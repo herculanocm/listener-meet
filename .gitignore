@@ -1,0 +1,10 @@
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Dados do usuário: histórico completo e chaves em texto aberto (CP9, CP10). Nunca no git nem no OneDrive.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite

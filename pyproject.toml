@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "listener-meet"
+version = "0.3.0"
+description = "Gravador de reuniões (qualquer app) com identificação por perfil de voz, transcrição local, ata por LLM agnóstica e base consultável. Código aberto. Documento mestre: specs/00-handoff-v4.md."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "numpy",
+  "scipy",
+  "soundfile",
+  "sounddevice",
+  "proc-tap",
+  "pynput",
+  "PySide6",
+]
+
+[project.optional-dependencies]
+win32    = ["pycaw", "comtypes", "PyAudioWPatch"]
+pipeline = ["whisperx", "pyannote.audio>=4"]
+llm      = ["google-genai", "openai", "anthropic"]
+store    = ["sqlite-vec"]
+dev      = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["listener*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

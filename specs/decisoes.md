@@ -1,0 +1,60 @@
+# Decisões (D-nnn), perguntas abertas (P-nn) e medições
+
+Quando ler: ao mexer em produto ou arquitetura (T1), ou quando uma spec citar um D. Formato: quem · decisão · motivo.
+Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em `memory/dono.md`. Tamanho-alvo: 8 KB.
+
+## Decididas (todas em 2026-10-24)
+| # | Quem | Decisão | Motivo |
+| --- | --- | --- | --- |
+| D-001 | Herculano | CP13: nenhuma codificação sem autorização explícita, por entrega; documentos não precisam | controle do dono; SDD |
+| D-002 | Herculano | CP14: sem GPU, tudo em CPU; só open source e a LLM paga (Gemini inicial); o resto é proposta | máquina sem GPU |
+| D-003 | Herculano | dois SQLite anexados: `listener.db` (texto, vetores, config) e `listener-audio.db` (FLAC) | backup e gestão; continua CP9 |
+| D-004 | Herculano | mudo global muta o microfone no Windows (o app de reunião também silencia) e grava silêncio | único mudo visível sem API de plataforma (CP4) |
+| D-005 | Herculano | legenda ao vivo leve (VAD e Whisper em janelas, 5 a 10 s de atraso, nome por embedding best effort); a passagem final substitui | WhisperX e diarização são batch; CPU dividida |
+| D-006 | Herculano | repositório recomeçado do zero em SDD; protótipo v3 apagado sem commit | "não quero guardar lixo" |
+| D-007 | Herculano | Handoff v4 é o mestre; Spec v3 superada | decisão do dono |
+| D-008 | LLM (aceita) | identificação = embedding do pyannote, centroide por pessoa e cosseno; limiar 0,60, margem, autocalibração | identificação pronta da pyannoteAI é paga; CP5 |
+| D-009 | Herculano | embeddings do RAG: gemini-embedding-001 em 768 dimensões; modelo e dimensão por vetor; reindexar ao trocar | coerente com CP2; 768 preserva a qualidade |
+| D-010 | Herculano | detecção de reunião por sessões de áudio do Windows (processo e pico); Teams, Zoom e Meet no navegador (título); nunca grava sozinho | título de janela é do SO, não da plataforma (CP4) |
+| D-011 | Herculano | pausa mantém a linha do tempo contínua (silêncio comprimido); evento; o player pula | alinhamento L/R e marcadores não se deslocam |
+| D-012 | Herculano | exportar ata e transcrição (.md, .docx, área de transferência) só por ação do usuário | CP9 trata da persistência do app |
+| D-013 | Herculano | idioma detectado por reunião (pt-BR e inglês); glossário bilíngue | há reuniões em inglês |
+| D-014 | Herculano | processamento começa sozinho ao Parar, numa fila com pausar e retomar | sem isso a ata atrasa |
+| D-015 | Herculano | 16 kHz mono nos dois canais por padrão (5 a 6 GB por mês); taxa configurável | Whisper e pyannote usam 16 kHz |
+| D-016 | Herculano | `segments.role_at_time`: cargo do dia junto da fala, além do atual na ficha | ata antiga não muda com promoção |
+| D-017 | Herculano | U-001 a U-015 aprovadas; entram por padrão nas fases | CP12 |
+| D-018 | Herculano | CP13 e CP14 registradas em AGENTS e aqui; o handoff no Claude Docs não é editado | padrão confirmado |
+| D-019 | Herculano | venv 3.14 do protótipo apagado; produto em Python 3.12 | WhisperX exige < 3.14 |
+| D-020 | Herculano | M-001: transcrição final pela LLM com áudio nativo (Gemini) como opção ao lado do Whisper local | alívio de CPU; custo e saída do áudio são escolha do usuário |
+| D-021 | Herculano | M-002: embeddings locais (multilingual-e5) como opção ao lado do Gemini | CP2 e CP14; zero custo e offline |
+| D-022 | Herculano | spec F0 aprovada; `scripts/medir.py` autorizado | primeira autorização sob CP13 |
+| D-023 | Herculano | pasta `memory/` no repositório | memória compartilhada entre LLMs |
+| D-024 | LLM (medido) | vetores com sqlite-vec 0.1.9 (`vec0`); fallback BLOB e numpy previsto na interface | carrega no 3.12 com SQLite 3.49.1; KNN ok |
+| D-025 | LLM (medido) | áudio decodificado com soundfile e entregue em memória ao pyannote e ao Whisper; nunca FFmpeg nem torchcodec | torchcodec não carrega sem FFmpeg |
+| D-026 | Herculano | app de código aberto; nada pessoal no código; primeira inicialização coleta os dados do usuário e a pasta do banco | respostas Q3 e Q6 da F1 |
+| D-027 | Herculano | portabilidade futura para Linux e macOS; nada do Windows fora da camada de plataforma | pedido do dono |
+| D-028 | Herculano | M-003: timestamps por palavra do faster-whisper como padrão (0,67×); wav2vec2 como opção "alta precisão" | medido: wav2vec2 custava mais que a transcrição |
+| D-029 | Herculano | spec F1 aprovada: Q1, Q2, Q4 e Q5 sim; Q3 assistente de primeira inicialização; Q6 usuário escolhe a pasta do banco | primeira entrega com código |
+| D-030 | Herculano | CP15: open source e multiplataforma como cláusula pétrea (eleva D-026 e D-027) | decisão do dono |
+| D-031 | Herculano ("Ok, siga") | documentação reescrita no formato compacto para IA: camadas T0 a T3, regras em `specs/README.md`, memória superada apagada; de 128 KB para 92 KB no total e de 78 KB para 10 KB na leitura inicial | arquivos estouravam o limite de leitura |
+| D-032 | Herculano | depois da compactação, tudo que não era necessário foi apagado, inclusive o `.git` com o snapshot; git reiniciado limpo, sem commits até ele pedir | "não quero guardar lixo" |
+
+## Em aberto (padrão assumido enquanto não há resposta)
+| # | Pergunta | Padrão |
+| --- | --- | --- |
+| P18 | licença do código aberto: MIT, Apache 2.0 ou outra? | MIT; sem arquivo LICENSE até a resposta |
+| P19 | atalhos globais (F1.1 A1): `ctrl+alt+shift+letra` ou teclas de função? | `ctrl+alt+shift+letra`; `RegisterHotKey` exclusivo no Windows, pynput nos demais |
+| P20 | log em arquivo como exceção ao CP9 (F1.1 A8)? | não: tabela `app_log` |
+| P21 | datas no banco (F1.1 A5): hora local com offset ISO 8601? | sim; migração v2 reescreve o existente |
+| P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
+
+## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
+| Data | O quê | Resultado |
+| --- | --- | --- |
+| 24/10 | WhisperX large-v3-turbo int8, 5 min de TTS, 2 vozes | transcrição 0,49× · alinhamento wav2vec2 pt 0,62× · total 1,11× (67 min por hora de áudio) |
+| 24/10 | faster-whisper direto, `word_timestamps`, VAD, beam 5, mesmo áudio | 0,67× (40 min por hora), já com palavras e tempos |
+| 24/10 | sqlite-vec 0.1.9 | carrega, cria `vec0`, KNN responde (SQLite 3.49.1) |
+| 24/10 | selftest da F1 no Windows (mic e loopback do sistema) | L e R contínuos; desvio de 19 ms na duração; sem buracos no índice |
+| 24/10 | documentação antes da compactação | 128 KB no total; 78 KB na trilha obrigatória |
+| pendente | pyannote community-1 por hora de áudio em CPU | precisa de `HF_TOKEN` (B4) |
+| pendente | banco por hora de reunião; deriva e deslocamento L/R; `list_playing_apps` | G1 e B1 |
