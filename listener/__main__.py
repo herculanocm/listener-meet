@@ -2,7 +2,7 @@
 
 Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
-  --check DIR [--meeting ID]                        relatório de continuidade dos pedaços de uma gravação
+  --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016)
 """
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ def _utf8() -> None:
 
 
 def selftest(args) -> int:
+    from .capture.audio import rms
     from .capture.recorder import RecordConfig, Recorder, SourceSpec
     from .platform import get_platform
     from .store import Store
     from .store.playback import decode_range
-    from .capture.audio import rms
 
     platform = get_platform()
     db_dir = Path(args.db) if args.db else Path(tempfile.mkdtemp(prefix="listener-selftest-"))
@@ -42,6 +42,7 @@ def selftest(args) -> int:
             print(f"{args.app} não está rodando; usando o sistema inteiro")
     cfg = RecordConfig(mic_device=platform.default_input_device(), source=source, chunk_seconds=args.chunk)
     meeting_id = store.create_meeting("selftest", source.exe or "sistema", None, None)
+    platform.mic_mute().set_device(cfg.mic_device)
     rec = Recorder(platform, store, meeting_id, cfg)
     rec.start()
     print(json.dumps({"db": str(db_dir), "meeting_id": meeting_id, "mic": rec.L.detail, "source": rec.R.detail,
@@ -65,6 +66,29 @@ def selftest(args) -> int:
     return 0
 
 
+def alignment(store, meeting_id: int, window_s: int = 10, search_s: int = 300) -> dict:
+    """Deslocamento L/R (U-016) na janela de `window_s` com mais sinal nos dois canais, nos primeiros `search_s`."""
+    from .capture.align import estimate_offset
+    from .capture.audio import rms
+    from .store.playback import decode_range
+
+    m = store.get_meeting(meeting_id) or {}
+    dur = int(m.get("duration_ms") or 0)
+    best = None
+    for t0 in range(0, min(dur, search_s * 1000), window_s * 1000):
+        left, sr = decode_range(store, meeting_id, "L", t0, t0 + window_s * 1000)
+        right, sr_r = decode_range(store, meeting_id, "R", t0, t0 + window_s * 1000)
+        if not len(left) or not len(right) or sr != sr_r:
+            continue
+        score = min(rms(left), rms(right))
+        if best is None or score > best[0]:
+            best = (score, t0, left, right, sr)
+    if best is None or best[0] < 0.004:
+        return {"error": "sem janela com sinal nos dois canais"}
+    res = estimate_offset(best[2], best[3], best[4]) or {}
+    return {"t0_ms": best[1], "window_s": window_s, **{k: round(v, 3) for k, v in res.items()}}
+
+
 def report(store, meeting_id: int) -> None:
     m = store.get_meeting(meeting_id) or {}
     dur = m.get("duration_ms")
@@ -74,8 +98,12 @@ def report(store, meeting_id: int) -> None:
         out["channels"][ch] = {"chunks": st["n"], "covered_ms": covered_ms, "gap_ms": int((st["gaps"] or 0) * 1000 / (st["sr"] or 16000)),
                                "bytes": st["bytes"], "delta_vs_duration_ms": (covered_ms - dur) if dur else None,
                                "continuity_issues": store.continuity(meeting_id, ch)}
+    events = store.list_events(meeting_id)
     out["markers"] = store.list_markers(meeting_id)
-    out["events"] = [(e["t_ms"], e["type"]) for e in store.list_events(meeting_id)]
+    out["events"] = [(e["t_ms"], e["type"]) for e in events]
+    stop = next((e for e in reversed(events) if e["type"] == "stop"), None)
+    out["drift"] = (stop or {}).get("data", {}).get("drift") if stop else None
+    out["alignment"] = alignment(store, meeting_id)
     print(json.dumps(out, ensure_ascii=False, default=str, indent=1), flush=True)
 
 
@@ -92,6 +120,9 @@ def check(args) -> int:
 
 def main(argv=None) -> int:
     _utf8()
+    from .log import setup
+
+    setup("INFO")
     ap = argparse.ArgumentParser(prog="listener", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--seconds", type=float, default=8.0)

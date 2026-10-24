@@ -20,3 +20,18 @@ def human_size(n: int) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} TB"
+
+
+def clamp_to_screens(x: int, y: int, w: int, h: int, screens: list[tuple[int, int, int, int]]) -> tuple[int, int] | None:
+    """Mantém a janela (x, y, w, h) dentro do monitor com que mais se sobrepõe (retângulos x, y, largura, altura).
+    None quando ela não toca monitor nenhum (monitor desplugado): quem chama volta à posição padrão (F1.1 A9)."""
+    best, best_area = None, 0
+    for sx, sy, sw, sh in screens:
+        ix = max(0, min(x + w, sx + sw) - max(x, sx))
+        iy = max(0, min(y + h, sy + sh) - max(y, sy))
+        if ix * iy > best_area:
+            best, best_area = (sx, sy, sw, sh), ix * iy
+    if best is None:
+        return None
+    sx, sy, sw, sh = best
+    return int(min(max(x, sx), sx + sw - w)), int(min(max(y, sy), sy + sh - h))

@@ -1,6 +1,5 @@
 import time
 
-import numpy as np
 
 from listener.capture.audio import rms
 from listener.capture.recorder import RecordConfig, Recorder, SourceSpec
@@ -39,7 +38,9 @@ def test_records_two_channels_continuous(tmp_path):
     l, _ = decode_range(store, mid, "L", 200, 700)
     r, _ = decode_range(store, mid, "R", 200, 700)
     assert rms(l) > 0.1 and rms(r) > 0.1
-    assert rec.health() in ({"L": "ok", "R": "ok"}, {"L": "ok", "R": "warn"}, {"L": "warn", "R": "ok"}) or True
+    health = rec.health()
+    assert set(health) == {"L", "R"} and set(health.values()) <= {"ok", "warn", "alert", "off"}
+    assert stats["drift"]["L"]["fills"] == 0 and stats["drift"]["R"]["fills"] == 0
     store.close()
 
 

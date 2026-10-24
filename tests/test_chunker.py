@@ -66,3 +66,16 @@ def test_stereo_kept_and_mono_downmix():
     c2.write(np.stack([np.full(10, 1.0, np.float32), np.full(10, 0.0, np.float32)], axis=1), t_rel=0.0)
     c2.close()
     assert out2[0].data[:, 0] == pytest.approx(0.5)
+
+
+def test_drift_metrics_are_measured_without_changing_behaviour():
+    c, out = make()
+    c.write(np.ones(50, np.float32), t_rel=0.0)
+    c.write(np.ones(50, np.float32), t_rel=0.6)        # 100 ms atrasado, dentro da tolerância: só mede
+    c.write(np.ones(50, np.float32), t_rel=2.5)        # 1,5 s de buraco: preenche
+    c.write(np.ones(50, np.float32), t_rel=2.7)        # 300 ms adiantado: conta como late_block
+    c.close()
+    st = c.drift_stats()
+    assert st["fills"] == 1 and st["late_blocks"] == 1
+    assert st["max_creep_ms"] == 100.0 and st["max_lag_ms"] == 1500.0 and st["max_lead_ms"] == 300.0
+    assert st["gap_frames"] == 150 and sum(o.frames for o in out) == 350

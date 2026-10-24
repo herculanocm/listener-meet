@@ -1,4 +1,4 @@
-"""Esquema v1 (F1). Tabelas das fases seguintes já existem vazias para as migrações serem só acréscimo."""
+"""Esquema do banco: migrações numeradas (F1.1 A6). v1 = F1; v2 = datas com fuso (A5). Tabelas em specs/dados.md."""
 MAIN_V1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (
@@ -64,4 +64,19 @@ CREATE TABLE IF NOT EXISTS audio.audio_chunks (
 CREATE INDEX IF NOT EXISTS audio.idx_chunks_meeting ON audio_chunks(meeting_id, channel, t_start_ms);
 """
 
-SCHEMA_VERSION = 1
+# Colunas de data reescritas pela migração v2 (hora local com offset, F1.1 A5)
+DATE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "settings": ("updated_at",), "presets": ("updated_at",), "people": ("created_at", "updated_at"),
+    "providers": ("updated_at",), "meetings": ("started_at", "ended_at"), "markers": ("created_at",),
+    "events": ("created_at",), "revisions": ("created_at",), "captions": ("created_at",),
+    "summaries": ("created_at",), "voice_profiles": ("updated_at",), "voice_embeddings": ("created_at",),
+    "schema_migrations": ("applied_at",), "audio.audio_chunks": ("created_at",),
+    "audio.schema_migrations": ("applied_at",),
+}
+
+# (versão, SQL) para migrações só de esquema; (versão, None) quando a migração é código Python em db.py
+MIGRATIONS: list[tuple[int, str | None]] = [
+    (1, MAIN_V1 + AUDIO_V1),
+    (2, None),   # datas com offset (A5)
+]
+SCHEMA_VERSION = MIGRATIONS[-1][0]

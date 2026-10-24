@@ -1,13 +1,13 @@
 # Melhorias de UX (U-nnn), CP12
 
-Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 propostas na
-F1.1. Status: proposta | aprovada | vetada | implementada. Tamanho-alvo: 3 KB.
+Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 aprovadas e
+implementadas na F1.1 (D-035). Status: proposta | aprovada | vetada | implementada. Tamanho-alvo: 3 KB.
 
 | # | Melhoria | Onde | Status |
 | --- | --- | --- | --- |
 | U-001 | "Apps tocando agora": processos emitindo áudio com medidor ao vivo; um clique escolhe a fonte; app de reunião primeiro | Warm-up | implementada (F1) |
-| U-002 | Mudo global: botão e atalho mutam o mic no Windows e gravam silêncio; estado refletido no widget | Widget | implementada (F1); correção A2 |
-| U-003 | Marcador com nota por atalho: popup junto ao cursor, Enter salva, Esc cancela; a nota entra na ata | Widget | implementada (F1); risco A10 |
+| U-002 | Mudo global: botão e atalho mutam o mic no Windows e gravam silêncio; estado refletido no widget | Widget | implementada (F1; A2 corrige o endpoint) |
+| U-003 | Marcador com nota por atalho: popup junto ao cursor, Enter salva, Esc cancela; a nota entra na ata | Widget | implementada (F1; A10 traz o popup para a frente) |
 | U-004 | Saúde dos canais verde, âmbar, vermelho; R mudo por 20 s dispara aviso com "trocar fonte" | Widget | implementada (F1) |
 | U-005 | Fila de processamento visível: progresso por etapa, pausar, retomar; aviso ao gravar com fila cheia | Janela principal | aprovada (F2) |
 | U-006 | Revisão por teclado: card por falante com 5 s de áudio; Enter aceita; setas navegam; "é a mesma pessoa que" mescla | Revisão | aprovada (F2) |
@@ -20,5 +20,5 @@ F1.1. Status: proposta | aprovada | vetada | implementada. Tamanho-alvo: 3 KB.
 | U-013 | Assistente de primeiro uso: token HF, chave do provedor, teste do mic, app de reunião | Primeiro uso | aprovada (F6; versão mínima na F1) |
 | U-014 | Tema claro e escuro seguindo o sistema; DPI alto | Geral | aprovada (F6; básico na F1) |
 | U-015 | Preset "sala de reunião": diariza também o L e desliga "L é sempre eu" | Warm-up | aprovada (metadado na F1; lógica na F2) |
-| U-016 | Detector de eco e alinhamento por correlação cruzada L×R: aviso no warm-up; deslocamento L/R no `--check` | Warm-up, `--check` | proposta (F1.1) |
-| U-017 | Instrução para fixar o ícone da bandeja no Windows 11 (ícones novos vão para o menu oculto) | Primeiro uso | proposta (F1.1) |
+| U-016 | Detector de eco e alinhamento por correlação cruzada L×R: aviso no warm-up; deslocamento L/R no `--check` | Warm-up, `--check` | implementada (F1.1) |
+| U-017 | Instrução para fixar o ícone da bandeja no Windows 11 (ícones novos vão para o menu oculto) | Primeiro uso | implementada (F1.1) |

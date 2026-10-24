@@ -7,15 +7,17 @@ from __future__ import annotations
 
 import queue
 import threading
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..log import get_logger
 from ..platform.base import AudioDevice, Platform
 from . import audio as A
 from .chunker import ChannelChunker, RawChunk
 from .clock import SessionClock
+
+log = get_logger("capture")
 
 
 @dataclass
@@ -181,6 +183,7 @@ class Recorder:
             self._worker.join(timeout=120)
         self.store.add_event(self.meeting_id, int(end_rel * 1000), "stop", self.stats_light())
         self.store.finish_meeting(self.meeting_id, int(end_rel * 1000))
+        log.info("reunião %s parada em %.1f s: %s", self.meeting_id, end_rel, self.stats_light())
         return self.stats()
 
     def cancel(self) -> None:
@@ -223,7 +226,8 @@ class Recorder:
     def stats_light(self) -> dict:
         return {"chunks": dict(self.chunks_written), "bytes": self.bytes_written, "markers": self.markers,
                 "gaps_L": self._l_chunker.gap_frames_total if self._l_chunker else None,
-                "gaps_R": self._r_chunker.gap_frames_total if self._r_chunker else None}
+                "gaps_R": self._r_chunker.gap_frames_total if self._r_chunker else None,
+                "drift": {ch.channel: ch.drift_stats() for ch in (self._l_chunker, self._r_chunker) if ch is not None}}
 
     def stats(self) -> dict:
         s = self.stats_light()
@@ -294,6 +298,7 @@ class Recorder:
 
     def _warn(self, msg: str) -> None:
         self.warnings.append(msg)
+        log.warning("reunião %s: %s", self.meeting_id, msg)
         try:
             self.store.add_event(self.meeting_id, self._ms(), "warning", {"message": msg})
         except Exception:

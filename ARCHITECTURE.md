@@ -10,14 +10,15 @@ legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQ
 ## Camadas
 | Camada | Pacote | Responsabilidade | Fase |
 | --- | --- | --- | --- |
-| Plataforma | `listener/platform/` | Tudo que depende do SO atrás de `base.py`: dispositivos, apps tocando, mic, loopback de app e de sistema, mudo, atalhos, processos, pastas. `common/` (pastas, pynput); `win32/` (sounddevice WASAPI, proc-tap, PyAudioWPatch, pycaw, Toolhelp32); `linux/` e `macos/` na F7. Fora daqui não há pycaw, PyAudioWPatch, `ctypes.windll` nem `C:\` | F1, F7 |
+| Plataforma | `listener/platform/` | Tudo que depende do SO atrás de `base.py`: dispositivos, apps tocando, mic, loopback de app e de sistema, mudo, atalhos, processos, pastas. `common/` (pastas, pynput para Linux e macOS); `win32/` (sounddevice WASAPI, proc-tap, PyAudioWPatch, pycaw, `RegisterHotKey`, Toolhelp32, identidade do processo, suspensão e foco); `linux/` e `macos/` na F7. Fora daqui não há pycaw, PyAudioWPatch, `ctypes.windll` nem `C:\` | F1, F7 |
 | Captura | `listener/capture/` | Dois canais num relógio único (`perf_counter`, QPC no Windows): L = mic 16 kHz; R = loopback do app (árvore de processos) ou do sistema. Mudo e pausa gravam silêncio; buracos preenchidos por timestamp; pedaços FLAC de ~60 s gravados no SQLite por uma thread de trabalho | F1 |
 | Transcrição | `listener/pipeline/` | faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028); wav2vec2 opcional; glossário no `initial_prompt`; idioma por reunião (D-013). Ao vivo: VAD e janelas de ~8 s (D-005) | F2, F4 |
 | Identificação | `listener/pipeline/` | L = usuário (salvo preset sala, U-015). R: pyannote community-1 diariza; embedding por cluster; cosseno contra perfis persistentes (centroide por pessoa, limiar 0,60 com margem e autocalibração, D-008); confirmações reforçam o perfil | F2 |
 | Inteligência | `listener/llm/` | Interface única de provedor (texto, JSON, áudio, embeddings) com adaptadores Gemini, GPT e Claude; prompts e esquemas do projeto. Glossário, resumo parcial, identidade por contexto abaixo do limiar, título, pré-resumo, ata, resumo executivo, transcrição revisada, chat e RAG | F3 |
 | Base | `listener/store/` | `listener.db` e `listener-audio.db` anexados (D-003), WAL; FTS5 e sqlite-vec (D-024); modelo e dimensão por vetor (D-009) | F1, F5 |
 | Interface | `listener/ui/` | PySide6: assistente de primeiro uso, warm-up, widget flutuante, bandeja, resumo, configurações mínimas; janela principal completa na F6 | F1, F6 |
-| Config | `listener/config/` | Padrões das settings e o ponteiro da pasta do banco, único arquivo fora do SQLite (D-029) | F1 |
+| Config | `listener/config/` | Padrões das settings e o ponteiro da pasta do banco (D-029) | F1 |
+| Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, nível configurável (D-033) | F1.1 |
 
 ## Fluxo de uma reunião (handoff §4)
 1. Warm-up: mic, fonte (app tocando ou sistema), medidores, teste; título e participantes opcionais; a LLM monta glossário

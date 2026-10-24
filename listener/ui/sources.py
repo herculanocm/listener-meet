@@ -1,13 +1,38 @@
-"""Tabela "apps tocando agora" (U-001) + "Sistema inteiro", com medidor de pico por app."""
+"""Tabela "apps tocando agora" (U-001) + "Sistema inteiro", com medidor de pico por app.
+A consulta roda numa thread própria (F1.1 A4): a interface nunca espera pelo sistema de áudio."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QProgressBar, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from ..capture.recorder import SourceSpec
+from ..log import get_logger
 from ..platform.base import PlayingApp
 
+log = get_logger("ui.sources")
 SYSTEM_ROW_PID = -1
+
+
+class _Poller(QThread):
+    apps_ready = Signal(object)
+
+    def __init__(self, platform, interval_ms: int, parent=None):
+        super().__init__(parent)
+        self.platform = platform
+        self.interval_ms = int(interval_ms)
+
+    def run(self) -> None:
+        while not self.isInterruptionRequested():
+            try:
+                apps = list(self.platform.list_playing_apps())
+            except Exception as e:
+                log.debug("list_playing_apps: %s", e)
+                apps = []
+            self.apps_ready.emit(apps)
+            waited = 0
+            while waited < self.interval_ms and not self.isInterruptionRequested():
+                self.msleep(50)
+                waited += 50
 
 
 class SourceTable(QWidget):
@@ -16,7 +41,9 @@ class SourceTable(QWidget):
     def __init__(self, platform, parent=None, refresh_ms: int = 500):
         super().__init__(parent)
         self.platform = platform
+        self.refresh_ms = refresh_ms
         self._apps: list[PlayingApp] = []
+        self._poller: _Poller | None = None
         self.table = QTableWidget(0, 3, self)
         self.table.setHorizontalHeaderLabels(["Fonte", "Janela", "Nível"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -31,33 +58,32 @@ class SourceTable(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.table)
-        self._timer = QTimer(self)
-        self._timer.setInterval(refresh_ms)
-        self._timer.timeout.connect(self.refresh)
-        self.refresh()
+        self.render([])
 
     def start(self) -> None:
-        self._timer.start()
+        if self._poller is None:
+            self._poller = _Poller(self.platform, self.refresh_ms, self)
+            self._poller.apps_ready.connect(self.render)
+            self._poller.start()
 
     def stop(self) -> None:
-        self._timer.stop()
+        if self._poller is not None:
+            self._poller.requestInterruption()
+            self._poller.wait(3000)
+            self._poller = None
 
     # ---- dados ----
-    def refresh(self) -> None:
-        try:
-            apps = self.platform.list_playing_apps()
-        except Exception:
-            apps = []
+    def render(self, apps) -> None:
         selected = self.selected_pid()
-        self._apps = apps
-        self.table.setRowCount(1 + len(apps))
+        self._apps = list(apps)
+        self.table.setRowCount(1 + len(self._apps))
         self._set_row(0, SYSTEM_ROW_PID, "Sistema inteiro", "tudo que toca no computador", 0.0, False)
-        for i, app in enumerate(apps, start=1):
+        for i, app in enumerate(self._apps, start=1):
             self._set_row(i, app.pid, app.exe.removesuffix(".exe"), app.title, app.peak, app.is_meeting_app)
-        if selected is not None:
-            self.select_pid(selected)
-        elif self.table.rowCount() > 0 and not self.table.selectedItems():
-            self.table.selectRow(1 if apps and apps[0].is_meeting_app else 0)
+        if selected is not None and self.select_pid(selected):
+            return
+        if self.table.rowCount() > 0 and not self.table.selectedItems():
+            self.table.selectRow(1 if self._apps and self._apps[0].is_meeting_app else 0)
 
     def _set_row(self, row: int, pid: int, name: str, title: str, peak: float, meeting: bool) -> None:
         it = self.table.item(row, 0)

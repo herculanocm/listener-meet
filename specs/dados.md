@@ -24,7 +24,6 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 | voice_embeddings | main | id, profile_id, meeting_id, segment_id, vector BLOB, source (cadastro, confirmacao, automatico); F2 Q9 acrescenta platform | F2 | v1 vazia |
 | rag_chunks | main | id, meeting_id, t_start_ms, t_end_ms, text, speakers; mais `rag_fts` (FTS5) | F5 | v1 vazia |
 | rag_vectors | main | chunk_id PK, model, dim, vector (sqlite-vec `vec0`, D-024; fallback BLOB + numpy) | F5 | v1 vazia |
-| app_log | main | ts, level, logger, message, meeting_id, data | F1.1 A8 | planejada (v2) |
 | processing_jobs | main | id, meeting_id, status (pendente, rodando, pausado, concluído, erro, cancelado), step, progress, error, attempts, started_at, finished_at, timings_json | F2 | planejada |
 | clusters | main | id, meeting_id, channel, cluster, speech_ms, centroid BLOB, person_id, similarity, margin, status (auto, confirmado, ambíguo, sem nome, ignorado) | F2 | planejada |
 
@@ -32,5 +31,7 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 
 Regras: nada apaga dados (CP3), salvo Cancelar da gravação em curso e Reprocessar (só clusters e segments da reunião);
 `revisions` registra toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
-`listener/config/defaults.py`): `capture.*`, `hotkeys.*`, `ui.widget_pos`, `ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`.
-Único arquivo fora do SQLite: o ponteiro `db-location.json` na pasta de configuração do sistema (D-029).
+`listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`, `ui.widget_pos`,
+`ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`. Esquema atual: v2 (datas com offset, F1.1 A5).
+Fora do SQLite, por decisão: o ponteiro `db-location.json` na pasta de configuração do sistema (D-029) e o arquivo de log
+rotativo escolhido pelo usuário (D-033).

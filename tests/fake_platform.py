@@ -52,6 +52,11 @@ class _FakeStream(threading.Thread):
 class FakeMute:
     def __init__(self):
         self.muted = False
+        self.device = None
+
+    def set_device(self, device) -> bool:
+        self.device = device
+        return True
 
     def get(self):
         return self.muted
@@ -64,10 +69,14 @@ class FakeMute:
 class FakeHotkeys:
     def __init__(self):
         self.registered = {}
+        self._errors = {}
 
     def register(self, combo, callback):
         self.registered[combo] = callback
         return True
+
+    def errors(self):
+        return dict(self._errors)
 
     def unregister_all(self):
         self.registered.clear()
@@ -87,9 +96,20 @@ class FakePlatform:
         self._mute = FakeMute()
         self._hk = FakeHotkeys()
         self.streams = []
+        self.awake = None
+
+    def app_init(self):
+        pass
+
+    def keep_awake(self, on: bool) -> bool:
+        self.awake = on
+        return True
+
+    def bring_to_front(self, window_id: int) -> bool:
+        return True
 
     def list_input_devices(self):
-        return [AudioDevice("0", "Mic Fake", "fake", 1, 16000)]
+        return [AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)]
 
     def default_input_device(self):
         return self.list_input_devices()[0]

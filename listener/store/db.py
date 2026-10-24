@@ -1,4 +1,5 @@
-"""Store: acesso único aos dois arquivos SQLite, com lock (threads de áudio e interface gravam)."""
+"""Store: acesso único aos dois arquivos SQLite, com lock (threads de áudio e interface gravam).
+Migrações numeradas (F1.1 A6); datas em hora local com offset (A5)."""
 from __future__ import annotations
 
 import json
@@ -9,14 +10,44 @@ from pathlib import Path
 from typing import Any
 
 from ..config.defaults import DEFAULTS
-from .schema import AUDIO_V1, MAIN_V1, SCHEMA_VERSION
+from ..log import get_logger
+from .schema import DATE_COLUMNS, MIGRATIONS, SCHEMA_VERSION
+
+log = get_logger("store")
 
 MAIN_FILE = "listener.db"
 AUDIO_FILE = "listener-audio.db"
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="milliseconds")
+    """Hora local com offset (ISO 8601), por exemplo 2026-10-24T18:03:12.345-03:00 (F1.1 A5)."""
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+def with_offset(value: str | None) -> str | None:
+    """Reescreve uma data ISO sem fuso como hora local com offset; datas já com offset ou vazias voltam iguais."""
+    if not value:
+        return value
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+    return dt.isoformat(timespec="milliseconds")
+
+
+def _migrate_v2_dates(conn: sqlite3.Connection) -> None:
+    for table, cols in DATE_COLUMNS.items():
+        for col in cols:
+            rows = conn.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL").fetchall()
+            for rowid, value in rows:
+                new = with_offset(value)
+                if new != value:
+                    conn.execute(f"UPDATE {table} SET {col} = ? WHERE rowid = ?", (new, rowid))
+
+
+PY_MIGRATIONS = {2: _migrate_v2_dates}
 
 
 class Store:
@@ -37,12 +68,37 @@ class Store:
 
     # ---------------------------------------------------------------- infra
     def _migrate(self) -> None:
+        """Aplica as migrações pendentes em ordem; recusa um banco mais novo que o app."""
         with self._lock:
-            self._conn.executescript(MAIN_V1)
-            self._conn.executescript(AUDIO_V1)
             for table in ("schema_migrations", "audio.schema_migrations"):
-                self._conn.execute(f"INSERT OR IGNORE INTO {table}(version, applied_at) VALUES (?, ?)",
-                                   (SCHEMA_VERSION, _now()))
+                self._conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+            row = self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+            current = int(row[0] or 0)
+            if current > SCHEMA_VERSION:
+                raise RuntimeError(f"o banco está na versão {current} e este app conhece até a {SCHEMA_VERSION}: atualize o app")
+            for version, sql in MIGRATIONS:
+                if version <= current:
+                    continue
+                if sql is not None:
+                    self._conn.executescript(sql)
+                else:
+                    self._conn.execute("BEGIN")
+                    try:
+                        PY_MIGRATIONS[version](self._conn)
+                        self._conn.execute("COMMIT")
+                    except Exception:
+                        self._conn.execute("ROLLBACK")
+                        raise
+                for table in ("schema_migrations", "audio.schema_migrations"):
+                    self._conn.execute(f"INSERT OR IGNORE INTO {table}(version, applied_at) VALUES (?, ?)", (version, _now()))
+                log.info("banco migrado para a versão %d", version)
+
+    def schema_version(self) -> int:
+        row = self._q("SELECT MAX(version) AS v FROM schema_migrations")
+        return int(row[0]["v"] or 0)
+
+    def default_log_path(self) -> Path:
+        return self.base_dir / "logs" / "listener.log"
 
     def close(self) -> None:
         with self._lock:
@@ -182,9 +238,11 @@ class Store:
     # ---------------------------------------------------------------- chunks (audio.db)
     def insert_chunk(self, meeting_id: int, channel: str, idx: int, t_start_ms: int, frames: int,
                      sample_rate: int, gap_frames: int, flac: bytes) -> int:
-        return self._x("INSERT INTO audio.audio_chunks(meeting_id, channel, idx, t_start_ms, frames, sample_rate, gap_frames, flac, created_at) "
+        return self._x("INSERT INTO audio.audio_chunks(meeting_id, channel, idx, t_start_ms, frames, sample_rate, "
+                       "gap_frames, flac, created_at) "
                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       (meeting_id, channel, idx, int(t_start_ms), int(frames), int(sample_rate), int(gap_frames), sqlite3.Binary(flac), _now()))
+                       (meeting_id, channel, idx, int(t_start_ms), int(frames), int(sample_rate), int(gap_frames),
+                        sqlite3.Binary(flac), _now()))
 
     def list_chunks(self, meeting_id: int, channel: str | None = None) -> list[dict]:
         if channel:
@@ -245,4 +303,5 @@ class Store:
 
     def add_revision(self, entity: str, entity_id: int, field: str, before: Any, after: Any, author: str) -> int:
         return self._x("INSERT INTO revisions(entity, entity_id, field, before, after, author, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (entity, entity_id, field, None if before is None else str(before), None if after is None else str(after), author, _now()))
+                       (entity, entity_id, field, None if before is None else str(before),
+                        None if after is None else str(after), author, _now()))

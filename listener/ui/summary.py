@@ -23,7 +23,8 @@ class SummaryDialog(QDialog):
         form.addRow("Duração", QLabel(fmt_mmss(stats.get("duration_s", 0))))
         for ch in ("L", "R"):
             c = cs.get(ch)
-            txt = "sem áudio" if not c else f"{c['n']} pedaços · {human_size(c['bytes'] or 0)} · buracos preenchidos: {fmt_mmss((c['gaps'] or 0) / (c['sr'] or 16000))}"
+            gaps = fmt_mmss((c["gaps"] or 0) / (c["sr"] or 16000)) if c else ""
+            txt = "sem áudio" if not c else f"{c['n']} pedaços · {human_size(c['bytes'] or 0)} · buracos preenchidos: {gaps}"
             form.addRow(f"Canal {ch}", QLabel(txt))
         markers = store.list_markers(meeting_id)
         lst = QListWidget()

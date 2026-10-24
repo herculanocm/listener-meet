@@ -1,15 +1,20 @@
-"""Warm-up (CP6): escolher microfone e fonte de saída, ver medidores, testar, preset, título e participantes."""
+"""Warm-up (CP6): microfone e fonte de saída, medidores, teste de 3 s com detecção de eco (U-016), preset, título."""
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
-from ..capture.audio import rms
+from ..capture.align import estimate_offset
+from ..capture.audio import resample, rms, to_mono
 from ..capture.recorder import RecordConfig
+from ..log import get_logger
+from ..platform.base import pick_device
 from .meters import LevelMeter
 from .sources import SourceTable
+
+log = get_logger("ui.warmup")
 
 
 class WarmupDialog(QDialog):
@@ -20,8 +25,10 @@ class WarmupDialog(QDialog):
         self.setWindowTitle("Antes de gravar")
         self.setMinimumWidth(760)
         self._mic_handle = None
+        self._r_handle = None
         self._mic_level = 0.0
         self._test_buffer: list[np.ndarray] = []
+        self._r_buffer: list[np.ndarray] = []
         self._testing = False
         self._devices = platform.list_input_devices()
 
@@ -32,7 +39,11 @@ class WarmupDialog(QDialog):
             self.mic_combo.addItem(d.name, d.id)
         self.mic_meter = LevelMeter(height=10)
         self.mic_status = QLabel("ouvindo…")
+        self.mic_note = QLabel("")
+        self.mic_note.setStyleSheet("color: #e67e22;")
+        self.mic_note.setWordWrap(True)
         self.test_btn = QPushButton("Testar 3 s")
+        self.test_btn.setToolTip("Grava 3 s do microfone e da saída escolhida, toca o microfone de volta e verifica eco.")
         self.test_btn.clicked.connect(self._test_mic)
         ml = QVBoxLayout(mic_box)
         ml.addWidget(self.mic_combo)
@@ -42,14 +53,18 @@ class WarmupDialog(QDialog):
         row.addStretch(1)
         row.addWidget(self.test_btn)
         ml.addLayout(row)
+        ml.addWidget(self.mic_note)
 
         # --- saída ---
         src_box = QGroupBox("Saída (canal R: quem você ouve). ● = app de reunião")
         self.sources = SourceTable(platform)
         self.src_status = QLabel("")
+        self.echo_label = QLabel("")
+        self.echo_label.setWordWrap(True)
         sl = QVBoxLayout(src_box)
         sl.addWidget(self.sources)
         sl.addWidget(self.src_status)
+        sl.addWidget(self.echo_label)
 
         # --- reunião ---
         meet_box = QGroupBox("Reunião (opcional)")
@@ -122,6 +137,7 @@ class WarmupDialog(QDialog):
         self._timer.stop()
         self.sources.stop()
         self._close_mic()
+        self._close_r()
 
     # ---------------------------------------------------------------- mic
     def _selected_device(self):
@@ -137,31 +153,57 @@ class WarmupDialog(QDialog):
         except Exception as e:
             self._mic_handle = None
             self.mic_status.setText(f"microfone indisponível: {e}")
+            log.warning("warm-up: microfone indisponível: %s", e)
 
     def _close_mic(self) -> None:
         if self._mic_handle is not None:
             try:
                 self._mic_handle.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("fechar mic do warm-up: %s", e)
             self._mic_handle = None
+
+    def _close_r(self) -> None:
+        if self._r_handle is not None:
+            try:
+                self._r_handle.stop()
+            except Exception as e:
+                log.debug("fechar saída do teste: %s", e)
+            self._r_handle = None
 
     def _on_mic(self, block, t_first) -> None:
         self._mic_level = rms(block)
         if self._testing:
             self._test_buffer.append(np.asarray(block, dtype=np.float32).reshape(-1))
 
+    def _on_r_test(self, block, t_first) -> None:
+        if self._testing:
+            self._r_buffer.append(np.asarray(block, dtype=np.float32))
+
     def _test_mic(self) -> None:
         if self._mic_handle is None or self._testing:
             return
         self._testing = True
         self._test_buffer = []
+        self._r_buffer = []
+        spec = self.sources.selected_spec()
+        try:
+            if spec.kind == "app" and spec.pid:
+                self._r_handle = self.platform.open_app_loopback(spec.pid, self._on_r_test)
+            else:
+                self._r_handle = self.platform.open_system_loopback(self._on_r_test)
+        except Exception as e:
+            log.debug("teste: saída não abriu: %s", e)
+            self._r_handle = None
         self.test_btn.setText("gravando…")
         self.test_btn.setEnabled(False)
+        self.echo_label.setText("")
         QTimer.singleShot(3000, self._finish_test)
 
     def _finish_test(self) -> None:
         self._testing = False
+        r_rate = self._r_handle.sample_rate if self._r_handle is not None else None
+        self._close_r()
         self.test_btn.setText("Testar 3 s")
         self.test_btn.setEnabled(True)
         if not self._test_buffer:
@@ -170,11 +212,34 @@ class WarmupDialog(QDialog):
         from ..store.playback import play
 
         audio = np.concatenate(self._test_buffer)
+        self._check_echo(audio, r_rate)
         self.mic_status.setText(f"tocando o teste ({len(audio) / 16000:.1f} s)…")
         try:
             play(audio, 16000)
         except Exception as e:
             self.mic_status.setText(f"não consegui tocar: {e}")
+
+    def _check_echo(self, mic: np.ndarray, r_rate: int | None) -> None:
+        """U-016: o microfone está ouvindo a saída? Correlação cruzada entre os 3 s do mic e os 3 s da saída."""
+        if not self._r_buffer or not r_rate:
+            self.echo_label.setStyleSheet("color: #888;")
+            self.echo_label.setText("Eco: a saída não entregou áudio durante o teste (nada tocando?).")
+            return
+        r = resample(to_mono(np.concatenate(self._r_buffer)), r_rate, 16000)
+        res = estimate_offset(mic, r, 16000)
+        if res is None:
+            self.echo_label.setStyleSheet("color: #888;")
+            self.echo_label.setText("Eco: sinal insuficiente para testar (fale e deixe a saída tocando).")
+            return
+        corr, limit = res["correlation"], self.store.get_float("capture.echo_corr_min")
+        log.info("teste de eco: correlação %.3f, atraso %.0f ms, limite %.2f", corr, res["offset_ms"], limit)
+        if corr >= limit:
+            self.echo_label.setStyleSheet("color: #e67e22;")
+            self.echo_label.setText(f"Eco: seu microfone está ouvindo a reunião (correlação {corr:.2f}, atraso aproximado "
+                                    f"{res['offset_ms']:.0f} ms). Use fone ou marque 'Sala de reunião'.")
+        else:
+            self.echo_label.setStyleSheet("color: #2ecc71;")
+            self.echo_label.setText(f"Sem eco: o microfone não ouve a saída (correlação {corr:.2f}).")
 
     # ---------------------------------------------------------------- tick
     def _tick(self) -> None:
@@ -205,21 +270,23 @@ class WarmupDialog(QDialog):
         QTimer.singleShot(600, lambda: self._select_source(kind, exe))
         self.room_check.setChecked(self.store.get_setting("warmup.last_in_room") == "1")
 
-    def _select_mic(self, device_id: str, device_name: str) -> None:
-        for i, d in enumerate(self._devices):
-            if device_id and d.id == device_id:
-                self.mic_combo.setCurrentIndex(i)
-                return
-        for i, d in enumerate(self._devices):
-            if device_name and d.name == device_name:
-                self.mic_combo.setCurrentIndex(i)
-                return
+    def _select_mic(self, device_id: str, device_name: str) -> bool:
+        """Seleciona o microfone salvo (id estável, depois nome); se sumiu, avisa e cai no padrão (F1.1 A3)."""
+        if device_id or device_name:
+            dev = pick_device(self._devices, device_id or None, device_name or None)
+            if dev is not None:
+                self.mic_combo.setCurrentIndex(self._devices.index(dev))
+                self.mic_note.setText("")
+                return True
+            self.mic_note.setText(f"O microfone salvo ({device_name or device_id}) não está nesta máquina; usando o padrão.")
+            log.warning("microfone salvo %r não encontrado; usando o padrão", device_name or device_id)
         default = self.platform.default_input_device()
         if default:
             for i, d in enumerate(self._devices):
                 if d.id == default.id:
                     self.mic_combo.setCurrentIndex(i)
-                    return
+                    break
+        return False
 
     def _select_source(self, kind: str, exe: str) -> None:
         if kind == "app" and exe and self.sources.select_exe(exe):

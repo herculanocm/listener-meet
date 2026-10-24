@@ -21,5 +21,6 @@ altera uma cláusula. Se uma parecer difícil, propor como cumpri-la, nunca remo
 | CP14 | Sem placa de vídeo: tudo em CPU nesta máquina. Só bibliotecas open source (Python) e a LLM paga (Gemini inicial). Qualquer outra coisa é proposta, não decisão. |
 | CP15 | Open source e multiplataforma: Windows primeiro, adaptável a Linux e macOS. Nada específico de SO fora de `listener/platform/<os>/`; nada pessoal no código; caminhos e dispositivos configuráveis; o usuário se configura na primeira inicialização. |
 
-Exceções já decididas: exportar ata e transcrição por ação do usuário não fere CP9 (D-012); o ponteiro da pasta do banco é
-o único arquivo fora do SQLite (D-029); modelos de ML ficam numa pasta própria porque não são dados do usuário (F1).
+Exceções já decididas: exportar ata e transcrição por ação do usuário não fere CP9 (D-012); fora do SQLite ficam só o
+ponteiro da pasta do banco (D-029) e o arquivo de log escolhido pelo usuário (D-033); modelos de ML ficam numa pasta
+própria porque não são dados do usuário (F1).

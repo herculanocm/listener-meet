@@ -12,7 +12,7 @@ class SessionClock:
     t0_wall: float
 
     @classmethod
-    def start(cls) -> "SessionClock":
+    def start(cls) -> SessionClock:
         return cls(t0_perf=time.perf_counter(), t0_wall=time.time())
 
     def rel(self) -> float:

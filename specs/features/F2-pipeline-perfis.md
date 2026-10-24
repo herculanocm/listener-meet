@@ -1,6 +1,6 @@
 # F2 — Pós-reunião: transcrição, diarização e perfis de voz
 
-Status: rascunho (aguardando aprovação) · Aprovada por Herculano em: — · Fase e gate: F2 · G2 ·
+Status: aprovada (código depois do G1, ordem do backlog) · Aprovada por Herculano em: 2026-10-24 (Q1 a Q9 nos padrões, D-036) · Fase e gate: F2 · G2 ·
 CPs: 3, 5, 8, 9, 10, 11 (parte "depois da reunião", sem a LLM), 12, 13, 14, 15
 Quando ler: ao trabalhar no pipeline pós-reunião. Tabelas: `dados.md`. Tamanho-alvo: 8 KB.
 

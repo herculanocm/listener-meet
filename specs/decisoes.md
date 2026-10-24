@@ -38,14 +38,14 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | D-030 | Herculano | CP15: open source e multiplataforma como cláusula pétrea (eleva D-026 e D-027) | decisão do dono |
 | D-031 | Herculano ("Ok, siga") | documentação reescrita no formato compacto para IA: camadas T0 a T3, regras em `specs/README.md`, memória superada apagada; de 128 KB para 92 KB no total e de 78 KB para 10 KB na leitura inicial | arquivos estouravam o limite de leitura |
 | D-032 | Herculano | depois da compactação, tudo que não era necessário foi apagado, inclusive o `.git` com o snapshot; git reiniciado limpo, sem commits até ele pedir | "não quero guardar lixo" |
+| D-033 | Herculano | log do app em arquivo rotativo escolhido pelo usuário na primeira inicialização, com nível (DEBUG, INFO, WARNING, ERROR) editável nas Configurações; exceção explícita ao CP9 | diagnóstico legível fora do app e vivo mesmo com o banco em falha |
+| D-034 | Herculano | licença MIT (`LICENSE`) | resposta à P18 |
+| D-035 | Herculano | spec F1.1 aprovada em bloco: A1 a A17, U-016 e U-017; atalhos `ctrl+alt+shift+letra` com `RegisterHotKey` no Windows (P19); datas com offset (P21); implementada no mesmo dia | correções antes do G1 |
+| D-036 | Herculano | spec F2 aprovada com Q1 a Q9 nos padrões (worker em subprocesso, token HF no banco, limiar 0,60 e margem 0,05, turbo int8, clusters curtos só na revisão, leitura mínima, fila pausa em gravação, embeddings do pipeline se expostos, coluna `platform`) | libera o código da F2 depois do G1 |
 
 ## Em aberto (padrão assumido enquanto não há resposta)
 | # | Pergunta | Padrão |
 | --- | --- | --- |
-| P18 | licença do código aberto: MIT, Apache 2.0 ou outra? | MIT; sem arquivo LICENSE até a resposta |
-| P19 | atalhos globais (F1.1 A1): `ctrl+alt+shift+letra` ou teclas de função? | `ctrl+alt+shift+letra`; `RegisterHotKey` exclusivo no Windows, pynput nos demais |
-| P20 | log em arquivo como exceção ao CP9 (F1.1 A8)? | não: tabela `app_log` |
-| P21 | datas no banco (F1.1 A5): hora local com offset ISO 8601? | sim; migração v2 reescreve o existente |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)

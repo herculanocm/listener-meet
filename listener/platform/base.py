@@ -3,18 +3,39 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
+from collections.abc import Callable
 
 import numpy as np
 
 
 @dataclass(frozen=True)
 class AudioDevice:
-    id: str            # identificador na plataforma (ex.: índice PortAudio como texto)
+    id: str            # identificador estável (ID do endpoint no Windows; "name:<nome>" quando não há): é o que se persiste
     name: str
     api: str           # "WASAPI", "CoreAudio", "PulseAudio"...
     channels: int
     sample_rate: int
+    index: int | None = None   # índice na biblioteca de áudio nesta sessão: muda ao plugar e desplugar, nunca persistir
+
+
+def pick_device(devices: list[AudioDevice], device_id: str | None, name: str | None) -> AudioDevice | None:
+    """Acha o dispositivo salvo: pelo id estável, depois pelo nome (exato, depois por prefixo). Índices antigos
+    (só dígitos, F1) são ignorados. None = não está mais nesta máquina: quem chama avisa e cai no padrão."""
+    if device_id and not device_id.isdigit():
+        for d in devices:
+            if d.id == device_id:
+                return d
+    if name:
+        for d in devices:
+            if d.name == name:
+                return d
+        low = name.lower()
+        for d in devices:
+            dn = d.name.lower()
+            if len(low) >= 20 and (dn.startswith(low[:24]) or low.startswith(dn[:24])):
+                return d
+    return None
 
 
 @dataclass
@@ -43,18 +64,25 @@ class CaptureHandle(Protocol):
 
 
 class MicMute(Protocol):
+    def set_device(self, device: AudioDevice | None) -> bool: ...   # True se achou o endpoint; False = vai no padrão
     def get(self) -> bool | None: ...          # None = não sei
     def set(self, muted: bool) -> bool: ...    # True se conseguiu
 
 
 class Hotkeys(Protocol):
     def register(self, combo: str, callback: Callable[[], None]) -> bool: ...
+    def errors(self) -> dict[str, str]: ...    # combo -> motivo da falha (sintaxe, já usado por outro app...)
     def unregister_all(self) -> None: ...
     def stop(self) -> None: ...
 
 
 class Platform(Protocol):
     name: str
+
+    # processo
+    def app_init(self) -> None: ...                      # antes de criar a interface: identidade do processo etc.
+    def keep_awake(self, on: bool) -> bool: ...          # impede a suspensão do sistema enquanto grava
+    def bring_to_front(self, window_id: int) -> bool: ...  # traz uma janela nossa para a frente mesmo em segundo plano
 
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...

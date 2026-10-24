@@ -1,27 +1,29 @@
-"""Reprodução a partir do banco: decodifica os pedaços de um intervalo e toca (sounddevice, portável)."""
+"""Reprodução a partir do banco: decodifica os pedaços de um intervalo posicionando cada um pelo seu instante
+(F1.1 A17: buracos entre pedaços viram silêncio em vez de deslocar o áudio) e toca (sounddevice, portável)."""
 from __future__ import annotations
 
 import numpy as np
 
-from ..capture.audio import decode_flac
+from ..capture.audio import decode_flac, resample
 
 
 def decode_range(store, meeting_id: int, channel: str, t0_ms: int, t1_ms: int) -> tuple[np.ndarray, int]:
     chunks = store.get_chunks_range(meeting_id, channel, t0_ms, t1_ms)
     if not chunks:
         return np.zeros(0, dtype=np.float32), 16000
-    parts, sr = [], int(chunks[0]["sample_rate"])
-    base_ms = int(chunks[0]["t_start_ms"])
+    sr = int(chunks[0]["sample_rate"])
+    n = max(0, int(round((int(t1_ms) - int(t0_ms)) * sr / 1000)))
+    out = np.zeros(n, dtype=np.float32)
     for c in chunks:
         samples, sr_c = decode_flac(c["flac"])
         if sr_c != sr:
-            from ..capture.audio import resample
             samples = resample(samples, sr_c, sr)
-        parts.append(samples)
-    audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
-    a = max(0, int((t0_ms - base_ms) * sr / 1000))
-    b = max(a, int((t1_ms - base_ms) * sr / 1000))
-    return audio[a:b], sr
+        start = int(round((int(c["t_start_ms"]) - int(t0_ms)) * sr / 1000))   # posição do pedaço na saída
+        a_out, a_in = max(0, start), max(0, -start)
+        length = min(len(samples) - a_in, n - a_out)
+        if length > 0:
+            out[a_out:a_out + length] = samples[a_in:a_in + length]
+    return out, sr
 
 
 def play(samples: np.ndarray, sample_rate: int) -> None:

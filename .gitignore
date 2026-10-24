@@ -3,6 +3,15 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+# Modelos de ML baixados e logs (não são dados do usuário, mas não entram no git)
+models/
+*.log
+*.log.*
 # Dados do usuário: histórico completo e chaves em texto aberto (CP9, CP10). Nunca no git nem no OneDrive.
 *.db
 *.db-wal

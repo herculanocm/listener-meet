@@ -11,7 +11,7 @@ def test_two_files_and_schema(tmp_path):
     assert s.get_setting("capture.chunk_seconds") == "60"
     s.set_setting("capture.chunk_seconds", 30)
     assert s.get_int("capture.chunk_seconds") == 30
-    assert s.all_settings()["hotkeys.start"] == "ctrl+shift+r"
+    assert s.all_settings()["hotkeys.start"] == "ctrl+alt+shift+r"
     s.close()
     s2 = Store(tmp_path / "db")           # reabrir migra sem erro e mantém dados
     assert s2.get_int("capture.chunk_seconds") == 30
@@ -72,3 +72,47 @@ def test_continuity_detects_gap_and_interrupted(tmp_path):
     assert len(issues) == 1 and issues[0]["delta_ms"] == 1500
     assert s.mark_interrupted() == 1 and s.get_meeting(mid)["status"] == "interrompida"
     s.close()
+
+
+def test_decode_range_positions_non_contiguous_chunks_by_time(tmp_path):
+    s = Store(tmp_path)
+    mid = s.create_meeting(None, None, None, None)
+    tone = (0.5 * np.ones(16000)).astype(np.float32)
+    s.insert_chunk(mid, "L", 0, 0, 16000, 16000, 0, encode_flac(tone, 16000))
+    s.insert_chunk(mid, "L", 1, 2500, 16000, 16000, 0, encode_flac(tone, 16000))   # buraco de 1,5 s
+    samples, sr = decode_range(s, mid, "L", 0, 3500)
+    assert sr == 16000 and len(samples) == 56000
+    assert abs(samples[8000] - 0.5) < 1e-3 and samples[24000] == 0.0 and abs(samples[48000] - 0.5) < 1e-3
+    s.close()
+
+
+def test_dates_have_offset_and_migration_v2_rewrites_old_rows(tmp_path):
+    import re
+
+    from listener.store.db import with_offset
+
+    s = Store(tmp_path)
+    assert s.schema_version() == 2
+    me = s.upsert_me("Fulano")
+    assert re.search(r"[+-]\d\d:\d\d$", s.get_me()["created_at"])
+    # simula um banco da F1: data sem fuso e versão 1
+    s._x("UPDATE people SET created_at = '2026-10-24T18:03:12.345' WHERE id = ?", (me,))
+    s._x("DELETE FROM schema_migrations WHERE version = 2")
+    s._x("DELETE FROM audio.schema_migrations WHERE version = 2")
+    s.close()
+    s2 = Store(tmp_path)
+    assert s2.schema_version() == 2
+    created = s2.get_me()["created_at"]
+    assert created.startswith("2026-10-24T18:03:12.345") and re.search(r"[+-]\d\d:\d\d$", created)
+    assert with_offset("") == "" and with_offset(None) is None and with_offset("lixo") == "lixo"
+    s2.close()
+
+
+def test_store_refuses_newer_schema(tmp_path):
+    import pytest
+
+    s = Store(tmp_path)
+    s._x("INSERT INTO schema_migrations(version, applied_at) VALUES (99, 'x')")
+    s.close()
+    with pytest.raises(RuntimeError):
+        Store(tmp_path)

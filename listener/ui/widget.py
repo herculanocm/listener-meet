@@ -1,13 +1,21 @@
-"""Widget flutuante de gravação: sempre no topo, arrastável; tempo, medidores, saúde, botões."""
+"""Widget flutuante de gravação: sempre no topo, arrastável, fundo translúcido com cantos arredondados; posição
+presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from ..capture.clock import fmt_mmss
-from .common import HEALTH_COLORS, HEALTH_TEXT
+from ..log import get_logger
+from .common import HEALTH_COLORS, HEALTH_TEXT, clamp_to_screens
 from .meters import LevelMeter
+
+log = get_logger("ui.widget")
+
+
+def _screen_rects() -> list[tuple[int, int, int, int]]:
+    return [tuple(s.availableGeometry().getRect()) for s in QGuiApplication.screens()]
 
 
 class RecordingWidget(QWidget):
@@ -22,13 +30,13 @@ class RecordingWidget(QWidget):
 
     def __init__(self, size=(320, 96), pos: QPoint | None = None):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("recwidget")
         self.setStyleSheet("""
-            #recwidget { background: rgba(28, 30, 36, 235); border: 1px solid #555; border-radius: 10px; }
             QLabel { color: #eee; } QToolButton { color: #eee; background: #3a3f4b; border: none; border-radius: 6px;
             padding: 2px 6px; font-size: 14px; } QToolButton:hover { background: #4a5063; }
-            QToolButton:checked { background: #c0392b; } QPushButton { color: #fff; background: #c0392b; border-radius: 6px; padding: 2px 8px; }
+            QToolButton:checked { background: #c0392b; }
+            QPushButton { color: #fff; background: #c0392b; border-radius: 6px; padding: 2px 8px; }
         """)
         self.resize(*size)
         self._drag_offset: QPoint | None = None
@@ -83,11 +91,17 @@ class RecordingWidget(QWidget):
         lay.addLayout(top)
         lay.addLayout(meters)
         lay.addLayout(buttons)
+        self.move(self._initial_pos(pos))
 
-        if pos is None:
-            screen = QGuiApplication.primaryScreen().availableGeometry()
-            pos = QPoint(screen.right() - self.width() - 16, screen.bottom() - self.height() - 16)
-        self.move(pos)
+    def _initial_pos(self, pos: QPoint | None) -> QPoint:
+        screens = _screen_rects()
+        if pos is not None:
+            clamped = clamp_to_screens(pos.x(), pos.y(), self.width(), self.height(), screens)
+            if clamped is not None:
+                return QPoint(*clamped)
+            log.info("posição salva do widget fora dos monitores atuais; voltando ao canto padrão")
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        return QPoint(screen.right() - self.width() - 16, screen.bottom() - self.height() - 16)
 
     def _btn(self, text: str, tip: str, signal) -> QToolButton:
         b = QToolButton()
@@ -95,6 +109,14 @@ class RecordingWidget(QWidget):
         b.setToolTip(tip)
         b.clicked.connect(signal)
         return b
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor("#555555")))
+        p.setBrush(QColor(28, 30, 36, 235))
+        p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 10, 10)
+        p.end()
 
     # ---------------------------------------------------------------- estado
     def update_state(self, elapsed: float, levels: dict, health: dict, paused: bool, muted: bool, markers: int) -> None:
@@ -140,10 +162,11 @@ class RecordingWidget(QWidget):
 
 
 class MarkerPopup(QDialog):
-    """Popup junto ao cursor: Enter salva a nota, Esc cancela (U-003)."""
+    """Popup junto ao cursor: Enter salva a nota, Esc cancela (U-003). Pede o foco à plataforma ao abrir (A10)."""
 
-    def __init__(self, t_rel: float, parent=None):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+    def __init__(self, t_rel: float, platform=None, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.platform = platform
         self.setStyleSheet("QDialog { background: #1c1e24; border: 1px solid #666; border-radius: 8px; } QLabel { color: #eee; } "
                            "QLineEdit { background: #2b2f3a; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 4px; }")
         self.edit = QLineEdit()
@@ -155,6 +178,18 @@ class MarkerPopup(QDialog):
         lay.addWidget(self.edit)
         pos = QCursor.pos()
         self.move(pos.x() - 20, pos.y() - 20)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.platform is not None:
+            try:
+                ok = self.platform.bring_to_front(int(self.winId()))
+                log.debug("popup do marcador para a frente: %s", ok)
+            except Exception as e:
+                log.debug("bring_to_front: %s", e)
+        self.raise_()
+        self.activateWindow()
+        self.edit.setFocus()
 
     def note(self) -> str:
         return self.edit.text().strip()

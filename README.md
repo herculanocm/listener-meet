@@ -17,8 +17,8 @@ C:\caminho\do\venv\Scripts\python.exe -m listener
 ```
 
 Na primeira vez abre o assistente (seus dados, pasta do banco, teste do microfone). Depois: ícone na bandeja,
-`Ctrl+Shift+R` abre o warm-up, Gravar mostra o widget flutuante (pausar, marcador com nota, mudo global,
-parar, cancelar). Flags de desenvolvimento para o gate G1: `--selftest` (grava alguns segundos sem interface)
+`Ctrl+Alt+Shift+R` abre o warm-up, Gravar mostra o widget flutuante (pausar, marcador com nota, mudo global,
+parar, cancelar). O log fica no arquivo escolhido na primeira inicialização (nível editável nas Configurações). Flags de desenvolvimento para o gate G1: `--selftest` (grava alguns segundos sem interface)
 e `--check <pasta do banco>` (relatório de continuidade de cada gravação).
 
-Testes (qualquer sistema, com plataforma simulada): `python -m pytest -q`.
+Testes (qualquer sistema, com plataforma simulada): `python -m pytest -q`; lint: `ruff check .`. Licença MIT.

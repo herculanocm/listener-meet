@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "listener-meet"
-version = "0.3.0"
+version = "0.3.1"
 description = "Gravador de reuniões (qualquer app) com identificação por perfil de voz, transcrição local, ata por LLM agnóstica e base consultável. Código aberto. Documento mestre: specs/00-handoff-v4.md."
 requires-python = ">=3.12,<3.14"
+license = {text = "MIT"}
 dependencies = [
   "numpy",
   "scipy",
@@ -18,14 +19,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-win32    = ["pycaw", "comtypes", "PyAudioWPatch"]
+win32    = ["pycaw; sys_platform == 'win32'", "comtypes; sys_platform == 'win32'", "PyAudioWPatch; sys_platform == 'win32'"]
 pipeline = ["whisperx", "pyannote.audio>=4"]
 llm      = ["google-genai", "openai", "anthropic"]
 store    = ["sqlite-vec"]
-dev      = ["pytest"]
+dev      = ["pytest", "ruff"]
 
 [tool.setuptools.packages.find]
 include = ["listener*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E501", "E702", "UP031"]
