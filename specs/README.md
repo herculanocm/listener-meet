@@ -11,8 +11,8 @@ uma spec por entrega (correções de fase aprovada: `F<n>.<m>-<nome>.md`).
 ## Ciclo de vida de uma spec
 `rascunho` (LLM escreveu; pode ter perguntas e melhorias) → `em revisão` (ele lendo) → `aprovada` (linha "Aprovada por
 Herculano em AAAA-MM-DD"; libera código, CP13) → `implementada` (o código faz o que a spec diz; nada além) →
-`verificada` (gate medido em reunião real, anotado em `decisoes.md`). Mudou o contrato de uma spec aprovada? Volta para
-`em revisão` e o código espera. Condensar o texto sem mudar o contrato não reabre a aprovação (D-031).
+`verificada` (gate medido em reunião real, anotado em `decisoes.md`). Cada transição importante fecha com commit (CP16).
+Mudou o contrato de uma spec aprovada? Volta para `em revisão` e o código espera. Condensar o texto sem mudar o contrato não reabre a aprovação (D-031).
 
 ## Template (seções obrigatórias, nesta ordem)
 Cabeçalho: `Status · Aprovada por Herculano em · Fase e gate · CPs` e a linha `Quando ler / Tamanho-alvo`.

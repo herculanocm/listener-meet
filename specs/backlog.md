@@ -6,7 +6,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Código: F1 implementada; **F1.1 implementada** (A1 a A17, U-016, U-017; D-035): 41 testes com plataforma simulada
   passam no WSL, ruff limpo, CI no GitHub Actions. O que só o Windows verifica (`RegisterHotKey`, endpoint do mudo,
   id de endpoint, `AppUserModelID`, suspensão, foco do popup, lista de apps sem psutil) ainda não rodou: `--selftest` e B1.
-- Git: dois commits em 24/10 (F1 com docs compactos; F1.1); branch `main`; sem remoto. Commits só quando ele pedir.
+- Git: commits em 24/10 (F1 com docs compactos; F1.1; CP16); branch `main`; sem remoto. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1 implementada · F2 **aprovada**
   (D-036), código depois do G1 · F3 a F6 rascunho inicial · F7 futuro. Licença MIT (D-034).
 

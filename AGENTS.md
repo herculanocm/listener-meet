@@ -6,7 +6,7 @@ a LLM propõe, pergunta e executa o que foi aprovado. Tamanho-alvo deste arquivo
 ## Leitura em camadas (leia a camada da tarefa, não tudo)
 | Camada | Quando | Arquivos |
 | --- | --- | --- |
-| T0 | sempre | este arquivo · `specs/01-clausulas.md` (CP1 a CP15) · `specs/backlog.md` (estado, bloqueios, o que fazer agora) |
+| T0 | sempre | este arquivo · `specs/01-clausulas.md` (CP1 a CP16) · `specs/backlog.md` (estado, bloqueios, o que fazer agora) |
 | T1 | mexer em produto ou arquitetura | `specs/00-handoff-v4.md` (mestre; em conflito, vence) · `ARCHITECTURE.md` · `specs/decisoes.md` |
 | T2 | trabalhar numa fase | `specs/features/F<n>-*.md` (só o que está nela é escopo) · `specs/dados.md` · `specs/ux-melhorias.md` · `specs/roadmap.md` |
 | T3 | ambiente desta máquina ou preferências do dono | `memory/dono.md` · `memory/maquina.md` |
@@ -19,7 +19,9 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
 - CP14: só CPU; só open source (Python) e a LLM paga (Gemini inicial). O resto é proposta.
 - CP15: open source e multiplataforma; nada de SO fora de `listener/platform/<os>/`; nada pessoal no código.
 - Nunca: ativar recursos das plataformas de reunião (CP4); apagar dados sozinho (CP3); persistir em arquivos soltos (CP9).
-- Commits só quando ele pedir; mensagem em PT-BR citando a spec. `*.db` nunca no git nem em pasta sincronizada.
+- CP16: toda grande alteração ou item importante fecha com um commit (entrega implementada, spec aprovada, decisão,
+  reestruturação de docs, gate medido); a LLM commita ao fechar, sem pedir; mensagem em PT-BR citando a spec ou a
+  decisão. Nenhuma sessão termina com mudança grande sem commit. `*.db` nunca no git nem em pasta sincronizada.
 
 ## Fluxo
 1. Ache a spec da entrega em `specs/features/`; se não existir, escreva uma com o template de `specs/README.md`.
@@ -29,7 +31,7 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
    spec diz. Desvio ou descoberta volta para a spec, não para o código.
 4. Cada fase fecha com o gate medido em reunião real (`specs/roadmap.md`), anotado em `specs/decisoes.md`.
 5. Ao encerrar a sessão: atualizar `specs/backlog.md` (único lugar de estado), o status da spec e `memory/` se houver
-   fato novo sobre a máquina ou sobre o dono.
+   fato novo sobre a máquina ou sobre o dono; commitar (CP16).
 
 ## Convenções
 PT-BR em documentos, commits e interface; código com nomes em inglês e comentários em PT-BR. Stack fixa pelo handoff:
