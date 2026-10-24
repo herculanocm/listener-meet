@@ -10,3 +10,5 @@
 - Documentação compacta para IA (D-031): ele zera o contexto entre sessões e usa várias LLMs; arquivos grandes e repetidos
   "estouram o limite de leitura". Regras em `specs/README.md`.
 - Windows é o alvo com a melhor experiência nativa; Linux e macOS implementam o que der (CP15).
+- Python moderno e rápido: piso 3.12, sem retrocompatibilidade, recursos novos e performance primeiro (CP17); quando a
+  stack liberar uma versão mais nova, ele quer migrar, não esperar.

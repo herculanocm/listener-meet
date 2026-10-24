@@ -43,6 +43,8 @@ Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · 
 - O eco do warm-up é medido só no "Testar 3 s", não de forma contínua; o `--check` dá o número preciso.
 - `Recorder.stop()` espera o último pedaço na thread da interface (até 1 s de tela congelada); revisar na F2.
 - Antes de publicar o repositório: conferir que nada pessoal sobrou em `memory/` e `decisoes.md` (caminhos usam `<usuário>`; CP15).
+- CP17: subir o piso e o teto do `requires-python` assim que WhisperX e torch aceitarem Python 3.13 ou 3.14 (hoje `<3.14`);
+  conferir a cada atualização da stack.
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · tempo de `list_playing_apps`

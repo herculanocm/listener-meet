@@ -1,6 +1,6 @@
-# Cláusulas pétreas CP1 a CP16 (cartão de leitura)
+# Cláusulas pétreas CP1 a CP17 (cartão de leitura)
 
-Quando ler: sempre (T0). Texto integral de CP1 a CP12 no handoff §2; CP13 a CP16 em D-001, D-002, D-030 e D-037. Só o Herculano
+Quando ler: sempre (T0). Texto integral de CP1 a CP12 no handoff §2; CP13 a CP17 em D-001, D-002, D-030, D-037 e D-038. Só o Herculano
 altera uma cláusula. Se uma parecer difícil, propor como cumpri-la, nunca removê-la. Tamanho-alvo: 3 KB.
 
 | CP | Cláusula |
@@ -21,6 +21,7 @@ altera uma cláusula. Se uma parecer difícil, propor como cumpri-la, nunca remo
 | CP14 | Sem placa de vídeo: tudo em CPU nesta máquina. Só bibliotecas open source (Python) e a LLM paga (Gemini inicial). Qualquer outra coisa é proposta, não decisão. |
 | CP15 | Open source e multiplataforma: Windows primeiro, adaptável a Linux e macOS. Nada específico de SO fora de `listener/platform/<os>/`; nada pessoal no código; caminhos e dispositivos configuráveis; o usuário se configura na primeira inicialização. |
 | CP16 | Commit obrigatório a cada grande alteração ou item importante: entrega implementada (fase ou correção), spec aprovada, decisão registrada, reestruturação de documentação, gate medido. A LLM commita ao fechar o item, sem precisar pedir; nenhuma sessão termina com mudança grande sem commit. Mensagem em PT-BR citando a spec ou a decisão. |
+| CP17 | Python: piso 3.12, a versão mais nova que a stack aceita em 24/10/2026 (WhisperX 3.8.6 e torch 2.8 exigem menos que 3.14; D-019). Sem retrocompatibilidade: nada de shims, polyfills ou sintaxe antiga para rodar em 3.11 ou menos. Usar os recursos e as otimizações da versão em uso (sintaxe de tipos PEP 695, `@override`, `itertools.batched`, f-strings PEP 701, `sqlite3` com `autocommit`, dataclasses com `slots`, `asyncio.TaskGroup`) e pensar em performance primeiro. O piso só sobe: quando a stack permitir uma versão mais nova, migrar e subir o `requires-python`; nunca descer. |
 
 Exceções já decididas: exportar ata e transcrição por ação do usuário não fere CP9 (D-012); fora do SQLite ficam só o
 ponteiro da pasta do banco (D-029) e o arquivo de log escolhido pelo usuário (D-033); modelos de ML ficam numa pasta

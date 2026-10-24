@@ -43,6 +43,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | D-035 | Herculano | spec F1.1 aprovada em bloco: A1 a A17, U-016 e U-017; atalhos `ctrl+alt+shift+letra` com `RegisterHotKey` no Windows (P19); datas com offset (P21); implementada no mesmo dia | correções antes do G1 |
 | D-036 | Herculano | spec F2 aprovada com Q1 a Q9 nos padrões (worker em subprocesso, token HF no banco, limiar 0,60 e margem 0,05, turbo int8, clusters curtos só na revisão, leitura mínima, fila pausa em gravação, embeddings do pipeline se expostos, coluna `platform`) | libera o código da F2 depois do G1 |
 | D-037 | Herculano | **CP16 (cláusula pétrea):** commit obrigatório a cada grande alteração ou item importante (entrega, spec aprovada, decisão, reestruturação de docs, gate medido); a LLM commita ao fechar o item, sem pedir; nenhuma sessão termina com mudança grande sem commit | substitui "commits só quando ele pedir"; histórico é a memória do projeto |
+| D-038 | Herculano | **CP17 (cláusula pétrea):** Python 3.12 como piso, sem retrocompatibilidade com versões anteriores; usar recursos e otimizações da versão em uso, performance primeiro; o piso só sobe quando a stack permitir (`requires-python` acompanha), nunca desce | 3.12 é a versão mais nova que WhisperX 3.8.6 e torch 2.8 suportam (menos que 3.14, D-019); app novo, sem base instalada a preservar |
 
 ## Em aberto (padrão assumido enquanto não há resposta)
 | # | Pergunta | Padrão |

@@ -6,7 +6,7 @@ a LLM propõe, pergunta e executa o que foi aprovado. Tamanho-alvo deste arquivo
 ## Leitura em camadas (leia a camada da tarefa, não tudo)
 | Camada | Quando | Arquivos |
 | --- | --- | --- |
-| T0 | sempre | este arquivo · `specs/01-clausulas.md` (CP1 a CP16) · `specs/backlog.md` (estado, bloqueios, o que fazer agora) |
+| T0 | sempre | este arquivo · `specs/01-clausulas.md` (CP1 a CP17) · `specs/backlog.md` (estado, bloqueios, o que fazer agora) |
 | T1 | mexer em produto ou arquitetura | `specs/00-handoff-v4.md` (mestre; em conflito, vence) · `ARCHITECTURE.md` · `specs/decisoes.md` |
 | T2 | trabalhar numa fase | `specs/features/F<n>-*.md` (só o que está nela é escopo) · `specs/dados.md` · `specs/ux-melhorias.md` · `specs/roadmap.md` |
 | T3 | ambiente desta máquina ou preferências do dono | `memory/dono.md` · `memory/maquina.md` |
@@ -22,6 +22,8 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
 - CP16: toda grande alteração ou item importante fecha com um commit (entrega implementada, spec aprovada, decisão,
   reestruturação de docs, gate medido); a LLM commita ao fechar, sem pedir; mensagem em PT-BR citando a spec ou a
   decisão. Nenhuma sessão termina com mudança grande sem commit. `*.db` nunca no git nem em pasta sincronizada.
+- CP17: Python 3.12 é o piso e só sobe; sem retrocompatibilidade com versões anteriores; usar os recursos e otimizações
+  da versão em uso, performance primeiro.
 
 ## Fluxo
 1. Ache a spec da entrega em `specs/features/`; se não existir, escreva uma com o template de `specs/README.md`.
@@ -35,7 +37,7 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
 
 ## Convenções
 PT-BR em documentos, commits e interface; código com nomes em inglês e comentários em PT-BR. Stack fixa pelo handoff:
-Python 3.12 num venv, PySide6, SQLite (`listener.db` e `listener-audio.db`), faster-whisper ou WhisperX, pyannote, LLM
+Python 3.12 ou mais novo (CP17) num venv, PySide6, SQLite (`listener.db` e `listener-audio.db`), faster-whisper ou WhisperX, pyannote, LLM
 agnóstica com Gemini inicial. Separe sempre [fato], [exp] e [chute]. Testes: `python -m pytest -q`.
 
 ## Ferramentas

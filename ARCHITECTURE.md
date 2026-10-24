@@ -38,7 +38,7 @@ reamostragem, FLAC e grava no banco. F2: worker em subprocesso de prioridade bai
 `busy_timeout`).
 
 ## Stack
-Python 3.12 (um venv) · PySide6 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy ·
+Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy ·
 faster-whisper ou WhisperX (CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 e
 sqlite-vec · google-genai, openai, anthropic · pynput · empacotamento: venv e atalho; PyInstaller só se necessário.
 Versões medidas: `memory/maquina.md`.
