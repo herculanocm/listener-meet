@@ -49,6 +49,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
+| P23 | F1.2 (revisão Python 3.12+), Q1 a Q7: aprovar em bloco; lote A antes do G1 e lote B antes da F2; um arquivo de áudio por mês (altera D-003); 3.13 no CI; reamostragem com estado; F2 reaberta só no item da fila; relatórios completos fora do repo | sim para tudo, com os padrões da spec |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |
