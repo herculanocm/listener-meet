@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from listener.model import JobStatus
@@ -82,8 +83,17 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     assert models.deps_key(cfg) == ("small", False, 3, str(tmp_path / "m"))
     deps = models.real_deps(cfg, "hf_x")
     assert deps.name == "real" and not deps.prepared
-    with pytest.raises(PermanentError, match="pip install"):            # importação preguiçosa sem o extra: mensagem própria
-        deps.transcriber()
+    transcriber = deps.transcriber()                                      # o adaptador carrega sem torch...
+    assert transcriber.name == "faster-whisper:small:int8"
+    from listener.pipeline.types import AudioWindow
+
+    with pytest.raises(PermanentError, match="pip install"):            # ...e o primeiro uso sem o extra tem mensagem própria
+        transcriber.transcribe(AudioWindow(0, "R", 0, 1000, np.zeros(16000, np.float32)), language=None, initial_prompt="")
+    assert models._adapter("whisper", "FasterWhisperTranscriber") is type(transcriber)
+    with pytest.raises(PermanentError, match="pip install"):
+        models._adapter("inexistente", "X")
+    for name in ("listener.pipeline.whisper", "listener.pipeline.pyannote", "listener.pipeline.models"):
+        sys.modules.pop(name, None)
     for k in ("HF_HOME", "HF_HUB_OFFLINE", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "CT2_VERBOSE", "TOKENIZERS_PARALLELISM"):
         monkeypatch.delenv(k, raising=False)
 
