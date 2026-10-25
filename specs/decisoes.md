@@ -46,12 +46,12 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | D-038 | Herculano | **CP17 (cláusula pétrea):** Python 3.12 como piso, sem retrocompatibilidade com versões anteriores; usar recursos e otimizações da versão em uso, performance primeiro; o piso só sobe quando a stack permitir (`requires-python` acompanha), nunca desce | 3.12 é a versão mais nova que WhisperX 3.8.6 e torch 2.8 suportam (menos que 3.14, D-019); app novo, sem base instalada a preservar |
 | D-039 | Herculano ("Implemente todas as melhorias com o agente especialista sênior") | spec F1.2 aprovada em bloco (M-01 a M-31; Q1 a Q7 nos padrões): dois lotes; **um arquivo de áudio por mês** (`listener-audio-AAAA-MM.db`, anexado sob demanda; complementa D-003); Python 3.13 no CI; reamostragem com estado; F2 reaberta só no item da fila (M-20); relatórios dos revisores ficam fora do repo; implementação por agente especialista com commit por item | 65 achados de dois revisores; bugs que perdem áudio e memória antes do G1; SQLite pronto para o worker da F2 |
 | D-040 | Herculano | fluxo por entrega com agentes (`AGENTS.md`): arquiteto revisa a spec rascunhada contra o código; especialista implementa com briefing e commit por item; revisor novo lê só o diff; orquestradora verifica e fecha; o dono aprova a spec, verifica no Windows e mede o gate | custo medido em 24/10: revisões em paralelo em ~25 min, 31 itens implementados em 70 min; briefing com decisões prontas evita travas e invenções |
+| D-041 | Herculano ("Ok") | F2 reaprovada após a revisão de arquitetura, P1 a P6 nos padrões: diarizar e identificar antes de transcrever; worker termina a fila com o app fechado; reforço automático do perfil do usuário pelo canal L sem entrar no centroide até uma confirmação; participantes esperados como desempate abaixo de 0,05 de margem; plano B = aceitar até 2× a duração se o pyannote passar de 0,8×; perfil de trecho = turno do job, trecho livre na F6 | contrato da F2 alinhado ao código pós-F1.2 (24 lacunas, 17 decisões, 14 riscos) |
 
 ## Em aberto (padrão assumido enquanto não há resposta)
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
-| P24 | F2 reaprovação (P1 a P6 da spec): diarizar antes de transcrever; worker segue com o app fechado; reforço automático do perfil do usuário pelo L; participantes como desempate; plano B se pyannote passar de 0,8×; perfil de trecho = turno do job | sim para tudo; plano B = aceitar até 2× |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |

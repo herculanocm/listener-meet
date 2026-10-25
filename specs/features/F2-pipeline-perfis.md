@@ -1,8 +1,8 @@
 # F2 — Pós-reunião: transcrição, diarização e perfis de voz
 
-Status: em revisão (aprovada em 2026-10-24, D-036, Q1 a Q9; voltou para revisão em 24/10 porque a revisão de arquitetura
-mudou o contrato: ordem das etapas, artefatos por janela, janelas do pyannote, reprocessar atômico, forma de medir o aceite) ·
-Aprovada por Herculano em: — (reaprovação pendente: P1 a P6) · Fase e gate: F2 · G2 ·
+Status: aprovada; implementação delegada ao agente especialista, lotes L1 a L6 com commit por lote (CP16) · Aprovada por
+Herculano em: 2026-10-24 (Q1 a Q9, D-036; reaprovada no mesmo dia após a revisão de arquitetura, P1 a P6 nos padrões,
+D-041) · Fase e gate: F2 · G2 ·
 CPs: 3, 5, 8, 9, 10, 11 (parte "depois da reunião", sem a LLM), 12, 13, 14, 15, 16, 17
 Quando ler: ao trabalhar no pipeline pós-reunião. Tabelas: `dados.md`. Código que já existe e esta spec usa: Store com
 conexão por thread e `transaction()`, `open_readonly`, áudio mensal por reunião, `json_default`, `MemorySink`, `_Task`,
@@ -182,7 +182,7 @@ L1 dados (v4, enums, repositórios, `StoreRole.WORKER`, `pipeline.*`) 1 d · L2 
 `models.py`, plataforma, controlador, fila na bandeja) 1,5 d · L5 adaptadores reais (`whisper.py`, `pyannote.py`, sonda Q8;
 verificados no Windows com token) 1 d mais B4 · L6 revisão e leitura 1,5 d · L7 G2 nas três gravações 0,5 d mais o dono.
 
-## Perguntas ao dono (reaprovação)
+## Respostas do dono (24/10, D-041): tudo nos padrões
 - P1 Diarizar e identificar antes de transcrever, com a revisão de falantes aberta enquanto o Whisper roda? Padrão: sim.
 - P2 O worker continua processando depois que o app é fechado, até terminar a fila (logoff encerra)? Padrão: sim.
 - P3 Reforçar automaticamente o perfil do próprio usuário com o canal L de cada reunião (`automatico`, sem entrar no
