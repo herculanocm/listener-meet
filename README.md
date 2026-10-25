@@ -21,4 +21,6 @@ Na primeira vez abre o assistente (seus dados, pasta do banco, teste do microfon
 parar, cancelar). O log fica no arquivo escolhido na primeira inicialização (nível editável nas Configurações). Flags de desenvolvimento para o gate G1: `--selftest` (grava alguns segundos sem interface)
 e `--check <pasta do banco>` (relatório de continuidade de cada gravação).
 
-Testes (qualquer sistema, com plataforma simulada): `python -m pytest -q`; lint: `ruff check .`. Licença MIT.
+Testes (qualquer sistema, com plataforma simulada): `python -m pytest -q`; lint e tipos: `ruff check .` e
+`mypy listener`. No Linux a captura precisa de `libportaudio2`. O áudio fica em um arquivo por mês
+(`listener-audio-AAAA-MM.db`) ao lado de `listener.db`. Licença MIT.

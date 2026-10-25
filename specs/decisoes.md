@@ -59,5 +59,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | 24/10 | sqlite-vec 0.1.9 | carrega, cria `vec0`, KNN responde (SQLite 3.49.1) |
 | 24/10 | selftest da F1 no Windows (mic e loopback do sistema) | L e R contínuos; desvio de 19 ms na duração; sem buracos no índice |
 | 24/10 | documentação antes da compactação | 128 KB no total; 78 KB na trilha obrigatória |
+| 24/10 | F1.2, WSL: buraco de 30 min no R | pico de alocação de 714 MB para 4,4 MB; captura em regime de ~25 MB para 5,2 MB |
+| 24/10 | F1.2, WSL: `to_mono` 60 s · `rms` por bloco · `estimate_offset` 10 s | 36 para 2,1 ms · 4,3 para 0,8 µs · 41,8 para 2,3 ms; suíte de 7,8 s (41 testes) para 3,1 s (85) |
 | pendente | pyannote community-1 por hora de áudio em CPU | precisa de `HF_TOKEN` (B4) |
 | pendente | banco por hora de reunião; deriva e deslocamento L/R; `list_playing_apps` | G1 e B1 |

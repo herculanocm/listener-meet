@@ -10,8 +10,9 @@ Tudo [fato] medido em 24/10/2026, salvo indicação. Caminhos com `<usuário>` s
 - Versões: whisperx 3.8.6, faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, PySide6 6.12.0, sqlite-vec 0.1.9
   (SQLite 3.49.1), proc-tap 1.1.1, sounddevice 0.5.6, soundfile 0.14.0, PyAudioWPatch 0.2.12.9, pynput 1.8.2,
   pycaw 20260927, google-genai 2.33.0, openai 3.37.0, anthropic 2.3.0.
-- WSL (Ubuntu 24.04): `.venv/` com Python 3.12.3 e só numpy, scipy, soundfile e pytest: roda os 21 testes de lógica; não
-  roda a interface nem o selftest (sem PySide6 e sounddevice).
+- WSL (Ubuntu 24.04): `.venv/` com Python 3.12.3, numpy, scipy, soundfile, pytest, ruff, mypy, pytest-qt e PySide6: roda
+  os 85 testes (interface em `QT_QPA_PLATFORM=offscreen`) e `scripts/ui_smoke.py --fake`; não roda o selftest nem o app
+  de verdade (sem sounddevice nem dispositivos). `uv` não está instalado.
 - Git: reiniciado limpo em 24/10 (D-032) e primeiro commit no mesmo dia; branch `main`; sem remoto.
 
 ## Áudio e processos (medido com o protótipo v3 e o selftest da F1)
