@@ -116,6 +116,12 @@ class MeetingsRepo:
     def set_status(self, meeting_id: int, status: MeetingStatus) -> None:
         self.core.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
 
+    def mark_processed(self, meeting_id: int, force: bool = False) -> None:
+        """Fim do job: `processada`, sem rebaixar `revisada` (o usuário pode concluir a revisão durante o Whisper, R2-11)
+        salvo com `force` (vozes novas pendentes)."""
+        self.core.execute("UPDATE meetings SET status = ? WHERE id = ? AND (status != ? OR ?)",
+                          (MeetingStatus.PROCESSED, meeting_id, MeetingStatus.REVIEWED, int(force)))
+
     def set_language(self, meeting_id: int, language: str | None) -> None:
         """Idioma detectado na primeira janela com fala (D-013); só preenche se ainda não houver."""
         self.core.execute("UPDATE meetings SET language = COALESCE(language, ?) WHERE id = ?", (language, meeting_id))

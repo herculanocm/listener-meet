@@ -111,11 +111,12 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float) -> int:
         if job is not None:
             idle_since, released = None, False
             config = JobConfig.from_json(job.get("config_json"))
+            token = store.settings.provider_key(HF_PROVIDER_ID)
             from .models import deps_key as key_of
 
-            key = ("fake",) if fake else key_of(config)
+            key = ("fake",) if fake else key_of(config, token)
             if deps is None or key != deps_key:
-                deps, deps_key = build_deps(config, store.settings.provider_key(HF_PROVIDER_ID), fake), key
+                deps, deps_key = build_deps(config, token, fake), key
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
             status = JobRunner(store, deps, job, memory_rss=memory).run()
             log.info("job %s terminou: %s", job["id"], status)

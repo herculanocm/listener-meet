@@ -122,6 +122,7 @@ def test_runner_resumes_after_crash_skipping_saved_windows(platform, store):
     assert [c[1] for c in r_calls] == [0, 1, 2, 2] and r_calls[-1][2] == "pt"                   # só a janela 2 foi refeita
     assert store.segments.count_segments(mid) > 0 and store.get_meeting(mid)["status"] == "processada"
     assert store._q("SELECT COUNT(*) FROM job_artifacts")[0][0] == 0
+    assert store._q("SELECT COUNT(*) FROM voice_embeddings WHERE source = 'automatico'")[0][0] == 1      # R2-06: um por reunião
 
 
 def test_runner_cancel_between_windows_and_permanent_error(platform, store):
@@ -226,6 +227,7 @@ def test_reprocess_transports_decisions_and_failure_keeps_old_results(platform, 
     assert ana_segs and all(s["person_id"] == ana and s["role_at_time"] == "CFO" for s in ana_segs)
     assert store._q("SELECT segment_id FROM voice_embeddings WHERE source = 'confirmacao'")[0][0] is None   # solto, não apagado
     assert store.profiles.profile_for(ana, "fake-tone-256")["n_samples"] == 1
+    assert store._q("SELECT COUNT(*) FROM voice_embeddings WHERE source = 'automatico'")[0][0] == 1      # R2-06: reprocessar não soma
     assert store._q("SELECT COUNT(*) FROM revisions WHERE field = 'transporte'")[0][0] == 0     # tudo casou
 
 
@@ -354,3 +356,109 @@ def test_transport_does_not_overwrite_decision_taken_during_reprocess(platform, 
     rev = store._q("SELECT entity_id, before, after FROM revisions WHERE field = 'transporte_conflito'")
     assert len(rev) == 1 and rev[0]["entity_id"] == acted[0]                                 # o L (mesma decisão) não anota
     assert rev[0]["before"] == f"confirmado:{ana}" and rev[0]["after"] == f"confirmado:{bia}"
+
+
+def test_cancel_removes_undecided_clusters_but_keeps_decided_ones_with_stitch(platform, store):
+    """R2-10: cancelar sem decisão limpa clusters e artefatos; com decisão humana, clusters e costura ficam para a retomada."""
+    from listener.pipeline import review
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    job_id = store.jobs.enqueue(mid)
+
+    def cancel_on_l(window):
+        if window.channel == "L":
+            store.jobs.request_cancel(job_id)
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=cancel_on_l))
+    assert status == JobStatus.CANCELLED and store.segments.list_clusters(mid) == [] and review.review_items(store, mid) == []
+    assert store._q("SELECT COUNT(*) FROM job_artifacts")[0][0] == 0
+    assert store.jobs.retry(job_id)
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and len(store.segments.list_clusters(mid, job_id)) == 3
+    # segunda reunião: o usuário confirma uma voz e então cancela
+    mid2 = _record(type(platform)(platform.tmp), store)
+    job2 = store.jobs.enqueue(mid2)
+    ana = store.people.create_person("Ana")
+    acted: list[int] = []
+
+    def confirm_then_cancel(window):
+        if window.channel == "L" and not acted:
+            items = review.review_items(store, mid2)
+            review.confirm(store, items[0].cluster_id, ana)
+            acted.append(items[0].cluster_id)
+            store.jobs.request_cancel(job2)
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=confirm_then_cancel))
+    assert status == JobStatus.CANCELLED
+    kept = store.segments.list_clusters(mid2, job2)
+    assert len(kept) == 2 and store.jobs.artifact_indexes(job2, "stitch") == {0}            # o L do usuário nasce nos segmentos
+    assert store._q("SELECT COUNT(*) FROM job_artifacts WHERE step != 'stitch'")[0][0] == 0
+    assert review.clip_range(store, acted[0]) is not None                                   # trecho de 5 s pela costura
+    assert store.jobs.retry(job2)
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and len(store.segments.list_clusters(mid2, job2)) == 3
+    c = store.segments.get_cluster(acted[0])
+    assert c["status"] == ClusterStatus.CONFIRMED and c["person_id"] == ana
+    assert all(s["person_id"] == ana for s in store.segments.list_segments(mid2) if s["cluster_id"] == acted[0])
+
+
+def test_review_finished_during_transcription_is_not_downgraded(platform, store):
+    """R2-11: "Concluir" durante o Whisper deixa `revisada`; só vozes novas pendentes num reprocessamento voltam a `processada`."""
+    from listener.pipeline import review
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    store.jobs.enqueue(mid)
+    done: list[int] = []
+
+    def user_finishes(window):
+        if window.channel == "L" and not done:
+            ana = store.people.create_person("Ana")
+            for it in review.review_items(store, mid):
+                review.confirm(store, it.cluster_id, ana)
+            review.finish(store, mid)
+            done.append(1)
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=user_finishes))
+    assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED
+    store.jobs.enqueue(mid, JobKind.REPROCESS)                                             # tudo transportado: continua revisada
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED
+    store.jobs.enqueue(mid, JobKind.REPROCESS)
+    store._x("UPDATE clusters SET centroid = ? WHERE meeting_id = ?", (np.full(256, 1 / 16, np.float32).tobytes(), mid))   # nada casa
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.PROCESSED   # vozes novas pendentes
+
+
+def test_current_job_is_the_latest_done_during_and_after_a_failed_reprocess(platform, store, monkeypatch):
+    """R2-17: durante um reprocessamento (e depois de ele falhar no fim) a revisão e a leitura seguem o job concluído."""
+    from listener.pipeline import review
+    from listener.pipeline import runner as runner_mod
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    first = store.jobs.enqueue(mid)
+    _run(store, FakeDeps(SCRIPT))
+    assert store.segments.current_job_id(mid) == first
+    rep = store.jobs.enqueue(mid, JobKind.REPROCESS)
+    seen: list[int | None] = []
+
+    def during(window):
+        if window.channel == "L" and not seen:
+            seen.append(store.segments.current_job_id(mid))
+            seen.append(len(review.transcript_rows(store, mid)))
+
+    def boom(self, others):
+        raise RuntimeError("falha no fim")
+
+    monkeypatch.setattr(runner_mod.JobRunner, "_transport_decisions", boom)
+    _, status = _run(store, FakeDeps(SCRIPT, before=during))
+    assert status == JobStatus.ERROR and seen == [first, 3]                                 # durante: o concluído
+    assert store.segments.count_segments(mid) == 6                                         # segmentos novos já gravados...
+    assert len(review.transcript_rows(store, mid)) == 3 and store.segments.current_job_id(mid) == first   # ...mas a leitura não dobra
+    assert all(i.cluster_id in {c["id"] for c in store.segments.list_clusters(mid, first)} for i in review.review_items(store, mid))
+    monkeypatch.undo()
+    store.jobs.retry(rep)
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and store.segments.current_job_id(mid) == rep and store.segments.count_segments(mid) == 3

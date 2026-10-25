@@ -80,7 +80,8 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     assert "sem rede" in str(models.classify_error(OSError("Max retries exceeded"), "r"))
     assert "offline" in str(models.classify_error(RuntimeError("OfflineModeIsEnabled"), "r"))
     assert models.classify_error(ValueError("outra coisa")) is None
-    assert models.deps_key(cfg) == ("small", False, 3, str(tmp_path / "m"))
+    assert models.deps_key(cfg) == ("small", False, 3, str(tmp_path / "m"), "")
+    assert models.deps_key(cfg, "hf_a") != models.deps_key(cfg, "hf_b") and "hf_a" not in str(models.deps_key(cfg, "hf_a"))   # R2-13
     deps = models.real_deps(cfg, "hf_x")
     assert deps.name == "real" and not deps.prepared
     transcriber = deps.transcriber()                                      # o adaptador carrega sem torch...

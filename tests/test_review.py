@@ -179,14 +179,59 @@ def test_controller_opens_review_when_clusters_exist_and_on_done(qtbot, qapp, pl
         assert mid in c._reviews and c._reviews[mid].isVisible() and c._reviews[mid].list.count() == 2
         c._poll_queue()
         assert len(c._reviews) == 1                                                   # não abre duas vezes
+        t = c.open_transcript(mid)
+        assert t.model.rowCount() == 3 and c.open_transcript(mid) is t                   # job vigente: o concluído
         store.jobs.finish(job_id, JobStatus.DONE)
         notes: list[str] = []
         monkeypatch.setattr(c, "notify", notes.append)
         c._poll_queue()
         assert notes == ["Planejamento: pronta para revisão de falantes."]
-        t = c.open_transcript(mid)
-        assert t.model.rowCount() == 3 and c.open_transcript(mid) is t
         c._reviews[mid].reject()
         qtbot.waitUntil(lambda: mid not in c._reviews, timeout=2000)
     finally:
         c.emergency_stop()
+
+
+def test_reading_does_not_name_pending_voices_and_merge_into_suggestion_confirms_nobody(platform, store):
+    """R2-07/R2-08: a sugestão guardada em `sem_nome` não vira nome na leitura nem pessoa numa mescla."""
+    import numpy as np
+
+    store.upsert_me("Eu", role="Gerente")
+    mid = _record(platform, store)
+    ana = store.people.create_person("Ana")
+    far = np.zeros(256, np.float32)
+    far[200] = 1.0                                                                        # perfil longe dos tons
+    from listener.model import EmbeddingSource
+
+    store.profiles.confirm(ana, "fake-tone-256", far, None, None, source=EmbeddingSource.ENROLL)
+    store.jobs.enqueue(mid)
+    job = store.jobs.claim(pid=1)
+    assert JobRunner(store, FakeDeps(SCRIPT), job, config=CFG, heartbeat_thread=False).run() == "concluído"
+    items = review.review_items(store, mid)
+    assert all(i.status == ClusterStatus.UNNAMED and i.person_id == ana for i in items)   # sugestão guardada
+    assert items[0].summary().startswith("sem nome; parecida com Ana")
+    rows = review.transcript_rows(store, mid)
+    assert [r.name for r in rows if r.channel == "R"] == ["Voz SPK_0", "Voz SPK_1"]        # e não "Ana"
+    review.merge(store, items[1].cluster_id, items[0].cluster_id)
+    c1 = store.segments.get_cluster(items[1].cluster_id)
+    assert c1["merged_into"] == items[0].cluster_id and c1["status"] == ClusterStatus.UNNAMED and c1["person_id"] == ana
+    assert [e[2] for e in store.profiles.embeddings(store.profiles.profile_for(ana, "fake-tone-256")["id"])] == ["cadastro"]
+    review.confirm(store, items[0].cluster_id)                                           # agora sim: Enter aceita a sugestão
+    assert review.transcript_rows(store, mid)[0].name == "Ana"
+    assert [r.name for r in review.transcript_rows(store, mid) if r.channel == "R"] == ["Ana", "Ana"]   # a mesclada segue o alvo
+
+
+def test_reconfirming_with_another_person_invalidates_the_old_vector(platform, store):
+    """R2-09: "outra pessoa" depois de um erro: o vetor sai do centroide da pessoa anterior (fonte `invalidado`, nada apagado)."""
+    mid, items = _processed(platform, store)
+    ana = review.new_person(store, items[0].cluster_id, "Ana")
+    bia = review.new_person(store, items[0].cluster_id, "Bia")
+    pa, pb = store.profiles.profile_for(ana, "fake-tone-256"), store.profiles.profile_for(bia, "fake-tone-256")
+    assert pa["n_samples"] == 0 and not pa["centroid"].any() and pb["n_samples"] == 1
+    assert [e[2] for e in store.profiles.embeddings(pa["id"])] == ["invalidado"]           # CP3: continua gravado
+    assert store._q("SELECT cluster_id FROM voice_embeddings WHERE source = 'invalidado'")[0][0] == items[0].cluster_id
+    rev = store._q("SELECT entity, entity_id, field FROM revisions WHERE field = 'invalidado'")
+    assert len(rev) == 1 and rev[0]["entity"] == "voice_profile" and rev[0]["entity_id"] == pa["id"]
+    assert all(s["person_id"] == bia for s in store.segments.list_segments(mid) if s["cluster_id"] == items[0].cluster_id)
+    review.confirm(store, items[0].cluster_id)                                           # Enter de novo na mesma pessoa: nada muda
+    assert store.profiles.profile_for(bia, "fake-tone-256")["n_samples"] == 1

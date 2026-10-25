@@ -116,6 +116,7 @@ class EmbeddingSource(StrEnum):
     ENROLL = "cadastro"
     CONFIRM = "confirmacao"
     AUTO = "automatico"            # gravado, mas fora do centroide até uma confirmação (D-041 P3)
+    INVALID = "invalidado"         # confirmação corrigida pelo usuário: fica gravado, fora do centroide (R2-09, CP3)
 
 
 class SegmentSource(StrEnum):

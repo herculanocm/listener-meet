@@ -100,8 +100,8 @@ def _people(store: Store) -> dict[int, dict[str, Any]]:
 
 
 def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
-    """Um card por cluster do job vigente, exceto o canal L do usuário (já é ele); mais fala primeiro."""
-    job_id = store.segments.latest_job_id(meeting_id)
+    """Um card por cluster do job vigente (`current_job_id`, R2-17), exceto o canal L do usuário; mais fala primeiro."""
+    job_id = store.segments.current_job_id(meeting_id)
     if job_id is None:
         return []
     people = _people(store)
@@ -124,9 +124,10 @@ def pending(items: list[ReviewItem]) -> list[ReviewItem]:
 def transcript_rows(store: Store, meeting_id: int) -> list[TranscriptRow]:
     """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, o rótulo da voz; toca da primeira palavra menos 150 ms."""
     people = _people(store)
-    clusters = {int(c["id"]): c for c in store.segments.list_clusters(meeting_id)}
+    job_id = store.segments.current_job_id(meeting_id)
+    clusters = {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
     rows: list[TranscriptRow] = []
-    for s in store.segments.list_segments(meeting_id):
+    for s in store.segments.list_segments(meeting_id, job_id):
         pid = s.get("person_id")
         if pid is None and s.get("cluster_id") is not None and int(s["cluster_id"]) in clusters:  # type: ignore[arg-type]
             pid = resolve_person(clusters[int(s["cluster_id"])], clusters)  # type: ignore[arg-type]
@@ -198,12 +199,17 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     meeting = store.get_meeting(int(c["meeting_id"])) or {}
     sim = c.get("similarity") if pid == c.get("person_id") else _similarity_to(store, c, pid)
     segs = [s for s in store.segments.list_segments(int(c["meeting_id"]), int(c["job_id"])) if s.get("cluster_id") == cluster_id]
+    previous = int(c["person_id"]) if str(c["status"]) == ClusterStatus.CONFIRMED and c.get("person_id") is not None else None  # type: ignore[arg-type]
     with store.transaction():
+        if previous is not None and previous != pid and c.get("model"):
+            old = store.profiles.profile_for(previous, str(c["model"]))             # correção: o vetor sai do perfil anterior (R2-09)
+            if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), cluster_id):
+                store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {cluster_id}", str(pid), author)
         store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid)
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, pid, str(person.get("role") or "") or None)
-        if c["centroid"].size and c.get("model"):
+        if c["centroid"].size and c.get("model") and previous != pid:
             store.profiles.confirm(pid, str(c["model"]), c["centroid"], sim, int(c["meeting_id"]),
-                                   segment_id=int(segs[0]["id"]) if segs else None, platform=meeting.get("platform"))
+                                   segment_id=int(segs[0]["id"]) if segs else None, platform=meeting.get("platform"), cluster_id=cluster_id)
         store.add_revision("cluster", cluster_id, "person_id", c.get("person_id"), pid, author)
         store.add_event(int(c["meeting_id"]), None, EventType.PROFILE_CONFIRM,
                         {"cluster_id": cluster_id, "person_id": pid, "similarity": sim, "label": c["cluster"]})
@@ -231,7 +237,8 @@ def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:
 
 
 def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "usuario") -> None:
-    """"É a mesma pessoa que a voz X": o cluster passa a seguir o outro; se o outro já tem pessoa, confirma também."""
+    """"É a mesma pessoa que a voz X": o cluster passa a seguir o outro; só confirma junto se o outro já tem pessoa decidida
+    (`auto` ou `confirmado`); uma sugestão no alvo não confirma ninguém (R2-08)."""
     if cluster_id == into_cluster_id:
         raise ValueError("escolha outra voz")
     c, target = store.segments.get_cluster(cluster_id), store.segments.get_cluster(into_cluster_id)

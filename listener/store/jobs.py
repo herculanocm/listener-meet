@@ -143,19 +143,17 @@ class JobsRepo:
                           (status, error, _now(), 1 if count_attempt else 0, timings_json, status, JobStatus.DONE, job_id))
 
     def request_cancel(self, job_id: int) -> JobStatus | None:
-        """Pendente cancela na hora; rodando ou pausado pede e o worker atende entre janelas (item 11)."""
-        job = self.get(job_id)
-        if job is None:
-            return None
-        if job["status"] == JobStatus.PENDING:
-            self.core.execute("UPDATE processing_jobs SET status = ?, cancel_requested = 1, finished_at = ? WHERE id = ? AND status = ?",
-                              (JobStatus.CANCELLED, _now(), job_id, JobStatus.PENDING))
-            self.delete_artifacts(job_id)
-            return JobStatus.CANCELLED
-        if job["status"] in HELD:
-            self.core.execute("UPDATE processing_jobs SET cancel_requested = 1 WHERE id = ?", (job_id,))
-            return JobStatus(job["status"])
-        return JobStatus(job["status"])
+        """Pendente cancela na hora; rodando ou pausado pede e o worker atende entre janelas (item 11). Tudo numa transação,
+        decidido pelo `rowcount`: um claim entre a leitura e a escrita não perde artefatos (R2-14)."""
+        with self.core.transaction() as c:
+            n = c.execute("UPDATE processing_jobs SET status = ?, cancel_requested = 1, finished_at = ? WHERE id = ? AND status = ?",
+                          (JobStatus.CANCELLED, _now(), job_id, JobStatus.PENDING)).rowcount
+            if n:
+                c.execute("DELETE FROM job_artifacts WHERE job_id = ?", (job_id,))
+                return JobStatus.CANCELLED
+            c.execute("UPDATE processing_jobs SET cancel_requested = 1 WHERE id = ? AND status IN (?, ?)", (job_id, *HELD))
+            row = c.execute("SELECT status FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
+        return JobStatus(str(row[0])) if row is not None else None
 
     def cancel_requested(self, job_id: int) -> bool:
         rows = self.core.q("SELECT cancel_requested FROM processing_jobs WHERE id = ?", (job_id,))
@@ -183,7 +181,10 @@ class JobsRepo:
         rows = self.core.q("SELECT idx, data FROM job_artifacts WHERE job_id = ? AND step = ? ORDER BY idx", (job_id, str(step)))
         return [(int(r[0]), bytes(r[1])) for r in rows]
 
-    def delete_artifacts(self, job_id: int, step: JobStep | str | None = None) -> int:
-        if step is None:
-            return self.core.execute("DELETE FROM job_artifacts WHERE job_id = ?", (job_id,))
-        return self.core.execute("DELETE FROM job_artifacts WHERE job_id = ? AND step = ?", (job_id, str(step)))
+    def delete_artifacts(self, job_id: int, step: JobStep | str | None = None, keep: tuple[str, ...] = ()) -> int:
+        if step is not None:
+            return self.core.execute("DELETE FROM job_artifacts WHERE job_id = ? AND step = ?", (job_id, str(step)))
+        if keep:
+            marks = ",".join("?" * len(keep))
+            return self.core.execute(f"DELETE FROM job_artifacts WHERE job_id = ? AND step NOT IN ({marks})", (job_id, *keep))  # noqa: S608
+        return self.core.execute("DELETE FROM job_artifacts WHERE job_id = ?", (job_id,))

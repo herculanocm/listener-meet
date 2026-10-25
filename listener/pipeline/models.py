@@ -174,6 +174,10 @@ def real_deps(config: JobConfig, token: str) -> PipelineDeps:
     return PipelineDeps(transcriber, diarizer, embedder, prepare, name="real")
 
 
-def deps_key(config: JobConfig) -> tuple[str, bool, int, str]:
-    """Muda -> o worker reconstrói as dependências (modelo escolhido vale para o próximo job, CP8)."""
-    return (config.whisper_model, config.whisper_hq, config.torch_threads, config.models_dir)
+def deps_key(config: JobConfig, token: str = "") -> tuple[str, bool, int, str, str]:
+    """Muda -> o worker reconstrói as dependências (modelo escolhido vale para o próximo job, CP8; token novo colado nas
+    Configurações vale para a próxima tentativa, R2-13). O token entra por hash: nunca em log."""
+    import hashlib
+
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12] if token else ""
+    return (config.whisper_model, config.whisper_hq, config.torch_threads, config.models_dir, digest)

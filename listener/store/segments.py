@@ -170,29 +170,56 @@ class SegmentsRepo:
         self.core.execute(f"UPDATE clusters SET {cols} WHERE id = ?", (*values, cluster_id))  # noqa: S608
 
     def latest_job_id(self, meeting_id: int) -> int | None:
-        """Job cujos clusters e segmentos são os vigentes da reunião (o maior já gravado)."""
+        """Maior `job_id` já gravado em clusters ou segmentos da reunião (fallback de `current_job_id`)."""
         row = self.core.q("SELECT MAX(job_id) FROM clusters WHERE meeting_id = ?", (meeting_id,))
         if row and row[0][0] is not None:
             return int(row[0][0])
         row = self.core.q("SELECT MAX(job_id) FROM segments WHERE meeting_id = ?", (meeting_id,))
         return int(row[0][0]) if row and row[0][0] is not None else None
 
+    def current_job_id(self, meeting_id: int) -> int | None:
+        """Job vigente da reunião (R2-17): o `concluído` mais recente; sem concluído, o ativo (pendente, rodando, pausado);
+        sem nenhum, o maior já gravado. Revisão, leitura e trecho de 5 s usam o mesmo id."""
+        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+                          (meeting_id, "concluído"))
+        if row:
+            return int(row[0][0])
+        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status IN (?, ?, ?) ORDER BY id LIMIT 1",
+                          (meeting_id, "pendente", "rodando", "pausado"))
+        if row:
+            return int(row[0][0])
+        return self.latest_job_id(meeting_id)
+
+    def delete_clusters(self, meeting_id: int, job_id: int) -> int:
+        """Só para um job cancelado sem nenhuma decisão humana (R2-10): clusters são dado derivado do job."""
+        return self.core.execute("DELETE FROM clusters WHERE meeting_id = ? AND job_id = ?", (meeting_id, job_id))
+
     # ---------------------------------------------------------------- troca atômica (reprocessar, item 12)
-    def swap_job(self, meeting_id: int, new_job_id: int, status: MeetingStatus = MeetingStatus.PROCESSED) -> dict[str, int]:
+    def swap_job(self, meeting_id: int, new_job_id: int, status: MeetingStatus = MeetingStatus.PROCESSED,
+                 downgrade_reviewed: bool = False) -> dict[str, int]:
         """Numa só transação: solta os `voice_embeddings` dos segmentos antigos (`segment_id = NULL`), apaga clusters e
-        segmentos dos jobs anteriores e atualiza o status da reunião. Só é chamado no último passo de um reprocessamento
-        disparado pelo usuário (CP3)."""
+        segmentos dos jobs anteriores (só linhas de job: `job_id` nulo fica, R2-22) e atualiza o status da reunião, sem
+        rebaixar `revisada` salvo quando o job novo deixou vozes pendentes (R2-11). Só é chamado no último passo de um
+        reprocessamento disparado pelo usuário (CP3)."""
         with self.core.transaction():
             freed = self.core.execute("UPDATE voice_embeddings SET segment_id = NULL WHERE segment_id IN "
-                                      "(SELECT id FROM segments WHERE meeting_id = ? AND job_id IS NOT ?)", (meeting_id, new_job_id))
-            segs = self.core.execute("DELETE FROM segments WHERE meeting_id = ? AND job_id IS NOT ?", (meeting_id, new_job_id))
-            clus = self.core.execute("DELETE FROM clusters WHERE meeting_id = ? AND job_id IS NOT ?", (meeting_id, new_job_id))
-            self.core.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
+                                      "(SELECT id FROM segments WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?)",
+                                      (meeting_id, new_job_id))
+            segs = self.core.execute("DELETE FROM segments WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
+                                     (meeting_id, new_job_id))
+            clus = self.core.execute("DELETE FROM clusters WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
+                                     (meeting_id, new_job_id))
+            self.core.execute("UPDATE meetings SET status = ? WHERE id = ? AND (status != ? OR ?)",
+                              (status, meeting_id, MeetingStatus.REVIEWED, int(downgrade_reviewed)))
         return {"embeddings_freed": freed, "segments_deleted": segs, "clusters_deleted": clus}
 
 
+DECIDED_WITH_PERSON = (str(ClusterStatus.AUTO), str(ClusterStatus.CONFIRMED))
+
+
 def resolve_person(cluster: ClusterRow, by_id: dict[int, ClusterRow]) -> int | None:
-    """Pessoa de um cluster seguindo `merged_into` (mesclas da revisão, D-F2-9), com guarda contra ciclos."""
+    """Pessoa de um cluster seguindo `merged_into` (mesclas da revisão, D-F2-9), com guarda contra ciclos. Só vale quando o
+    cluster final da cadeia está `auto` ou `confirmado`: em `sem_nome` e `ambíguo` o `person_id` é só sugestão (R2-07)."""
     seen: set[int] = set()
     cur: ClusterRow | None = cluster
     while cur is not None and cur["id"] not in seen:
@@ -202,5 +229,5 @@ def resolve_person(cluster: ClusterRow, by_id: dict[int, ClusterRow]) -> int | N
             cur = by_id[int(nxt)]
             continue
         pid = cur.get("person_id")
-        return int(pid) if pid is not None else None
+        return int(pid) if pid is not None and str(cur["status"]) in DECIDED_WITH_PERSON else None
     return None

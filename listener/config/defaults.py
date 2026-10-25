@@ -114,7 +114,7 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("pipeline.torch_threads", _default_threads(), _NOW, "Threads de CPU do processamento", int, low=1, high=64, phase="F2"),
     SettingSpec("pipeline.auto_start", True, _NOW, "Processar sozinho ao parar a gravação", _bool, phase="F2"),
     SettingSpec("pipeline.pause_on_record", True, _NOW, "Pausar a fila enquanto grava", _bool, phase="F2"),
-    SettingSpec("pipeline.diar_window_s", 3600, _NOW, "Janela da separação de vozes (s)", int, low=300, high=7200, phase="F2"),
+    SettingSpec("pipeline.diar_window_s", 1200, _NOW, "Janela da separação de vozes (s)", int, low=300, high=7200, phase="F2"),
     SettingSpec("pipeline.whisper_window_s", 600, _NOW, "Janela da transcrição (s)", int, low=60, high=1800, phase="F2"),
     SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),

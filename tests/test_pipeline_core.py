@@ -133,6 +133,17 @@ def test_profile_matcher_lsa_threshold_margin_short_and_tie_break():
     strict = ProfileMatcher().match([cd[0]], [ProfileRef(1, 10, mix(_e(0), _e(3), 1.0), threshold=0.75)])   # cosseno 0,707
     assert strict[0].status == ClusterStatus.UNNAMED and strict[0].threshold == 0.75
     assert [r.status for r in ProfileMatcher().match(cd[:2], [])] == [ClusterStatus.UNNAMED] * 2
+    # R2-16: perfil "hub": a 2ª voz é mais parecida com a Ana (já dada à 1ª), o LSA a entrega à Bia acima do limiar e com
+    # margem folgada; isso não pode virar `auto` Bia sem revisão
+    hub = [cluster_data([Turn(0, 20_000, lab)], {lab: [c]})[0] for lab, c in (("h0", _e(0)), ("h1", mix(_e(0), _e(1), 0.8)))]
+    hub_res = {r.label: r for r in ProfileMatcher(0.60, 0.05).match(hub, [ana, bia])}
+    assert hub_res["h0"].status == ClusterStatus.AUTO and hub_res["h0"].person_id == 10
+    assert hub_res["h1"].status == ClusterStatus.AMBIGUOUS and hub_res["h1"].person_id == 20 and hub_res["h1"].similarity > 0.6
+    # desempate não repete pessoa: "ana" está na lista, mas a Ana já foi para a outra voz -> ambíguo
+    pair = [cluster_data([Turn(0, 20_000, lab)], {lab: [c]})[0] for lab, c in (("p0", _e(0)), ("p1", mix(_e(0), _e(2), 0.95)))]
+    pair_res = {r.label: r for r in ProfileMatcher(0.60, 0.05, expected=("ana",)).match(pair, [ana, bia, dan])}
+    assert pair_res["p0"].status == ClusterStatus.AUTO and pair_res["p1"].status == ClusterStatus.AMBIGUOUS
+    assert pair_res["p1"].person_id == 30
     assert ProfileMatcher().match([cluster_data([Turn(0, 100, "x")], {})[0]], [ana])[0].person_id is None   # sem centroide
     assert expected_names(None) == () and expected_names(" Ana , Bia ") == ("ana", "bia")
 
@@ -204,6 +215,6 @@ def test_artifacts_roundtrip_and_job_config():
     with pytest.raises(ValueError):
         decode_transcript(b"lixo")
     cfg = JobConfig.from_settings({"pipeline.whisper_model": "small", "pipeline.threshold": "0.9", "capture.silence_rms": "0.02"})
-    assert cfg.whisper_model == "small" and cfg.threshold == 0.60 and cfg.silence_rms == 0.02 and cfg.diar_window_s == 3600
+    assert cfg.whisper_model == "small" and cfg.threshold == 0.60 and cfg.silence_rms == 0.02 and cfg.diar_window_s == 1200   # R2-15
     assert JobConfig.from_json('{"pipeline.margin": 0.1}').margin == 0.1 and JobConfig.from_json("x").margin == 0.05
     assert JobConfig.from_json(None).to_dict()["whisper_window_s"] == 600

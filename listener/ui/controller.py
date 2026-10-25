@@ -609,6 +609,8 @@ class Controller(QObject):
             if rec.muted:
                 self.platform.mic_mute().set(False)
             self._finish(rec)
+            self._clear_lease()
+            self._enqueue_processing(rec.meeting_id)     # o worker é solto do app e termina a fila (P2, R2-12)
         log.info("app encerrado pelo usuário")
         self.app.quit()                                  # aboutToQuit -> emergency_stop fecha atalhos e banco
 

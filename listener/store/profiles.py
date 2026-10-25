@@ -105,10 +105,30 @@ class ProfilesRepo:
 
     # ---------------------------------------------------------------- embeddings
     def add_embedding(self, profile_id: int, vector: np.ndarray, source: EmbeddingSource, meeting_id: int | None = None,
-                      segment_id: int | None = None, platform: str | None = None) -> int:
-        return self.core.insert("INSERT INTO voice_embeddings(profile_id, meeting_id, segment_id, vector, source, platform, created_at) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                (profile_id, meeting_id, segment_id, to_blob(normalize(vector)), str(source), platform, _now()))
+                      segment_id: int | None = None, platform: str | None = None, cluster_id: int | None = None) -> int:
+        return self.core.insert("INSERT INTO voice_embeddings(profile_id, meeting_id, segment_id, vector, source, platform, cluster_id, "
+                                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (profile_id, meeting_id, segment_id, to_blob(normalize(vector)), str(source), platform, cluster_id, _now()))
+
+    def upsert_auto_embedding(self, person_id: int, model: str, vector: np.ndarray, meeting_id: int, platform: str | None) -> int:
+        """Um só vetor `automatico` por (perfil, reunião): retomada, nova tentativa e reprocessamento substituem (R2-06)."""
+        v = np.asarray(vector, dtype=np.float32).reshape(-1)
+        with self.core.transaction():
+            pid = self.ensure_profile(person_id, model, int(v.size))
+            n = self.core.execute("UPDATE voice_embeddings SET vector = ?, platform = ?, created_at = ? "
+                                  "WHERE profile_id = ? AND meeting_id = ? AND source = ?",
+                                  (to_blob(normalize(v)), platform, _now(), pid, meeting_id, EmbeddingSource.AUTO))
+            if n == 0:
+                self.add_embedding(pid, v, EmbeddingSource.AUTO, meeting_id, None, platform)
+        return pid
+
+    def invalidate_cluster_embeddings(self, profile_id: int, cluster_id: int) -> int:
+        """Confirmação corrigida: os vetores daquela voz saem do centroide (fonte `invalidado`), sem apagar (CP3)."""
+        n = self.core.execute("UPDATE voice_embeddings SET source = ? WHERE profile_id = ? AND cluster_id = ? AND source IN (?, ?)",
+                              (EmbeddingSource.INVALID, profile_id, cluster_id, EmbeddingSource.CONFIRM, EmbeddingSource.ENROLL))
+        if n:
+            self.recompute_centroid(profile_id)
+        return n
 
     def embeddings(self, profile_id: int, sources: tuple[str, ...] | None = None) -> list[tuple[int, np.ndarray, str]]:
         if sources:
@@ -120,10 +140,15 @@ class ProfilesRepo:
         return [(int(r["id"]), from_blob(r["vector"]), str(r["source"])) for r in rows]
 
     def recompute_centroid(self, profile_id: int) -> np.ndarray | None:
-        """Centroide só dos vetores de cadastro e confirmação; `n_samples` acompanha. None quando não há nenhum."""
+        """Centroide só dos vetores de cadastro e confirmação; `n_samples` acompanha. Sem nenhum, o perfil fica vazio
+        (centroide zero, `n_samples = 0`: o casamento o ignora) e devolve None."""
         vectors = [v for _, v, _ in self.embeddings(profile_id, CENTROID_SOURCES)]
         c = centroid_of(vectors)
         if c is None:
+            p = self.get_profile(profile_id)
+            dim = int(p["dim"]) if p else 0
+            self.core.execute("UPDATE voice_profiles SET centroid = ?, n_samples = 0, updated_at = ? WHERE id = ?",
+                              (to_blob(np.zeros(dim, np.float32)), _now(), profile_id))
             return None
         self.core.execute("UPDATE voice_profiles SET centroid = ?, dim = ?, n_samples = ?, updated_at = ? WHERE id = ?",
                           (to_blob(c), int(c.size), len(vectors), _now(), profile_id))
@@ -146,14 +171,14 @@ class ProfilesRepo:
 
     def confirm(self, person_id: int, model: str, vector: np.ndarray, similarity: float | None, meeting_id: int | None,
                 segment_id: int | None = None, platform: str | None = None,
-                source: EmbeddingSource = EmbeddingSource.CONFIRM) -> int:
+                source: EmbeddingSource = EmbeddingSource.CONFIRM, cluster_id: int | None = None) -> int:
         """Uma confirmação humana: calibra (antes), grava o vetor e recalcula o centroide; devolve o id do perfil."""
         v = np.asarray(vector, dtype=np.float32).reshape(-1)
         with self.core.transaction():
             pid = self.ensure_profile(person_id, model, int(v.size))
             if similarity is not None and source == EmbeddingSource.CONFIRM:
                 self.update_calibration(pid, similarity)
-            self.add_embedding(pid, v, source, meeting_id, segment_id, platform)
+            self.add_embedding(pid, v, source, meeting_id, segment_id, platform, cluster_id)
             if source in (EmbeddingSource.CONFIRM, EmbeddingSource.ENROLL):
                 self.recompute_centroid(pid)
         return pid

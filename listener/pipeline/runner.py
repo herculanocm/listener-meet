@@ -23,8 +23,7 @@ from scipy.optimize import linear_sum_assignment
 
 from ..config.defaults import SPECS
 from ..log import get_logger
-from ..model import (Attribution, ClusterStatus, EmbeddingSource, EventType, JobKind, JobStatus, JobStep, MeetingStatus,
-                     SegmentSource)
+from ..model import Attribution, ClusterStatus, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SegmentSource
 from ..store import Store
 from ..store.core import json_default
 from ..store.jobs import JobRow
@@ -160,15 +159,22 @@ class JobRunner:
         finally:
             self._stop_heartbeat()
 
+    def _pending_voices(self) -> bool:
+        """Há voz do job por decidir (fora o `L` do usuário)? Decide se uma reunião `revisada` volta a `processada` (R2-11)."""
+        return any(str(c["status"]) in (ClusterStatus.AMBIGUOUS, ClusterStatus.UNNAMED) and c.get("merged_into") is None
+                   and not (c["channel"] == "L" and c["cluster"] == USER_CLUSTER)
+                   for c in self.store.segments.list_clusters(self.meeting_id, self.job_id))
+
     def _finish_ok(self) -> JobStatus:
         self._done_weight = 1.0
         others = [c for c in self.store.segments.list_clusters(self.meeting_id) if int(c["job_id"]) != self.job_id]
         if self.kind == JobKind.REPROCESS or others:
             with self.store.transaction():
                 self._transport_decisions(others)
-                self.store.segments.swap_job(self.meeting_id, self.job_id, MeetingStatus.PROCESSED)
+                self.store.segments.swap_job(self.meeting_id, self.job_id, MeetingStatus.PROCESSED,
+                                             downgrade_reviewed=self._pending_voices())
         else:
-            self.store.meetings.set_status(self.meeting_id, MeetingStatus.PROCESSED)
+            self.store.meetings.mark_processed(self.meeting_id, force=self._pending_voices())
         self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.DONE, timings=self._timings_dict())
         self.store.set_setting("pipeline.rtf_json", update_rtf(self.store.get_setting("pipeline.rtf_json"), self.timings))
@@ -178,7 +184,17 @@ class JobRunner:
         return JobStatus.DONE
 
     def _cancelled(self) -> JobStatus:
-        self.store.jobs.delete_artifacts(self.job_id)
+        """Sem decisão humana nos clusters do job, eles saem com os artefatos (dado derivado); com decisão, ficam com o
+        artefato da costura, para o trecho de 5 s e para a nova tentativa reaproveitar os mesmos ids (R2-10)."""
+        clusters = self.store.segments.list_clusters(self.meeting_id, self.job_id)
+        decided = any(str(c["status"]) in (ClusterStatus.CONFIRMED, ClusterStatus.IGNORED) or c.get("merged_into") is not None
+                      for c in clusters if not (c["channel"] == "L" and c["cluster"] == USER_CLUSTER))
+        with self.store.transaction():
+            if decided:
+                self.store.jobs.delete_artifacts(self.job_id, keep=(STITCH_ARTIFACT,))
+            else:
+                self.store.segments.delete_clusters(self.meeting_id, self.job_id)
+                self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.CANCELLED, timings=self._timings_dict())
         self.store.add_event(self.meeting_id, None, EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})
         log.info("job %s cancelado pelo usuário na etapa %s", self.job_id, self._step)
@@ -383,8 +399,8 @@ class JobRunner:
                 acc += vec * ms
                 total += ms
         if total and np.any(acc):
-            self.store.profiles.confirm(int(self.me["id"]), embedder.model, normalize(acc), None, self.meeting_id,
-                                        platform=self.meeting.get("platform"), source=EmbeddingSource.AUTO)
+            self.store.profiles.upsert_auto_embedding(int(self.me["id"]), embedder.model, normalize(acc), self.meeting_id,
+                                                      self.meeting.get("platform"))
 
     def _embed_runs(self, w: AudioWindow, embedder: Any, min_run_ms: int = 1500, limit: int = 20) -> tuple[np.ndarray, int]:
         """Trechos contíguos com fala (RMS por quadro) do canal L, os mais longos primeiro."""

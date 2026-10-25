@@ -110,7 +110,7 @@ class JobConfig:
     margin: float = 0.05
     models_dir: str = ""
     torch_threads: int = 4
-    diar_window_s: int = 3600
+    diar_window_s: int = 1200             # R2-15: 3 emendas por hora; a janela corrente termina em ~16 min a 0,8x
     whisper_window_s: int = 600
     pause_on_record: bool = True
     silence_rms: float = 0.004

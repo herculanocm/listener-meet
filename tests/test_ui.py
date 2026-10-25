@@ -176,6 +176,31 @@ def test_controller_enqueues_job_launches_worker_and_renews_lease(qtbot, qapp, s
         c.emergency_stop()
 
 
+def test_quit_while_recording_enqueues_the_meeting_and_clears_the_lease(qtbot, qapp, store, platform, monkeypatch):
+    """R2-12: "Sair" com gravação em curso para, salva, cria o job e limpa a lease (o worker solto termina a fila, P2)."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from listener.capture.recorder import RecordConfig
+    from listener.ui.controller import Controller
+
+    store.upsert_me("Eu")
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(c.app, "quit", lambda: None)
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+    assert c.start_recording(cfg, {"title": "q"}) and store.get_setting("pipeline.paused_until")
+    rec = c.recorder
+    platform.pump(0.6)
+    c.quit()
+    assert c.recorder is None and c.state == AppState.IDLE and store.get_meeting(rec.meeting_id)["status"] == "gravada"
+    assert store.get_setting("pipeline.paused_until") == ""
+    jobs = store.jobs.for_meeting(rec.meeting_id)
+    assert len(jobs) == 1 and jobs[0]["status"] == "pendente" and len(platform.spawned) == 1
+    c.emergency_stop()
+
+
 def test_dead_worker_job_is_relaunched_by_the_app(qtbot, qapp, store, platform):
     """R2-01: job `rodando` com heartbeat vencido (worker morto) conta como ativo sem worker: o app relança."""
     from datetime import datetime, timedelta

@@ -78,10 +78,11 @@ class ProfileMatcher:
                 rows, cols = linear_sum_assignment(s, maximize=True)
                 assigned = dict(zip(rows.tolist(), cols.tolist(), strict=True))
                 for r, (i, c) in enumerate(usable):
-                    results[i] = self._decide(c, s[r], prof, assigned.get(r))
+                    taken = {j for rr, j in assigned.items() if rr != r}
+                    results[i] = self._decide(c, s[r], prof, assigned.get(r), taken)
         return [results.get(i, MatchResult(c.label, ClusterStatus.UNNAMED)) for i, c in enumerate(clusters)]
 
-    def _decide(self, c: ClusterData, row: np.ndarray, prof: list[ProfileRef], j: int | None) -> MatchResult:
+    def _decide(self, c: ClusterData, row: np.ndarray, prof: list[ProfileRef], j: int | None, taken: set[int]) -> MatchResult:
         order = np.argsort(-row)
         best_j = int(order[0])
         best, second = float(row[best_j]), (float(row[order[1]]) if len(order) > 1 else 0.0)
@@ -94,9 +95,12 @@ class ProfileMatcher:
         threshold = p.threshold if p.threshold is not None else self.threshold
         if sim < threshold:
             return MatchResult(c.label, ClusterStatus.UNNAMED, p.person_id, p.profile_id, sim, margin, threshold)
+        if j != best_j:                                          # o LSA deu o 2º melhor (o melhor foi para outra voz): revisar (R2-16)
+            return MatchResult(c.label, ClusterStatus.AMBIGUOUS, p.person_id, p.profile_id, sim, margin, threshold)
         if margin < self.margin:
-            winner = self._tie_break(prof[best_j], prof[int(order[1])] if len(order) > 1 else None)
-            if winner is None:
+            runner_up = int(order[1]) if len(order) > 1 else None
+            winner = self._tie_break(prof[best_j], prof[runner_up] if runner_up is not None else None)
+            if winner is None or (winner is not p and prof.index(winner) in taken):   # nunca repetir pessoa já atribuída
                 return MatchResult(c.label, ClusterStatus.AMBIGUOUS, p.person_id, p.profile_id, sim, margin, threshold)
             p, sim = winner, float(row[prof.index(winner)])
         if c.speech_ms < self.min_speech_ms:                     # Q5: curto demais para nomear sozinho

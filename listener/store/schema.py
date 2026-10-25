@@ -88,7 +88,7 @@ MAIN_V4: tuple[str, ...] = (
 MAIN_V4_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("segments", "words_json", "TEXT"), ("segments", "cluster_id", "INTEGER"), ("segments", "job_id", "INTEGER"),
     ("voice_profiles", "threshold", "REAL"), ("voice_profiles", "sim_mean", "REAL"), ("voice_profiles", "sim_std", "REAL"),
-    ("voice_embeddings", "platform", "TEXT"), ("meetings", "language", "TEXT"),
+    ("voice_embeddings", "platform", "TEXT"), ("voice_embeddings", "cluster_id", "INTEGER"), ("meetings", "language", "TEXT"),
 )
 
 AUDIO_V1: tuple[str, ...] = (

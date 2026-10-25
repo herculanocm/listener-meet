@@ -117,3 +117,29 @@ def test_list_jobs_orders_active_first(store):
     assert [j["id"] for j in store.jobs.list_jobs()] == [pend, done]
     with pytest.raises(ValueError):
         store.segments.update_cluster(1, nome="x")
+
+
+def test_request_cancel_racing_with_a_claim_keeps_artifacts(tmp_path):
+    """R2-14: o worker pega o job entre a leitura da interface e a escrita; o cancelamento vira pedido, nada é apagado."""
+    from listener.store import Store
+
+    ui, worker = Store(tmp_path), Store(tmp_path)
+    mid = _meeting(ui)
+    j = ui.jobs.enqueue(mid)
+    real_tx = ui.core.transaction
+
+    def tx_after_claim():
+        got = worker.jobs.claim(pid=7)                                    # o worker chega primeiro
+        worker.jobs.put_artifact(j, JobStep.DIARIZE, 0, b"janela 0")
+        assert got is not None
+        return real_tx()
+
+    ui.core.transaction = tx_after_claim  # type: ignore[method-assign]
+    result = ui.jobs.request_cancel(j)
+    ui.core.transaction = real_tx  # type: ignore[method-assign]
+    row = ui.jobs.get(j)
+    assert result == JobStatus.RUNNING and row["status"] == "rodando" and row["cancel_requested"] == 1
+    assert ui.jobs.artifact_indexes(j, JobStep.DIARIZE) == {0}
+    assert ui.jobs.request_cancel(999) is None
+    ui.close()
+    worker.close()
