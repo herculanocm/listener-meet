@@ -197,11 +197,13 @@ class Core:
         return c
 
     def _connect(self) -> sqlite3.Connection:
+        # `uri=True` sempre: o ATTACH do áudio em `file:...?mode=ro` só é interpretado como URI quando a conexão foi aberta
+        # com SQLITE_OPEN_URI (a sqlite3.dll do Windows não tem SQLITE_USE_URI); caminho simples continua aceito (R2-02)
         if self.readonly:
             c = sqlite3.connect(f"{self.main_path.as_uri()}?mode=ro", uri=True, autocommit=True, timeout=BUSY_TIMEOUT_S,
                                 check_same_thread=False)
         else:
-            c = sqlite3.connect(str(self.main_path), autocommit=True, timeout=BUSY_TIMEOUT_S, check_same_thread=False)
+            c = sqlite3.connect(str(self.main_path), uri=True, autocommit=True, timeout=BUSY_TIMEOUT_S, check_same_thread=False)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA foreign_keys = ON")
         if not self.readonly:

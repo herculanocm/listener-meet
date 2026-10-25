@@ -368,3 +368,28 @@ def test_worker_role_writes_main_reads_audio_and_refuses_old_schema(tmp_path):
         Store.open_worker(tmp_path)
     with pytest.raises(FileNotFoundError):
         Store.open_worker(tmp_path / "nada")
+
+
+def test_every_connection_is_opened_with_uri_support(tmp_path, monkeypatch):
+    """R2-02: o ATTACH do áudio usa `file:...?mode=ro`; só vale se a conexão foi aberta com `uri=True` (fora do Ubuntu a
+    biblioteca não tem SQLITE_USE_URI). Vale para os três papéis."""
+    from listener.model import StoreRole
+
+    seen: list[tuple[str, bool]] = []
+    real_connect = store_core.sqlite3.connect
+
+    def spy(database, *args, **kwargs):
+        seen.append((str(database), bool(kwargs.get("uri", False))))
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(store_core.sqlite3, "connect", spy)
+    with Store(tmp_path) as app:
+        mid = app.create_meeting("u", None, None, None)
+        app.insert_chunk(mid, "L", 0, 0, 16000, 16000, 0, _flac(value=0.1))
+    with Store.open_worker(tmp_path) as w:
+        assert w.role == StoreRole.WORKER and w.chunk_stats(mid)["L"]["n"] == 1
+        with w.connection() as c:
+            files = {r[1]: r[2] for r in c.execute("PRAGMA database_list")}
+        assert all("?" not in f and not f.startswith("file:") for f in files.values())      # URI resolvida em caminho real
+    Store.open_readonly(tmp_path).close()
+    assert seen and all(uri for _, uri in seen), seen

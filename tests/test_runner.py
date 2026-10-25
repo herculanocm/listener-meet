@@ -270,3 +270,87 @@ def test_app_modules_do_not_import_models():
     heavy = {"torch", "faster_whisper", "pyannote", "pyannote.audio", "ctranslate2", "listener.pipeline.whisper",
              "listener.pipeline.pyannote", "listener.pipeline.models"}
     assert not (heavy & set(sys.modules)), sorted(heavy & set(sys.modules))
+
+
+def test_crash_between_segment_batches_leaves_nothing_and_retry_rewrites_all(platform, store, monkeypatch):
+    """R2-03: os lotes de segmentos ficam numa só transação; uma queda no 2º lote não deixa parciais e a retomada regrava tudo."""
+    from listener.store import segments as segments_mod
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    job_id = store.jobs.enqueue(mid)
+    monkeypatch.setattr(segments_mod, "BATCH", 1)
+    real_batched = segments_mod.batched
+    state = {"fail": True}
+
+    def flaky_batched(rows, n):
+        for i, batch in enumerate(real_batched(rows, n)):
+            if state["fail"] and i == 1:
+                raise RuntimeError("queda entre lotes")
+            yield batch
+
+    monkeypatch.setattr(segments_mod, "batched", flaky_batched)
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.ERROR and "queda entre lotes" in store.jobs.get(job_id)["error"]
+    assert store.segments.count_segments(mid) == 0                                           # nada parcial
+    assert store.jobs.artifact_indexes(job_id, "transcribe_r") and store.get_meeting(mid)["status"] == "gravada"
+    state["fail"] = False
+    store.jobs.retry(job_id)
+    _, status = _run(store, FakeDeps(SCRIPT))
+    assert status == JobStatus.DONE and store.segments.count_segments(mid) == 3 and store.get_meeting(mid)["status"] == "processada"
+
+
+def test_confirmation_during_transcription_reaches_segments(platform, store):
+    """R2-04 (P1): o usuário confirma uma voz enquanto o Whisper roda; os segmentos nascem com a pessoa e o cargo."""
+    from listener.pipeline import review
+
+    store.upsert_me("Eu", role="Gerente")
+    mid = _record(platform, store)
+    store.jobs.enqueue(mid)
+    done: list[int] = []
+
+    def user_acts(window):
+        if window.channel == "L" and not done:
+            items = review.review_items(store, mid)
+            ana = store.people.create_person("Ana", role="CFO")
+            review.confirm(store, items[0].cluster_id, ana)
+            done.append(items[0].cluster_id)
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=user_acts))
+    assert status == JobStatus.DONE and done
+    segs = [s for s in store.segments.list_segments(mid) if s["cluster_id"] == done[0]]
+    ana = store.people.find_by_name("Ana")["id"]
+    assert segs and all(s["person_id"] == ana and s["role_at_time"] == "CFO" for s in segs)
+    assert store.segments.get_cluster(done[0])["status"] == ClusterStatus.CONFIRMED
+
+
+def test_transport_does_not_overwrite_decision_taken_during_reprocess(platform, store):
+    """R2-05: decisão nova (feita durante o reprocessamento) vence a transportada; o conflito fica em revisions."""
+    from listener.pipeline import review
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    store.jobs.enqueue(mid)
+    _run(store, FakeDeps(SCRIPT))
+    old_items = review.review_items(store, mid)
+    ana = review.new_person(store, old_items[0].cluster_id, "Ana")
+    old_centroid = store.segments.get_cluster(old_items[0].cluster_id)["centroid"]
+    bia = store.people.create_person("Bia")
+    rep = store.jobs.enqueue(mid, JobKind.REPROCESS)
+    acted: list[int] = []
+
+    def user_acts(window):
+        if window.channel == "L" and not acted:                                             # clusters novos já gravados (P1)
+            new = [c for c in store.segments.list_clusters(mid, rep) if c["channel"] == "R"]
+            target = max(new, key=lambda c: float(c["centroid"] @ old_centroid))
+            review.confirm(store, int(target["id"]), bia)                                  # "esta voz é a Bia", corrigindo a Ana
+            acted.append(int(target["id"]))
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=user_acts))
+    assert status == JobStatus.DONE and acted
+    c = store.segments.get_cluster(acted[0])
+    assert c["status"] == ClusterStatus.CONFIRMED and c["person_id"] == bia and c["person_id"] != ana
+    assert all(s["person_id"] == bia for s in store.segments.list_segments(mid) if s["cluster_id"] == acted[0])
+    rev = store._q("SELECT entity_id, before, after FROM revisions WHERE field = 'transporte_conflito'")
+    assert len(rev) == 1 and rev[0]["entity_id"] == acted[0]                                 # o L (mesma decisão) não anota
+    assert rev[0]["before"] == f"confirmado:{ana}" and rev[0]["after"] == f"confirmado:{bia}"

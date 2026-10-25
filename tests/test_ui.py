@@ -176,6 +176,31 @@ def test_controller_enqueues_job_launches_worker_and_renews_lease(qtbot, qapp, s
         c.emergency_stop()
 
 
+def test_dead_worker_job_is_relaunched_by_the_app(qtbot, qapp, store, platform):
+    """R2-01: job `rodando` com heartbeat vencido (worker morto) conta como ativo sem worker: o app relança."""
+    from datetime import datetime, timedelta
+
+    from listener.platform.common.process import worker_command
+    from listener.ui.controller import Controller
+
+    mid = store.create_meeting("m", None, None, None)
+    store.finish_meeting(mid, 3000)
+    jid = store.jobs.enqueue(mid)
+    old = (datetime.now().astimezone() - timedelta(minutes=30)).isoformat(timespec="milliseconds")
+    assert store.jobs.claim(pid=4242, now=old)["id"] == jid                                  # worker pegou há 30 min e morreu
+    assert not store.jobs.has_pending() and store.jobs.held_fresh() == []
+    c = Controller(qapp, platform, store)
+    c.tray = None
+    try:
+        assert c.launch_worker() is True and platform.spawned[0][0] == worker_command()
+        assert c.launch_worker() is False                                                   # cooldown
+        store.jobs.heartbeat(jid)                                                           # worker novo vivo: não relança
+        c._worker_spawned_at = None
+        assert c.launch_worker() is False
+    finally:
+        c.emergency_stop()
+
+
 def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     from listener.model import JobKind, JobStep
     from listener.ui.queue import QueueDialog, job_row_texts

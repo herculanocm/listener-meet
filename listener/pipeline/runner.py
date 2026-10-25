@@ -501,9 +501,6 @@ class JobRunner:
                   clusters: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]]) -> None:
         step = JobStep.SEGMENTS
         self._begin_step(step)
-        if self.store.segments.count_segments(self.meeting_id, self.job_id):
-            self._end_step(step)                                       # retomada depois de gravar: nada a refazer
-            return
         t0 = time.perf_counter()
         segmenter = Segmenter()
         rows: list[SegmentInsert] = []
@@ -511,16 +508,15 @@ class JobRunner:
         for channel, windows in transcripts.items():
             words = merge_words(windows)
             if channel in clusters:
-                turns, ids, crows = clusters[channel]
-                by_id = {int(c["id"]): c for c in crows}
+                turns, ids, _crows = clusters[channel]
                 attribution = Attribution.PYANNOTE
             else:
                 ids = self._user_cluster(words)                        # existe mesmo sem fala transcrita
                 duration = int(self.meeting.get("duration_ms") or 0)
                 end = max(duration, words[-1].end_ms) if words else duration
                 turns, attribution = (Turn(0, end, USER_CLUSTER),), Attribution.CHANNEL
-                by_id = {int(c["id"]): c for c in self.store.segments.list_clusters(self.meeting_id, self.job_id)
-                         if c["channel"] == channel}
+            # clusters relidos do banco agora: o usuário pode ter confirmado vozes enquanto o Whisper rodava (P1, R2-04)
+            by_id = {int(c["id"]): c for c in self.store.segments.list_clusters(self.meeting_id, self.job_id) if c["channel"] == channel}
             if not words:
                 continue
             for d in segmenter.run(words, turns):
@@ -537,7 +533,9 @@ class JobRunner:
                 rows.append(SegmentInsert(self.meeting_id, self.job_id, channel, d.start_ms, d.end_ms, d.text, str(attribution),
                                           str(SegmentSource.FINAL), d.label, cid, person, role, conf, words_json))
         rows.sort(key=lambda r: (r.t_start_ms, r.channel))
-        n = self.store.segments.insert_segments(rows)
+        with self.store.transaction():                                 # parciais de uma queda anterior saem junto (R2-03)
+            self.store.segments.delete_segments(self.meeting_id, self.job_id)
+            n = self.store.segments.insert_segments(rows)
         timing = self._timing(step)
         timing.wall_s += time.perf_counter() - t0
         log.info("job %s: %d segmentos", self.job_id, n)
@@ -574,10 +572,18 @@ class JobRunner:
                 if match is not None:
                     pairs[int(oc["id"])] = int(match["id"])
         people = {int(p["id"]): p for p in self.store.people.list_people()}
+        new_by_id = {int(c["id"]): c for c in new}
         for oc in decided:
             nid = pairs.get(int(oc["id"]))
             if nid is None:
                 self.store.add_revision("cluster", int(oc["id"]), "transporte", f"{oc['status']}:{oc.get('person_id')}", None, "sistema")
+                continue
+            nc = new_by_id[nid]
+            if str(nc["status"]) in (ClusterStatus.CONFIRMED, ClusterStatus.IGNORED) or nc.get("merged_into") is not None:
+                # o usuário já decidiu esta voz durante o reprocessamento (P1): a decisão nova vale; se difere, fica anotada (R2-05)
+                if (str(nc["status"]), nc.get("person_id")) != (str(oc["status"]), oc.get("person_id")):
+                    self.store.add_revision("cluster", nid, "transporte_conflito", f"{oc['status']}:{oc.get('person_id')}",
+                                            f"{nc['status']}:{nc.get('person_id')}", "sistema")
                 continue
             mi = oc.get("merged_into")
             merged = pairs.get(int(mi)) if mi is not None else None

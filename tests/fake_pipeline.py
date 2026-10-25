@@ -30,16 +30,19 @@ class ScriptedTranscriber:
     `fail_once_at` = {(canal, idx)}: a primeira chamada dessa janela levanta (simula uma queda para o teste de retomada)."""
 
     def __init__(self, script: Scripts, name: str = "fake:script", language: str = "pt",
-                 fail_once_at: set[tuple[str, int]] | None = None):
+                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None):
         self.scripts: dict[str, list[tuple[float, float, str]]] = (
             {k: list(v) for k, v in script.items()} if isinstance(script, dict) else {"*": list(script)})
         self.name = name
         self.language = language
         self.fail_once_at = set(fail_once_at or ())
+        self.before = before                   # chamado antes de cada janela: "o usuário agiu enquanto o Whisper roda"
         self.calls: list[tuple[str, int, str | None, str]] = []     # (canal, idx, idioma pedido, initial_prompt)
 
     def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
         self.calls.append((window.channel, window.idx, language, initial_prompt))
+        if self.before is not None:
+            self.before(window)
         if (window.channel, window.idx) in self.fail_once_at:
             self.fail_once_at.discard((window.channel, window.idx))
             raise RuntimeError(f"queda simulada na janela {window.channel}{window.idx}")
@@ -111,8 +114,8 @@ class ToneEmbedder:
 
 class FakeDeps(PipelineDeps):
     def __init__(self, script: Scripts = (), prepare: Callable[[ProgressFn], None] | None = None,
-                 fail_once_at: set[tuple[str, int]] | None = None):
-        self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at)
+                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None):
+        self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at, before=before)
         self.tones = ToneDiarizer()
         self.tone_embedder = ToneEmbedder()
         super().__init__(lambda: self.scripted, lambda: self.tones, lambda: self.tone_embedder, prepare, name="fake")

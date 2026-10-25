@@ -96,16 +96,20 @@ class SegmentsRepo:
 
     # ---------------------------------------------------------------- segmentos
     def insert_segments(self, rows: Iterable[SegmentInsert]) -> int:
+        """Todos os lotes (`executemany` de até 1000) numa só transação: ou a transcrição inteira entra, ou nada (R2-03)."""
         n = 0
-        for batch in batched(rows, BATCH):
-            with self.core.transaction() as c:
+        with self.core.transaction() as c:
+            for batch in batched(rows, BATCH):
                 c.executemany(
                     "INSERT INTO segments(meeting_id, job_id, channel, t_start_ms, t_end_ms, text, attribution, source, cluster, "
                     "cluster_id, person_id, role_at_time, confidence, words_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [(s.meeting_id, s.job_id, s.channel, int(s.t_start_ms), int(s.t_end_ms), s.text, s.attribution, s.source, s.cluster,
                       s.cluster_id, s.person_id, s.role_at_time, s.confidence, s.words_json) for s in batch])
-            n += len(batch)
+                n += len(batch)
         return n
+
+    def delete_segments(self, meeting_id: int, job_id: int) -> int:
+        return self.core.execute("DELETE FROM segments WHERE meeting_id = ? AND job_id = ?", (meeting_id, job_id))
 
     def list_segments(self, meeting_id: int, job_id: int | None = None) -> list[SegmentRow]:
         if job_id is None:

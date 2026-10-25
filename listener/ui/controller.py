@@ -470,8 +470,9 @@ class Controller(QObject):
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS)
 
     def launch_worker(self) -> bool:
-        """Só se há `pendente`, nenhum job com heartbeat fresco e o último lançamento já teve tempo de se anunciar."""
-        if not self.store.jobs.has_pending() or self.store.jobs.held_fresh():
+        """Só se há job ativo (pendente, ou rodando/pausado de um worker que morreu: heartbeat vencido), nenhum heartbeat
+        fresco e o último lançamento já teve tempo de se anunciar; o claim do worker novo devolve o job morto à fila (R2-01)."""
+        if not self.store.jobs.active() or self.store.jobs.held_fresh():
             return False
         if self.store.get(SPECS["pipeline.paused_manual"]):
             return False
