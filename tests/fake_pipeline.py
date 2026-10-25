@@ -11,6 +11,7 @@ from listener.pipeline.base import PipelineDeps, ProgressFn
 from listener.pipeline.types import AudioWindow, DiarizationWindow, TranscriptWindow, Turn, Word
 
 type Script = Sequence[tuple[float, float, str]]      # (t0 s, t1 s, texto) na linha do tempo da sessão
+type Scripts = Script | dict[str, Script]             # um roteiro para todos os canais ou um por canal
 
 
 def dominant_freq(x: np.ndarray, sample_rate: int) -> float:
@@ -25,19 +26,26 @@ def dominant_freq(x: np.ndarray, sample_rate: int) -> float:
 
 
 class ScriptedTranscriber:
-    """Devolve as palavras do roteiro que caem na janela, com tempos espaçados igualmente dentro de cada fala."""
+    """Devolve as palavras do roteiro que caem na janela, com tempos espaçados igualmente dentro de cada fala.
+    `fail_once_at` = {(canal, idx)}: a primeira chamada dessa janela levanta (simula uma queda para o teste de retomada)."""
 
-    def __init__(self, script: Script, name: str = "fake:script", language: str = "pt"):
-        self.script = list(script)
+    def __init__(self, script: Scripts, name: str = "fake:script", language: str = "pt",
+                 fail_once_at: set[tuple[str, int]] | None = None):
+        self.scripts: dict[str, list[tuple[float, float, str]]] = (
+            {k: list(v) for k, v in script.items()} if isinstance(script, dict) else {"*": list(script)})
         self.name = name
         self.language = language
-        self.calls: list[tuple[int, str | None, str]] = []          # (idx, idioma pedido, initial_prompt)
+        self.fail_once_at = set(fail_once_at or ())
+        self.calls: list[tuple[str, int, str | None, str]] = []     # (canal, idx, idioma pedido, initial_prompt)
 
     def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
-        self.calls.append((window.idx, language, initial_prompt))
+        self.calls.append((window.channel, window.idx, language, initial_prompt))
+        if (window.channel, window.idx) in self.fail_once_at:
+            self.fail_once_at.discard((window.channel, window.idx))
+            raise RuntimeError(f"queda simulada na janela {window.channel}{window.idx}")
         words: list[Word] = []
         speech = 0
-        for t0, t1, text in self.script:
+        for t0, t1, text in self.scripts.get(window.channel, self.scripts.get("*", [])):
             a, b = int(t0 * 1000), int(t1 * 1000)
             if b <= window.t0_ms or a >= window.t1_ms:
                 continue
@@ -102,8 +110,9 @@ class ToneEmbedder:
 
 
 class FakeDeps(PipelineDeps):
-    def __init__(self, script: Script = (), prepare: Callable[[ProgressFn], None] | None = None):
-        self.scripted = ScriptedTranscriber(script)
+    def __init__(self, script: Scripts = (), prepare: Callable[[ProgressFn], None] | None = None,
+                 fail_once_at: set[tuple[str, int]] | None = None):
+        self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at)
         self.tones = ToneDiarizer()
         self.tone_embedder = ToneEmbedder()
         super().__init__(lambda: self.scripted, lambda: self.tones, lambda: self.tone_embedder, prepare, name="fake")

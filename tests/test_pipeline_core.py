@@ -186,7 +186,7 @@ def test_fakes_label_tones_and_embed_deterministically():
     assert a.shape == (256,) and float(a @ b) > 0.99 and float(a @ c) < 0.05 and emb.calls == 3
     tr = ScriptedTranscriber([(0.5, 1.5, "oi tudo bem"), (2.0, 3.0, "sim")])
     t = tr.transcribe(AudioWindow(1, "R", 1000, 2600, x[SR:]), language=None, initial_prompt="p")
-    assert [w.text for w in t.words] == ["bem", "sim"] and t.speech_ms == 1100 and tr.calls == [(1, None, "p")]
+    assert [w.text for w in t.words] == ["bem", "sim"] and t.speech_ms == 1100 and tr.calls == [("R", 1, None, "p")]
     deps = FakeDeps([(0, 1, "x")])
     assert deps.transcriber() is deps.transcriber() and deps.embedder().dim == 256
     deps.release()
