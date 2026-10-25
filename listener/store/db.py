@@ -1,307 +1,210 @@
-"""Store: acesso único aos dois arquivos SQLite, com lock (threads de áudio e interface gravam).
-Migrações numeradas (F1.1 A6); datas em hora local com offset (A5)."""
+"""Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`) atrás dos nomes de método da F1.
+Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`."""
 from __future__ import annotations
 
-import json
-import sqlite3
-import threading
-from datetime import datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from sqlite3 import Connection
+from typing import TYPE_CHECKING, Any, Self
 
-from ..config.defaults import DEFAULTS
 from ..log import get_logger
-from .schema import DATE_COLUMNS, MIGRATIONS, SCHEMA_VERSION
+from ..model import EventType, MeetingStatus
+from .audio import AudioRepo, ChannelStats, ChunkData, ChunkMeta, ContinuityIssue
+from .core import LEGACY_AUDIO_FILE, MAIN_FILE, Core, with_offset
+from .meetings import EventRow, MarkerRow, MeetingRow, MeetingsRepo, PresetRow
+from .settings import SettingsRepo
+
+if TYPE_CHECKING:
+    from ..capture.sinks import EncodedChunk
+    from ..config.defaults import SettingSpec
+
+__all__ = ["LEGACY_AUDIO_FILE", "MAIN_FILE", "Store", "with_offset"]
 
 log = get_logger("store")
 
-MAIN_FILE = "listener.db"
-AUDIO_FILE = "listener-audio.db"
-
-
-def _now() -> str:
-    """Hora local com offset (ISO 8601), por exemplo 2026-10-24T18:03:12.345-03:00 (F1.1 A5)."""
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
-
-
-def with_offset(value: str | None) -> str | None:
-    """Reescreve uma data ISO sem fuso como hora local com offset; datas já com offset ou vazias voltam iguais."""
-    if not value:
-        return value
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
-        return value
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-    return dt.isoformat(timespec="milliseconds")
-
-
-def _migrate_v2_dates(conn: sqlite3.Connection) -> None:
-    for table, cols in DATE_COLUMNS.items():
-        for col in cols:
-            rows = conn.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL").fetchall()
-            for rowid, value in rows:
-                new = with_offset(value)
-                if new != value:
-                    conn.execute(f"UPDATE {table} SET {col} = ? WHERE rowid = ?", (new, rowid))
-
-
-PY_MIGRATIONS = {2: _migrate_v2_dates}
-
 
 class Store:
-    def __init__(self, base_dir: str | Path):
-        self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.main_path = self.base_dir / MAIN_FILE
-        self.audio_path = self.base_dir / AUDIO_FILE
-        self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self.main_path), check_same_thread=False, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("ATTACH DATABASE ? AS audio", (str(self.audio_path),))
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA audio.journal_mode = WAL")
-        self._conn.execute("PRAGMA synchronous = NORMAL")
-        self._migrate()
+    def __init__(self, base_dir: str | Path, readonly: bool = False):
+        self.core = Core(base_dir, readonly=readonly)
+        self.settings = SettingsRepo(self.core)
+        self.meetings = MeetingsRepo(self.core)
+        self.audio = AudioRepo(self.core)
+
+    @classmethod
+    def open_readonly(cls, base_dir: str | Path) -> Self:
+        """Abre com `mode=ro` (nada é migrado nem escrito): diagnóstico (`--check`) e leitores de outro processo."""
+        return cls(base_dir, readonly=True)
 
     # ---------------------------------------------------------------- infra
-    def _migrate(self) -> None:
-        """Aplica as migrações pendentes em ordem; recusa um banco mais novo que o app."""
-        with self._lock:
-            for table in ("schema_migrations", "audio.schema_migrations"):
-                self._conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
-            row = self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-            current = int(row[0] or 0)
-            if current > SCHEMA_VERSION:
-                raise RuntimeError(f"o banco está na versão {current} e este app conhece até a {SCHEMA_VERSION}: atualize o app")
-            for version, sql in MIGRATIONS:
-                if version <= current:
-                    continue
-                if sql is not None:
-                    self._conn.executescript(sql)
-                else:
-                    self._conn.execute("BEGIN")
-                    try:
-                        PY_MIGRATIONS[version](self._conn)
-                        self._conn.execute("COMMIT")
-                    except Exception:
-                        self._conn.execute("ROLLBACK")
-                        raise
-                for table in ("schema_migrations", "audio.schema_migrations"):
-                    self._conn.execute(f"INSERT OR IGNORE INTO {table}(version, applied_at) VALUES (?, ?)", (version, _now()))
-                log.info("banco migrado para a versão %d", version)
+    @property
+    def base_dir(self) -> Path:
+        return self.core.base_dir
+
+    @property
+    def main_path(self) -> Path:
+        return self.core.main_path
+
+    @property
+    def readonly(self) -> bool:
+        return self.core.readonly
 
     def schema_version(self) -> int:
-        row = self._q("SELECT MAX(version) AS v FROM schema_migrations")
-        return int(row[0]["v"] or 0)
+        return self.core.main_version
 
     def default_log_path(self) -> Path:
         return self.base_dir / "logs" / "listener.log"
 
+    def transaction(self) -> Any:
+        return self.core.transaction()
+
+    @contextmanager
+    def connection(self) -> Iterator[Connection]:
+        yield self.core.conn()
+
     def close(self) -> None:
-        with self._lock:
-            try:
-                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except sqlite3.Error:
-                pass
-            self._conn.close()
+        self.core.close()
 
-    def _q(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        with self._lock:
-            return self._conn.execute(sql, params).fetchall()
+    def close_thread(self) -> None:
+        self.core.close_thread()
 
-    def _x(self, sql: str, params: tuple = ()) -> int:
-        with self._lock:
-            cur = self._conn.execute(sql, params)
-            return int(cur.lastrowid or 0)
+    def __enter__(self) -> Self:
+        return self
 
-    def db_sizes(self) -> dict[str, int]:
-        def size(p: Path) -> int:
-            total = 0
-            for suffix in ("", "-wal", "-shm"):
-                f = Path(str(p) + suffix)
-                if f.exists():
-                    total += f.stat().st_size
-            return total
-        return {"main": size(self.main_path), "audio": size(self.audio_path)}
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def _q(self, sql: str, params: tuple[Any, ...] = ()) -> list[Any]:
+        return self.core.q(sql, params)
+
+    def _x(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        return self.core.execute(sql, params)
+
+    def db_sizes(self) -> dict[str, Any]:
+        return self.core.db_sizes()
+
+    def audio_files(self) -> list[str]:
+        return self.core.audio_files()
 
     # ---------------------------------------------------------------- settings
     def get_setting(self, key: str, default: str | None = None) -> str:
-        rows = self._q("SELECT value FROM settings WHERE key = ?", (key,))
-        if rows:
-            return rows[0]["value"]
-        if default is not None:
-            return default
-        return DEFAULTS.get(key, ("", "now"))[0]
+        return self.settings.get_setting(key, default)
+
+    def get[T](self, spec: SettingSpec[T]) -> T:
+        return self.settings.get(spec)
 
     def get_int(self, key: str) -> int:
-        return int(float(self.get_setting(key)))
+        return self.settings.get_int(key)
 
     def get_float(self, key: str) -> float:
-        return float(self.get_setting(key))
+        return self.settings.get_float(key)
 
     def set_setting(self, key: str, value: Any, scope: str | None = None) -> None:
-        scope = scope or DEFAULTS.get(key, ("", "now"))[1]
-        self._x("INSERT INTO settings(key, value, scope, updated_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, scope = excluded.scope, updated_at = excluded.updated_at",
-                (key, str(value), scope, _now()))
+        self.settings.set_setting(key, value, scope)
 
     def all_settings(self) -> dict[str, str]:
-        out = {k: v[0] for k, v in DEFAULTS.items()}
-        for r in self._q("SELECT key, value FROM settings"):
-            out[r["key"]] = r["value"]
-        return out
+        return self.settings.all_settings()
 
-    # ---------------------------------------------------------------- presets
-    def list_presets(self) -> list[dict]:
-        return [dict(r) for r in self._q("SELECT * FROM presets ORDER BY name")]
+    # ---------------------------------------------------------------- presets e pessoas
+    def list_presets(self) -> list[PresetRow]:
+        return self.meetings.list_presets()
 
-    def get_preset(self, preset_id: int) -> dict | None:
-        rows = self._q("SELECT * FROM presets WHERE id = ?", (preset_id,))
-        return dict(rows[0]) if rows else None
+    def get_preset(self, preset_id: int) -> PresetRow | None:
+        return self.meetings.get_preset(preset_id)
 
     def upsert_preset(self, name: str, mic_device_id: str | None, mic_device_name: str | None, source_kind: str,
                       source_exe: str | None, sample_rate: int = 16000, is_in_room: bool = False) -> int:
-        self._x("INSERT INTO presets(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET mic_device_id = excluded.mic_device_id, "
-                "mic_device_name = excluded.mic_device_name, source_kind = excluded.source_kind, source_exe = excluded.source_exe, "
-                "sample_rate = excluded.sample_rate, is_in_room = excluded.is_in_room, updated_at = excluded.updated_at",
-                (name, mic_device_id, mic_device_name, source_kind, source_exe, int(sample_rate), int(bool(is_in_room)), _now()))
-        return int(self._q("SELECT id FROM presets WHERE name = ?", (name,))[0]["id"])
+        return self.meetings.upsert_preset(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room)
 
-    def delete_preset(self, preset_id: int) -> None:
-        self._x("DELETE FROM presets WHERE id = ?", (preset_id,))
+    def delete_preset(self, preset_id: int) -> bool:
+        return self.meetings.delete_preset(preset_id)
 
     def seed_default_presets(self) -> None:
-        if self.list_presets():
-            return
-        for name, kind, exe in (("Teams", "app", "ms-teams.exe"), ("Zoom", "app", "Zoom.exe"),
-                                ("Meet (navegador)", "app", "msedge.exe"), ("Sistema inteiro", "system", None)):
-            self.upsert_preset(name, None, None, kind, exe)
+        self.meetings.seed_default_presets()
 
-    # ---------------------------------------------------------------- people
-    def get_me(self) -> dict | None:
-        rows = self._q("SELECT * FROM people WHERE is_me = 1 ORDER BY id LIMIT 1")
-        return dict(rows[0]) if rows else None
+    def get_me(self) -> dict[str, Any] | None:
+        return self.meetings.get_me()
 
     def upsert_me(self, name: str, email: str = "", role: str = "", company: str = "") -> int:
-        me = self.get_me()
-        if me:
-            self._x("UPDATE people SET name = ?, email = ?, role = ?, company = ?, updated_at = ? WHERE id = ?",
-                    (name, email, role, company, _now(), me["id"]))
-            return int(me["id"])
-        return self._x("INSERT INTO people(name, email, role, company, is_me, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-                       (name, email, role, company, _now(), _now()))
+        return self.meetings.upsert_me(name, email, role, company)
 
-    # ---------------------------------------------------------------- meetings
+    # ---------------------------------------------------------------- reuniões
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False) -> int:
-        return self._x("INSERT INTO meetings(title, started_at, platform, preset_id, status, expected_participants, is_in_room) "
-                       "VALUES (?, ?, ?, ?, 'gravando', ?, ?)",
-                       (title, _now(), platform, preset_id, expected_participants, int(bool(is_in_room))))
+        return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room)
 
-    def get_meeting(self, meeting_id: int) -> dict | None:
-        rows = self._q("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-        return dict(rows[0]) if rows else None
+    def get_meeting(self, meeting_id: int) -> MeetingRow | None:
+        return self.meetings.get_meeting(meeting_id)
 
-    def list_meetings(self) -> list[dict]:
-        return [dict(r) for r in self._q("SELECT * FROM meetings ORDER BY started_at DESC")]
+    def list_meetings(self) -> list[MeetingRow]:
+        return self.meetings.list_meetings()
 
-    def set_meeting_status(self, meeting_id: int, status: str) -> None:
-        self._x("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
-
-    def finish_meeting(self, meeting_id: int, duration_ms: int) -> None:
-        self._x("UPDATE meetings SET status = 'gravada', ended_at = ?, duration_ms = ? WHERE id = ?",
-                (_now(), int(duration_ms), meeting_id))
+    def finish_meeting(self, meeting_id: int, duration_ms: int, status: MeetingStatus = MeetingStatus.RECORDED) -> None:
+        self.meetings.finish_meeting(meeting_id, duration_ms, status)
 
     def update_title(self, meeting_id: int, title: str, author: str = "usuario") -> None:
-        m = self.get_meeting(meeting_id)
-        before = (m or {}).get("title")
-        if before == title:
-            return
-        self._x("UPDATE meetings SET title = ? WHERE id = ?", (title, meeting_id))
-        self.add_revision("meeting", meeting_id, "title", before, title, author)
+        self.meetings.update_title(meeting_id, title, author)
 
     def mark_interrupted(self) -> int:
-        """Na abertura: reuniões que ficaram 'gravando' viram 'interrompida' (pedaços preservados)."""
-        with self._lock:
-            cur = self._conn.execute("UPDATE meetings SET status = 'interrompida' WHERE status = 'gravando'")
-            return cur.rowcount
+        """Na abertura: reuniões que ficaram 'gravando' viram 'interrompida', com a duração dos pedaços (M-05)."""
+        n = 0
+        for mid in self.meetings.interrupted_candidates():
+            try:
+                covered = self.audio.covered_ms(mid)
+            except Exception as e:
+                log.warning("reunião %s: não li os pedaços para calcular a duração: %s", mid, e)
+                covered = None
+            self.meetings.set_interrupted(mid, covered)
+            n += 1
+        return n
 
     def delete_meeting(self, meeting_id: int) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM audio.audio_chunks WHERE meeting_id = ?", (meeting_id,))
-            self._conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+        """Pedaços primeiro, depois a linha: uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão."""
+        self.core.audio_schema_for_meeting(meeting_id)     # anexa fora da transação
+        with self.core.transaction():
+            self.audio.delete_chunks(meeting_id)
+            self.meetings.delete_meeting_row(meeting_id)
+        self.core.forget_meeting(meeting_id)
 
-    # ---------------------------------------------------------------- chunks (audio.db)
+    # ---------------------------------------------------------------- pedaços
     def insert_chunk(self, meeting_id: int, channel: str, idx: int, t_start_ms: int, frames: int,
                      sample_rate: int, gap_frames: int, flac: bytes) -> int:
-        return self._x("INSERT INTO audio.audio_chunks(meeting_id, channel, idx, t_start_ms, frames, sample_rate, "
-                       "gap_frames, flac, created_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       (meeting_id, channel, idx, int(t_start_ms), int(frames), int(sample_rate), int(gap_frames),
-                        sqlite3.Binary(flac), _now()))
+        return self.audio.insert_chunk(meeting_id, channel, idx, t_start_ms, frames, sample_rate, gap_frames, flac)
 
-    def list_chunks(self, meeting_id: int, channel: str | None = None) -> list[dict]:
-        if channel:
-            rows = self._q("SELECT id, meeting_id, channel, idx, t_start_ms, frames, sample_rate, gap_frames, length(flac) AS bytes "
-                           "FROM audio.audio_chunks WHERE meeting_id = ? AND channel = ? ORDER BY idx", (meeting_id, channel))
-        else:
-            rows = self._q("SELECT id, meeting_id, channel, idx, t_start_ms, frames, sample_rate, gap_frames, length(flac) AS bytes "
-                           "FROM audio.audio_chunks WHERE meeting_id = ? ORDER BY channel, idx", (meeting_id,))
-        return [dict(r) for r in rows]
+    def write_chunk(self, chunk: EncodedChunk) -> None:
+        self.audio.write_chunk(chunk)
 
-    def get_chunks_range(self, meeting_id: int, channel: str, t0_ms: int, t1_ms: int) -> list[dict]:
-        rows = self._q("SELECT idx, t_start_ms, frames, sample_rate, flac FROM audio.audio_chunks "
-                       "WHERE meeting_id = ? AND channel = ? AND t_start_ms < ? AND (t_start_ms + frames * 1000 / sample_rate) > ? "
-                       "ORDER BY idx", (meeting_id, channel, int(t1_ms), int(t0_ms)))
-        return [dict(r) for r in rows]
+    def list_chunks(self, meeting_id: int, channel: str | None = None) -> list[ChunkMeta]:
+        return self.audio.list_chunks(meeting_id, channel)
 
-    def chunk_stats(self, meeting_id: int) -> dict[str, dict]:
-        out: dict[str, dict] = {}
-        for r in self._q("SELECT channel, COUNT(*) AS n, SUM(frames) AS frames, SUM(gap_frames) AS gaps, SUM(length(flac)) AS bytes, "
-                         "MIN(t_start_ms) AS t0, MAX(t_start_ms + frames * 1000 / sample_rate) AS t1, MAX(sample_rate) AS sr "
-                         "FROM audio.audio_chunks WHERE meeting_id = ? GROUP BY channel", (meeting_id,)):
-            out[r["channel"]] = dict(r)
-        return out
+    def get_chunks_range(self, meeting_id: int, channel: str, t0_ms: int, t1_ms: int) -> list[ChunkData]:
+        return self.audio.get_chunks_range(meeting_id, channel, t0_ms, t1_ms)
 
-    def continuity(self, meeting_id: int, channel: str, tolerance_ms: int = 50) -> list[dict]:
-        """Buracos ou sobreposições entre pedaços consecutivos (para o gate G1)."""
-        issues = []
-        prev_end = None
-        for c in self.list_chunks(meeting_id, channel):
-            if prev_end is not None and abs(c["t_start_ms"] - prev_end) > tolerance_ms:
-                issues.append({"idx": c["idx"], "expected_ms": prev_end, "got_ms": c["t_start_ms"],
-                               "delta_ms": c["t_start_ms"] - prev_end})
-            prev_end = c["t_start_ms"] + int(round(c["frames"] * 1000 / c["sample_rate"]))
-        return issues
+    def chunk_stats(self, meeting_id: int) -> dict[str, ChannelStats]:
+        return self.audio.chunk_stats(meeting_id)
 
-    # ---------------------------------------------------------------- markers, events, revisions
+    def continuity(self, meeting_id: int, channel: str, tolerance_ms: int = 50) -> list[ContinuityIssue]:
+        return self.audio.continuity(meeting_id, channel, tolerance_ms)
+
+    def orphan_report(self) -> dict[str, list[int]]:
+        return self.audio.orphan_report()
+
+    def missing_audio_files(self) -> list[str]:
+        """Arquivos de áudio citados por reuniões e ausentes da pasta (apagados ou não restaurados): só reporta (CP3)."""
+        return [f for f in self.meetings.audio_files_referenced() if not (self.base_dir / f).exists()]
+
+    # ---------------------------------------------------------------- marcadores, eventos, revisões
     def add_marker(self, meeting_id: int, t_ms: int, note: str = "") -> int:
-        return self._x("INSERT INTO markers(meeting_id, t_ms, note, created_at) VALUES (?, ?, ?, ?)",
-                       (meeting_id, int(t_ms), note or "", _now()))
+        return self.meetings.add_marker(meeting_id, t_ms, note)
 
-    def list_markers(self, meeting_id: int) -> list[dict]:
-        return [dict(r) for r in self._q("SELECT * FROM markers WHERE meeting_id = ? ORDER BY t_ms", (meeting_id,))]
+    def list_markers(self, meeting_id: int) -> list[MarkerRow]:
+        return self.meetings.list_markers(meeting_id)
 
-    def add_event(self, meeting_id: int | None, t_ms: int | None, type_: str, data: dict | None = None) -> int:
-        return self._x("INSERT INTO events(meeting_id, t_ms, type, data, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (meeting_id, t_ms, type_, json.dumps(data or {}, ensure_ascii=False, default=str), _now()))
+    def add_event(self, meeting_id: int | None, t_ms: int | None, type_: EventType | str, data: dict[str, Any] | None = None) -> int:
+        return self.meetings.add_event(meeting_id, t_ms, type_, data)
 
-    def list_events(self, meeting_id: int) -> list[dict]:
-        out = []
-        for r in self._q("SELECT * FROM events WHERE meeting_id = ? ORDER BY id", (meeting_id,)):
-            d = dict(r)
-            try:
-                d["data"] = json.loads(d["data"] or "{}")
-            except ValueError:
-                pass
-            out.append(d)
-        return out
+    def list_events(self, meeting_id: int) -> list[EventRow]:
+        return self.meetings.list_events(meeting_id)
 
     def add_revision(self, entity: str, entity_id: int, field: str, before: Any, after: Any, author: str) -> int:
-        return self._x("INSERT INTO revisions(entity, entity_id, field, before, after, author, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (entity, entity_id, field, None if before is None else str(before),
-                        None if after is None else str(after), author, _now()))
+        return self.meetings.add_revision(entity, entity_id, field, before, after, author)
