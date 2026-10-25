@@ -2,27 +2,32 @@
 
 Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
-  --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016)
+  --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016),
+                                                    pedaços órfãos e arquivos de áudio ausentes; abre o banco só leitura
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import tempfile
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .store import Store
 
 
 def _utf8() -> None:
     for s in (sys.stdout, sys.stderr):
-        try:
-            s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            s.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 
-def selftest(args) -> int:
+def selftest(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
     from .capture.audio import rms
     from .capture.recorder import RecordConfig, Recorder, SourceSpec
     from .platform import get_platform
@@ -31,94 +36,111 @@ def selftest(args) -> int:
 
     platform = get_platform()
     db_dir = Path(args.db) if args.db else Path(tempfile.mkdtemp(prefix="listener-selftest-"))
-    store = Store(db_dir)
-    store.upsert_me("selftest")
-    source = SourceSpec("system", label="Sistema inteiro")
-    if args.app:
-        pid = platform.root_pid(args.app)
-        if pid:
-            source = SourceSpec("app", pid=pid, exe=args.app, label=args.app)
-        else:
-            print(f"{args.app} não está rodando; usando o sistema inteiro")
-    cfg = RecordConfig(mic_device=platform.default_input_device(), source=source, chunk_seconds=args.chunk)
-    meeting_id = store.create_meeting("selftest", source.exe or "sistema", None, None)
-    platform.mic_mute().set_device(cfg.mic_device)
-    rec = Recorder(platform, store, meeting_id, cfg)
-    rec.start()
-    print(json.dumps({"db": str(db_dir), "meeting_id": meeting_id, "mic": rec.L.detail, "source": rec.R.detail,
-                      "warnings": rec.warnings}, ensure_ascii=False), flush=True)
-    t_end = time.time() + args.seconds
-    marked = False
-    while time.time() < t_end:
-        time.sleep(1)
-        if not marked and rec.elapsed() >= 2:
-            rec.mark("marcador do selftest")
-            marked = True
-        print(json.dumps({"t": round(rec.elapsed(), 1), "levels": {k: round(v, 4) for k, v in rec.levels().items()},
-                          "health": rec.health()}), flush=True)
-    stats = rec.stop()
-    print(json.dumps({"stats": stats}, ensure_ascii=False, default=str), flush=True)
-    report(store, meeting_id)
-    for ch in ("L", "R"):
-        samples, sr = decode_range(store, meeting_id, ch, 0, 2000)
-        print(json.dumps({"decode": ch, "frames": int(len(samples)), "sr": sr, "rms": round(rms(samples), 4)}), flush=True)
-    store.close()
+    with Store(db_dir) as store:
+        store.upsert_me("selftest")
+        source = SourceSpec("system", label="Sistema inteiro")
+        if args.app:
+            pid = platform.root_pid(args.app)
+            if pid:
+                source = SourceSpec("app", pid=pid, exe=args.app, label=args.app)
+            else:
+                print(f"{args.app} não está rodando; usando o sistema inteiro")
+        cfg = RecordConfig(mic_device=platform.default_input_device(), source=source, chunk_seconds=args.chunk)
+        meeting_id = store.create_meeting("selftest", source.exe or "sistema", None, None)
+        platform.mic_mute().set_device(cfg.mic_device)
+        rec = Recorder(platform, store, meeting_id, cfg)
+        rec.start()
+        print(json.dumps({"db": str(db_dir), "meeting_id": meeting_id, "mic": rec.L.detail, "source": rec.R.detail,
+                          "warnings": rec.warnings}, ensure_ascii=False), flush=True)
+        t_end = time.time() + args.seconds
+        marked = False
+        while time.time() < t_end:
+            time.sleep(1)
+            rec.check_devices()
+            if not marked and rec.elapsed() >= 2:
+                rec.mark("marcador do selftest")
+                marked = True
+            print(json.dumps({"t": round(rec.elapsed(), 1), "levels": {k: round(v, 4) for k, v in rec.levels().items()},
+                              "health": rec.health()}), flush=True)
+        stats = rec.stop()
+        print(json.dumps({"stats": stats}, ensure_ascii=False, default=str), flush=True)
+        report(store, meeting_id)
+        for ch in ("L", "R"):
+            samples, sr = decode_range(store, meeting_id, ch, 0, 2000)
+            print(json.dumps({"decode": ch, "frames": len(samples), "sr": sr, "rms": round(rms(samples), 4)}), flush=True)
     return 0
 
 
-def alignment(store, meeting_id: int, window_s: int = 10, search_s: int = 300) -> dict:
-    """Deslocamento L/R (U-016) na janela de `window_s` com mais sinal nos dois canais, nos primeiros `search_s`."""
+def alignment(store: Store, meeting_id: int, window_s: int = 10, search_s: int = 300) -> dict[str, Any]:
+    """Deslocamento L/R (U-016) na janela de `window_s` com mais sinal nos dois canais, nos primeiros `search_s`.
+    Decodifica cada pedaço uma vez e fatia as janelas (M-11)."""
+    import numpy as np
+
     from .capture.align import estimate_offset
     from .capture.audio import rms
     from .store.playback import decode_range
 
     m = store.get_meeting(meeting_id) or {}
-    dur = int(m.get("duration_ms") or 0)
-    best = None
-    for t0 in range(0, min(dur, search_s * 1000), window_s * 1000):
-        left, sr = decode_range(store, meeting_id, "L", t0, t0 + window_s * 1000)
-        right, sr_r = decode_range(store, meeting_id, "R", t0, t0 + window_s * 1000)
-        if not len(left) or not len(right) or sr != sr_r:
-            continue
-        score = min(rms(left), rms(right))
+    dur = min(m.get("duration_ms") or 0, search_s * 1000)
+    if dur <= 0:
+        return {"error": "sem duração"}
+    left, sr = decode_range(store, meeting_id, "L", 0, dur)
+    right, sr_r = decode_range(store, meeting_id, "R", 0, dur)
+    if not len(left) or not len(right) or sr != sr_r:
+        return {"error": "sem áudio nos dois canais na mesma taxa"}
+    win = window_s * sr
+    best: tuple[float, int, np.ndarray, np.ndarray] | None = None
+    for start in range(0, min(len(left), len(right)) - win + 1, win):
+        l_win, r_win = left[start:start + win], right[start:start + win]
+        score = min(rms(l_win), rms(r_win))
         if best is None or score > best[0]:
-            best = (score, t0, left, right, sr)
+            best = (score, start, l_win, r_win)
     if best is None or best[0] < 0.004:
         return {"error": "sem janela com sinal nos dois canais"}
-    res = estimate_offset(best[2], best[3], best[4]) or {}
-    return {"t0_ms": best[1], "window_s": window_s, **{k: round(v, 3) for k, v in res.items()}}
+    res = estimate_offset(best[2], best[3], sr) or {}
+    return {"t0_ms": int(best[1] * 1000 / sr), "window_s": window_s, **{k: round(v, 3) for k, v in res.items()}}
 
 
-def report(store, meeting_id: int) -> None:
+def meeting_report(store: Store, meeting_id: int) -> dict[str, Any]:
     m = store.get_meeting(meeting_id) or {}
     dur = m.get("duration_ms")
-    out = {"meeting": meeting_id, "status": m.get("status"), "duration_ms": dur, "channels": {}}
+    channels: dict[str, Any] = {}
+    out: dict[str, Any] = {"meeting": meeting_id, "status": m.get("status"), "duration_ms": dur,
+                           "audio_file": m.get("audio_file"), "channels": channels}
     for ch, st in store.chunk_stats(meeting_id).items():
-        covered_ms = int(st["frames"] * 1000 / (st["sr"] or 16000)) if st["frames"] else 0
-        out["channels"][ch] = {"chunks": st["n"], "covered_ms": covered_ms, "gap_ms": int((st["gaps"] or 0) * 1000 / (st["sr"] or 16000)),
-                               "bytes": st["bytes"], "delta_vs_duration_ms": (covered_ms - dur) if dur else None,
-                               "continuity_issues": store.continuity(meeting_id, ch)}
+        sr = st["sr"] or 16000
+        covered_ms = int(st["frames"] * 1000 / sr) if st["frames"] else 0
+        channels[ch] = {"chunks": st["n"], "covered_ms": covered_ms, "gap_ms": int((st["gaps"] or 0) * 1000 / sr),
+                        "bytes": st["bytes"], "delta_vs_duration_ms": (covered_ms - dur) if dur else None,
+                        "continuity_issues": store.continuity(meeting_id, ch)}
     events = store.list_events(meeting_id)
     out["markers"] = store.list_markers(meeting_id)
     out["events"] = [(e["t_ms"], e["type"]) for e in events]
     stop = next((e for e in reversed(events) if e["type"] == "stop"), None)
     out["drift"] = (stop or {}).get("data", {}).get("drift") if stop else None
+    out["unsaved"] = (stop or {}).get("data", {}).get("unsaved") if stop else None
     out["alignment"] = alignment(store, meeting_id)
+    return out
+
+
+def report(store: Store, meeting_id: int) -> None:
+    out = meeting_report(store, meeting_id)
+    out["orphans"] = store.orphan_report()
+    out["missing_audio_files"] = store.missing_audio_files()
     print(json.dumps(out, ensure_ascii=False, default=str, indent=1), flush=True)
 
 
-def check(args) -> int:
+def check(args: argparse.Namespace) -> int:
     from .store import Store
 
-    store = Store(args.check)
-    ids = [args.meeting] if args.meeting else [m["id"] for m in store.list_meetings()]
-    for mid in ids:
-        report(store, mid)
-    store.close()
+    with Store.open_readonly(args.check) as store:
+        ids = [args.meeting] if args.meeting else [m["id"] for m in store.list_meetings()]
+        for mid in ids:
+            report(store, mid)
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     _utf8()
     from .log import setup
 

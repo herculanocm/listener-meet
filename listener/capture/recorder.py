@@ -1,34 +1,56 @@
 """Gravador de uma reunião: canal L (mic) e canal R (app ou sistema), pausa, mudo, marcadores, saúde dos canais.
 
-Threads: callbacks de áudio só copiam para os chunkers; uma thread de trabalho faz mono, reamostragem,
-FLAC e grava no banco. Eventos e marcadores são gravados por quem chama (thread da interface).
+Threads (F1.2 M-04, M-06, M-16): os callbacks de áudio só enfileiram um bloco imutável; uma única thread de trabalho
+(não daemon) faz mono, reamostragem com estado, pedaços, FLAC e a gravação no destino, com nova tentativa e backoff
+quando o banco não responde. Comandos (`abrir`, `pausar`, `parar`) entram na mesma fila e são processados em ordem.
+A interface lê um snapshot imutável (`CaptureSnapshot`) substituído por referência. Nenhum pedaço é descartado: na
+falha definitiva o FLAC fica retido e o resumo lista os `idx` não gravados (CP3). Eventos e marcadores são gravados por
+quem chama (thread da interface), com a conexão dessa thread.
 """
 from __future__ import annotations
 
 import queue
+import sqlite3
 import threading
-from dataclasses import dataclass, field
+import time
+from collections import deque
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, Protocol
 
 import numpy as np
 
+from ..config.defaults import SPECS, SettingSpec
 from ..log import get_logger
-from ..platform.base import AudioDevice, Platform
-from . import audio as A
+from ..model import EventType, Health, MeetingStatus, SourceKind
+from ..platform.base import AudioDevice, CaptureHandle, ErrorCallback, Platform
+from . import audio
 from .chunker import ChannelChunker, RawChunk
-from .clock import SessionClock
+from .clock import Clock, SessionClock
+from .sinks import ChunkSink, EncodedChunk, RecorderSink
 
 log = get_logger("capture")
 
+CH_INDEX = {"L": 0, "R": 1}
+GAP_TOLERANCE_S = 0.25
+REOPEN_EVERY_S = 5.0
+DB_ALERT_AFTER_S = 30.0
+QUEUE_WARN_BLOCKS = 50          # ~5 s de blocos de 100 ms à espera da thread de trabalho: "banco lento"
 
-@dataclass
+
+class SettingsReader(Protocol):
+    def get[T](self, spec: SettingSpec[T]) -> T: ...
+
+
+@dataclass(frozen=True, slots=True)
 class SourceSpec:
-    kind: str = "system"        # "app" | "system" | "none"
+    kind: str = SourceKind.SYSTEM        # SourceKind: "app" | "system" | "none"
     pid: int | None = None
     exe: str = ""
     label: str = ""
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class RecordConfig:
     mic_device: AudioDevice | None = None
     source: SourceSpec = field(default_factory=SourceSpec)
@@ -38,268 +60,625 @@ class RecordConfig:
     silence_rms: float = 0.004
     l_alert_seconds: float = 15.0
     r_alert_seconds: float = 20.0
-    block_ms: int = 100
+    stop_timeout_s: float = 120.0       # tempo máximo para gravar os pedaços pendentes ao parar (M-04)
+    retry_base_s: float = 1.0           # backoff 1, 2, 4... 30 s (testes e medições usam um valor menor)
+
+    @classmethod
+    def from_settings(cls, settings: SettingsReader, mic_device: AudioDevice | None, source: SourceSpec) -> RecordConfig:
+        """Lê as chaves `capture.*` já validadas (M-24); texto inválido no banco cai no padrão com aviso."""
+        return cls(mic_device=mic_device, source=source,
+                   mic_rate=settings.get(SPECS["capture.mic_rate"]), target_rate=settings.get(SPECS["capture.target_rate"]),
+                   chunk_seconds=settings.get(SPECS["capture.chunk_seconds"]), silence_rms=settings.get(SPECS["capture.silence_rms"]),
+                   l_alert_seconds=settings.get(SPECS["capture.l_alert_seconds"]),
+                   r_alert_seconds=settings.get(SPECS["capture.r_alert_seconds"]))
+
+    def apply_live(self, settings: SettingsReader) -> None:
+        """Escopo `now`: vale na gravação em curso."""
+        self.silence_rms = settings.get(SPECS["capture.silence_rms"])
+        self.l_alert_seconds = settings.get(SPECS["capture.l_alert_seconds"])
+        self.r_alert_seconds = settings.get(SPECS["capture.r_alert_seconds"])
+
+    def validate(self) -> list[str]:
+        """Erros que fariam a gravação morrer pedaço a pedaço (M-08); vazio = ok."""
+        errors = []
+        if self.target_rate <= 0:
+            errors.append(f"taxa gravada inválida: {self.target_rate}")
+        if self.mic_rate <= 0:
+            errors.append(f"taxa do microfone inválida: {self.mic_rate}")
+        if not 0.1 <= self.chunk_seconds <= 3600:
+            errors.append(f"duração do pedaço fora de 0,1 a 3600 s: {self.chunk_seconds}")
+        if not 0.0 <= self.silence_rms <= 1.0:
+            errors.append(f"limiar de silêncio fora de 0 a 1: {self.silence_rms}")
+        if self.l_alert_seconds <= 0 or self.r_alert_seconds <= 0:
+            errors.append("tempo de alerta precisa ser positivo")
+        return errors
 
 
-@dataclass
+@dataclass(slots=True)
 class ChannelState:
+    """Estado de um canal visto pela thread da interface (quem abre e fecha as streams)."""
     name: str
-    level: float = 0.0            # RMS do último bloco (0 a 1)
-    last_signal_rel: float = 0.0  # último instante com sinal acima do limiar
-    blocks: int = 0
     active: bool = False
     detail: str = ""
+    lost_since: float | None = None    # instante (sessão) em que o dispositivo sumiu (M-09)
+    last_reopen: float = -1e9
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureSnapshot:
+    """O que a interface lê: imutável, trocado por referência pela thread de trabalho."""
+    levels: tuple[float, float] = (0.0, 0.0)            # RMS do último bloco (L, R)
+    last_signal: tuple[float, float] = (0.0, 0.0)       # último instante com sinal acima do limiar
+    blocks: tuple[int, int] = (0, 0)
+    chunks: tuple[int, int] = (0, 0)                    # pedaços gravados no destino
+    bytes_written: int = 0
+    drift: dict[str, dict[str, Any]] = field(default_factory=dict)   # por canal; dicionário novo a cada publicação
+    pending: int = 0                                    # pedaços codificados à espera do banco
+    pending_since: float | None = None                  # instante (sessão) do primeiro pedaço pendente
+    db_error: str = ""
+    unsaved: tuple[str, ...] = ()                       # "L3", "R7": retidos após falha definitiva
+    lost: frozenset[str] = frozenset()                  # canais cujo dispositivo sumiu
+
+
+# ---------------------------------------------------------------- mensagens da fila (imutáveis)
+@dataclass(frozen=True, slots=True)
+class _Block:
+    channel: str
+    source: int
+    data: np.ndarray
+    t_perf: float
+
+
+@dataclass(frozen=True, slots=True)
+class _Open:
+    channel: str
+    source: int
+    sample_rate: int
+    channels: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Flags:
+    paused: bool
+    muted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Lost:
+    channel: str
+    source: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Stop:
+    end_rel: float
+    cancel: bool
+
+
+type _Msg = _Block | _Open | _Flags | _Lost | _Stop
+
+
+class _Pipeline:
+    """Um canal na thread de trabalho: mono -> reamostragem com estado -> pedaços na taxa gravada."""
+
+    def __init__(self, channel: str, sr_in: int, ch_in: int, target_rate: int, chunk_seconds: float,
+                 on_chunk: Callable[[RawChunk], None]):
+        self.channel = channel
+        self.target = int(target_rate)
+        self.chunker = ChannelChunker(channel, self.target, 1, on_chunk, chunk_seconds=chunk_seconds, gap_tolerance=GAP_TOLERANCE_S)
+        self.sr_in = int(sr_in)
+        self.ch_in = int(ch_in)
+        self.resampler: audio.StreamResampler | None = None
+        self.min_in = 1
+        self._acc: list[np.ndarray] = []
+        self._acc_n = 0
+        self._acc_t = 0.0
+        self.expected_t: float | None = None
+        self._set_format(sr_in, ch_in)
+
+    def _set_format(self, sr_in: int, ch_in: int) -> None:
+        self.sr_in, self.ch_in = int(sr_in), int(ch_in)
+        self.resampler = audio.StreamResampler(self.sr_in, self.target) if self.sr_in != self.target else None
+        self.min_in = max(1, self.sr_in // 10)          # reamostra em lotes de ~100 ms (10 ms do proc-tap custa 7x)
+        self.expected_t = None
+
+    def set_input(self, sr_in: int, ch_in: int) -> None:
+        """Fonte nova (troca de app): fecha a cauda da antiga; o chunker continua a mesma linha do tempo."""
+        if (sr_in, ch_in) != (self.sr_in, self.ch_in):
+            self.flush()
+            self._set_format(sr_in, ch_in)
+        else:
+            self.flush()
+
+    def feed(self, block: np.ndarray, t_rel: float) -> None:
+        mono = audio.to_mono(block)
+        n = len(mono)
+        if n == 0:
+            return
+        if self.expected_t is not None and t_rel - self.expected_t > GAP_TOLERANCE_S:
+            self.flush()                                  # buraco: termina a cauda antes do silêncio
+        if not self._acc:
+            self._acc_t = t_rel
+        self._acc.append(mono)
+        self._acc_n += n
+        self.expected_t = t_rel + n / self.sr_in
+        if self._acc_n >= self.min_in:
+            self._drain()
+
+    def _drain(self) -> None:
+        if not self._acc:
+            return
+        x = np.concatenate(self._acc) if len(self._acc) > 1 else self._acc[0]
+        t = self._acc_t
+        self._acc, self._acc_n = [], 0
+        if self.resampler is None:
+            self.chunker.write(x, t)
+            return
+        lag = self.resampler.pending_in / self.sr_in       # entrada retida pelo filtro: a saída começa antes de `t`
+        y = self.resampler.process(x)
+        if len(y):
+            self.chunker.write(y, t - lag)
+
+    def flush(self) -> None:
+        self._drain()
+        if self.resampler is not None:
+            y = self.resampler.flush()
+            if len(y):
+                self.chunker.write(y, None)               # contíguo ao que já saiu
+        self.expected_t = None
+
+    def close(self, end_rel: float) -> None:
+        self.flush()
+        self.chunker.close(end_rel)
 
 
 class Recorder:
-    def __init__(self, platform: Platform, store, meeting_id: int, cfg: RecordConfig,
-                 clock: SessionClock | None = None):
+    def __init__(self, platform: Platform, sink: RecorderSink, meeting_id: int, cfg: RecordConfig,
+                 clock: Clock | None = None, *, inline_worker: bool = False, extra_sinks: Sequence[ChunkSink] = ()):
         self.platform = platform
-        self.store = store
+        self.sink = sink
+        self.extra_sinks = tuple(extra_sinks)
         self.meeting_id = meeting_id
         self.cfg = cfg
-        self.clock = clock or SessionClock.start()
+        self.clock: Clock = clock or SessionClock.start()
         self.L = ChannelState("L")
         self.R = ChannelState("R")
         self.paused = False
         self.muted = False
         self.markers = 0
         self.warnings: list[str] = []
-        self._l_handle = None
-        self._r_handle = None
-        self._l_chunker: ChannelChunker | None = None
-        self._r_chunker: ChannelChunker | None = None
-        self._queue: queue.Queue[RawChunk | None] = queue.Queue()
+        self.source = cfg.source
+        self._l_handle: CaptureHandle | None = None
+        self._r_handle: CaptureHandle | None = None
+        self._inline = inline_worker
+        self._queue: queue.SimpleQueue[_Msg] = queue.SimpleQueue()
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self._stopped = False
-        self.chunks_written = {"L": 0, "R": 0}
-        self.bytes_written = 0
-        self.source = cfg.source
+        self._next_source = 0
+        # estado da thread de trabalho
+        self._snap = CaptureSnapshot()
+        self._pipes: dict[str, _Pipeline] = {}
+        self._sources: dict[str, int] = {}
+        self._w_paused = False
+        self._w_muted = False
+        self._w_cancel = False
+        self._pending: deque[EncodedChunk] = deque()
+        self._failed: list[EncodedChunk] = []
+        self._failures = 0
+        self._retry_at: float | None = None
+        self._zeros = np.zeros(48000, np.float32)
 
-    # ---------------------------------------------------------------- ciclo
+    # ---------------------------------------------------------------- ciclo (thread da interface)
     def start(self) -> None:
-        self._worker = threading.Thread(target=self._work, name="chunks-worker", daemon=True)
-        self._worker.start()
-        self.store.add_event(self.meeting_id, self._ms(), "start", {"source": self.source.kind, "exe": self.source.exe})
-        try:
-            self._l_handle = self.platform.open_mic(self.cfg.mic_device, self.cfg.mic_rate, self._on_l)
-            self._l_chunker = ChannelChunker("L", self._l_handle.sample_rate, 1, self._enqueue,
-                                             chunk_seconds=self.cfg.chunk_seconds)
-            self.L.active = True
-            self.L.detail = self.cfg.mic_device.name if self.cfg.mic_device else "microfone padrão"
-        except Exception as e:
-            self._warn(f"microfone não iniciou: {e}")
+        errors = self.cfg.validate()
+        if errors:
+            raise ValueError("configuração de captura inválida: " + "; ".join(errors))
+        if not self._inline:
+            self._worker = threading.Thread(target=self._run, name="capture-worker", daemon=False)
+            self._worker.start()
+        self.sink.add_event(self.meeting_id, self._ms(), EventType.START, {"source": str(self.source.kind), "exe": self.source.exe})
+        self._open_mic()
         self._open_source(self.source)
 
-    def _open_source(self, spec: SourceSpec) -> None:
-        self.R.active = False
+    def _new_source_id(self) -> int:
+        self._next_source += 1
+        return self._next_source
+
+    def _audio_callback(self, channel: str, source: int) -> Callable[[np.ndarray, float], None]:
+        def cb(block: np.ndarray, t_first_perf: float) -> None:
+            self._post(_Block(channel, source, block, t_first_perf))
+        return cb
+
+    def _error_callback(self, channel: str, source: int) -> ErrorCallback:
+        def cb(reason: str) -> None:
+            self._post(_Lost(channel, source, reason))
+        return cb
+
+    def _open_mic(self) -> bool:
+        sid = self._new_source_id()
         try:
-            if spec.kind == "app" and spec.pid:
-                self._r_handle = self.platform.open_app_loopback(spec.pid, self._on_r)
+            handle = self.platform.open_mic(self.cfg.mic_device, self.cfg.mic_rate, self._audio_callback("L", sid),
+                                            self._error_callback("L", sid))
+        except Exception as e:
+            self._warn(f"microfone não iniciou: {e}")
+            return False
+        self._l_handle = handle
+        self._post(_Open("L", sid, handle.sample_rate, handle.channels))
+        handle.start()                                    # só depois de a thread de trabalho conhecer o formato (M-06)
+        self.L.active = True
+        self.L.detail = self.cfg.mic_device.name if self.cfg.mic_device else "microfone padrão"
+        return True
+
+    def _open_source(self, spec: SourceSpec) -> bool:
+        self.R.active = False
+        sid = self._new_source_id()
+        cb, err = self._audio_callback("R", sid), self._error_callback("R", sid)
+        handle: CaptureHandle | None
+        try:
+            if spec.kind == SourceKind.APP and spec.pid:
+                handle = self.platform.open_app_loopback(spec.pid, cb, err)
                 self.R.detail = spec.label or spec.exe or f"pid {spec.pid}"
-            elif spec.kind == "system":
-                self._r_handle = self.platform.open_system_loopback(self._on_r)
+            elif spec.kind == SourceKind.SYSTEM:
+                handle = self.platform.open_system_loopback(cb, err)
                 self.R.detail = "sistema inteiro"
             else:
                 self._r_handle = None
                 self.R.detail = "sem saída"
-                return
+                return False
         except Exception as e:
             self._warn(f"saída ({spec.kind}) não iniciou: {e}")
-            if spec.kind == "app":
-                try:
-                    self._r_handle = self.platform.open_system_loopback(self._on_r)
-                    self.R.detail = "sistema inteiro (fallback)"
-                    spec = SourceSpec("system")
-                except Exception as e2:
-                    self._warn(f"loopback do sistema não iniciou: {e2}")
-                    self._r_handle = None
-                    return
-            else:
+            if spec.kind != SourceKind.APP:
                 self._r_handle = None
-                return
+                return False
+            try:
+                handle = self.platform.open_system_loopback(cb, err)
+                self.R.detail = "sistema inteiro (fallback)"
+                spec = SourceSpec(SourceKind.SYSTEM)
+            except Exception as e2:
+                self._warn(f"loopback do sistema não iniciou: {e2}")
+                self._r_handle = None
+                return False
         self.source = spec
-        if self._r_chunker is None:
-            self._r_chunker = ChannelChunker("R", self._r_handle.sample_rate, self._r_handle.channels,
-                                             self._enqueue, chunk_seconds=self.cfg.chunk_seconds)
-        elif self._r_chunker.sample_rate != self._r_handle.sample_rate or self._r_chunker.channels != self._r_handle.channels:
-            # fonte nova com formato diferente: fecha o chunker antigo no instante atual e abre outro na sequência
-            end = self.clock.rel()
-            old = self._r_chunker
-            old.close(end)
-            self._r_chunker = ChannelChunker("R", self._r_handle.sample_rate, self._r_handle.channels, self._enqueue,
-                                             chunk_seconds=self.cfg.chunk_seconds, start_rel=end)
-            self._r_chunker.idx = old.idx
+        self._r_handle = handle
+        self._post(_Open("R", sid, handle.sample_rate, handle.channels))
+        handle.start()
         self.R.active = True
+        return True
 
     def switch_source(self, spec: SourceSpec) -> None:
         """Troca a fonte do canal R sem parar; o buraco entre uma e outra é preenchido com silêncio."""
         with self._lock:
-            if self._r_handle is not None:
-                self._r_handle.stop()
-                self._r_handle = None
+            if self._stopped:
+                return
+            old, self._r_handle = self._r_handle, None
+            if old is not None:
+                old.stop()                                # um callback tardio da antiga é ignorado pelo id da fonte
             self._open_source(spec)
-        self.store.add_event(self.meeting_id, self._ms(), "source_change",
-                             {"kind": self.source.kind, "exe": self.source.exe, "pid": self.source.pid})
+        self.sink.add_event(self.meeting_id, self._ms(), EventType.SOURCE_CHANGE,
+                            {"kind": str(self.source.kind), "exe": self.source.exe, "pid": self.source.pid})
+
+    def check_devices(self) -> None:
+        """Chamada periódica da interface (M-09): registra `device_lost` e tenta reabrir a cada 5 s pelo id estável."""
+        if self._stopped:
+            return
+        now = self.clock.rel()
+        lost = self._snap.lost
+        for st in (self.L, self.R):
+            if st.name not in lost:
+                continue
+            if st.lost_since is None:
+                st.lost_since = now
+                self._warn(f"dispositivo do canal {st.name} parou de responder ({st.detail})", EventType.DEVICE_LOST)
+            if now - st.last_reopen < REOPEN_EVERY_S:
+                continue
+            st.last_reopen = now
+            with self._lock:
+                ok = self._open_mic() if st.name == "L" else self._open_source(self.source)
+            if ok:
+                st.lost_since = None
+                log.info("canal %s voltou (%s)", st.name, st.detail)
+                self.sink.add_event(self.meeting_id, self._ms(), EventType.DEVICE_BACK, {"channel": st.name, "detail": st.detail})
 
     def pause(self) -> None:
         if not self.paused:
             self.paused = True
-            self.store.add_event(self.meeting_id, self._ms(), "pause", {})
+            self._post(_Flags(True, self.muted))
+            self.sink.add_event(self.meeting_id, self._ms(), EventType.PAUSE, {})
 
     def resume(self) -> None:
         if self.paused:
             self.paused = False
-            self.store.add_event(self.meeting_id, self._ms(), "resume", {})
+            self._post(_Flags(False, self.muted))
+            self.sink.add_event(self.meeting_id, self._ms(), EventType.RESUME, {})
 
     def set_muted(self, muted: bool, source: str = "app") -> None:
         if muted != self.muted:
             self.muted = muted
-            self.store.add_event(self.meeting_id, self._ms(), "mute" if muted else "unmute", {"source": source})
+            self._post(_Flags(self.paused, muted))
+            self.sink.add_event(self.meeting_id, self._ms(), EventType.MUTE if muted else EventType.UNMUTE, {"source": source})
 
     def mark(self, note: str = "") -> int:
         t_ms = self._ms()
-        marker_id = self.store.add_marker(self.meeting_id, t_ms, note)
-        self.store.add_event(self.meeting_id, t_ms, "marker", {"note": note, "marker_id": marker_id})
+        marker_id = self.sink.add_marker(self.meeting_id, t_ms, note)
+        self.sink.add_event(self.meeting_id, t_ms, EventType.MARKER, {"note": note, "marker_id": marker_id})
         self.markers += 1
         return t_ms
 
-    def stop(self) -> dict:
-        if self._stopped:
-            return self.stats()
-        self._stopped = True
-        end_rel = self.clock.rel()
+    def stop(self) -> dict[str, Any]:
+        """Para as streams, enfileira o fechamento e espera a fila esvaziar (até `stop_timeout_s` se o banco falhar)."""
         with self._lock:
-            for h in (self._l_handle, self._r_handle):
-                if h is not None:
-                    h.stop()
-            self._l_handle = self._r_handle = None
-            for ch in (self._l_chunker, self._r_chunker):
-                if ch is not None:
-                    ch.close(end_rel)
-        self._queue.put(None)
-        if self._worker is not None:
-            self._worker.join(timeout=120)
-        self.store.add_event(self.meeting_id, int(end_rel * 1000), "stop", self.stats_light())
-        self.store.finish_meeting(self.meeting_id, int(end_rel * 1000))
-        log.info("reunião %s parada em %.1f s: %s", self.meeting_id, end_rel, self.stats_light())
+            if self._stopped:
+                return self.stats()
+            self._stopped = True
+            end_rel = self.clock.rel()
+            self._stop_handles()
+            self._post(_Stop(end_rel, cancel=False))
+        self._join_worker()
+        snap = self._snap
+        status = MeetingStatus.RECORDED
+        if snap.unsaved:
+            status = MeetingStatus.INTERRUPTED
+            msg = f"{len(snap.unsaved)} pedaço(s) não gravado(s) no banco: {', '.join(snap.unsaved)}"
+            self.warnings.append(msg)
+            log.error("reunião %s: %s (%s)", self.meeting_id, msg, snap.db_error)
+            self.sink.add_event(self.meeting_id, round(end_rel * 1000), EventType.ERROR,
+                                {"message": msg, "unsaved": list(snap.unsaved), "db_error": snap.db_error})
+        self.sink.add_event(self.meeting_id, round(end_rel * 1000), EventType.STOP, self.stats_light())
+        self.sink.finish_meeting(self.meeting_id, round(end_rel * 1000), status)
+        log.info("reunião %s parada em %.1f s (%s): %s", self.meeting_id, end_rel, status, self.stats_light())
         return self.stats()
 
     def cancel(self) -> None:
-        if not self._stopped:
-            self._stopped = True
-            with self._lock:
-                for h in (self._l_handle, self._r_handle):
-                    if h is not None:
-                        h.stop()
-                self._l_handle = self._r_handle = None
-            self._queue.put(None)
-            if self._worker is not None:
-                self._worker.join(timeout=30)
-        self.store.delete_meeting(self.meeting_id)
+        with self._lock:
+            if not self._stopped:
+                self._stopped = True
+                self._stop_handles()
+                self._post(_Stop(self.clock.rel(), cancel=True))
+        self._join_worker()
+        self.sink.delete_meeting(self.meeting_id)
 
-    # ---------------------------------------------------------------- estado
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
+    def _stop_handles(self) -> None:
+        for h in (self._l_handle, self._r_handle):
+            if h is not None:
+                h.stop()
+        self._l_handle = self._r_handle = None
+
+    def _join_worker(self) -> None:
+        if self._worker is not None:
+            self._worker.join()
+            self._worker = None
+
+    # ---------------------------------------------------------------- estado (thread da interface)
     def elapsed(self) -> float:
         return self.clock.rel()
 
-    def levels(self) -> dict[str, float]:
-        return {"L": self.L.level, "R": self.R.level}
+    @property
+    def snapshot(self) -> CaptureSnapshot:
+        return self._snap
 
-    def health(self) -> dict[str, str]:
-        """ok | warn | alert | muted | paused | off por canal."""
+    def levels(self) -> dict[str, float]:
+        lv = self._snap.levels
+        return {"L": lv[0], "R": lv[1]}
+
+    def health(self) -> dict[str, Health]:
+        """Por canal: ok | warn | alert | muted | paused | off | lost; e `db`: ok | warn | alert (banco lento ou parado)."""
         now = self.clock.rel()
-        out = {}
+        snap = self._snap
+        out: dict[str, Health] = {}
         for st, alert_s in ((self.L, self.cfg.l_alert_seconds), (self.R, self.cfg.r_alert_seconds)):
             if not st.active:
-                out[st.name] = "off"
+                out[st.name] = Health.OFF
+            elif st.name in snap.lost:
+                out[st.name] = Health.LOST
             elif self.paused:
-                out[st.name] = "paused"
+                out[st.name] = Health.PAUSED
             elif st.name == "L" and self.muted:
-                out[st.name] = "muted"
+                out[st.name] = Health.MUTED
             else:
-                silent = now - st.last_signal_rel
+                silent = now - snap.last_signal[CH_INDEX[st.name]]
                 warn_at = min(10.0, alert_s / 2.0)      # verde até 10 s (ou metade do limiar, se menor)
-                out[st.name] = "ok" if silent < warn_at else ("warn" if silent < alert_s else "alert")
+                out[st.name] = Health.OK if silent < warn_at else (Health.WARN if silent < alert_s else Health.ALERT)
+        out["db"] = self._db_health(now, snap)
         return out
 
-    def stats_light(self) -> dict:
-        return {"chunks": dict(self.chunks_written), "bytes": self.bytes_written, "markers": self.markers,
-                "gaps_L": self._l_chunker.gap_frames_total if self._l_chunker else None,
-                "gaps_R": self._r_chunker.gap_frames_total if self._r_chunker else None,
-                "drift": {ch.channel: ch.drift_stats() for ch in (self._l_chunker, self._r_chunker) if ch is not None}}
+    def _db_health(self, now: float, snap: CaptureSnapshot) -> Health:
+        if snap.pending and snap.pending_since is not None:
+            return Health.WARN if now - snap.pending_since < DB_ALERT_AFTER_S else Health.ALERT
+        if snap.unsaved:
+            return Health.ALERT
+        if self._queue.qsize() > QUEUE_WARN_BLOCKS:
+            return Health.WARN
+        return Health.OK
 
-    def stats(self) -> dict:
+    def stats_light(self) -> dict[str, Any]:
+        snap = self._snap
+        return {"chunks": {"L": snap.chunks[0], "R": snap.chunks[1]}, "bytes": snap.bytes_written, "markers": self.markers,
+                "gaps_L": snap.drift["L"]["gap_frames"] if "L" in snap.drift else None,
+                "gaps_R": snap.drift["R"]["gap_frames"] if "R" in snap.drift else None,
+                "drift": dict(snap.drift), "pending": snap.pending, "unsaved": list(snap.unsaved)}
+
+    def stats(self) -> dict[str, Any]:
         s = self.stats_light()
-        s.update({"meeting_id": self.meeting_id, "duration_s": round(self.clock.rel(), 1),
-                  "warnings": list(self.warnings), "source": self.source.kind, "source_detail": self.R.detail})
+        s.update({"meeting_id": self.meeting_id, "duration_s": round(self.clock.rel(), 1), "warnings": list(self.warnings),
+                  "source": str(self.source.kind), "source_detail": self.R.detail})
         return s
 
-    # ---------------------------------------------------------------- áudio (threads de áudio)
-    def _on_l(self, block: np.ndarray, t_first_perf: float) -> None:
-        st = self.L
-        st.blocks += 1
-        level = A.rms(block)
-        st.level = level
-        t_rel = self.clock.rel_from_perf(t_first_perf)
-        if level > self.cfg.silence_rms and not (self.paused or self.muted):
-            st.last_signal_rel = t_rel
-        if self.paused or self.muted:
-            block = np.zeros_like(block)
-        ch = self._l_chunker
-        if ch is not None:
-            ch.write(block, t_rel)
+    # ---------------------------------------------------------------- fila
+    def _post(self, msg: _Msg) -> None:
+        if self._inline:
+            self._dispatch(msg)
+        else:
+            self._queue.put_nowait(msg)
 
-    def _on_r(self, block: np.ndarray, t_first_perf: float) -> None:
-        st = self.R
-        st.blocks += 1
-        level = A.rms(block)
-        st.level = level
-        t_rel = self.clock.rel_from_perf(t_first_perf)
-        if level > self.cfg.silence_rms and not self.paused:
-            st.last_signal_rel = t_rel
-        if self.paused:
-            block = np.zeros_like(block)
-        ch = self._r_chunker
-        if ch is not None:
-            ch.write(block, t_rel)
+    def _run(self) -> None:
+        try:
+            while True:
+                timeout = None
+                if self._pending and self._retry_at is not None:
+                    timeout = max(0.0, self._retry_at - time.monotonic())
+                try:
+                    msg = self._queue.get(timeout=timeout)
+                except queue.Empty:
+                    self._flush_pending()
+                    continue
+                if self._dispatch(msg):
+                    return
+        except BaseException:
+            log.exception("thread de trabalho da reunião %s morreu", self.meeting_id)
+            raise
+        finally:
+            try:
+                self.sink.close_thread()
+            except Exception as e:
+                log.debug("fechar conexão da thread de trabalho: %s", e)
 
-    def _enqueue(self, chunk: RawChunk) -> None:
-        self._queue.put(chunk)
+    def _dispatch(self, msg: _Msg) -> bool:
+        match msg:
+            case _Block():
+                self._on_block(msg)
+            case _Open():
+                self._on_open(msg)
+            case _Flags(paused=paused, muted=muted):
+                self._w_paused, self._w_muted = paused, muted
+            case _Lost():
+                self._on_lost(msg)
+            case _Stop():
+                self._on_stop(msg)
+                return True
+        return False
 
     # ---------------------------------------------------------------- thread de trabalho
-    def _work(self) -> None:
-        while True:
-            item = self._queue.get()
-            if item is None:
-                return
-            try:
-                self._persist(item)
-            except Exception as e:
-                self._warn(f"falha ao gravar pedaço {item.channel}{item.idx}: {e}")
+    def _publish(self, **changes: Any) -> None:
+        self._snap = replace(self._snap, **changes)
 
-    def _persist(self, c: RawChunk) -> None:
-        mono = A.to_mono(c.data)
-        target = int(self.cfg.target_rate)
-        if c.sample_rate != target:
-            mono = A.resample(mono, c.sample_rate, target)
-            frames = len(mono)
-            gap = int(round(c.gap_frames * target / c.sample_rate))
+    def _on_open(self, msg: _Open) -> None:
+        self._sources[msg.channel] = msg.source
+        pipe = self._pipes.get(msg.channel)
+        if pipe is None:
+            self._pipes[msg.channel] = _Pipeline(msg.channel, msg.sample_rate, msg.channels, self.cfg.target_rate,
+                                                 self.cfg.chunk_seconds, self._on_raw_chunk)
         else:
-            frames, gap = c.frames, c.gap_frames
-        flac = A.encode_flac(mono, target)
-        self.store.insert_chunk(self.meeting_id, c.channel, c.idx, int(round(c.start_rel * 1000)), frames, target, gap, flac)
-        self.chunks_written[c.channel] = self.chunks_written.get(c.channel, 0) + 1
-        self.bytes_written += len(flac)
+            pipe.set_input(msg.sample_rate, msg.channels)
+        if msg.channel in self._snap.lost:
+            self._publish(lost=self._snap.lost - {msg.channel})
+
+    def _on_lost(self, msg: _Lost) -> None:
+        if self._sources.get(msg.channel) != msg.source:
+            return
+        log.warning("canal %s: stream encerrada pelo sistema (%s)", msg.channel, msg.reason)
+        self._publish(lost=self._snap.lost | {msg.channel})
+
+    def _on_block(self, msg: _Block) -> None:
+        if self._sources.get(msg.channel) != msg.source:
+            return                                        # stream antiga depois de uma troca de fonte
+        pipe = self._pipes.get(msg.channel)
+        if pipe is None:
+            return
+        i = CH_INDEX[msg.channel]
+        t_rel = self.clock.rel_from_perf(msg.t_perf)
+        level = audio.rms(msg.data)
+        silenced = self._w_paused or (self._w_muted and msg.channel == "L")
+        snap = self._snap
+        levels, last, blocks = list(snap.levels), list(snap.last_signal), list(snap.blocks)
+        levels[i] = level
+        blocks[i] += 1
+        if level > self.cfg.silence_rms and not silenced:
+            last[i] = t_rel
+        self._snap = replace(snap, levels=(levels[0], levels[1]), last_signal=(last[0], last[1]), blocks=(blocks[0], blocks[1]))
+        data = self._silence(len(msg.data)) if silenced else msg.data
+        pipe.feed(data, t_rel)
+
+    def _silence(self, n: int) -> np.ndarray:
+        if n > len(self._zeros):
+            self._zeros = np.zeros(n, np.float32)
+        return self._zeros[:n]
+
+    def _on_raw_chunk(self, raw: RawChunk) -> None:
+        if self._w_cancel:
+            return
+        if raw.silent or raw.data is None:
+            flac = audio.silent_flac(raw.sample_rate, raw.frames)
+        else:
+            flac = audio.encode_flac(raw.data, raw.sample_rate)
+        enc = EncodedChunk(self.meeting_id, raw.channel, raw.idx, round(raw.start_rel * 1000), raw.frames, raw.sample_rate,
+                           raw.gap_frames, flac)
+        for sink in self.extra_sinks:
+            try:
+                sink.write_chunk(enc)
+            except Exception:
+                log.exception("destino secundário falhou no pedaço %s", enc.key)
+        self._pending.append(enc)
+        self._publish(pending=len(self._pending), pending_since=self._snap.pending_since if self._snap.pending else self.clock.rel(),
+                      drift={ch: p.chunker.drift_stats() for ch, p in self._pipes.items()})
+        self._flush_pending()
+
+    def _flush_pending(self, deadline: float | None = None) -> None:
+        """Grava os pedaços pendentes em ordem; `OperationalError` espera com backoff (1, 2, 4... 30 s) e tenta de novo.
+        Com `deadline` (ao parar), dorme e insiste até o prazo; sem ele, volta à fila e tenta no próximo despertar."""
+        while self._pending:
+            now = time.monotonic()
+            if self._retry_at is not None and now < self._retry_at:
+                if deadline is None:
+                    return
+                wait = min(self._retry_at - now, deadline - now)
+                if wait <= 0:
+                    return
+                time.sleep(wait)
+                continue
+            enc = self._pending[0]
+            try:
+                self.sink.write_chunk(enc)
+            except sqlite3.IntegrityError:
+                log.exception("pedaço %s já existia no banco; mantendo o existente", enc.key)
+                self._pending.popleft()
+            except sqlite3.OperationalError as e:
+                self._failures += 1
+                backoff = min(30.0 * self.cfg.retry_base_s, self.cfg.retry_base_s * 2 ** (self._failures - 1))
+                self._retry_at = time.monotonic() + backoff
+                log.warning("banco não aceitou o pedaço %s (%s); %d pendente(s), nova tentativa em %.0f s",
+                            enc.key, e, len(self._pending), backoff)
+                self._publish(db_error=str(e), pending=len(self._pending))
+                if deadline is None:
+                    return
+                continue
+            except Exception as e:
+                log.exception("pedaço %s não pôde ser gravado; retido em memória", enc.key)
+                self._failed.append(self._pending.popleft())
+                self._publish(db_error=str(e), pending=len(self._pending), unsaved=tuple(c.key for c in self._failed))
+            else:
+                self._pending.popleft()
+                self._failures, self._retry_at = 0, None
+                snap = self._snap
+                chunks = list(snap.chunks)
+                chunks[CH_INDEX[enc.channel]] += 1
+                self._publish(chunks=(chunks[0], chunks[1]), bytes_written=snap.bytes_written + len(enc.flac),
+                              pending=len(self._pending), pending_since=None if not self._pending else snap.pending_since,
+                              db_error="" if not self._pending else snap.db_error)
+
+    def _on_stop(self, msg: _Stop) -> None:
+        self._w_cancel = msg.cancel
+        for pipe in self._pipes.values():
+            pipe.close(msg.end_rel)
+        if not msg.cancel:
+            self._flush_pending(deadline=time.monotonic() + self.cfg.stop_timeout_s)
+        unsaved = tuple(c.key for c in self._failed) + tuple(c.key for c in self._pending)
+        self._publish(drift={ch: p.chunker.drift_stats() for ch, p in self._pipes.items()}, unsaved=unsaved,
+                      pending=len(self._pending))
 
     # ---------------------------------------------------------------- util
     def _ms(self) -> int:
-        return int(self.clock.rel() * 1000)
+        return round(self.clock.rel() * 1000)
 
-    def _warn(self, msg: str) -> None:
+    def _warn(self, msg: str, type_: EventType = EventType.WARNING) -> None:
         self.warnings.append(msg)
         log.warning("reunião %s: %s", self.meeting_id, msg)
         try:
-            self.store.add_event(self.meeting_id, self._ms(), "warning", {"message": msg})
-        except Exception:
-            pass
+            self.sink.add_event(self.meeting_id, self._ms(), type_, {"message": msg})
+        except Exception as e:
+            log.debug("evento de aviso não gravado: %s", e)

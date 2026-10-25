@@ -1,26 +1,47 @@
 """Tabela "apps tocando agora" (U-001) + "Sistema inteiro", com medidor de pico por app.
-A consulta roda numa thread própria (F1.1 A4): a interface nunca espera pelo sistema de áudio."""
+A consulta roda numa thread própria (F1.1 A4): a interface nunca espera pelo sistema de áudio. O poller não tem
+parent, acorda por `Event` e se destrói ao terminar (M-12); `first_apps_ready` dispara uma vez, na primeira lista."""
 from __future__ import annotations
+
+import functools
+import threading
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QProgressBar, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from ..capture.recorder import SourceSpec
 from ..log import get_logger
+from ..model import SourceKind
 from ..platform.base import PlayingApp
+
+if TYPE_CHECKING:
+    from ..platform.base import Platform
 
 log = get_logger("ui.sources")
 SYSTEM_ROW_PID = -1
+_live_pollers: set[QThread] = set()      # referências até `finished` (sem parent, M-12)
+
+
+def _release(thread: QThread) -> None:
+    _live_pollers.discard(thread)
+    thread.deleteLater()
 
 
 class _Poller(QThread):
     apps_ready = Signal(object)
 
-    def __init__(self, platform, interval_ms: int, parent=None):
-        super().__init__(parent)
+    def __init__(self, platform: Platform, interval_ms: int):
+        super().__init__(None)
         self.platform = platform
-        self.interval_ms = int(interval_ms)
+        self.interval_s = int(interval_ms) / 1000.0
+        self._wake = threading.Event()
 
+    def interrupt(self) -> None:
+        self.requestInterruption()
+        self._wake.set()
+
+    @override
     def run(self) -> None:
         while not self.isInterruptionRequested():
             try:
@@ -29,21 +50,20 @@ class _Poller(QThread):
                 log.debug("list_playing_apps: %s", e)
                 apps = []
             self.apps_ready.emit(apps)
-            waited = 0
-            while waited < self.interval_ms and not self.isInterruptionRequested():
-                self.msleep(50)
-                waited += 50
+            self._wake.wait(self.interval_s)
 
 
 class SourceTable(QWidget):
     selection_changed = Signal()
+    first_apps_ready = Signal()
 
-    def __init__(self, platform, parent=None, refresh_ms: int = 500):
+    def __init__(self, platform: Platform, parent: QWidget | None = None, refresh_ms: int = 500):
         super().__init__(parent)
         self.platform = platform
         self.refresh_ms = refresh_ms
         self._apps: list[PlayingApp] = []
         self._poller: _Poller | None = None
+        self._got_first = False
         self.table = QTableWidget(0, 3, self)
         self.table.setHorizontalHeaderLabels(["Fonte", "Janela", "Nível"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -58,22 +78,31 @@ class SourceTable(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.table)
-        self.render([])
+        self.render_apps([])
 
     def start(self) -> None:
         if self._poller is None:
-            self._poller = _Poller(self.platform, self.refresh_ms, self)
-            self._poller.apps_ready.connect(self.render)
-            self._poller.start()
+            poller = _Poller(self.platform, self.refresh_ms)
+            poller.apps_ready.connect(self._on_apps)
+            poller.finished.connect(functools.partial(_release, poller))
+            _live_pollers.add(poller)
+            self._poller = poller
+            poller.start()
 
     def stop(self) -> None:
         if self._poller is not None:
-            self._poller.requestInterruption()
-            self._poller.wait(3000)
-            self._poller = None
+            poller, self._poller = self._poller, None
+            poller.apps_ready.disconnect(self._on_apps)
+            poller.interrupt()                            # termina sozinho; `finished` faz o deleteLater
 
     # ---- dados ----
-    def render(self, apps) -> None:
+    def _on_apps(self, apps: list[PlayingApp]) -> None:
+        self.render_apps(apps)
+        if not self._got_first:
+            self._got_first = True
+            self.first_apps_ready.emit()
+
+    def render_apps(self, apps: list[PlayingApp]) -> None:
         selected = self.selected_pid()
         self._apps = list(apps)
         self.table.setRowCount(1 + len(self._apps))
@@ -109,11 +138,13 @@ class SourceTable(QWidget):
         items = self.table.selectedItems()
         if not items:
             return None
-        return int(self.table.item(items[0].row(), 0).data(Qt.ItemDataRole.UserRole))
+        it = self.table.item(items[0].row(), 0)
+        return int(it.data(Qt.ItemDataRole.UserRole)) if it is not None else None
 
     def select_pid(self, pid: int) -> bool:
         for row in range(self.table.rowCount()):
-            if int(self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)) == pid:
+            it = self.table.item(row, 0)
+            if it is not None and int(it.data(Qt.ItemDataRole.UserRole)) == pid:
                 self.table.selectRow(row)
                 return True
         return False
@@ -128,8 +159,8 @@ class SourceTable(QWidget):
     def selected_spec(self) -> SourceSpec:
         pid = self.selected_pid()
         if pid is None or pid == SYSTEM_ROW_PID:
-            return SourceSpec(kind="system", label="Sistema inteiro")
+            return SourceSpec(kind=SourceKind.SYSTEM, label="Sistema inteiro")
         for app in self._apps:
             if app.pid == pid:
-                return SourceSpec(kind="app", pid=app.pid, exe=app.exe, label=app.label)
-        return SourceSpec(kind="system", label="Sistema inteiro")
+                return SourceSpec(kind=SourceKind.APP, pid=app.pid, exe=app.exe, label=app.label)
+        return SourceSpec(kind=SourceKind.SYSTEM, label="Sistema inteiro")

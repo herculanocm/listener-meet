@@ -1,53 +1,65 @@
 """Processos e janelas no Windows via ctypes (Toolhelp32 e EnumWindows), sem psutil.
 
-psutil abre um handle por processo e levava ~4 s nesta máquina (EDR); o snapshot leva ~30 ms.
+psutil abre um handle por processo e levava ~4 s nesta máquina (EDR); o snapshot leva ~30 ms. As estruturas e
+assinaturas ctypes ficam no nível do módulo (M-12); `root_of` e `root_pid_for` são puras e rodam em qualquer sistema.
 """
 from __future__ import annotations
 
 import ctypes
+import sys
 from ctypes import wintypes
 from dataclasses import dataclass
+from typing import Any
+
+TH32CS_SNAPPROCESS = 0x00000002
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProcInfo:
     pid: int
     name: str
     ppid: int
 
 
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = (
+        ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260),
+    )
+
+
+_k32: Any = None
+WNDENUMPROC: Any = None
+if sys.platform == "win32":
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    _k32 = ctypes.windll.kernel32
+    _k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    _k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    _k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+    _k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+    _k32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+
 def snapshot_processes() -> dict[int, ProcInfo]:
-    TH32CS_SNAPPROCESS = 0x00000002
-    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
-            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
-            ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260),
-        ]
-
-    k32 = ctypes.windll.kernel32
-    k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.CloseHandle.argtypes = [ctypes.c_void_p]
-    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if sys.platform != "win32":
+        raise OSError("snapshot_processes só existe no Windows")
+    snap = _k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if not snap or snap == INVALID_HANDLE_VALUE:
         raise OSError("CreateToolhelp32Snapshot falhou")
     procs: dict[int, ProcInfo] = {}
     try:
         pe = PROCESSENTRY32W()
         pe.dwSize = ctypes.sizeof(pe)
-        ok = k32.Process32FirstW(snap, ctypes.byref(pe))
+        ok = _k32.Process32FirstW(snap, ctypes.byref(pe))
         while ok:
             procs[int(pe.th32ProcessID)] = ProcInfo(int(pe.th32ProcessID), pe.szExeFile, int(pe.th32ParentProcessID))
-            ok = k32.Process32NextW(snap, ctypes.byref(pe))
+            ok = _k32.Process32NextW(snap, ctypes.byref(pe))
     finally:
-        k32.CloseHandle(snap)
+        _k32.CloseHandle(snap)
     return procs
 
 
@@ -78,11 +90,12 @@ def root_of(pid: int, procs: dict[int, ProcInfo] | None = None) -> int:
 
 def window_titles_by_pid() -> dict[int, str]:
     """Título da maior janela visível de cada processo."""
+    if sys.platform != "win32":
+        raise OSError("window_titles_by_pid só existe no Windows")
     user32 = ctypes.windll.user32
     titles: dict[int, tuple[int, str]] = {}
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
-    def cb(hwnd, _):
+    def cb(hwnd: int, _lparam: int) -> bool:
         if not user32.IsWindowVisible(hwnd):
             return True
         n = user32.GetWindowTextLengthW(hwnd)

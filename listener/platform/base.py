@@ -1,15 +1,15 @@
 """Interfaces da camada de plataforma. Nada específico de sistema operacional aqui."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-from collections.abc import Callable
 
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AudioDevice:
     id: str            # identificador estável (ID do endpoint no Windows; "name:<nome>" quando não há): é o que se persiste
     name: str
@@ -38,7 +38,7 @@ def pick_device(devices: list[AudioDevice], device_id: str | None, name: str | N
     return None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PlayingApp:
     pid: int
     exe: str                   # nome do executável
@@ -52,24 +52,31 @@ class PlayingApp:
         return f"{base} — {self.title}" if self.title else base
 
 
-# Callback de áudio: (bloco float32 com shape (frames, canais), perf_counter do primeiro frame)
-AudioCallback = Callable[[np.ndarray, float], None]
+# Callback de áudio: (bloco float32 com shape (frames, canais), perf_counter do primeiro frame). Roda na thread do
+# driver: só copiar e enfileirar. Callback de erro: motivo em texto quando a stream morre sozinha (dispositivo sumiu).
+type AudioCallback = Callable[[np.ndarray, float], None]
+type ErrorCallback = Callable[[str], None]
 
 
 class CaptureHandle(Protocol):
+    """Stream devolvida parada: quem chama registra o formato e só então chama `start()` (F1.2 M-06)."""
     sample_rate: int
     channels: int
 
+    def start(self) -> None: ...
     def stop(self) -> None: ...
 
 
 class MicMute(Protocol):
+    """Afinizado à thread em que foi usado pela primeira vez quando a plataforma usa COM (win32): `get()` e `set()`
+    podem ser chamados de outra thread, mas o adaptador refaz o endpoint ao notar a troca (M-07)."""
     def set_device(self, device: AudioDevice | None) -> bool: ...   # True se achou o endpoint; False = vai no padrão
     def get(self) -> bool | None: ...          # None = não sei
     def set(self, muted: bool) -> bool: ...    # True se conseguiu
 
 
 class Hotkeys(Protocol):
+    def validate(self, combo: str) -> str | None: ...   # motivo da recusa (sintaxe) ou None quando o atalho é aceitável
     def register(self, combo: str, callback: Callable[[], None]) -> bool: ...
     def errors(self) -> dict[str, str]: ...    # combo -> motivo da falha (sintaxe, já usado por outro app...)
     def unregister_all(self) -> None: ...
@@ -89,10 +96,11 @@ class Platform(Protocol):
     def default_input_device(self) -> AudioDevice | None: ...
     def list_playing_apps(self) -> list[PlayingApp]: ...
 
-    # captura (o callback roda em thread de áudio: só copiar e enfileirar)
-    def open_mic(self, device: AudioDevice | None, sample_rate: int, on_audio: AudioCallback) -> CaptureHandle: ...
-    def open_app_loopback(self, pid: int, on_audio: AudioCallback) -> CaptureHandle: ...
-    def open_system_loopback(self, on_audio: AudioCallback) -> CaptureHandle: ...
+    # captura (o callback roda em thread de áudio: só copiar e enfileirar); a stream volta parada
+    def open_mic(self, device: AudioDevice | None, sample_rate: int, on_audio: AudioCallback,
+                 on_error: ErrorCallback | None = None) -> CaptureHandle: ...
+    def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> CaptureHandle: ...
+    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> CaptureHandle: ...
 
     # controles
     def mic_mute(self) -> MicMute: ...

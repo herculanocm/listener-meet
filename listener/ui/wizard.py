@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, override
 
+import numpy as np
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QVBoxLayout, QWizard, QWizardPage)
+                               QPushButton, QVBoxLayout, QWidget, QWizard, QWizardPage)
 
 from ..capture.audio import rms
 from ..config import bootstrap
-from ..log import LEVELS, attach_file, get_logger
+from ..config.defaults import LOG_LEVELS
+from ..log import attach_file, get_logger
 from ..store import Store
 from .meters import LevelMeter
+
+if TYPE_CHECKING:
+    from ..platform.base import AudioDevice, CaptureHandle, Platform
 
 log = get_logger("ui.wizard")
 
 
 class IntroPage(QWizardPage):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setTitle("Bem-vindo ao listener-meet")
         lab = QLabel("Este app grava suas reuniões (qualquer plataforma) em dois canais, identifica quem fala por "
@@ -33,7 +39,7 @@ class IntroPage(QWizardPage):
 
 
 class UserPage(QWizardPage):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setTitle("Seus dados")
         self.setSubTitle("O canal do microfone é sempre você. Nome e cargo aparecem na transcrição e na ata.")
@@ -53,11 +59,11 @@ class UserPage(QWizardPage):
 
 
 class DbPage(QWizardPage):
-    def __init__(self, platform, initial: Path | None):
+    def __init__(self, platform: Platform, initial: Path | None):
         super().__init__()
         self.platform = platform
         self.setTitle("Onde guardar o banco")
-        self.setSubTitle("Dois arquivos SQLite: um com textos e configurações, outro com o áudio. "
+        self.setSubTitle("Arquivos SQLite: um com textos e configurações e um por mês com o áudio. "
                          "Evite pastas sincronizadas (OneDrive, Dropbox, Google Drive, iCloud).")
         self.path = QLineEdit(str(initial or platform.data_dir_suggestion()))
         browse = QPushButton("Escolher…")
@@ -85,6 +91,7 @@ class DbPage(QWizardPage):
         self.warning.setText(f"Esta pasta está dentro do {synced}: o banco inteiro (áudio e chaves) sairia da máquina "
                              f"pela sincronização." if synced else "")
 
+    @override
     def validatePage(self) -> bool:
         p = Path(self.path.text()).expanduser()
         try:
@@ -104,7 +111,7 @@ class DbPage(QWizardPage):
 class LogPage(QWizardPage):
     """Arquivo de log e nível de detalhe (D-033): escolhidos aqui, editáveis depois nas Configurações (CP8)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setTitle("Arquivo de log")
         self.setSubTitle("Registro do que o app fez e quando (diagnóstico). Escolha onde fica e o nível de detalhe; "
@@ -113,7 +120,7 @@ class LogPage(QWizardPage):
         browse = QPushButton("Escolher…")
         browse.clicked.connect(self._browse)
         self.level = QComboBox()
-        self.level.addItems(list(LEVELS))
+        self.level.addItems(list(LOG_LEVELS))
         self.level.setCurrentText("INFO")
         row = QHBoxLayout()
         row.addWidget(self.path, 1)
@@ -126,6 +133,7 @@ class LogPage(QWizardPage):
         hint.setWordWrap(True)
         form.addRow(hint)
 
+    @override
     def initializePage(self) -> None:
         if not self.path.text().strip():
             self.path.setText(str(Path(self.field("db_dir")).expanduser() / "logs" / "listener.log"))
@@ -135,6 +143,7 @@ class LogPage(QWizardPage):
         if f:
             self.path.setText(f)
 
+    @override
     def validatePage(self) -> bool:
         p = Path(self.path.text().strip()).expanduser()
         if not p.name:
@@ -142,7 +151,7 @@ class LogPage(QWizardPage):
             return False
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "a", encoding="utf-8"):
+            with p.open("a", encoding="utf-8"):
                 pass
         except Exception as e:
             QMessageBox.warning(self, "Arquivo de log", f"Não consigo escrever em {p}: {e}")
@@ -151,13 +160,13 @@ class LogPage(QWizardPage):
 
 
 class MicPage(QWizardPage):
-    def __init__(self, platform):
+    def __init__(self, platform: Platform):
         super().__init__()
         self.platform = platform
         self.setTitle("Teste do microfone")
         self.setSubTitle("Fale alguma coisa: o medidor precisa mexer. Você pode trocar o microfone depois, no warm-up.")
         self.combo = QComboBox()
-        self._devices = []
+        self._devices: list[AudioDevice] = []
         try:
             self._devices = platform.list_input_devices()
         except Exception as e:
@@ -171,13 +180,14 @@ class MicPage(QWizardPage):
         lay.addWidget(self.combo)
         lay.addWidget(self.meter)
         lay.addWidget(self.status)
-        self._handle = None
+        self._handle: CaptureHandle | None = None
         self._level = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(lambda: self.meter.set_rms(self._level))
         self.combo.currentIndexChanged.connect(lambda _: self._open())
 
+    @override
     def initializePage(self) -> None:
         default = None
         try:
@@ -191,16 +201,18 @@ class MicPage(QWizardPage):
         self._open()
         self._timer.start()
 
+    @override
     def cleanupPage(self) -> None:
         self._close()
         self._timer.stop()
 
+    @override
     def validatePage(self) -> bool:
         self._close()
         self._timer.stop()
         return True
 
-    def selected_device(self):
+    def selected_device(self) -> AudioDevice | None:
         i = self.combo.currentIndex()
         return self._devices[i] if 0 <= i < len(self._devices) else None
 
@@ -208,8 +220,10 @@ class MicPage(QWizardPage):
         self._close()
         try:
             self._handle = self.platform.open_mic(self.selected_device(), 16000, self._on_audio)
+            self._handle.start()
             self.status.setText("ouvindo…")
         except Exception as e:
+            self._handle = None
             self.status.setText(f"microfone indisponível: {e}")
             log.warning("assistente: microfone indisponível: %s", e)
 
@@ -221,12 +235,12 @@ class MicPage(QWizardPage):
                 log.debug("fechar mic do assistente: %s", e)
             self._handle = None
 
-    def _on_audio(self, block, t) -> None:
+    def _on_audio(self, block: np.ndarray, t: float) -> None:
         self._level = rms(block)
 
 
 class FirstRunWizard(QWizard):
-    def __init__(self, platform, initial_dir: Path | None = None, parent=None):
+    def __init__(self, platform: Platform, initial_dir: Path | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.platform = platform
         self.store: Store | None = None
@@ -242,9 +256,15 @@ class FirstRunWizard(QWizard):
         self.mic_page = MicPage(platform)
         self.addPage(self.mic_page)
 
+    @override
     def accept(self) -> None:
         db_dir = Path(self.field("db_dir")).expanduser()
-        store = Store(db_dir)
+        try:
+            store = Store(db_dir)
+        except Exception as e:
+            log.exception("não consegui criar o banco em %s", db_dir)
+            QMessageBox.critical(self, "Banco de dados", f"Não consegui criar o banco em {db_dir}:\n{e}")
+            return                                        # o assistente continua aberto para escolher outra pasta
         store.upsert_me(self.field("name").strip(), self.field("email").strip(), self.field("role").strip(),
                         self.field("company").strip())
         store.seed_default_presets()

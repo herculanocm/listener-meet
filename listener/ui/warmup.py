@@ -1,35 +1,46 @@
-"""Warm-up (CP6): microfone e fonte de saída, medidores, teste de 3 s com detecção de eco (U-016), preset, título."""
+"""Warm-up (CP6): microfone e fonte de saída, medidores, teste de 3 s com detecção de eco (U-016), preset, título.
+O microfone abre uma vez só (no `showEvent`); a fonte salva é escolhida na primeira lista de apps (M-12)."""
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
+                               QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from ..capture.align import estimate_offset
 from ..capture.audio import resample, rms, to_mono
 from ..capture.recorder import RecordConfig
+from ..config.defaults import SPECS
 from ..log import get_logger
+from ..model import SourceKind
 from ..platform.base import pick_device
 from .meters import LevelMeter
 from .sources import SourceTable
+
+if TYPE_CHECKING:
+    from ..platform.base import AudioDevice, CaptureHandle, Platform
+    from ..store import Store
 
 log = get_logger("ui.warmup")
 
 
 class WarmupDialog(QDialog):
-    def __init__(self, platform, store, parent=None):
+    def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None):
         super().__init__(parent)
         self.platform = platform
         self.store = store
         self.setWindowTitle("Antes de gravar")
         self.setMinimumWidth(760)
-        self._mic_handle = None
-        self._r_handle = None
+        self._mic_handle: CaptureHandle | None = None
+        self._r_handle: CaptureHandle | None = None
         self._mic_level = 0.0
         self._test_buffer: list[np.ndarray] = []
         self._r_buffer: list[np.ndarray] = []
         self._testing = False
+        self._pending_source: tuple[str, str] | None = None
         self._devices = platform.list_input_devices()
 
         # --- microfone ---
@@ -58,6 +69,8 @@ class WarmupDialog(QDialog):
         # --- saída ---
         src_box = QGroupBox("Saída (canal R: quem você ouve). ● = app de reunião")
         self.sources = SourceTable(platform)
+        self.sources.selection_changed.connect(self._update_src_status)
+        self.sources.first_apps_ready.connect(self._apply_pending_source)
         self.src_status = QLabel("")
         self.echo_label = QLabel("")
         self.echo_label.setWordWrap(True)
@@ -110,25 +123,31 @@ class WarmupDialog(QDialog):
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._tick)
         self._silent_ticks = 0
-        self.mic_combo.currentIndexChanged.connect(lambda _: self._open_mic())
         self._restore_last_choice()
+        self.mic_combo.currentIndexChanged.connect(lambda _: self._open_mic())   # só depois de restaurar: um open só
+        self._update_src_status()
 
     # ---------------------------------------------------------------- ciclo
-    def showEvent(self, event) -> None:
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self._open_mic()
+        if self._mic_handle is None:
+            self._open_mic()
         self.sources.start()
         self._timer.start()
 
-    def closeEvent(self, event) -> None:
+    @override
+    def closeEvent(self, event: QCloseEvent) -> None:
         self._shutdown()
         super().closeEvent(event)
 
+    @override
     def accept(self) -> None:
         self._save_last_choice()
         self._shutdown()
         super().accept()
 
+    @override
     def reject(self) -> None:
         self._shutdown()
         super().reject()
@@ -140,7 +159,7 @@ class WarmupDialog(QDialog):
         self._close_r()
 
     # ---------------------------------------------------------------- mic
-    def _selected_device(self):
+    def _selected_device(self) -> AudioDevice | None:
         i = self.mic_combo.currentIndex()
         return self._devices[i] if 0 <= i < len(self._devices) else None
 
@@ -148,7 +167,9 @@ class WarmupDialog(QDialog):
         self._close_mic()
         dev = self._selected_device()
         try:
-            self._mic_handle = self.platform.open_mic(dev, 16000, self._on_mic)
+            handle = self.platform.open_mic(dev, 16000, self._on_mic)
+            handle.start()
+            self._mic_handle = handle
             self.mic_status.setText("ouvindo…")
         except Exception as e:
             self._mic_handle = None
@@ -171,12 +192,12 @@ class WarmupDialog(QDialog):
                 log.debug("fechar saída do teste: %s", e)
             self._r_handle = None
 
-    def _on_mic(self, block, t_first) -> None:
+    def _on_mic(self, block: np.ndarray, t_first: float) -> None:
         self._mic_level = rms(block)
         if self._testing:
             self._test_buffer.append(np.asarray(block, dtype=np.float32).reshape(-1))
 
-    def _on_r_test(self, block, t_first) -> None:
+    def _on_r_test(self, block: np.ndarray, t_first: float) -> None:
         if self._testing:
             self._r_buffer.append(np.asarray(block, dtype=np.float32))
 
@@ -188,10 +209,11 @@ class WarmupDialog(QDialog):
         self._r_buffer = []
         spec = self.sources.selected_spec()
         try:
-            if spec.kind == "app" and spec.pid:
+            if spec.kind == SourceKind.APP and spec.pid:
                 self._r_handle = self.platform.open_app_loopback(spec.pid, self._on_r_test)
             else:
                 self._r_handle = self.platform.open_system_loopback(self._on_r_test)
+            self._r_handle.start()
         except Exception as e:
             log.debug("teste: saída não abriu: %s", e)
             self._r_handle = None
@@ -231,7 +253,7 @@ class WarmupDialog(QDialog):
             self.echo_label.setStyleSheet("color: #888;")
             self.echo_label.setText("Eco: sinal insuficiente para testar (fale e deixe a saída tocando).")
             return
-        corr, limit = res["correlation"], self.store.get_float("capture.echo_corr_min")
+        corr, limit = res["correlation"], self.store.get(SPECS["capture.echo_corr_min"])
         log.info("teste de eco: correlação %.3f, atraso %.0f ms, limite %.2f", corr, res["offset_ms"], limit)
         if corr >= limit:
             self.echo_label.setStyleSheet("color: #e67e22;")
@@ -247,12 +269,14 @@ class WarmupDialog(QDialog):
         if self._mic_handle is not None:
             if self._mic_level < 0.002:
                 self._silent_ticks += 1
-                if self._silent_ticks > 50:
+                if self._silent_ticks == 51:
                     self.mic_status.setText("sem sinal no microfone há 5 s")
             else:
-                self._silent_ticks = 0
-                if not self._testing:
+                if self._silent_ticks > 50 and not self._testing:
                     self.mic_status.setText("ouvindo…")
+                self._silent_ticks = 0
+
+    def _update_src_status(self) -> None:
         spec = self.sources.selected_spec()
         self.src_status.setText(f"selecionado: {spec.label or spec.kind}")
 
@@ -265,9 +289,7 @@ class WarmupDialog(QDialog):
                 self.preset_combo.setCurrentIndex(i)
                 return
         self._select_mic(self.store.get_setting("warmup.last_mic_device_id"), self.store.get_setting("warmup.last_mic_device_name"))
-        kind = self.store.get_setting("warmup.last_source_kind")
-        exe = self.store.get_setting("warmup.last_source_exe")
-        QTimer.singleShot(600, lambda: self._select_source(kind, exe))
+        self._select_source(self.store.get_setting("warmup.last_source_kind"), self.store.get_setting("warmup.last_source_exe"))
         self.room_check.setChecked(self.store.get_setting("warmup.last_in_room") == "1")
 
     def _select_mic(self, device_id: str, device_name: str) -> bool:
@@ -289,10 +311,22 @@ class WarmupDialog(QDialog):
         return False
 
     def _select_source(self, kind: str, exe: str) -> None:
-        if kind == "app" and exe and self.sources.select_exe(exe):
+        """Aplica agora se a lista de apps já chegou; senão fica pendente para a primeira lista (sem chutar tempo)."""
+        if kind == SourceKind.APP and exe and self.sources.select_exe(exe):
+            self._pending_source = None
             return
-        if kind == "system":
+        if kind == SourceKind.SYSTEM:
             self.sources.select_pid(-1)
+            self._pending_source = None
+            return
+        self._pending_source = (kind, exe)
+
+    def _apply_pending_source(self) -> None:
+        if self._pending_source is not None:
+            kind, exe = self._pending_source
+            self._pending_source = None
+            if not (kind == SourceKind.APP and exe and self.sources.select_exe(exe)):
+                self.sources.select_pid(-1)
 
     def _apply_preset(self, index: int) -> None:
         pid = self.preset_combo.itemData(index)
@@ -325,25 +359,15 @@ class WarmupDialog(QDialog):
         self.store.set_setting("warmup.last_preset_id", pid if pid is not None else "")
         self.store.set_setting("warmup.last_mic_device_id", dev.id if dev else "")
         self.store.set_setting("warmup.last_mic_device_name", dev.name if dev else "")
-        self.store.set_setting("warmup.last_source_kind", spec.kind)
+        self.store.set_setting("warmup.last_source_kind", str(spec.kind))
         self.store.set_setting("warmup.last_source_exe", spec.exe or "")
         self.store.set_setting("warmup.last_in_room", "1" if self.room_check.isChecked() else "0")
 
     # ---------------------------------------------------------------- resultado
-    def result_config(self) -> tuple[RecordConfig, dict]:
-        s = self.store
-        cfg = RecordConfig(
-            mic_device=self._selected_device(),
-            source=self.sources.selected_spec(),
-            mic_rate=s.get_int("capture.mic_rate"),
-            target_rate=s.get_int("capture.target_rate"),
-            chunk_seconds=s.get_float("capture.chunk_seconds"),
-            silence_rms=s.get_float("capture.silence_rms"),
-            l_alert_seconds=s.get_float("capture.l_alert_seconds"),
-            r_alert_seconds=s.get_float("capture.r_alert_seconds"),
-        )
+    def result_config(self) -> tuple[RecordConfig, dict[str, Any]]:
+        cfg = RecordConfig.from_settings(self.store, self._selected_device(), self.sources.selected_spec())
         spec = cfg.source
-        platform_name = (spec.exe or "sistema").removesuffix(".exe") if spec.kind == "app" else "sistema"
+        platform_name = (spec.exe or "sistema").removesuffix(".exe") if spec.kind == SourceKind.APP else "sistema"
         fields = {
             "title": self.title_edit.text().strip() or None,
             "participants": self.participants_edit.text().strip() or None,
