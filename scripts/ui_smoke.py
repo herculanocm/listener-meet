@@ -1,16 +1,17 @@
-"""Verificação das telas da F1 sem monitor (QT_QPA_PLATFORM=offscreen). Desenvolvimento; não é o produto."""
+"""Verificação das telas da F1 sem monitor (QT_QPA_PLATFORM=offscreen). Desenvolvimento; não é o produto.
+Com a plataforma real (Windows) por padrão; `--fake` usa a plataforma simulada dos testes (qualquer sistema)."""
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication
 
 app = QApplication([])
-from listener.log import setup  # noqa: E402
-from listener.platform import get_platform  # noqa: E402
+from listener.log import log_versions, setup  # noqa: E402
 from listener.store import Store  # noqa: E402
 from listener.ui.controller import Controller  # noqa: E402
 from listener.ui.settings_min import SettingsDialog  # noqa: E402
@@ -21,9 +22,17 @@ from listener.ui.widget import MarkerPopup, RecordingWidget  # noqa: E402
 from listener.ui.wizard import FirstRunWizard  # noqa: E402
 
 setup("DEBUG")
-p = get_platform()
+log_versions()
+tmp = Path(tempfile.mkdtemp(prefix="listener-ui-"))
+if "--fake" in sys.argv:
+    from tests.fake_platform import FakePlatform
+
+    p = FakePlatform(tmp)
+else:
+    from listener.platform import get_platform
+
+    p = get_platform()
 p.app_init()
-tmp = tempfile.mkdtemp(prefix="listener-ui-")
 store = Store(tmp)
 store.upsert_me("Teste")
 store.seed_default_presets()
@@ -37,7 +46,7 @@ cfg, fields = wu.result_config()
 wu.close()
 print("warmup ok:", cfg.source.kind, cfg.mic_device.name if cfg.mic_device else None, cfg.mic_device.id if cfg.mic_device else None, fields["platform"])
 rw = RecordingWidget()
-rw.show(); rw.update_state(65, {"L": 0.1, "R": 0.01}, {"L": "ok", "R": "warn"}, False, False, 2); rw.show_alert("teste", True)
+rw.show(); rw.update_state(65, {"L": 0.1, "R": 0.01}, {"L": "ok", "R": "warn", "db": "ok"}, False, False, 2); rw.show_alert("teste", True)
 app.processEvents(); rw.close()
 mp = MarkerPopup(12.0, p); mp.show(); app.processEvents(); mp.close()
 print("widget ok")

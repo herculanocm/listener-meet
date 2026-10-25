@@ -1,13 +1,25 @@
-"""Ícone na bandeja com estado (ocioso, gravando, pausado) e menu."""
+"""Ícone na bandeja com estado (ocioso, gravando, pausado, salvando) e menu."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from functools import cache
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
-STATE_COLORS = {"idle": "#7f8c8d", "recording": "#e74c3c", "paused": "#f1c40f"}
+from ..model import AppState
+
+if TYPE_CHECKING:
+    from .controller import Controller
+
+STATE_COLORS: dict[str, str] = {AppState.IDLE: "#7f8c8d", AppState.RECORDING: "#e74c3c", AppState.PAUSED: "#f1c40f",
+                                AppState.SAVING: "#3498db"}
+STATE_TIPS: dict[str, str] = {AppState.IDLE: "listener-meet: pronto", AppState.RECORDING: "listener-meet: gravando",
+                              AppState.PAUSED: "listener-meet: pausado", AppState.SAVING: "listener-meet: salvando…"}
 
 
+@cache
 def make_icon(color: str) -> QIcon:
     pm = QPixmap(64, 64)
     pm.fill(Qt.GlobalColor.transparent)
@@ -23,7 +35,7 @@ def make_icon(color: str) -> QIcon:
 
 
 class TrayIcon(QSystemTrayIcon):
-    def __init__(self, controller, parent=None):
+    def __init__(self, controller: Controller, parent: QObject | None = None):
         super().__init__(parent)
         self.controller = controller
         self.menu = QMenu()
@@ -48,20 +60,20 @@ class TrayIcon(QSystemTrayIcon):
         self.act_settings.triggered.connect(controller.open_settings)
         self.act_quit.triggered.connect(controller.quit)
         self.activated.connect(self._activated)
-        self.set_state("idle")
+        self.set_state(AppState.IDLE)
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state: AppState) -> None:
         self.setIcon(make_icon(STATE_COLORS.get(state, "#7f8c8d")))
-        self.setToolTip({"idle": "listener-meet: pronto", "recording": "listener-meet: gravando",
-                         "paused": "listener-meet: pausado"}.get(state, "listener-meet"))
-        recording = state in ("recording", "paused")
-        self.act_record.setEnabled(not recording)
+        self.setToolTip(STATE_TIPS.get(state, "listener-meet"))
+        recording = state in (AppState.RECORDING, AppState.PAUSED)
+        self.act_record.setEnabled(state == AppState.IDLE)
         for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop):
             a.setEnabled(recording)
 
-    def _activated(self, reason) -> None:
+    def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.DoubleClick, QSystemTrayIcon.ActivationReason.Trigger):
-            if self.controller.state == "idle":
-                self.controller.open_warmup()
-            else:
-                self.controller.show_widget()
+            match self.controller.state:
+                case AppState.IDLE:
+                    self.controller.open_warmup()
+                case _:
+                    self.controller.show_widget()

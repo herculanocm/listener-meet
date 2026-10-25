@@ -1,14 +1,20 @@
-"""Resumo de fim de gravação (F1): duração, pedaços, tamanho, marcadores; título editável (vai para revisions)."""
+"""Resumo de fim de gravação (F1): duração, pedaços, tamanho, marcadores; título editável (vai para revisions);
+pedaços não gravados, se houver (M-04)."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget
+from typing import TYPE_CHECKING, Any, override
+
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget, QWidget
 
 from ..capture.clock import fmt_mmss
 from .common import human_size
 
+if TYPE_CHECKING:
+    from ..store import Store
+
 
 class SummaryDialog(QDialog):
-    def __init__(self, store, meeting_id: int, stats: dict, parent=None):
+    def __init__(self, store: Store, meeting_id: int, stats: dict[str, Any], parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
@@ -31,15 +37,26 @@ class SummaryDialog(QDialog):
         for mk in markers:
             lst.addItem(f"[{fmt_mmss(mk['t_ms'] / 1000)}] {mk['note'] or '(sem nota)'}")
         form.addRow(f"Marcadores ({len(markers)})", lst)
+        unsaved = stats.get("unsaved") or []
+        if unsaved:
+            lab = QLabel(f"{len(unsaved)} pedaço(s) não foram gravados no banco ({', '.join(unsaved)}); a reunião ficou "
+                         "marcada como interrompida. Veja o log.")
+            lab.setStyleSheet("color: #e74c3c;")
+            lab.setWordWrap(True)
+            form.addRow("Atenção", lab)
         warns = stats.get("warnings") or []
         if warns:
-            form.addRow("Avisos", QLabel("\n".join(warns)))
+            w = QLabel("\n".join(warns))
+            w.setWordWrap(True)
+            form.addRow("Avisos", w)
         sizes = store.db_sizes()
-        form.addRow("Banco", QLabel(f"texto {human_size(sizes['main'])} · áudio {human_size(sizes['audio'])}"))
+        form.addRow("Banco", QLabel(f"texto {human_size(sizes['main'])} · áudio {human_size(sizes['audio'])} "
+                                    f"em {len(sizes.get('audio_files', {}))} arquivo(s)"))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self.accept)
         form.addRow(buttons)
 
+    @override
     def accept(self) -> None:
         title = self.title_edit.text().strip()
         if title:

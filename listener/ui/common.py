@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import math
 
-HEALTH_COLORS = {"ok": "#2ecc71", "warn": "#f1c40f", "alert": "#e74c3c", "muted": "#7f8c8d",
-                 "paused": "#95a5a6", "off": "#34495e"}
-HEALTH_TEXT = {"ok": "ok", "warn": "sem sinal", "alert": "MUDO", "muted": "mudo", "paused": "pausado", "off": "desligado"}
+from ..model import Health
+
+HEALTH_COLORS: dict[str, str] = {Health.OK: "#2ecc71", Health.WARN: "#f1c40f", Health.ALERT: "#e74c3c", Health.MUTED: "#7f8c8d",
+                                 Health.PAUSED: "#95a5a6", Health.OFF: "#34495e", Health.LOST: "#e74c3c"}
+HEALTH_TEXT: dict[str, str] = {Health.OK: "ok", Health.WARN: "sem sinal", Health.ALERT: "MUDO", Health.MUTED: "mudo",
+                               Health.PAUSED: "pausado", Health.OFF: "desligado", Health.LOST: "dispositivo perdido"}
 
 
 def level_fraction(rms_value: float, floor_db: float = -60.0) -> float:
@@ -14,7 +17,7 @@ def level_fraction(rms_value: float, floor_db: float = -60.0) -> float:
     return max(0.0, min(1.0, (db - floor_db) / -floor_db))
 
 
-def human_size(n: int) -> str:
+def human_size(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"

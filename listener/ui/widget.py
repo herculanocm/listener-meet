@@ -1,21 +1,33 @@
 """Widget flutuante de gravação: sempre no topo, arrastável, fundo translúcido com cantos arredondados; posição
-presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10)."""
+presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10).
+Estilos e tooltips só mudam quando o estado muda (M-12)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, override
+
+from PySide6.QtCore import QPoint, Qt, Signal, SignalInstance
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QShowEvent
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
+from ..model import Health
 from .common import HEALTH_COLORS, HEALTH_TEXT, clamp_to_screens
 from .meters import LevelMeter
+
+if TYPE_CHECKING:
+    from ..platform.base import Platform
 
 log = get_logger("ui.widget")
 
 
 def _screen_rects() -> list[tuple[int, int, int, int]]:
-    return [tuple(s.availableGeometry().getRect()) for s in QGuiApplication.screens()]
+    out = []
+    for s in QGuiApplication.screens():
+        g = s.availableGeometry()
+        out.append((g.x(), g.y(), g.width(), g.height()))
+    return out
 
 
 class RecordingWidget(QWidget):
@@ -28,7 +40,7 @@ class RecordingWidget(QWidget):
     settings_requested = Signal()
     moved = Signal(QPoint)
 
-    def __init__(self, size=(320, 96), pos: QPoint | None = None):
+    def __init__(self, size: tuple[int, int] = (320, 96), pos: QPoint | None = None):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("recwidget")
@@ -40,6 +52,10 @@ class RecordingWidget(QWidget):
         """)
         self.resize(*size)
         self._drag_offset: QPoint | None = None
+        self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
+        self._last_health: dict[str, str] = {}
+        self._last_alert: tuple[str | None, bool] = (None, False)
+        self.style_changes = 0                                      # instrumentação dos testes (M-12)
 
         self.time_label = QLabel("00:00")
         self.time_label.setStyleSheet("font-size: 22px; font-weight: 600;")
@@ -103,14 +119,15 @@ class RecordingWidget(QWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         return QPoint(screen.right() - self.width() - 16, screen.bottom() - self.height() - 16)
 
-    def _btn(self, text: str, tip: str, signal) -> QToolButton:
+    def _btn(self, text: str, tip: str, signal: SignalInstance) -> QToolButton:
         b = QToolButton()
         b.setText(text)
         b.setToolTip(tip)
         b.clicked.connect(signal)
         return b
 
-    def paintEvent(self, event) -> None:
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(QPen(QColor("#555555")))
@@ -119,22 +136,39 @@ class RecordingWidget(QWidget):
         p.end()
 
     # ---------------------------------------------------------------- estado
-    def update_state(self, elapsed: float, levels: dict, health: dict, paused: bool, muted: bool, markers: int) -> None:
+    def update_state(self, elapsed: float, levels: Mapping[str, float], health: Mapping[str, str], paused: bool, muted: bool,
+                     markers: int, saving: bool = False) -> None:
         self.time_label.setText(fmt_mmss(elapsed))
-        self.status_label.setText("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
-        self.status_label.setStyleSheet("color: %s; font-weight: 600;" % ("#f1c40f" if paused else "#e74c3c"))
         self.meter_l.set_rms(levels.get("L", 0.0))
         self.meter_r.set_rms(levels.get("R", 0.0))
+        status = (paused, muted, saving)
+        if status != self._last_status:
+            self._last_status = status
+            self.style_changes += 1
+            text = "salvando…" if saving else ("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
+            color = "#3498db" if saving else ("#f1c40f" if paused else "#e74c3c")
+            self.status_label.setText(text)
+            self.status_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+            self.btn_pause.setText("▶" if paused else "⏸")
+            self.btn_mute.setChecked(muted)
+            self.btn_mute.setText("🔇" if muted else "🎤")
+            for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_stop, self.btn_cancel):
+                b.setEnabled(not saving)
         for lab, ch in ((self.health_l, "L"), (self.health_r, "R")):
-            h = health.get(ch, "off")
-            lab.setStyleSheet(f"color: {HEALTH_COLORS.get(h, '#888')}; font-weight: 600;")
-            lab.setToolTip(f"canal {ch}: {HEALTH_TEXT.get(h, h)}")
-        self.btn_pause.setText("▶" if paused else "⏸")
-        self.btn_mute.setChecked(muted)
-        self.btn_mute.setText("🔇" if muted else "🎤")
-        self.markers_label.setText(f"⚑ {markers}" if markers else "")
+            h = health.get(ch, Health.OFF)
+            if self._last_health.get(ch) != h:
+                self._last_health[ch] = h
+                self.style_changes += 1
+                lab.setStyleSheet(f"color: {HEALTH_COLORS.get(h, '#888')}; font-weight: 600;")
+                lab.setToolTip(f"canal {ch}: {HEALTH_TEXT.get(h, h)}")
+        text = f"⚑ {markers}" if markers else ""
+        if self.markers_label.text() != text:
+            self.markers_label.setText(text)
 
     def show_alert(self, text: str | None, can_switch: bool = False) -> None:
+        if (text, can_switch) == self._last_alert:
+            return
+        self._last_alert = (text, can_switch)
         if text:
             self.alert_label.setText(text)
             self.alert_label.show()
@@ -144,27 +178,31 @@ class RecordingWidget(QWidget):
             self.alert_btn.hide()
 
     # ---------------------------------------------------------------- arrastar
-    def mousePressEvent(self, event) -> None:
+    @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
-    def mouseMoveEvent(self, event) -> None:
+    @override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_offset)
 
-    def mouseReleaseEvent(self, event) -> None:
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if self._drag_offset is not None:
             self._drag_offset = None
             self.moved.emit(self.pos())
 
-    def mouseDoubleClickEvent(self, event) -> None:
+    @override
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.settings_requested.emit()
 
 
 class MarkerPopup(QDialog):
     """Popup junto ao cursor: Enter salva a nota, Esc cancela (U-003). Pede o foco à plataforma ao abrir (A10)."""
 
-    def __init__(self, t_rel: float, platform=None, parent=None):
+    def __init__(self, t_rel: float, platform: Platform | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.platform = platform
         self.setStyleSheet("QDialog { background: #1c1e24; border: 1px solid #666; border-radius: 8px; } QLabel { color: #eee; } "
@@ -179,7 +217,8 @@ class MarkerPopup(QDialog):
         pos = QCursor.pos()
         self.move(pos.x() - 20, pos.y() - 20)
 
-    def showEvent(self, event) -> None:
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         if self.platform is not None:
             try:

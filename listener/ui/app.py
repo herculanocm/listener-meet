@@ -1,13 +1,18 @@
-"""Ponto de entrada da interface: identidade do processo, log, primeira inicialização, banco, bandeja, controlador."""
+"""Ponto de entrada da interface: identidade do processo, log, primeira inicialização, banco, bandeja, controlador.
+`aboutToQuit` e `commitDataRequest` (logoff, desligamento) param a gravação sem diálogo (M-05)."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..config import bootstrap
-from ..log import attach_file, get_logger, setup
+from ..log import attach_file, get_logger, log_versions, set_crash_notifier, setup
 from ..platform import get_platform
 from ..store import Store
+
+if TYPE_CHECKING:
+    from ..platform.base import Platform
 
 log = get_logger("ui.app")
 
@@ -17,17 +22,18 @@ def attach_log(store: Store) -> str | None:
     path = store.get_setting("log.path") or str(store.default_log_path())
     try:
         attach_file(path, store.get_setting("log.level"))
-        return None
     except Exception as e:
         log.warning("log em arquivo indisponível (%s): %s", path, e)
         return f"{path}: {e}"
+    return None
 
 
-def run(argv: list[str] | None = None) -> int:
+def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
     setup()
-    platform = get_platform()
+    platform = platform or get_platform()
     platform.app_init()                       # identidade do processo antes de qualquer janela (F1.1 A11)
     app = QApplication(argv or sys.argv)
     app.setApplicationName("listener-meet")
@@ -41,26 +47,36 @@ def run(argv: list[str] | None = None) -> int:
         try:
             store = Store(db_dir)
         except Exception as e:
-            log.error("não consegui abrir o banco em %s: %s", db_dir, e)
+            log.exception("não consegui abrir o banco em %s", db_dir)
             QMessageBox.critical(None, "listener-meet", f"Não consegui abrir o banco em {db_dir}:\n{e}")
             return 1
     first_run = store is None or store.get_me() is None
     if first_run:
+        if store is not None:
+            store.close()                     # o assistente abre o seu próprio (M-13)
+            store = None
         from .wizard import FirstRunWizard
 
         wiz = FirstRunWizard(platform, initial_dir=db_dir)
         if wiz.exec() != QDialog.DialogCode.Accepted or wiz.store is None:
             return 0
         store = wiz.store
+    if store is None:                         # impossível aqui; mantém o verificador de tipos honesto
+        return 1
     log_error = attach_log(store)
-    log.info("listener-meet iniciando; banco em %s (esquema v%d)", store.base_dir, store.schema_version())
+    log_versions({"esquema": f"v{store.schema_version()}", "banco": str(store.base_dir)})
     from .controller import Controller
 
-    controller = Controller(app, platform, store, first_run=first_run)
+    controller = Controller(app, platform, store, first_run=first_run)   # vive até o app.exec() voltar
+    set_crash_notifier(controller.notify)
+    app.aboutToQuit.connect(controller.emergency_stop)
+    app.commitDataRequest.connect(lambda _manager: controller.emergency_stop(), Qt.ConnectionType.DirectConnection)
     controller.start()
-    if log_error and controller.tray:
-        controller.tray.showMessage("listener-meet", f"Log em arquivo indisponível: {log_error}")
-    app._listener_controller = controller   # mantém a referência viva
+    if log_error:
+        controller.notify(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:
         controller.open_warmup()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        set_crash_notifier(None)
