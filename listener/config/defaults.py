@@ -14,6 +14,8 @@ WHISPER_MODELS = ("large-v3-turbo", "small", "medium")       # F2 Q4: turbo padr
 TRANSCRIBERS = ("whisper", "llm")                            # F3 item 9: "llm" habilitado quando o modelo rápido tem áudio
 HF_PROVIDER_ID = "huggingface"
 OUTPUT_LANGUAGES = ("pt-BR", "auto", "en", "es")             # F3 P1: opções fixas mais um código livre
+LIVE_MODELS = ("small", "base")                              # F4 Q4: `small` padrão, `base` na degradação
+LIVE_MIN_CORES = 8                                           # F4 Q1: ao vivo ligado por padrão só a partir daqui
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +75,11 @@ def _bool(s: str) -> bool:
 
 def _default_threads() -> int:
     return max(1, (os.cpu_count() or 2) - 2)
+
+
+def _default_live() -> bool:
+    """F4 Q1: legenda ao vivo ligada por padrão com 8 núcleos lógicos ou mais; senão desligada."""
+    return (os.cpu_count() or 0) >= LIVE_MIN_CORES
 
 
 def _language(s: str) -> str:
@@ -141,12 +148,20 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("llm.proxy_url", "", _NOW, "Proxy HTTP(S) (vazio = o do sistema)", _text, phase="F3"),
     SettingSpec("llm.ca_bundle", "", _NOW, "Certificado raiz PEM (vazio = padrão)", _text, phase="F3"),
     SettingSpec("llm.system_certs", True, _NOW, "Aceitar certificados do sistema (truststore)", _bool, phase="F3"),
+    # F4 (item 10): grupo "Ao vivo"; vale na próxima gravação, salvo o intervalo do resumo parcial, que vale em uso (CP8)
+    SettingSpec("live.enabled", _default_live(), _NEXT, "Legenda ao vivo ligada (padrão do warm-up)", _bool, phase="F4"),
+    SettingSpec("live.names", True, _NEXT, "Nomes ao vivo (padrão do warm-up)", _bool, phase="F4"),
+    SettingSpec("live.model", "small", _NEXT, "Modelo da legenda ao vivo", _text, choices=frozenset(LIVE_MODELS), phase="F4"),
+    SettingSpec("live.threads", 2, _NEXT, "Threads de CPU da legenda ao vivo", int, low=1, high=8, phase="F4"),
+    SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min)", int, low=1, high=60, phase="F4"),
+    SettingSpec("live.in_widget", True, _NEXT, "Mostrar a última legenda no widget", _bool, phase="F4"),
 )}
 
 CAPTURE_KEYS = tuple(k for k in SPECS if k.startswith("capture."))
 HOTKEY_KEYS = tuple(k for k in SPECS if k.startswith("hotkeys."))
 PIPELINE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("pipeline.") and not s.internal)
 LLM_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("llm.") and not s.internal)
+LIVE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("live.") and not s.internal)
 
 # Vistas derivadas para quem só precisa do texto padrão, do escopo ou do rótulo
 DEFAULTS: dict[str, tuple[str, str]] = {k: (s.default_text, str(s.scope)) for k, s in SPECS.items()}

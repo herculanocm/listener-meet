@@ -18,7 +18,7 @@ from typing import Any, override
 import numpy as np
 
 from ...log import get_logger
-from ..base import AudioCallback, AudioDevice, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
+from ..base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
 from ..common import paths, process
 from . import processes
 from .hotkeys import Win32Hotkeys
@@ -32,6 +32,9 @@ MEETING_EXES = {"ms-teams.exe", "teams.exe", "zoom.exe", "cpthost.exe", "webex.e
 MEETING_TITLE_HINTS = ("meet", "teams", "zoom", "webex", "reunião", "meeting", "chamada", "call")
 ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 CREATE_NO_WINDOW, DETACHED_PROCESS, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00000008, 0x00004000   # worker da F2
+PROCESS_SET_INFORMATION = 0x0200                       # F4: EcoQoS do filho ao vivo (SetProcessInformation)
+PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling (PROCESS_INFORMATION_CLASS)
+POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
@@ -43,6 +46,42 @@ class ProcessMemoryCounters(ctypes.Structure):          # PROCESS_MEMORY_COUNTER
                 ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
                 ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
                 ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t))
+
+
+class ProcessPowerThrottlingState(ctypes.Structure):    # PROCESS_POWER_THROTTLING_STATE
+    _fields_ = (("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong))
+
+
+def disable_power_throttling(pid: int) -> bool:
+    """EcoQoS desligado no processo `pid` (F4): `ControlMask` = velocidade de execução e `StateMask` = 0 pedem "nunca
+    estrangular", senão o Windows 11 tende a mandar um processo abaixo do normal para os núcleos de eficiência [exp].
+    Instância própria do kernel32 (`WinDLL`) para não mexer nas assinaturas que outros módulos fixaram."""
+    if sys.platform != "win32":
+        return False
+    from ctypes import wintypes
+
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.SetProcessInformation.restype = wintypes.BOOL
+        k32.SetProcessInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = k32.OpenProcess(PROCESS_SET_INFORMATION, False, int(pid))
+        if not handle:
+            log.info("EcoQoS não desligado no processo %s: OpenProcess falhou (erro %s)", pid, ctypes.get_last_error())
+            return False
+        try:
+            state = ProcessPowerThrottlingState(POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED, 0)
+            ok = bool(k32.SetProcessInformation(handle, PROCESS_POWER_THROTTLING, ctypes.addressof(state), ctypes.sizeof(state)))
+        finally:
+            k32.CloseHandle(handle)
+    except Exception as e:
+        log.info("EcoQoS não desligado no processo %s: %s", pid, e)
+        return False
+    if not ok:
+        log.info("EcoQoS não desligado no processo %s: SetProcessInformation falhou (erro %s)", pid, ctypes.get_last_error())
+    return ok
 
 
 def _com_init() -> None:
@@ -581,6 +620,19 @@ class Win32Platform(Platform):
         p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.DEVNULL,  # noqa: S603
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
         return int(p.pid)
+
+    @override
+    def spawn_child(self, argv: list[str], env: Mapping[str, str] | None = None) -> ChildProcess:
+        """F4: sem console (`CREATE_NO_WINDOW`), abaixo do normal e preso ao app (sem `DETACHED_PROCESS`), com stdin e stdout
+        binários e stderr descartado; EcoQoS desligado logo depois de nascer (falha só vai para o log)."""
+        if sys.platform != "win32":
+            return process.spawn_child(argv, env)
+        flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.PIPE,  # noqa: S603
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+        if disable_power_throttling(p.pid):
+            log.debug("EcoQoS desligado no processo ao vivo %s", p.pid)
+        return p
 
     @override
     def lower_own_priority(self) -> bool:

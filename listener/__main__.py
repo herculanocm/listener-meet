@@ -7,6 +7,9 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --worker [--db DIR] [--once] [--light]            worker da fila de processamento (F2): o app o lança sozinho; à mão
                                                     serve para testes (LISTENER_PIPELINE=fake) e diagnóstico; `--light` é
                                                     o worker leve da F3 (só jobs de LLM, sem torch; LISTENER_LLM=fake)
+  --live --db DIR --meeting ID                      processo ao vivo (F4): o app o lança ao gravar e conversa por stdin e
+                                                    stdout (LISTENER_LIVE=fake nos testes)
+  --live --prepare [--db DIR]                       baixa os modelos do ao vivo (small e base), progresso em linhas JSON
 """
 from __future__ import annotations
 
@@ -146,6 +149,10 @@ def check(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     _utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--live" in argv:                                     # o processo ao vivo tem o seu próprio parser e log (F4)
+        from .live.proc import main as live_main
+
+        return live_main([a for a in argv if a != "--live"])
     if "--worker" in argv:                                   # o worker tem o seu próprio parser e log (F2)
         from .pipeline.worker import main as worker_main
 

@@ -36,6 +36,10 @@ class EventType(StrEnum):
     JOB_ERROR = "job_error"
     JOB_CANCEL = "job_cancel"
     PROFILE_CONFIRM = "profile_confirm"
+    LIVE_STARTED = "live_started"  # F4: processo ao vivo (gravados por ele, salvo `live_cpu`, que o app grava)
+    LIVE_DEGRADED = "live_degraded"
+    LIVE_CPU = "live_cpu"
+    LIVE_STOPPED = "live_stopped"
 
 
 class Health(StrEnum):

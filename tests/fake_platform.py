@@ -6,6 +6,8 @@ tempo, de forma síncrona: com `Recorder(inline_worker=True)` tudo acontece na t
 from __future__ import annotations
 
 import math
+import subprocess
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import override
@@ -13,7 +15,7 @@ from typing import override
 import numpy as np
 
 from listener.capture.clock import ManualClock
-from listener.platform.base import AudioCallback, AudioDevice, ErrorCallback, Platform, PlayingApp
+from listener.platform.base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, Platform, PlayingApp
 
 
 class FakeStream:
@@ -111,6 +113,64 @@ class FakeHotkeys:
         pass
 
 
+class _ChildStdin:
+    def __init__(self, child: FakeChild):
+        self.child = child
+
+    def write(self, data: bytes, /) -> int:
+        if self.child.done.is_set():
+            raise BrokenPipeError("filho encerrado")
+        self.child.received.extend(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.child.done.set()
+
+
+class _ChildStdout:
+    def __init__(self, child: FakeChild):
+        self.child = child
+
+    def readline(self, size: int = -1, /) -> bytes:
+        self.child.done.wait()
+        return b""
+
+    def close(self) -> None:
+        pass
+
+
+class FakeChild:
+    """Filho ao vivo silencioso (F4): guarda o que recebe no stdin, não escreve nada e sai com 0 no EOF ou no kill."""
+
+    def __init__(self, argv: list[str], env: Mapping[str, str] | None, pid: int):
+        self.argv = list(argv)
+        self.env = dict(env or {})
+        self.pid = pid
+        self.received = bytearray()
+        self.done = threading.Event()
+        self.killed = False
+        self.stdin = _ChildStdin(self)
+        self.stdout = _ChildStdout(self)
+
+    def poll(self) -> int | None:
+        return 0 if self.done.is_set() else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        if not self.done.wait(timeout):
+            raise subprocess.TimeoutExpired(self.argv, timeout or 0.0)
+        return 0
+
+    def kill(self) -> None:
+        self.killed = True
+        self.done.set()
+
+    def terminate(self) -> None:
+        self.kill()
+
+
 class FakePlatform(Platform):
     name = "fake"
 
@@ -129,6 +189,7 @@ class FakePlatform(Platform):
         self.streams: list[FakeStream] = []
         self.awake: bool | None = None
         self.spawned: list[tuple[list[str], dict[str, str]]] = []   # F2: o worker nunca é lançado de verdade
+        self.children: list[FakeChild] = []                          # F4: filhos ao vivo silenciosos
         self.lowered = 0
         self.next_pid = 5000
 
@@ -211,6 +272,13 @@ class FakePlatform(Platform):
         self.spawned.append((list(argv), dict(env or {})))
         self.next_pid += 1
         return self.next_pid
+
+    @override
+    def spawn_child(self, argv: list[str], env: Mapping[str, str] | None = None) -> ChildProcess:
+        self.next_pid += 1
+        child = FakeChild(argv, env, self.next_pid)
+        self.children.append(child)
+        return child
 
     @override
     def lower_own_priority(self) -> bool:

@@ -27,7 +27,8 @@ import numpy as np
 from ..log import get_logger
 from ..model import StoreRole
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS,
-                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES)
+                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES, MAIN_V7_COLUMNS,
+                     MAIN_V7_INDEXES)
 
 log = get_logger("store")
 
@@ -170,8 +171,15 @@ def _main_v6_llm(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
             conn.execute(f"UPDATE {schema}.providers SET {col} = 1 WHERE id = 'gemini'")  # noqa: S608
 
 
+def _main_v7_live(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """F4: colunas das legendas ao vivo (`captions`) e das caixas do warm-up no preset; o índice vem depois do ALTER."""
+    _add_columns(conn, schema, MAIN_V7_COLUMNS)
+    for sql in MAIN_V7_INDEXES:
+        conn.execute(sql.format(s=schema))
+
+
 MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
-                                              5: _main_v5_review_columns, 6: _main_v6_llm}
+                                              5: _main_v5_review_columns, 6: _main_v6_llm, 7: _main_v7_live}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 

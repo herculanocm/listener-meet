@@ -1,5 +1,5 @@
 """Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
-`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`) atrás dos nomes de método da F1. Uma conexão por
+`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`) atrás dos nomes de método da F1. Uma conexão por
 thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`;
 `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
@@ -14,6 +14,7 @@ from ..log import get_logger
 from ..model import EventType, MeetingStatus, StoreRole
 from .actions import ActionsRepo
 from .audio import AudioRepo, ChannelStats, ChunkData, ChunkMeta, ContinuityIssue
+from .captions import CaptionsRepo
 from .chat import ChatRepo
 from .core import LEGACY_AUDIO_FILE, MAIN_FILE, Core, with_offset
 from .jobs import JobsRepo
@@ -50,6 +51,7 @@ class Store:
         self.actions = ActionsRepo(self.core)
         self.llm_calls = LlmCallsRepo(self.core)
         self.chat = ChatRepo(self.core)
+        self.captions = CaptionsRepo(self.core)
 
     @classmethod
     def open_readonly(cls, base_dir: str | Path) -> Self:

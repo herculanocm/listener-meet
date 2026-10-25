@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import sys
 
-from .base import AudioDevice, CaptureHandle, Hotkeys, MicMute, Platform, PlayingApp
+from .base import AudioDevice, CaptureHandle, ChildProcess, Hotkeys, MicMute, Platform, PlayingApp
 
-__all__ = ["AudioDevice", "CaptureHandle", "Hotkeys", "MicMute", "Platform", "PlayingApp", "get_platform"]
+__all__ = ["AudioDevice", "CaptureHandle", "ChildProcess", "Hotkeys", "MicMute", "Platform", "PlayingApp", "get_platform"]
 
 
 def get_platform() -> Platform:

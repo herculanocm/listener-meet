@@ -40,6 +40,8 @@ class PresetRow(TypedDict, total=False):
     sample_rate: int
     is_in_room: int
     updated_at: str
+    live_enabled: int | None           # F4: caixas do warm-up guardadas no preset (nulo = padrão das Configurações)
+    live_names: int | None
 
 
 class EventRow(TypedDict, total=False):

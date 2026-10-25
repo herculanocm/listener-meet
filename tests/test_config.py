@@ -31,3 +31,24 @@ def test_record_config_from_settings_falls_back_on_invalid(store):
     assert cfg.silence_rms == 0.02
     assert store.get(SPECS["capture.silence_rms"]) == 0.02 and store.get(SPECS["log.level"]) == "INFO"
     assert RecordConfig(target_rate=0, chunk_seconds=0).validate()
+
+
+def test_live_settings_follow_the_spec(monkeypatch):
+    """F4 item 10: grupo "Ao vivo" na tabela; vale na próxima gravação, salvo o intervalo do resumo (em uso); Q1: ligado por
+    padrão só com 8 núcleos lógicos ou mais."""
+    from listener.config import defaults
+
+    assert defaults.LIVE_KEYS == ("live.enabled", "live.names", "live.model", "live.threads", "live.summary_interval_min", "live.in_widget")
+    assert all(SPECS[k].phase == "F4" for k in defaults.LIVE_KEYS)
+    assert {k for k in defaults.LIVE_KEYS if SPECS[k].scope == SettingScope.NOW} == {"live.summary_interval_min"}
+    assert SPECS["live.model"].default == "small" and validate_setting("live.model", "medium")
+    assert validate_setting("live.model", "base") is None
+    assert SPECS["live.threads"].default == 2 and validate_setting("live.threads", "9") and validate_setting("live.threads", "1") is None
+    assert validate_setting("live.summary_interval_min", "0") and validate_setting("live.summary_interval_min", "60") is None
+    assert SPECS["live.names"].default is True and SPECS["live.in_widget"].default is True
+    monkeypatch.setattr(defaults.os, "cpu_count", lambda: 8)
+    assert defaults._default_live() is True
+    monkeypatch.setattr(defaults.os, "cpu_count", lambda: 4)
+    assert defaults._default_live() is False
+    monkeypatch.setattr(defaults.os, "cpu_count", lambda: None)
+    assert defaults._default_live() is False

@@ -10,6 +10,7 @@ from listener.store import Store
 from listener.store import core as store_core
 from listener.store.core import LEGACY_AUDIO_FILE, AUDIO_PAGE_SIZE, audio_file_for, json_default, schema_for, with_offset
 from listener.store.playback import decode_range
+from listener.store.schema import MAIN_SCHEMA_VERSION as LATEST
 
 
 def _flac(n=16000, value=0.0):
@@ -21,9 +22,9 @@ def test_monthly_audio_file_and_schema(tmp_path):
     current = s.core.current_audio_file()
     assert (tmp_path / "db" / "listener.db").exists() and (tmp_path / "db" / current).exists()
     assert re.fullmatch(r"listener-audio-\d{4}-\d{2}\.db", current) and s.audio_files() == [current]
-    assert s.schema_version() == 6
+    assert s.schema_version() == LATEST
     with s.connection() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert c.execute("PRAGMA user_version").fetchone()[0] == LATEST
         assert c.execute(f"PRAGMA {schema_for(current)}.page_size").fetchone()[0] == AUDIO_PAGE_SIZE
         assert c.execute(f"PRAGMA {schema_for(current)}.journal_mode").fetchone()[0] == "wal"
         assert c.execute(f"PRAGMA {schema_for(current)}.synchronous").fetchone()[0] == 1
@@ -134,7 +135,7 @@ def test_dates_have_offset_and_migration_v2_rewrites_old_rows(tmp_path):
     s._x("DELETE FROM schema_migrations WHERE version > 1")
     s.close()
     s2 = Store(tmp_path)
-    assert s2.schema_version() == 6
+    assert s2.schema_version() == LATEST
     created = s2.get_me()["created_at"]
     assert created.startswith("2026-10-24T18:03:12.345") and re.search(r"[+-]\d\d:\d\d$", created)
     assert with_offset("") == "" and with_offset(None) is None and with_offset("lixo") == "lixo"
@@ -241,7 +242,7 @@ def test_migration_failure_rolls_back_whole_step(tmp_path, monkeypatch):
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 6 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
+        assert ok.schema_version() == LATEST and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
 
 
 def test_two_connections_wait_for_each_other(tmp_path):
@@ -325,7 +326,7 @@ def test_v4_creates_queue_tables_and_rolls_back_in_the_middle(tmp_path, monkeypa
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 6
+        assert ok.schema_version() == LATEST
         with ok.connection() as c:
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
@@ -411,9 +412,9 @@ def test_v5_adds_review_columns_to_a_database_already_in_v4(tmp_path):
     with pytest.raises(RuntimeError, match="abra o app"):
         Store.open_worker(tmp_path)                                               # v4 < 5: o worker espera o app migrar
     with Store(tmp_path) as s:
-        assert s.schema_version() == 6
+        assert s.schema_version() == LATEST
         with s.connection() as c:
-            assert c.execute("PRAGMA user_version").fetchone()[0] == 6
+            assert c.execute("PRAGMA user_version").fetchone()[0] == LATEST
             assert "calib_n" in {r[1] for r in c.execute("PRAGMA table_info(voice_profiles)")}
             assert "cluster_id" in {r[1] for r in c.execute("PRAGMA table_info(voice_embeddings)")}
         mid = s.create_meeting("v5", None, None, None)
@@ -428,7 +429,7 @@ def test_v5_adds_review_columns_to_a_database_already_in_v4(tmp_path):
         assert p["n_samples"] == 1 and p["calib_n"] in (None, 0)
         assert s._q("SELECT cluster_id FROM voice_embeddings")[0][0] == ids["SPK_0"]
     with Store(tmp_path) as again:                                                # reabrir não refaz nada
-        assert again.schema_version() == 6
+        assert again.schema_version() == LATEST
 
 
 def test_v6_adds_llm_tables_columns_seeds_and_rolls_back_in_the_middle(tmp_path, monkeypatch):
@@ -445,7 +446,7 @@ def test_v6_adds_llm_tables_columns_seeds_and_rolls_back_in_the_middle(tmp_path,
         raw.execute(f"DROP TABLE {table}")
     raw.execute("DROP INDEX idx_summaries_meeting_kind")
     raw.execute("DELETE FROM providers")
-    raw.execute("DELETE FROM schema_migrations WHERE version = 6")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 6")
     raw.execute("PRAGMA user_version = 5")
     raw.close()
     with pytest.raises(RuntimeError, match="abra o app"):
@@ -466,9 +467,9 @@ def test_v6_adds_llm_tables_columns_seeds_and_rolls_back_in_the_middle(tmp_path,
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as s:
-        assert s.schema_version() == 6
+        assert s.schema_version() == LATEST
         with s.connection() as c:
-            assert c.execute("PRAGMA user_version").fetchone()[0] == 6
+            assert c.execute("PRAGMA user_version").fetchone()[0] == LATEST
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
             cols = {t: {r[1] for r in c.execute(f"PRAGMA table_info({t})")} for t in ("summaries", "action_items", "clusters", "meetings",
@@ -491,7 +492,72 @@ def test_v6_adds_llm_tables_columns_seeds_and_rolls_back_in_the_middle(tmp_path,
         m = s.get_meeting(mid)
         assert m["glossary"] == "SRM, FIDC" and m["expected_people_json"] == "[1]"
     with Store.open_worker(tmp_path) as w:
-        assert w.schema_version() == 6
+        assert w.schema_version() == LATEST
+
+
+def test_v7_adds_live_columns_and_index_and_rolls_back_in_the_middle(tmp_path, monkeypatch):
+    """F4 (v7): colunas de `captions` e `presets` e o índice das legendas numa só transação; falha no meio desfaz tudo; um
+    banco em v6 com legendas antigas ganha a v7 ao abrir no app sem perder linhas; o worker (e o processo ao vivo) recusa
+    até lá."""
+    with Store(tmp_path) as s:
+        mid = s.create_meeting("v6", None, None, None)
+        s._x("INSERT INTO captions(meeting_id, t_start_ms, t_end_ms, text, created_at) VALUES (?, 0, 1000, 'antiga', 'x')", (mid,))
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("DROP INDEX idx_captions_meeting_time")
+    for table, col, _type in store_core.MAIN_V7_COLUMNS:
+        raw.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 7")
+    raw.execute("PRAGMA user_version = 6")
+    raw.close()
+    with pytest.raises(RuntimeError, match="abra o app"):
+        Store.open_worker(tmp_path)
+
+    def boom(core, conn, schema):
+        store_core._add_columns(conn, schema, store_core.MAIN_V7_COLUMNS[:3])    # metade feita...
+        raise RuntimeError("falha no meio da v7")                                # ...e cai
+
+    monkeypatch.setitem(store_core.MAIN_PY_MIGRATIONS, 7, boom)
+    with pytest.raises(RuntimeError, match="falha no meio da v7"):
+        Store(tmp_path)
+    raw = sqlite3.connect(tmp_path / "listener.db")
+    assert "channel" not in {r[1] for r in raw.execute("PRAGMA table_info(captions)")}       # o ALTER TABLE foi desfeito junto
+    assert raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
+    raw.close()
+    monkeypatch.undo()
+    with Store(tmp_path) as s:
+        assert s.schema_version() == LATEST == 7
+        with s.connection() as c:
+            caps = {r[1] for r in c.execute("PRAGMA table_info(captions)")}
+            presets = {r[1] for r in c.execute("PRAGMA table_info(presets)")}
+            indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        assert {"channel", "confidence", "label", "model", "latency_ms", "person_id", "created_at"} <= caps
+        assert {"live_enabled", "live_names"} <= presets and "idx_captions_meeting_time" in indexes
+        old = s.captions.list_for_meeting(mid)
+        assert [(r["text"], r["channel"], r["label"]) for r in old] == [("antiga", None, None)]          # linha antiga intacta
+        pid = s.upsert_preset("Teams", None, None, "app", "ms-teams.exe")
+        preset = s.get_preset(pid)
+        assert preset["live_enabled"] is None and preset["live_names"] is None                         # nulo = padrão das Configurações
+    with Store.open_worker(tmp_path) as w:                                        # o processo ao vivo abre como worker
+        assert w.schema_version() == 7
+
+
+def test_captions_repo_inserts_lists_after_id_and_cascades(store):
+    from listener.store.captions import CaptionInsert
+
+    mid = store.create_meeting("ao vivo", None, None, None)
+    ana = store.people.create_person("Ana", role="CFO")
+    a = store.captions.insert(CaptionInsert(mid, "R", 5200, 9800, "segundo", ana, "Ana — CFO", 0.71, "faster-whisper:small:int8", 6400))
+    b = store.captions.insert(CaptionInsert(mid, "L", 1000, 4000, "primeiro"))
+    rows = store.captions.list_for_meeting(mid)
+    assert [r["text"] for r in rows] == ["primeiro", "segundo"]                      # ordem de tempo, não de id
+    r = rows[1]
+    assert (r["channel"], r["person_id"], r["label"], r["latency_ms"]) == ("R", ana, "Ana — CFO", 6400)
+    assert r["model"] == "faster-whisper:small:int8"
+    assert r["confidence"] == pytest.approx(0.71) and r["created_at"] and rows[0]["confidence"] is None
+    assert [x["id"] for x in store.captions.list_for_meeting(mid, after_id=a)] == [b]
+    assert len(store.captions.list_for_meeting(mid, limit=1)) == 1 and store.captions.count(mid) == 2
+    store.delete_meeting(mid)                                                          # Cancelar: a FK em cascata limpa as legendas
+    assert store.captions.count(mid) == 0
 
 
 def test_providers_repo_whitelist_active_and_upsert_keeps_fields(store):
