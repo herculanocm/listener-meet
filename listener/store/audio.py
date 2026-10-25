@@ -95,6 +95,18 @@ class AudioRepo:
         return [ChunkData(idx=r["idx"], t_start_ms=r["t_start_ms"], frames=r["frames"], sample_rate=r["sample_rate"], flac=r["flac"])
                 for r in rows]
 
+    def get_chunk(self, meeting_id: int, channel: str, idx: int) -> ChunkData | None:
+        """Um pedaço só, com o FLAC (o player decodifica cada pedaço uma vez e corta janelas curtas dele, F5 R7-02)."""
+        s = self._schema(meeting_id)
+        if s is None:
+            return None
+        rows = self.core.q(f"SELECT idx, t_start_ms, frames, sample_rate, flac FROM {s}.audio_chunks "  # noqa: S608
+                           "WHERE meeting_id = ? AND channel = ? AND idx = ? LIMIT 1", (meeting_id, channel, int(idx)))
+        if not rows:
+            return None
+        r = rows[0]
+        return ChunkData(idx=r["idx"], t_start_ms=r["t_start_ms"], frames=r["frames"], sample_rate=r["sample_rate"], flac=r["flac"])
+
     def chunk_stats(self, meeting_id: int) -> dict[str, ChannelStats]:
         s = self._schema(meeting_id)
         if s is None:

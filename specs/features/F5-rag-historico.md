@@ -1,8 +1,8 @@
 # F5 — Base consultável: busca, histórico e chat sobre todas as reuniões
 
-Status: aprovada (código liberado para os lotes L0 a L5; F5.1 separada, Q10) · Aprovada por Herculano em: 2026-10-25
-(Q1 a Q11 nos padrões; U-024 a U-029 sim; D-047) · Fase e gate: F5 · G5 (mais a F5.1, Q10) · CPs: 2, 3, 7, 8, 9, 10,
-12, 13, 14, 15, 17
+Status: aprovada, em implementação: L0 a L5 commitados (`d9a94e5` a `5c0d458`); faltam as correções R7 e o fechamento
+(seção "Pendente", no fim) · Aprovada por Herculano em: 2026-10-25 (Q1 a Q11 nos padrões; U-024 a U-029 sim; D-047) ·
+Fase e gate: F5 · G5 (mais a F5.1, Q10) · CPs: 2, 3, 7, 8, 9, 10, 12, 13, 14, 15, 17
 Quando ler: ao detalhar ou implementar esta fase (T2). Origem: handoff §3 (Base) e §5 (Histórico), D-009, D-012, D-021,
 D-024. Tabelas: `dados.md`. Tamanho-alvo: 20 KB (24 KB com a Implementação).
 
@@ -229,3 +229,84 @@ não (o rápido) · U-024 a U-029 sim (U-025 na F5.1).
 - L5 grupo "Busca", reindexar com estimativa, `--check` do G5: 1 d
 - F5.1: L6 provedor local e preparo (L0 do e5 int8 contra fp32 no Linux e no Windows): 1,5 d · L7 linha do tempo,
   destaque contínuo e .docx: 1,5 d
+
+## Pendente (25/10): correções da revisão do L4 e do L5 (R7), depois o fechamento
+Revisor novo sobre o diff `c9ec043..5c0d458` (D-040): 7 achados, nenhum alto; o orquestrador reproduziu os três médios.
+Nada corrigido ainda: só `AudioRepo.get_chunk` (início do R7-02, sem uso). Implementar num commit só ("F5: correções da
+revisão do L4 e do L5 (R7-01 a R7-07)"), com um teste por item:
+- R7-01 (média) Q9 furado: `start_recording`, `switch_source` e `open_warmup` (`ui/controller.py`) não mexem no player,
+  e o som que já toca entra no R da gravação do sistema inteiro sem pergunta. Pausar o player ao abrir o warm-up, ao
+  começar a gravar com a fonte "sistema inteiro" (por qualquer caminho) e ao trocar a fonte para ela; aviso na barra do
+  player e no log, sem balão; retomar passa pelo guard do Q9.
+- R7-02 (média) engasgo do player: `_step` (`ui/player.py`) decodifica a janela seguinte (60 s de L e R, ~210 ms no
+  Xeon) entre dois `write`, mais que o buffer do dispositivo (~0,18 s no MME); num dispositivo simulado em tempo real,
+  buracos de 58 ms aos 4,9 s e de 30 ms aos 64,9 s; o `underflowed` do `write` é ignorado. O `write` nunca espera
+  decodificação: produtora com fila limitada de 2 a 5 s, ou cada pedaço FLAC decodificado uma vez (`get_chunk`) e
+  janelas curtas entre os `write`. Pausar, trocar o ponto e ±10 s descartam o pronto por geração e respondem em até um
+  bloco; contar o `underflowed` e registrar no log ao parar; no `finally` do `_run`, relançar a thread se sobrou comando
+  em `_cmds`. Teste curto: buffer de 0,18 s, decodificação atrasada em 300 ms, janelas pequenas pelo `decode_s`.
+- R7-03 (média) a saída aborta: uma busca por sentido presa na rede (até 15 s) ou um chat sem o primeiro pedaço passam
+  do teto das esperas (3 s e 2,5 s); o banco fecha com a QThread viva e o processo sai com código 134 ("QThread:
+  Destroyed while thread is still running"). Cancelamento de verdade no padrão do `llm/partial_task.py` (`asyncio.wait`
+  com `POLL_S`): `chat_task.ask` respeita `cancelled()` antes do primeiro pedaço (chat da F3 e global),
+  `rag.search.embed_query` ganha `should_stop`, `run_global_chat` repassa e a `HistoryPage` liga um `threading.Event` ao
+  `shutdown`; se ainda assim passar do teto, esperar o pior caso da rede antes do `store.close()`, como o
+  `_stop_sweeps`. Teste: embed do fake com `delay_s` longo, Enter e `shutdown` sem thread viva em ~1 s, idem nos dois
+  chats; um script de saída com código 0.
+- R7-04 (baixa) ±10 s presos numa pausa da gravação (o alvo dentro dela vai para o fim). Tempo de áudio nos dois
+  sentidos: para trás, alvo em [a, b) vira a − (b − alvo), repetindo, piso 0; para frente, b + (alvo − a); a posição em
+  pausa segue a regra. Teste: pausa de 10 a 70 s, tocando de 73 s, três vezes −10 s.
+- R7-05 (baixa) a recarga da reunião aberta (job `llm` ou `index` concluído) apaga a pergunta em voo do chat e leva a
+  rolagem ao fim (`ChatPanel.reload`). Em voo, só atualizar os dados ou redesenhar o histórico mais a parcial; fora
+  disso, devolver a rolagem, salvo se estava no fim.
+- R7-06 (baixa) o clique num balão abre a reunião de uma notificação anterior. `notify()` sem reunião zera a reunião
+  guardada; ajustar o teste em `test_rag_ui.py`.
+- R7-07 (baixa) títulos e nomes viram HTML em rótulos `AutoText` e dicas (`PlayerBar.what`, `info` da reunião, notas do
+  Histórico, `ToolTipRole`). `PlainText` nos rótulos e `html.escape` nas dicas; teste com "<b>Comitê</b> <img>".
+- "Completar índice" (decisão do orquestrador): depois de trocar o modelo e escolher "Depois", ele viraria um reindexar
+  completo sem diálogo. Passa a confirmar com a estimativa do "Reindexar tudo…" quando o que falta pede vetores; só
+  trechos, sem custo, segue direto; continua sem confirmar o modelo para a varredura.
+- Opcional: as listas de instrumentação que crescem sem limite (`Player.requests`, `HistoryPage.answers` e `copied`,
+  `TranscriptTab.played`, `MeetingWindow.exported`) viram `deque(maxlen=…)`.
+
+Depois: suíte com fakes, ruff, mypy (Linux e `--platform win32`) e `scripts/ui_smoke.py --fake`; um revisor novo lê só o
+diff das correções numa cópia congelada (`git archive <sha>` extraído numa pasta temporária, `PYTHONPATH` nela e
+`listener.__file__` conferido: o pacote está instalado em modo editável; um worktree de agente nasce do `origin/main`,
+atrasado); fechar: status "implementada", a seção Implementação com o commit das correções, backlog e commit. Relatar ao
+dono as decisões tomadas pelos padrões (D-047): (1)
+`rag.auto_index` só liga e desliga os vetores, trechos e FTS entram sempre; (2) Q9 pergunta a cada vez que o som
+começa, mais a pausa do R7-01; (3) "Completar índice" confirma quando há custo; (4) fechar o Histórico deixa a pergunta
+em voo terminar e ser gravada (sair do app cancela); (5) copiar a resposta leva as citações legíveis, sem a pergunta.
+
+## Implementação (25/10, até o L5; falta o R7)
+Commits: L0 `d9a94e5`, L1 `ca87a12`, L2 `b876088`, L3 `210e5a7`, L4 `394144d`, L5 `5c0d458`, correções das revisões do
+L0 a L2 `beb9fb4` e do L3 `c9ec043`. Novos: `rag/{chunker,vectors,index,fts,search,citations,chat_global,export,
+report}.py`, `pipeline/index_steps.py`, `store/rag.py`, `llm/prompts/rag_chat.py`, `ui/{history,meeting,player}.py`,
+`scripts/rag_probe.py`, `tests/fake_player.py`, `tests/test_rag_*.py`, `tests/test_{player,export}.py`. Desvios e
+decisões técnicas: (a) `rag.auto_index` virou "Vetores automáticos da busca por sentido (embeddings, com custo)": o
+`index` sempre grava trechos e FTS e, desligado, só os vetores ficam de fora (nota "vetores automáticos desligados"),
+salvo reindexar; (b) `text_hash` cobre tipo, título, data, falantes e texto, não o tempo; todo trecho leva o título (FTS
+peso 3 e cabeçalho do embedding), então editar o título regrava os vetores da reunião (~US$ 0,0001); (c) o `index` não
+grava `job_start`, `job_step` nem `job_done` em `events` (roda a cada edição), erro e cancelamento sim; concluído não
+avisa; a fila mostra "Índice: N reuniões (M com erro)"; (d) espera durável das edições: `not_before` (agora + 30 s,
+renovado a cada edição) no `params_json`, respeitado pelo claim; "Concluir" tira a espera e fechar a revisão a antecipa;
+(e) a varredura da abertura é interrompível, sempre põe na fila as reuniões processadas sem trecho e as de último
+`index` com erro, só completa vetores de um modelo confirmado (`rag_models.backfill`) e vai por último no claim; (f) a
+v8
+reconstrói `chat_messages` mantendo a mensagem órfã com reunião nula (CP3); `rag_chunks` e `rag_vectors` com
+AUTOINCREMENT (o cache das assinaturas depende de o id nunca voltar); índice `processing_jobs(meeting_id, kind,
+status)`; (g) FTS: cada palavra entre aspas, E implícito, `*` só na última com 3 ou mais caracteres, palavras vazias
+PT/EN fora quando sobra outra, até 32 palavras, controles C0 viram espaço, refeita com OU abaixo de 10; (h) teto por
+reunião dentro de cada lista e na fusão (Histórico 5, chat `rag.max_per_meeting`); filtro de pessoa = qualquer uma,
+"pessoa que fala"; (i) vetor da consulta com cache LRU, 2 tentativas e 15 s; sem vetor do modelo, nem chama a rede; o
+selo diz o motivo da "busca por palavras"; (j) citações `[R1 12:03]`, várias por colchete, h:mm:ss e intervalo; o tempo
+só casa com as linhas enviadas, até 5 s; o histórico volta ao prompt com as citações legíveis, sem apelidos; o custo da
+resposta soma o chat e o vetor da consulta; (k) player em `threading.Thread` que nasce no primeiro "tocar" e acaba
+quando o som para, primeira janela de 5 s; Q9 pergunta quando o som vai começar, também com a gravação pausada; (l)
+citação do chat da reunião toca do começo da fala até parar; trecho sem tempo abre a aba do tipo sem tocar; (m) área de
+transferência: o `QMimeData` nasce no C++ (`QStandardItemModel.mimeData`), porque o criado pelo Python derrubava o app
+na saída; (n) `--check` só julga a busca com 50 ou mais reuniões e o U-027 com 10 ou mais respostas avaliadas sobre 5
+ou mais reuniões (abaixo, `ok: null`); (o) participantes da lista pelos clusters decididos do job vigente; sem eles,
+quem fala; sem processamento, os esperados. Medido no Linux (`decisoes.md`): FTS5 com 60 mil trechos e assinatura com
+200 mil vetores (L0), busca com 20 mil trechos depois das revisões. Suíte em `5c0d458`: 348 testes mais 5 pulados em
+~22 s. Só o Windows verifica: item 8 de "Verificar no Windows" (`backlog.md`).

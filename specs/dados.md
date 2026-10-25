@@ -25,19 +25,23 @@ KB.
 | action_items | main | id, meeting_id, summary_id, text, owner_person_id (só quando casa com `people`), owner_text, due (AAAA-MM-DD), t_ms e segment_id (evidência; nulo = "sem evidência"), job_id, status (aberta, feita, descartada, superada), created_at | F3 | v6 |
 | voice_profiles | main | id, person_id, model, dim, centroid BLOB float32 (só cadastro e confirmacao), n_samples, threshold (calibrado, nulo = global), sim_mean, sim_std, calib_n (Welford: só similaridades medidas); único (person_id, model) | F2 | v4 |
 | voice_embeddings | main | id, profile_id, meeting_id, segment_id (nulo após reprocessar), cluster_id, vector BLOB, source (cadastro, confirmacao, automatico; invalidado = confirmação corrigida, fora do centroide, nunca apagado), platform (Q9) | F2 | v4 |
-| rag_chunks | main | id, meeting_id, t_start_ms, t_end_ms, text, speakers; mais `rag_fts` (FTS5) | F5 | v1 vazia |
-| rag_vectors | main | chunk_id PK, model, dim, vector (sqlite-vec `vec0`, D-024; fallback BLOB + numpy) | F5 | v1 vazia |
-| processing_jobs | main | id, meeting_id (FK cascade), kind (meeting, reprocess, embed_range; F3: llm, classe leve), status (pendente, rodando, pausado, concluído, erro, cancelado), step (F3: identify, minutes, executive, pre_summary, title, revise, test), progress, error, attempts, params_json (llm: tasks, parent_job_id, auto), config_json (snapshot `pipeline.*`; llm: `LlmJobConfig` sem chave), cancel_requested, heartbeat_at, worker_pid, claimed_at, started_at, finished_at, timings_json (llm: cost_usd, skipped, done) | F2, F3 | v4 |
+| rag_chunks | main | id (AUTOINCREMENT), meeting_id (FK cascade), kind (`ChunkKind`: transcricao, decisao, acao, destaque, pendencia, proximo_passo, ata, executivo, reuniao), t_start_ms (nulo = sem tempo), t_end_ms, seg_first e seg_last (só dica: a navegação usa o tempo), title, speakers, person_ids (JSON), text (corpo), text_hash (tipo, título, data, falantes e texto), job_id (pipeline vigente), created_at; mais `rag_fts` (FTS5 de conteúdo externo, `unicode61 remove_diacritics 2`, `rank` bm25(3, 2, 1), gatilhos de inserção, remoção e `UPDATE OF title, speakers, text`; o FTS5 é requisito da v8). Dado derivado, refeito pelo diff do job `index` | F5 | v8 |
+| rag_vectors | main | id (AUTOINCREMENT), chunk_id (FK cascade), model (`gemini/gemini-embedding-001@768`), dim, vector (float32 normalizado), sig (sinal de v − μ empacotado), created_at; único (chunk_id, model). Busca em numpy, sem sqlite-vec (D-048) | F5 | v8 |
+| rag_models | main | model PK, dim, mu (média dos vetores; refeita a cada dobra até 2 mil, então congelada), mu_n, backfill (1 = a varredura completa os vetores deste modelo: o primeiro do índice ou o confirmado por "reindexar"), updated_at | F5 | v8 |
+| processing_jobs | main | id, meeting_id (FK cascade), kind (meeting, reprocess, embed_range; F3: llm, classe leve; F5: index, classe leve, depois dos llm e com a varredura por último), status (pendente, rodando, pausado, concluído, erro, cancelado), step (F3: identify, minutes, executive, pre_summary, title, revise, test; F5: index_text, index_vectors), progress, error, attempts, params_json (llm: tasks, parent_job_id, auto; F5 index: reason pipeline, llm, review, edit, sweep ou reindex, force e not_before, a espera durável das edições), config_json (snapshot `pipeline.*`; llm: `LlmJobConfig` sem chave), cancel_requested, heartbeat_at, worker_pid, claimed_at, started_at, finished_at, timings_json (llm: cost_usd, skipped, done; index: trechos, vetores e a nota dos faltantes) | F2, F3, F5 | v8 |
 | clusters | main | id, meeting_id (FK cascade), job_id, channel, cluster (SPK_n; L = usuário), speech_ms, centroid BLOB, model, person_id (sugestão ou confirmação), similarity, margin, status (auto, confirmado, ambíguo, sem_nome, ignorado), merged_into; F3: llm_person_id, llm_name, llm_confidence, llm_evidence_json (só em ambíguo e sem_nome, via `set_llm_suggestion`, CP11), decision_source (auto, usuario, usuario_pyannote, usuario_llm, usuario_outro) | F2, F3 | v6 |
 | job_artifacts | main | job_id (FK cascade), step, idx, data BLOB (JSON zlib mais float32), PK (job_id, step, idx); dado derivado, apagado ao concluir; F3: `ok` por tarefa concluída e notas por bloco da ata hierárquica | F2, F3 | v4 |
-| llm_calls | main | id, meeting_id (nulo = glossário antes da reunião ou reunião apagada: Cancelar mantém a chamada paga, para o custo do mês, sem a reunião e sem o pedido e a resposta guardados), job_id (do pai), task (F4: partial), provider, model, prompt_version, schema_hash, input_tokens, output_tokens, cached_tokens, audio_tokens, cost_usd (nulo = sem preço), latency_ms, status (ok, erro), error (redigido), strategy (direct, map_reduce:n, stream, canary), request_blob e response_blob (zlib, se `llm.store_payloads`), created_at | F3 | v6 |
-| chat_messages | main | id, meeting_id (FK cascade), role (user, assistant), text, provider, model, citations_json ([{t_ms, segment_id}]), cost_usd, created_at | F3 | v6 |
+| llm_calls | main | id, meeting_id (nulo = glossário antes da reunião ou reunião apagada: Cancelar mantém a chamada paga, para o custo do mês, sem a reunião e sem o pedido e a resposta guardados), job_id (do pai), task (F4: partial; F5: rag_embed, por lote do índice com a reunião ou da consulta com reunião nula e strategy `query`, e rag_chat, do chat global, com reunião nula), provider, model, prompt_version, schema_hash, input_tokens, output_tokens, cached_tokens, audio_tokens, cost_usd (nulo = sem preço), latency_ms, status (ok, erro), error (redigido), strategy (direct, map_reduce:n, stream, canary), request_blob e response_blob (zlib, se `llm.store_payloads`), created_at | F3 | v6 |
+| chat_messages | main | id, meeting_id (FK cascade; nulo = chat global ou órfã da reconstrução da v8), thread_id (F5, FK cascade), role (user, assistant), text, provider, model, citations_json (F3: [{t_ms, segment_id}]; global: [{alias, meeting_id, t_ms, cited_ms, segment_id}]), cost_usd, rating (U-027: 1, 0 ou nulo), created_at | F3, F5 | v8 |
+| chat_threads | main | id, title (primeira pergunta), created_at: conversas do chat global | F5 | v8 |
 | llm_prices | main | provider, model (id ou prefixo de família), input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at; PK (provider, model); sementes do projeto, editáveis na sub-aba | F3 | v6 |
 
 Índices v1: markers(meeting_id, t_ms); events(meeting_id, t_ms); idx_chunks_meeting(meeting_id, channel, t_start_ms) em
 cada arquivo de áudio. v4: segments(meeting_id, t_start_ms); clusters(meeting_id); processing_jobs(status, id);
 voice_embeddings(profile_id); único voice_profiles(person_id, model). v6: summaries(meeting_id, kind);
-summaries(job_id); action_items(meeting_id); llm_calls(meeting_id, id); chat_messages(meeting_id, id). v7:
+summaries(job_id); action_items(meeting_id); llm_calls(meeting_id, id); chat_messages(meeting_id, id). v8:
+processing_jobs(meeting_id, kind, status); rag_chunks(meeting_id, t_start_ms); rag_vectors(model, id);
+chat_messages(thread_id, id). v7:
 captions(meeting_id, t_start_ms).
 
 Regras: nada apaga dados (CP3), salvo Cancelar da gravação em curso e Reprocessar (troca atômica dos clusters e segments
@@ -47,12 +51,15 @@ toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `
 `ui.widget_pos`, `ui.widget_size`, `warmup.last_*`, `pipeline.*` (F2; internas `paused_until`, `paused_manual`,
 `rtf_json`), `llm.*` (F3: output_language, auto_tasks, cost_alert_usd, max_parallel, audio_second_opinion,
 glossary_enabled, store_payloads, proxy_url, ca_bundle, system_certs), `live.*` (F4: enabled, names, model, threads,
-summary_interval_min com 0 = parcial desligado, in_widget), `ui.live_geometry`, `ui.live_on_top`; tipo, faixa e escopo
-na tabela `SPECS` (M-24).
+summary_interval_min com 0 = parcial desligado, in_widget), `ui.live_geometry`, `ui.live_on_top`, `rag.*` (F5:
+auto_index = vetores automáticos, top_k, max_per_meeting), `hotkeys.history`, `ui.history_geometry`,
+`ui.meeting_geometry`, `ui.history_filters`; tipo, faixa e escopo na tabela `SPECS` (M-24).
 Esquema do main: v1 (F1), v2 (datas com offset, A5), v3 (`meetings.audio_file`), v4 (F2: fila, clusters, artefatos,
 colunas dos perfis), v5 (calib_n, cluster_id), v6 (F3: camada de LLM, sementes de preço e provedores), v7 (F4: colunas
-de `captions` e `presets`, índice das legendas); áudio: v1 tabela, v2 datas, por arquivo; `user_version` acompanha; cada
-migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo `json_default` (numpy e datas; o resto é erro).
+de `captions` e `presets`, índice das legendas), v8 (F5: base consultável, FTS5 obrigatório, conversas, índice da fila
+por reunião; a guarda da CP3 renomeia tabelas da v1 com linhas para `*_v1`); áudio: v1 tabela, v2 datas, por arquivo;
+`user_version` acompanha; cada migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo `json_default`
+(numpy e datas; o resto é erro).
 Papéis do `Store`: APP migra; WORKER (worker da F2 e processo ao vivo da F4) escreve no main sem migrar e lê o áudio em
 `mode=ro` com `mmap_size` 256 MB; READONLY.
 Job vigente de uma reunião (revisão, leitura, trecho de 5 s): o `concluído` mais recente entre `meeting` e `reprocess`;

@@ -13,7 +13,8 @@ reasoning: Reasoning = NONE, timeout_s=120.0, cache_prefix=False)` · `Usage(inp
 audio_tokens=0)` · `Completion(text, data: Mapping | None, usage, model, latency_ms, finish, raw_id)` · `ModelInfo(id,
 display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok, latency_ms, model, error)` ·
 `Capability`: TEXT, JSON, AUDIO_IN, EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary, identify, minutes,
-executive, pre_summary, title, revise, transcribe, chat, test · `Reasoning`: none, low, high · `ProviderKind`: gemini,
+executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5) · `Reasoning`:
+none, low, high · `ProviderKind`: gemini,
 openai, anthropic · `SummaryKind`: pre_summary, minutes, executive, partial (F4) · `SummaryStatus`: atual, superada, erro ·
 `ActionStatus`: aberta, feita, descartada, superada · `DecisionSource`: auto, usuario, usuario_pyannote, usuario_llm,
 usuario_outro.
@@ -71,6 +72,12 @@ minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de 
 - `transcribe` (LLMAudioTranscriber): `{language, utterances: [{start_s, end_s, text}]}` relativo ao início da janela.
 - `chat`: texto livre com `[mm:ss]` da transcrição enviada; o projeto reescreve cada `[mm:ss]` para o segmento mais
   próximo (≤ 5 s) ou remove o link, nunca a citação.
+- `rag_chat` (F5, chat global, rápido): trechos de até `rag.top_k` por reunião com apelido (`[R1] título — data —
+  participantes`, linhas `#segment_id [mm:ss] Nome — Cargo: texto` dos segmentos vigentes); a resposta cita `[R1 12:03]`
+  e o projeto liga à reunião e à linha enviada mais próxima (≤ 5 s); o histórico volta ao prompt sem apelidos.
+- Embeddings (F5): `embed` passa pela retentativa e pelo timeout do `RetryingProvider`; o índice normaliza sempre (a
+  OpenAI não normaliza); documentos com `task=document` em lotes de 64, consulta com `task=query`; `rag_embed` em
+  `llm_calls` por lote.
 
 ## Evidência verificável
 Toda decisão, ação, destaque e sugestão de identidade carrega `segment_ids` ou `{segment_id, quote}`; o projeto confere
