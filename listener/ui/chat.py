@@ -1,6 +1,8 @@
 """Painel de chat da leitura (F3 item 10, U-019): pergunta -> resposta em streaming (`StreamTask`, sinal por pedaço,
 cancelamento ao fechar; a resposta parcial aparece a cada pedaço, F3.1 R3-06), citações `[mm:ss]` clicáveis que tocam o
-segmento (`listener://play?seg=<id>`), histórico de `chat_messages`. Chat sobre todas as reuniões é F5."""
+segmento (`listener://play?seg=<id>`), histórico de `chat_messages`. Chat sobre todas as reuniões é F5 (`ui/history.py`).
+F5 L4: a citação toca pelo player único do app, do começo da fala com L e R misturados até parar (item 10); a aba "Chat"
+da reunião aberta usa este painel sem outra mudança."""
 from __future__ import annotations
 
 import functools
@@ -13,19 +15,23 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QText
 from ..llm import chat_task
 from ..llm.costs import fmt_usd
 from ..log import get_logger
-from .tasks import StreamTask, run_stream, run_task
+from .tasks import StreamTask, run_stream
 
 if TYPE_CHECKING:
     from ..store import Store
+    from .player import Player
 
 log = get_logger("ui.chat")
 
 
 class ChatPanel(QWidget):
-    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None):
+    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, *, player: Player | None = None,
+                 title: Any = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
+        self.player = player                               # F5: as citações tocam pelo player único
+        self.title_fn = title                              # o título da reunião para a barra do player
         self.task: StreamTask | None = None
         self.answers: list[chat_task.ChatAnswer] = []       # instrumentação dos testes
         self.played: list[tuple[str, int, int]] = []
@@ -115,6 +121,14 @@ class ChatPanel(QWidget):
         """Ao fechar a janela: cancela o streaming em curso (a corrotina para no próximo pedaço)."""
         self.stop()
 
+    def shutdown(self, wait_ms: int = 2500) -> None:
+        """Saída do app (F5A-32): cancela o streaming e espera a thread antes de o banco fechar."""
+        task = self.task
+        if task is not None:
+            task.cancel()
+            if not task.wait(wait_ms):
+                log.warning("o chat da reunião %s não terminou em %d ms", self.meeting_id, wait_ms)
+
     # ---------------------------------------------------------------- citações
     def _link_clicked(self, url: QUrl) -> None:
         seg = chat_task.citation_segment(url.toString())
@@ -125,20 +139,8 @@ class ChatPanel(QWidget):
             self.status.setText("segmento citado não existe mais")
             return
         self.played.append(rng)
-        channel, t0, t1 = rng
-        from ..pipeline import review
-
-        run_task(lambda: review.decode_clip(self.store, self.meeting_id, channel, t0, t1), self.store, self._on_clip)
-
-    def _on_clip(self, result: Any) -> None:
-        if isinstance(result, BaseException):
-            self.status.setText(f"não consegui decodificar o trecho: {result}")
+        _channel, t0, _t1 = rng
+        if self.player is None:
+            self.status.setText("reprodução indisponível nesta janela")
             return
-        samples, sr = result
-        from ..store import playback
-
-        try:
-            playback.play(samples, sr)
-        except Exception as e:
-            log.warning("reprodução indisponível: %s", e)
-            self.status.setText(f"reprodução indisponível: {e}")
+        self.player.play_from(self.meeting_id, t0, title=self.title_fn() if callable(self.title_fn) else "")

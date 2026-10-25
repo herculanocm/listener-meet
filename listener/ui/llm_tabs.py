@@ -4,16 +4,19 @@ para a reunião), marca "gerados antes do reprocessamento" (P7), aviso "não ger
 (P5) e selo de custo da reunião. A recarga por assinatura nunca apaga uma edição em curso (F3.1 R3-01): com o editor em foco
 ou modificado, a versão nova só acende o aviso "recarregar?". Só metadados e texto: nada de SDK nem de rede aqui. F5: cada
 edição gravada (título, ata, executivo, ações) chama `on_edited()`, que reindexa a reunião para a busca (o controlador
-espera 30 s sem edição antes de enfileirar)."""
+espera 30 s sem edição antes de enfileirar). F5 L4 (F5A-26): `LlmTabsGroup` junta as abas, o selo de custo e o "gerar de
+novo" para a revisão e para a reunião aberta (as duas recarregam igual: ocupado, gerado antes do reprocessamento, pulado
+pelo alerta); o título tem um modo compacto, numa linha, para o cabeçalho da reunião aberta."""
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit,
+                               QPushButton, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
 from ..model import JOB_STEP_LABELS, ActionStatus, JobKind, JobStatus, JobStep, SummaryKind
@@ -201,13 +204,17 @@ class TextTab(QWidget):
 
 
 class TitleTab(QWidget):
+    """Título da reunião: o do usuário (editável, com `revisions`) e a sugestão da LLM à parte. `compact` (F5, cabeçalho da
+    reunião aberta): uma linha só, Enter salva, e "usar a sugestão" e "gerar de novo" num menu "LLM ▾"."""
+
     def __init__(self, store: Store, meeting_id: int, on_regenerate: Callable[[JobStep], Any], parent: QWidget | None = None,
-                 on_edited: Callable[[], Any] | None = None):
+                 on_edited: Callable[[], Any] | None = None, *, compact: bool = False):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_regenerate = on_regenerate
         self.on_edited = on_edited                               # F5: o título entra em todo trecho da busca
+        self.compact = compact
         self._busy = False
         self.title = QLineEdit()
         self.suggestion = QLabel("")
@@ -218,6 +225,9 @@ class TitleTab(QWidget):
         self.btn_use.clicked.connect(self.use_suggestion)
         self.btn_save.clicked.connect(self.save)
         self.btn_regen.clicked.connect(lambda: self.on_regenerate(JobStep.TITLE))
+        if compact:
+            self._compact_layout()
+            return
         row = QHBoxLayout()
         for b in (self.btn_save, self.btn_use, self.btn_regen):
             row.addWidget(b)
@@ -229,6 +239,30 @@ class TitleTab(QWidget):
         lay.addLayout(row)
         lay.addStretch(1)
 
+    def _compact_layout(self) -> None:
+        self.title.setObjectName("meetingTitle")
+        self.title.setPlaceholderText("título da reunião")
+        self.title.setToolTip("Edite e tecle Enter (ou \"Salvar\") para gravar o título")
+        self.title.returnPressed.connect(self.save)
+        self.btn_save.setText("Salvar")
+        self.act_use = QAction("Usar sugestão da LLM", self)
+        self.act_regen = QAction("Gerar título de novo", self)
+        self.act_use.triggered.connect(self.use_suggestion)
+        self.act_regen.triggered.connect(lambda: self.on_regenerate(JobStep.TITLE))
+        menu = QMenu(self)
+        menu.addAction(self.act_use)
+        menu.addAction(self.act_regen)
+        self.btn_menu = QToolButton()
+        self.btn_menu.setText("LLM ▾")
+        self.btn_menu.setToolTip("Sugestão de título da LLM")
+        self.btn_menu.setMenu(menu)
+        self.btn_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.title, 1)
+        row.addWidget(self.btn_save)
+        row.addWidget(self.btn_menu)
+
     def reload(self, busy: bool) -> None:
         self._busy = busy
         m = self.store.get_meeting(self.meeting_id) or {}
@@ -238,6 +272,11 @@ class TitleTab(QWidget):
         self.suggestion.setText(f"Sugestão da LLM: {llm}" if llm else "Sugestão da LLM: ainda não gerada")
         self.btn_use.setEnabled(bool(llm))
         self.btn_regen.setEnabled(not busy)
+        if self.compact:                                                     # sem título seu, a sugestão aparece apagada
+            self.title.setPlaceholderText(str(llm) if llm else "título da reunião")
+            self.act_use.setEnabled(bool(llm))
+            self.act_use.setText(f"Usar sugestão da LLM: {llm}" if llm else "Sugestão da LLM: ainda não gerada")
+            self.act_regen.setEnabled(not busy)
 
     def use_suggestion(self) -> None:
         m = self.store.get_meeting(self.meeting_id) or {}
@@ -245,7 +284,7 @@ class TitleTab(QWidget):
             self.title.setText(str(m["title_llm"]))
             self.save()
 
-    def save(self) -> None:
+    def save(self) -> bool:
         text = self.title.text().strip()
         changed = bool(text) and text != str((self.store.get_meeting(self.meeting_id) or {}).get("title") or "")
         if changed:
@@ -254,6 +293,7 @@ class TitleTab(QWidget):
         self.reload(self._busy)
         if changed and self.on_edited is not None:
             self.on_edited()
+        return changed
 
 
 class ActionsTab(QWidget):
@@ -363,9 +403,69 @@ class ActionsTab(QWidget):
             self.btn_reload.setVisible(True)
 
 
+class LlmTabsGroup(QObject):
+    """As abas da LLM de uma reunião (F5A-26), usadas pela revisão de falantes e pela reunião aberta: título, pré-resumo,
+    ata, executivo e ações, o selo de custo e o "gerar de novo" pela fila. `reload()` recarrega tudo de uma vez (ocupado,
+    gerado antes do reprocessamento, pulado pelo alerta de custo; a recarga nunca apaga uma edição em curso, R3-01) e
+    devolve se há job `llm` ativo. `on_message` recebe o texto do "gerar de novo"; `after_regenerate` recarrega quem mostra
+    o grupo (a revisão também atualiza o botão da identidade)."""
+
+    def __init__(self, store: Store, meeting_id: int, *, on_launch: Callable[[bool], Any] | None = None,
+                 on_edited: Callable[[], Any] | None = None, on_message: Callable[[str], Any] | None = None,
+                 after_regenerate: Callable[[], Any] | None = None, compact_title: bool = False, parent: QObject | None = None):
+        super().__init__(parent)
+        self.store = store
+        self.meeting_id = meeting_id
+        self.on_launch = on_launch
+        self.on_message = on_message
+        self.after_regenerate = after_regenerate
+        self.regenerated: list[int] = []                         # ids dos jobs `llm` criados por "gerar de novo"
+        self.title_tab = TitleTab(store, meeting_id, self.regenerate, on_edited=on_edited, compact=compact_title)
+        self.text_tabs: dict[str, TextTab] = {str(k): TextTab(store, meeting_id, k, self.regenerate, on_edited=on_edited)
+                                              for k in (SummaryKind.PRE_SUMMARY, SummaryKind.MINUTES, SummaryKind.EXECUTIVE)}
+        self.actions_tab = ActionsTab(store, meeting_id, on_edited=on_edited)
+        self.cost = QLabel("")
+        self.cost.setStyleSheet("color: #888; font-size: 11px;")
+
+    def reload(self) -> bool:
+        busy = llm_job_active(self.store, self.meeting_id)
+        current = self.store.segments.current_job_id(self.meeting_id)
+        stale = set(self.store.summaries.stale_after_reprocess(self.meeting_id, current))
+        info = last_llm_info(self.store, self.meeting_id)
+        skipped = {str(k): str(v) for k, v in (info.get("skipped") or {}).items()}
+        self.title_tab.reload(busy)
+        for tab in self.text_tabs.values():
+            tab.reload(stale, skipped, busy)
+        self.actions_tab.reload()
+        badge = cost_badge(self.store, self.meeting_id)
+        parts = [badge] if badge else []
+        if busy:
+            parts.append("LLM em andamento")
+        elif info.get("status") == "erro" and info.get("error"):
+            parts.append(f"última LLM falhou: {info['error']}")
+        self.cost.setText(" · ".join(parts))
+        return busy
+
+    def regenerate(self, step: JobStep) -> int | None:
+        """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
+        job_id, message = request_llm_step(self.store, self.meeting_id, step)
+        if self.on_message is not None:
+            self.on_message(message)
+        if job_id is None:
+            return None
+        self.regenerated.append(job_id)
+        if self.on_launch is not None:
+            self.on_launch(True)
+        if self.after_regenerate is not None:
+            self.after_regenerate()
+        else:
+            self.reload()
+        return job_id
+
+
 def step_label(step: JobStep | str) -> str:
     return JOB_STEP_LABELS.get(str(step), str(step)).removeprefix("LLM: ")
 
 
-__all__ = ["ActionsTab", "JobStatus", "TextTab", "TitleTab", "cost_badge", "last_llm_info", "llm_done_text", "llm_job_active",
-           "request_llm_step", "step_label"]
+__all__ = ["ActionsTab", "JobStatus", "LlmTabsGroup", "TextTab", "TitleTab", "cost_badge", "last_llm_info", "llm_done_text",
+           "llm_job_active", "request_llm_step", "step_label"]

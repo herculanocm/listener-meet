@@ -109,12 +109,16 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("hotkeys.stop", "ctrl+alt+shift+s", _NOW, "Atalho: parar", _text),
     SettingSpec("hotkeys.mark", "ctrl+alt+shift+m", _NOW, "Atalho: marcador", _text),
     SettingSpec("hotkeys.mute", "ctrl+alt+shift+u", _NOW, "Atalho: mudo", _text),
+    SettingSpec("hotkeys.history", "ctrl+alt+shift+h", _NOW, "Atalho: abrir o Histórico (cursor na busca)", _text, phase="F5"),  # U-028
     SettingSpec("log.path", "", _NOW, "Arquivo de log", _text),                 # vazio = <pasta do banco>/logs/listener.log
     SettingSpec("log.level", "INFO", _NOW, "Nível de log", _upper, choices=frozenset(LOG_LEVELS)),
     SettingSpec("ui.widget_pos", "", _NOW, "Posição do widget", _text),
     SettingSpec("ui.widget_size", "320x96", _NOW, "Tamanho do widget", _text),
     SettingSpec("ui.live_geometry", "", _NOW, "Posição e tamanho da janela Ao vivo", _text, phase="F4"),     # "x,y,largura,altura"
     SettingSpec("ui.live_on_top", True, _NOW, "Janela Ao vivo sempre visível", _bool, phase="F4"),
+    SettingSpec("ui.history_geometry", "", _NOW, "Posição e tamanho da janela Histórico", _text, phase="F5"),     # "x,y,largura,altura"
+    SettingSpec("ui.meeting_geometry", "", _NOW, "Posição e tamanho da janela da reunião", _text, phase="F5"),
+    SettingSpec("ui.history_filters", "{}", _NOW, "Filtros do Histórico (pessoa e período)", _text, phase="F5", internal=True),
     SettingSpec("warmup.last_preset_id", "", _NOW, "Último preset", _text),
     SettingSpec("warmup.last_mic_device_id", "", _NOW, "Último microfone (id)", _text),
     SettingSpec("warmup.last_mic_device_name", "", _NOW, "Último microfone (nome)", _text),

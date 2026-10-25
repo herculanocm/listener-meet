@@ -7,7 +7,7 @@ def test_specs_table_is_consistent():
     assert set(DEFAULTS) == set(LABELS) == set(SPECS)
     assert all(s.error(s.default_text) is None for s in SPECS.values())          # todo padrão passa na própria validação
     assert SPECS["capture.chunk_seconds"].scope == SettingScope.NEXT_RECORDING and SPECS["log.level"].scope == "now"
-    assert len(CAPTURE_KEYS) == 7 and len(HOTKEY_KEYS) == 5
+    assert len(CAPTURE_KEYS) == 7 and len(HOTKEY_KEYS) == 6                    # F5: + o do Histórico (U-028)
 
 
 def test_validation_rejects_values_that_break_recording():

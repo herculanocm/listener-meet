@@ -11,6 +11,13 @@ acrescenta "· índice N"), e um `index` concluído nunca abre a revisão (F5A-0
 banco. As edições da revisão, das abas da LLM e do título em "Gravação salva" (`on_edited`) põem o `index` da reunião na
 fila na hora, com uma espera durável de 30 s renovada a cada edição ("não antes de" no job, R5-07); "Concluir" e fechar a
 revisão tiram a espera.
+F5 L4: um player só no app (`self.player`), passado às janelas; a reunião aberta (`open_meeting`, uma janela por reunião)
+substitui a janela "Transcrição" (`open_transcript` vira apelido de `open_meeting(mid, "transcricao")`), abre num ponto e
+toca; o Histórico (`open_history`) pela bandeja e pelo atalho U-028 (`hotkeys.history`, com o cursor na busca e a janela
+trazida à frente pela plataforma); o clique no balão abre a reunião da última notificação que tinha reunião (Q6); os jobs
+`llm` e `index` concluídos recarregam a reunião aberta sem roubar o foco. Q9: gravando com a fonte "sistema inteiro", o
+player pede confirmação antes de o som começar. A saída para o player e espera a thread dele, cancela o chat global em
+voo e espera as `Task`s do Histórico e das reuniões antes de fechar o banco (F5A-32).
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -46,19 +53,21 @@ from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..llm import partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
-from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus
+from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
 from ..store.jobs import HELD
 from ..pipeline import review
 from ..platform.common import process
+from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import preparer, shutdown_preparer
+from .meeting import MeetingWindow
+from .player import Player, PlayRequest
 from .queue import QueueDialog
 from .review import ReviewDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
 from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task
-from .transcript import TranscriptDialog
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -68,7 +77,8 @@ if TYPE_CHECKING:
     from ..store import Store
 
 log = get_logger("ui")
-HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute")
+HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history")
+SYSTEM_PLAY_TEXT = ("Você está gravando o som do sistema inteiro: o áudio do player entra na gravação. Tocar mesmo assim?")
 TRAY_TIP = ("No Windows 11 o ícone da bandeja nasce no menu oculto (seta ao lado do relógio). Arraste-o para a barra "
             "para ver o estado da gravação.")
 EMERGENCY_STOP_BUDGET_S = 10.0
@@ -177,7 +187,6 @@ class Controller(QObject):
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
         self._review_sigs: dict[int, tuple[int, ...]] = {}
-        self._transcripts: dict[int, TranscriptDialog] = {}
         self._queue_dialog: QueueDialog | None = None
         self._queue_timer = QTimer(self)
         self._queue_timer.setInterval(QUEUE_POLL_IDLE_MS)
@@ -217,6 +226,14 @@ class Controller(QObject):
         self._index_edited: set[int] = set()                 # reuniões com edição esperando nesta sessão (fechar a revisão)
         self._sweeps: set[Task] = set()
         self._sweep_stop = threading.Event()                 # a saída interrompe a varredura entre reuniões (R5-02)
+        # F5 L4: player único, reuniões abertas, Histórico e a reunião da última notificação (Q6)
+        self.player = Player(store, parent=self)
+        self.player.guard = self._confirm_play
+        self._meetings: dict[int, MeetingWindow] = {}
+        self._meeting_index: dict[int, int] = {}              # último `index` concluído visto por reunião aberta
+        self._history: HistoryWindow | None = None
+        self._notified_meeting: int | None = None
+        self._windows_stopped = False
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -252,6 +269,18 @@ class Controller(QObject):
     def notify(self, message: str) -> None:
         if self.tray is not None:
             self.tray.showMessage("listener-meet", message)
+
+    def _notify_meeting(self, message: str, meeting_id: int) -> None:
+        """Balão sobre uma reunião: o clique nele abre a reunião (a da última notificação que tinha reunião, Q6)."""
+        self._notified_meeting = int(meeting_id)
+        self.notify(message)
+
+    def open_last_notified(self) -> MeetingWindow | None:
+        """`messageClicked`: abre a reunião da última notificação que tinha reunião (Q6)."""
+        mid = self._notified_meeting
+        if mid is None or self._quitting or self.store.get_meeting(mid) is None:
+            return None
+        return self.open_meeting(mid, focus=True)
 
     # ---------------------------------------------------------------- índice da busca (F5)
     def _start_sweep(self) -> None:
@@ -304,7 +333,8 @@ class Controller(QObject):
         run_task(fn, self.store, on_done)
 
     def register_hotkeys(self) -> dict[str, str]:
-        """Registra os cinco atalhos (pode rodar fora da thread do Qt); devolve combo -> motivo dos que falharam (A13)."""
+        """Registra os atalhos (pode rodar fora da thread do Qt; F5: mais o do Histórico, U-028); devolve combo -> motivo dos que
+        falharam (A13)."""
         hk = self.platform.hotkeys()
         hk.unregister_all()
         errors: dict[str, str] = {}
@@ -338,6 +368,8 @@ class Controller(QObject):
                 self.mark()
             case "mute":
                 self.toggle_mute()
+            case "history":
+                self.open_history(focus_search=True)
 
     # ---------------------------------------------------------------- gravação
     def open_warmup(self) -> None:
@@ -558,10 +590,33 @@ class Controller(QObject):
         shutdown_preparer()                              # F4: o download dos modelos não segue órfão
         self._wait_partials()                            # a chamada do parcial em voo é cancelada antes de o banco fechar
         self._stop_sweeps()                              # F5: a varredura usa o banco numa QThread; termina antes do close
+        self._stop_windows()                             # F5 L4: player, chat global e buscas do Histórico, chats das reuniões
         if self.live_window is not None:                 # guarda a posição antes de o banco fechar
             with suppress(Exception):
                 self.live_window.close()
         self.store.close()
+
+    def _stop_windows(self) -> None:
+        """Saída (F5A-32): para o player e espera a thread dele, cancela o chat global e o das reuniões e espera as `Task`s do
+        Histórico; as janelas guardam a posição antes de o banco fechar. Idempotente (o `quit` e o `emergency_stop`)."""
+        if self._windows_stopped:
+            return
+        self._windows_stopped = True
+        with suppress(Exception):
+            self.player.shutdown()
+        if self._history is not None:
+            with suppress(Exception):
+                self._history.page.shutdown()
+                self._history.save_geometry()
+        for win in list(self._meetings.values()):
+            with suppress(Exception):
+                win.shutdown()
+                win.save_geometry()
+        for task in [t for t in list(live_threads) if isinstance(t, StreamTask)]:   # o chat de uma reunião já fechada
+            task.cancel()
+            with suppress(RuntimeError):                 # já destruída pelo `release`
+                if not task.wait(PARTIAL_QUIT_WAIT_MS):
+                    log.warning("uma pergunta em voo não terminou em %d ms", PARTIAL_QUIT_WAIT_MS)
 
     def _finish(self, rec: Recorder) -> None:
         self.platform.keep_awake(False)
@@ -739,6 +794,7 @@ class Controller(QObject):
             if sig != self._review_sigs.get(mid):
                 self._review_sigs[mid] = sig
                 dlg.reload()
+        self._reload_indexed_meetings()
         if any(str(j.get("kind")) in HEAVY_JOB_KINDS for j in active_jobs):
             self.launch_worker()
         if any(str(j.get("kind")) in LIGHT_JOB_KINDS for j in active_jobs):
@@ -748,23 +804,41 @@ class Controller(QObject):
     def _on_job_done(self, job: Any) -> None:
         mid = int(job["meeting_id"])
         if str(job.get("kind")) in INDEX_KINDS:
-            # F5A-05: o índice não avisa nem abre a revisão; a revisão e a transcrição não mostram nada dele (recarregar a
-            # transcrição levaria a rolagem para o topo a cada edição), então não há janela aberta a recarregar ainda
+            # F5A-05: o índice não avisa nem abre a revisão; só recarrega a reunião aberta (sem roubar o foco nem rolar)
             log.debug("reunião %s: índice concluído (job %s)", mid, job["id"])
+            self._meeting_index[mid] = max(self._meeting_index.get(mid, 0), int(job["id"]))
+            if mid in self._meetings:
+                self._meetings[mid].reload()
             return
         m = self.store.get_meeting(mid) or {}
         title = m.get("title") or f"reunião {mid}"
         if str(job.get("kind")) == JobKind.LLM:
-            self.notify(f"{title}: {self._llm_done_text(job)}")
+            self._notify_meeting(f"{title}: {self._llm_done_text(job)}", mid)
             if mid in self._reviews:
                 self._reviews[mid].reload()
         else:
-            self.notify(f"{title}: pronta para revisão de falantes.")
+            self._notify_meeting(f"{title}: pronta para revisão de falantes.", mid)
             self._warn_no_llm(mid, int(job["id"]))
             self._review_offered.add(mid)
             self.open_review(mid)
-        if mid in self._transcripts:
-            self._transcripts[mid].reload()
+        if mid in self._meetings:
+            self._meetings[mid].reload()
+
+    def _reload_indexed_meetings(self) -> None:
+        """O `index` de uma reunião aberta terminou (os `index` ficam fora da detecção dos concluídos, F5A-05): recarrega a
+        janela dela, uma consulta só para as reuniões abertas."""
+        if not self._meetings:
+            return
+        try:
+            done = self.store.jobs.last_done(JobKind.INDEX, self._meetings)
+        except Exception as e:
+            log.debug("fila: índice das reuniões abertas: %s", e)
+            return
+        for mid, job_id in done.items():
+            seen = self._meeting_index.get(mid)
+            self._meeting_index[mid] = job_id
+            if seen is not None and job_id != seen and mid in self._meetings:
+                self._meetings[mid].reload()
 
     def _warn_no_llm(self, meeting_id: int, job_id: int) -> None:
         """Uma vez por sessão: o job pesado terminou e não haverá ata porque falta provedor com chave (F3.1 R3-13)."""
@@ -786,7 +860,7 @@ class Controller(QObject):
         dlg = self._reviews.get(meeting_id)
         if dlg is None:
             dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript, on_launch=self.launch_worker,
-                               on_edited=self.on_edited)
+                               on_edited=self.on_edited, player=self.player)
             dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
             self._reviews[meeting_id] = dlg
             self._review_sigs[meeting_id] = self._clusters_signature(meeting_id)
@@ -826,22 +900,73 @@ class Controller(QObject):
             if expedited:
                 self.launch_worker(light=True)
 
-    def open_transcript(self, meeting_id: int) -> TranscriptDialog:
-        dlg = self._transcripts.get(meeting_id)
-        if dlg is None:
-            dlg = TranscriptDialog(self.store, meeting_id, None, on_review=self.open_review, on_launch=self.launch_worker)
-            dlg.finished.connect(functools.partial(self._transcript_closed, meeting_id))
-            self._transcripts[meeting_id] = dlg
-        else:
-            dlg.reload()
-        dlg.show()
-        dlg.raise_()
-        return dlg
+    # ---------------------------------------------------------------- reunião aberta e Histórico (F5 L4)
+    def open_transcript(self, meeting_id: int) -> MeetingWindow:
+        """Apelido de `open_meeting(mid, "transcricao")` (Q6: a fila e a revisão continuam chamando)."""
+        return self.open_meeting(meeting_id, "transcricao")
 
-    def _transcript_closed(self, meeting_id: int, _result: int) -> None:
-        dlg = self._transcripts.pop(meeting_id, None)
-        if dlg is not None:
-            dlg.deleteLater()
+    def open_meeting(self, meeting_id: int, tab: str | None = None, t_ms: int | None = None, play: bool = False, *,
+                     focus: bool = False) -> MeetingWindow:
+        """Abre (ou traz à frente) a janela da reunião; com `t_ms`, vai à fala de início mais perto, rola até ela e, com
+        `play`, toca dela; senão mostra a aba `tab`. `focus` pede à plataforma para trazer a janela à frente (clique no
+        balão: o app está em segundo plano)."""
+        win = self._meetings.get(meeting_id)
+        if win is None:
+            win = MeetingWindow(self.store, meeting_id, player=self.player, on_review=self.open_review, on_launch=self.launch_worker,
+                                on_edited=self.on_edited, cascade=len(self._meetings))
+            win.closed.connect(self._meeting_closed)
+            self._meetings[meeting_id] = win
+            with suppress(Exception):
+                self._meeting_index[meeting_id] = self.store.jobs.last_done(JobKind.INDEX, [meeting_id]).get(meeting_id, 0)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        if focus:
+            with suppress(Exception):
+                self.platform.bring_to_front(int(win.winId()))
+        if t_ms is not None:
+            win.open_at(int(t_ms), play)
+        elif tab is not None:
+            win.show_tab(tab)
+        return win
+
+    def _meeting_closed(self, meeting_id: int) -> None:
+        win = self._meetings.pop(meeting_id, None)
+        self._meeting_index.pop(meeting_id, None)
+        if win is not None:
+            win.deleteLater()
+
+    def open_history(self, focus_search: bool = False) -> HistoryWindow:
+        """O Histórico (uma janela só, fechar só esconde): pela bandeja e pelo atalho U-028, que põe o cursor na busca com o
+        texto selecionado e traz a janela à frente pela plataforma (no Windows, um atalho global não dá o foco sozinho)."""
+        win = self._history
+        if win is None:
+            win = HistoryWindow(self.store, on_open=self._open_from_history, on_edited=self.on_edited)
+            self._history = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        if focus_search:
+            with suppress(Exception):
+                self.platform.bring_to_front(int(win.winId()))
+            win.page.focus_search()
+        return win
+
+    def _open_from_history(self, meeting_id: int, tab: str | None = None, t_ms: int | None = None, play: bool = False) -> None:
+        if self.store.get_meeting(meeting_id) is None:
+            self.notify("Esta reunião não existe mais.")
+            return
+        self.open_meeting(meeting_id, tab, t_ms, play)
+
+    def _confirm_play(self, _req: PlayRequest) -> bool:
+        """Q9: gravando com a fonte "sistema inteiro", o som do player entraria no canal R: pede confirmação antes de tocar;
+        com a fonte "app" ou sem gravação, toca direto."""
+        rec = self.recorder
+        if rec is None or self.state not in (AppState.RECORDING, AppState.PAUSED) or str(rec.source.kind) != SourceKind.SYSTEM:
+            return True
+        answer = QMessageBox.question(None, "Tocar durante a gravação", SYSTEM_PLAY_TEXT,
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        return answer == QMessageBox.StandardButton.Yes
 
     def open_queue(self) -> None:
         if self._queue_dialog is None:
@@ -1284,6 +1409,7 @@ class Controller(QObject):
             self._clear_lease()
             self._enqueue_processing(rec.meeting_id)     # o worker é solto do app e termina a fila (P2, R2-12)
         log.info("app encerrado pelo usuário")
+        self.player.stop()                               # o som para já; o resto da saída fica com o emergency_stop
         self.app.quit()                                  # aboutToQuit -> emergency_stop fecha atalhos e banco
 
     def _saved_widget_pos(self) -> QPoint | None:

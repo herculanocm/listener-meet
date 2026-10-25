@@ -180,6 +180,16 @@ class JobsRepo:
                              (JobKind.INDEX, JobStatus.ERROR, JobKind.INDEX))[0][0]
         return {"pending": int(row[0]), "running": int(row[1]), "meetings": int(row[2]), "errors": int(errors)}
 
+    def last_done(self, kind: JobKind | str, meeting_ids: Iterable[int]) -> dict[int, int]:
+        """O id do último job concluído da espécie por reunião (o app recarrega a reunião aberta quando o `index` dela termina,
+        sem varrer a fila inteira)."""
+        ids = [int(i) for i in meeting_ids]
+        if not ids:
+            return {}
+        rows = self.core.q(f"SELECT meeting_id, MAX(id) FROM processing_jobs WHERE kind = ? AND status = ? "  # noqa: S608
+                           f"AND meeting_id IN ({','.join('?' * len(ids))}) GROUP BY meeting_id", (str(kind), JobStatus.DONE, *ids))
+        return {int(r[0]): int(r[1]) for r in rows}
+
     def active(self, kinds: Iterable[JobKind | str] | None = None, *, due_only: bool = False, now: str | None = None) -> list[JobRow]:
         """Pendentes, rodando e pausados da classe; `due_only` deixa de fora os que esperam o "não antes de" (R5-07: o app
         não lança um worker só para esperar a edição assentar)."""

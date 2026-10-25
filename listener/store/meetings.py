@@ -5,7 +5,7 @@ import json
 from typing import Any, TypedDict, cast
 
 from ..log import get_logger
-from ..model import EventType, MeetingStatus
+from ..model import PIPELINE_JOB_KINDS, EventType, JobStatus, MeetingStatus
 from .core import Core, _now, audio_file_for, json_default
 
 log = get_logger("store.meetings")
@@ -122,6 +122,25 @@ class MeetingsRepo:
 
     def list_meetings(self) -> list[MeetingRow]:
         return [cast(MeetingRow, dict(r)) for r in self.core.q("SELECT * FROM meetings ORDER BY id DESC")]
+
+    def overview(self, date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
+        """Lista do Histórico (F5 item 8) numa consulta: a reunião, o custo somado das chamadas de LLM dela e o job vigente
+        (o pipeline concluído mais recente; sem ele, o maior já gravado nos clusters), da mais recente para a mais antiga;
+        período pela data da reunião (`AAAA-MM-DD`, inclusivo)."""
+        where, params = "", []
+        if date_from:
+            where += " AND substr(m.started_at, 1, 10) >= ?"
+            params.append(date_from)
+        if date_to:
+            where += " AND substr(m.started_at, 1, 10) <= ?"
+            params.append(date_to)
+        rows = self.core.q(
+            "SELECT m.id, m.title, m.title_llm, m.started_at, m.duration_ms, m.status, m.expected_participants, "  # noqa: S608
+            "(SELECT SUM(l.cost_usd) FROM llm_calls l WHERE l.meeting_id = m.id) AS cost_usd, "
+            "COALESCE((SELECT MAX(j.id) FROM processing_jobs j WHERE j.meeting_id = m.id AND j.kind IN (?, ?) AND j.status = ?), "
+            "(SELECT MAX(c.job_id) FROM clusters c WHERE c.meeting_id = m.id)) AS job_id "
+            f"FROM meetings m WHERE 1 = 1{where} ORDER BY m.started_at DESC, m.id DESC", (*PIPELINE_JOB_KINDS, JobStatus.DONE, *params))
+        return [dict(r) for r in rows]
 
     def finish_meeting(self, meeting_id: int, duration_ms: int, status: MeetingStatus = MeetingStatus.RECORDED) -> None:
         self.core.execute("UPDATE meetings SET status = ?, ended_at = ?, duration_ms = ? WHERE id = ?",

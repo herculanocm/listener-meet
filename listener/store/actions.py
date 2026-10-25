@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
-from ..model import ActionStatus
+from ..model import ActionStatus, SummaryKind, SummaryStatus
 from .core import Core, _now
 
 
@@ -65,6 +65,30 @@ class ActionsRepo:
             sql += " AND (status IS NULL OR status != ?)"
             params.append(str(ActionStatus.SUPERSEDED))
         return [cast(ActionRow, dict(r)) for r in self.core.q(sql + " ORDER BY t_ms, id", tuple(params))]
+
+    def list_open(self, person_id: int | None = None, date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
+        """"Ações abertas" de todas as reuniões (U-026): só as da ata atual de cada uma, com o dono (pessoa casada ou texto
+        livre), a reunião de origem (título atual e data) e o filtro de pessoa (dono) e período (data da reunião). As com
+        prazo primeiro, do mais próximo ao mais distante; depois as sem prazo, das reuniões mais recentes."""
+        where = ""
+        params: list[Any] = [str(ActionStatus.OPEN), str(SummaryStatus.CURRENT), str(SummaryKind.MINUTES)]
+        if person_id is not None:
+            where += " AND a.owner_person_id = ?"
+            params.append(int(person_id))
+        if date_from:
+            where += " AND substr(m.started_at, 1, 10) >= ?"
+            params.append(date_from)
+        if date_to:
+            where += " AND substr(m.started_at, 1, 10) <= ?"
+            params.append(date_to)
+        rows = self.core.q(
+            "SELECT a.id, a.meeting_id, a.text, a.owner_person_id, a.owner_text, a.due, a.t_ms, a.segment_id, a.status, "  # noqa: S608
+            "p.name AS owner_name, m.title AS meeting_title, m.title_llm AS meeting_title_llm, m.started_at "
+            "FROM action_items a JOIN summaries s ON s.id = a.summary_id JOIN meetings m ON m.id = a.meeting_id "
+            "LEFT JOIN people p ON p.id = a.owner_person_id "
+            f"WHERE a.status = ? AND s.status = ? AND s.kind = ?{where} "
+            "ORDER BY (COALESCE(a.due, '') = ''), a.due, m.started_at DESC, a.id", tuple(params))
+        return [dict(r) for r in rows]
 
     def get(self, action_id: int) -> ActionRow | None:
         rows = self.core.q("SELECT * FROM action_items WHERE id = ?", (action_id,))

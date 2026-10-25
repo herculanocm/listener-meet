@@ -13,7 +13,6 @@ from listener.llm.types import Capability, ProviderKind
 from listener.model import JobKind, JobStatus
 from listener.pipeline import llm_audio
 from listener.pipeline.types import AudioWindow
-from listener.store import playback
 from tests.test_llm_steps import KEY, _pipeline, _provider_ready, _record, _run_llm
 
 pytest.importorskip("PySide6")
@@ -79,7 +78,9 @@ def test_rewrite_citations_and_stream_task(qtbot):
 
 
 def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platform, store, monkeypatch):
-    from listener.ui.transcript import TranscriptDialog
+    from listener.ui.chat import ChatPanel
+    from listener.ui.player import Player
+    from tests.fake_player import FakeOutputs
 
     mid = _processed(platform, store)
     monkeypatch.setenv("LISTENER_LLM", "fake")
@@ -99,12 +100,11 @@ def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platf
     req, _ = store.llm_calls.payloads(second.call_id)
     assert req[1]["text"].startswith("Meeting date") and "O que ficou decidido?" in "".join(m["text"] for m in req)   # prefixo + histórico
     assert "Você:" in chat_task.history_html(store, mid, chat_task.transcript_lines(store, mid))
-    # painel: pergunta em streaming, status com citações e custo, clique toca o trecho
-    played: list[tuple[int, int]] = []
-    monkeypatch.setattr(playback, "play", lambda samples, sr: played.append((len(samples), sr)))
-    dlg = TranscriptDialog(store, mid)
-    qtbot.addWidget(dlg)
-    panel = dlg.chat
+    # painel: pergunta em streaming, status com citações e custo, clique toca pelo player (F5: do começo da fala até parar)
+    outputs = FakeOutputs()
+    player = Player(store, outputs)
+    panel = ChatPanel(store, mid, player=player, title=lambda: "Planejamento")
+    qtbot.addWidget(panel)
     assert "Você:" in panel.view.toPlainText() and panel.lines
     panel.question.setText("quem falou primeiro?")
     panel.ask()
@@ -114,11 +114,14 @@ def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platf
 
     seg = next(c.segment_id for c in panel.answers[0].citations if c.segment_id is not None)
     panel._link_clicked(QUrl(f"listener://play?seg={seg}"))
-    qtbot.waitUntil(lambda: bool(played), timeout=3000)
-    assert panel.played and panel.played[0][0] in ("R", "L") and played[0][1] == 16000
+    req = player.requests[-1]
+    assert panel.played and panel.played[0][0] in ("R", "L") and (req.meeting_id, req.t_ms) == (mid, panel.played[0][1])
+    assert req.channel is None and req.end_ms is None and req.title == "Planejamento"                # L e R até parar
+    qtbot.waitUntil(lambda: bool(outputs.opened and outputs.opened[0].chunks), timeout=3000)
+    player.shutdown()
     panel._link_clicked(QUrl("listener://play?seg=999999"))
     assert "não existe" in panel.status.text()
-    dlg.close()
+    panel.close_panel()
     # sem provedor: erro claro
     store.providers.set_active("gemini", llm=False)
     with pytest.raises(ValueError, match="provedor"):

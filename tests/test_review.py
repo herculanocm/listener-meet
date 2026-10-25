@@ -7,7 +7,6 @@ import pytest
 from listener.model import ClusterStatus, EventType, MeetingStatus
 from listener.pipeline import review
 from listener.pipeline.runner import JobRunner
-from listener.store import playback
 from tests.fake_pipeline import FakeDeps
 from tests.test_runner import CFG, SCRIPT, _record
 
@@ -110,22 +109,27 @@ def test_clip_range_from_segments_or_stitch_and_transcript_rows(platform, store)
 def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     from PySide6.QtCore import Qt
 
+    from listener.ui.player import Player
     from listener.ui.review import ReviewDialog
+    from tests.fake_player import FakeOutputs
 
     mid, items = _processed(platform, store)
     ana = store.people.create_person("Ana")
     store.segments.update_cluster(items[0].cluster_id, person_id=ana, status=ClusterStatus.AMBIGUOUS, similarity=0.7, margin=0.03)
-    played: list[tuple[int, int]] = []
-    monkeypatch.setattr(playback, "play", lambda samples, sr: played.append((len(samples), sr)))
-    dlg = ReviewDialog(store, mid)
+    outputs = FakeOutputs()
+    player = Player(store, outputs)
+    dlg = ReviewDialog(store, mid, player=player)
     qtbot.addWidget(dlg)
     dlg.show()
     assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 voz(es)" in dlg.header.text()
     assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
     assert "pyannote: Ana (similaridade 0.70, margem 0.03)" in dlg.list.item(0).text()
-    qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: decodifica numa Task
-    qtbot.waitUntil(lambda: bool(played), timeout=3000)
-    assert dlg.played and played[0][1] == 16000 and played[0][0] <= 5 * 16000
+    qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: pelo player único (F5)
+    channel, t0, t1 = dlg.played[0]
+    req = player.requests[0]
+    assert (req.meeting_id, req.t_ms, req.end_ms, req.channel) == (mid, t0, t1, channel) and t1 - t0 <= 5000
+    qtbot.waitUntil(lambda: not player.engine.alive and bool(outputs.opened), timeout=3000)
+    assert 0 < len(outputs.opened[0].frames) <= round((t1 - t0) * 16) and "close" in outputs.opened[0].calls   # um canal, só o trecho
     qtbot.keyClick(dlg, Qt.Key.Key_Return)                                            # Enter confirma a sugestão
     assert store.segments.get_cluster(items[0].cluster_id)["status"] == ClusterStatus.CONFIRMED
     assert dlg.current_cluster_id() == items[1].cluster_id                            # pula para a próxima pendente
@@ -145,23 +149,24 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     assert store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED and dlg.result() == dlg.DialogCode.Accepted
 
 
-def test_transcript_dialog_lists_and_click_plays_from_first_word(qtbot, platform, store, monkeypatch):
-    from listener.ui.transcript import TranscriptDialog
+def test_transcript_tab_lists_and_click_plays_from_first_word(qtbot, platform, store, monkeypatch):
+    from listener.ui.player import Player
+    from listener.ui.transcript import TranscriptTab
+    from tests.fake_player import FakeOutputs
 
     mid, items = _processed(platform, store)
     review.new_person(store, items[0].cluster_id, "Ana", role="CFO")
-    played: list[tuple[int, int]] = []
-    monkeypatch.setattr(playback, "play", lambda samples, sr: played.append((len(samples), sr)))
-    opened: list[int] = []
-    dlg = TranscriptDialog(store, mid, on_review=opened.append)
+    outputs = FakeOutputs()
+    player = Player(store, outputs)
+    dlg = TranscriptTab(store, mid, player=player)
     qtbot.addWidget(dlg)
     assert dlg.model.rowCount() == 3 and dlg.model.data(dlg.model.index(0), 0) == "[00:00] Ana — CFO: bom dia pessoal"
     assert "canal R" in dlg.model.data(dlg.model.index(0), 3)
     dlg.view.clicked.emit(dlg.model.index(2))
-    qtbot.waitUntil(lambda: bool(played), timeout=3000)
-    assert dlg.played == [(1450, 2890)] and played[0] == ((2890 - 1450) * 16, 16000)   # primeira palavra 1600 ms - 150 ms
-    dlg.btn_review.click()
-    assert opened == [mid]
+    assert dlg.played == [(1450, 2890)] and player.requests[0].t_ms == 1450              # primeira palavra 1600 ms - 150 ms
+    assert player.requests[0].end_ms is None and player.requests[0].channel is None        # F5: L e R até parar
+    qtbot.waitUntil(lambda: not player.engine.alive and bool(outputs.opened), timeout=3000)
+    assert len(outputs.opened[0].frames) == (3000 - 1450) * 16                            # do ponto até o fim da reunião
     store._x("DELETE FROM segments WHERE meeting_id = ?", (mid,))
     dlg.reload()
     assert dlg.model.rowCount() == 0 and dlg.status.text().startswith("0 fala(s)")
@@ -188,8 +193,9 @@ def test_controller_opens_review_when_clusters_exist_and_on_done(qtbot, qapp, pl
             mid, job_id, "R", "SPK_9", 10, None, None, ClusterStatus.UNNAMED)])
         c._poll_queue()
         assert c._reviews[mid].reloads == reloads + 1                                  # clusters mudaram: recarrega
-        t = c.open_transcript(mid)
-        assert t.model.rowCount() == 3 and c.open_transcript(mid) is t                   # job vigente: o concluído
+        t = c.open_transcript(mid)                                                     # F5: a reunião aberta, na transcrição
+        assert t.transcript.model.rowCount() == 3 and c.open_transcript(mid) is t        # job vigente: o concluído
+        assert t.tabs.currentWidget() is t.transcript
         store.jobs.finish(job_id, JobStatus.DONE)
         notes: list[str] = []
         monkeypatch.setattr(c, "notify", notes.append)

@@ -144,11 +144,11 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     dlg.reject()
 
 
-def test_transcript_dialog_toggles_revised_and_original(qtbot, platform, store):
-    from listener.ui.transcript import TranscriptDialog
+def test_transcript_tab_toggles_revised_and_original(qtbot, platform, store):
+    from listener.ui.transcript import TranscriptTab
 
     mid, _parent = _ready(platform, store)
-    dlg = TranscriptDialog(store, mid)
+    dlg = TranscriptTab(store, mid)
     qtbot.addWidget(dlg)
     first = dlg.model.data(dlg.model.index(0), 0)
     assert first.endswith("Bom dia Ana tudo bem.") and "revisada(s) pela LLM; mostrando a revisada" in dlg.status.text()
@@ -233,14 +233,14 @@ def test_on_demand_revise_and_identify(qtbot, platform, store):
     """R3-05: "Revisar transcrição pela LLM" na leitura (com o motivo de quando foi pulada) e "Identidade por contexto de
     novo" na aba Vozes viram jobs `llm` de uma tarefa; desabilitados com job `llm` ativo."""
     from listener.ui.review import ReviewDialog
-    from listener.ui.transcript import TranscriptDialog
+    from listener.ui.transcript import TranscriptTab
 
     mid, parent = _ready(platform, store)
     last = max(int(j["id"]) for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
     store._x("UPDATE processing_jobs SET timings_json = ? WHERE id = ?",
              (json.dumps({"llm": {"skipped": {"revise": "estimado US$ 2,00, acima do alerta"}}}), last))
     launched: list[bool] = []
-    dlg = TranscriptDialog(store, mid, on_launch=launched.append)
+    dlg = TranscriptTab(store, mid, on_launch=launched.append)
     qtbot.addWidget(dlg)
     assert "não feita: estimado US$ 2,00" in dlg.llm_note.text() and dlg.btn_revise.isEnabled()
     job_id = dlg.request_revise()

@@ -4,7 +4,8 @@ outra pessoa, N = nova pessoa, M = mesclar, I = ignorar, Espaço ouve 5 s (numa 
 pré-resumo, ata, executivo e ações editáveis com "gerar de novo" por aba (job `llm`), selo de custo no cabeçalho. "Concluir"
 marca a reunião como revisada. Só metadados no construtor (R-9). F5: cada decisão sobre uma voz e cada edição das abas
 chama `on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reunião 30 s depois da última; "Concluir" na
-hora)."""
+hora). F5 L4: as abas da LLM vêm do `LlmTabsGroup` (o mesmo da reunião aberta, F5A-26) e os 5 s passam pelo player único
+do app (um som por vez; o aviso de reprodução aparece no cabeçalho)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -18,35 +19,35 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import review
-from .llm_tabs import ActionsTab, TextTab, TitleTab, cost_badge, last_llm_info, llm_job_active, request_llm_step
-from .tasks import run_task
+from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
+from .player import ERROR, PlayerState
 
 if TYPE_CHECKING:
     from ..store import Store
+    from .player import Player
 
 log = get_logger("ui.review")
 
 
 class ReviewDialog(QDialog):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None,
-                 on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None):
+                 on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None,
+                 player: Player | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_transcript = on_transcript
         self.on_launch = on_launch
         self.on_edited = on_edited                         # F5: `on_edited(meeting_id, motivo, now=False)` reindexa a reunião
+        self.player = player                               # F5: o player único do app (None = sem som nesta janela)
         self.items: list[review.ReviewItem] = []
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
         self.reloads = 0
-        self.regenerated: list[int] = []                   # ids dos jobs `llm` criados por "gerar de novo"
         m = store.get_meeting(meeting_id) or {}
         self.setWindowTitle(f"Revisão — {m.get('title') or f'reunião {meeting_id}'}")
         self.setMinimumSize(760, 480)
         self.header = QLabel("")
         self.header.setWordWrap(True)
-        self.cost = QLabel("")
-        self.cost.setStyleSheet("color: #888; font-size: 11px;")
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.list.installEventFilter(self)                 # Enter, Espaço e letras valem com o foco na lista
@@ -85,10 +86,12 @@ class ReviewDialog(QDialog):
         vlay.addLayout(row2)
         self.tabs = QTabWidget()
         self.tabs.addTab(voices, "Vozes")
-        self.title_tab = TitleTab(store, meeting_id, self.regenerate, on_edited=self._text_edited)
-        self.text_tabs: dict[str, TextTab] = {str(k): TextTab(store, meeting_id, k, self.regenerate, on_edited=self._text_edited)
-                                              for k in (SummaryKind.PRE_SUMMARY, SummaryKind.MINUTES, SummaryKind.EXECUTIVE)}
-        self.actions_tab = ActionsTab(store, meeting_id, on_edited=self._text_edited)
+        self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._text_edited, on_message=self.header.setText,
+                                after_regenerate=self.reload_llm, parent=self)
+        self.title_tab: TitleTab = self.llm.title_tab
+        self.text_tabs: dict[str, TextTab] = self.llm.text_tabs
+        self.actions_tab: ActionsTab = self.llm.actions_tab
+        self.cost = self.llm.cost
         self.tabs.addTab(self.title_tab, "Título")
         self.tabs.addTab(self.text_tabs[SummaryKind.PRE_SUMMARY], "Pré-resumo")
         self.tabs.addTab(self.text_tabs[SummaryKind.MINUTES], "Ata")
@@ -99,6 +102,8 @@ class ReviewDialog(QDialog):
         lay.addWidget(self.cost)
         lay.addWidget(self.tabs, 1)
         self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
+        if player is not None:
+            player.state_changed.connect(self._on_player)
         self.reload(focus=True)
 
     # ---------------------------------------------------------------- índice da busca (F5)
@@ -113,37 +118,19 @@ class ReviewDialog(QDialog):
 
     # ---------------------------------------------------------------- abas da LLM (F3 item 11)
     def reload_llm(self) -> None:
-        busy = llm_job_active(self.store, self.meeting_id)
-        current = self.store.segments.current_job_id(self.meeting_id)
-        stale = set(self.store.summaries.stale_after_reprocess(self.meeting_id, current))
-        info = last_llm_info(self.store, self.meeting_id)
-        skipped = {str(k): str(v) for k, v in (info.get("skipped") or {}).items()}
-        self.title_tab.reload(busy)
-        for tab in self.text_tabs.values():
-            tab.reload(stale, skipped, busy)
-        self.actions_tab.reload()
+        busy = self.llm.reload()
         self.btn_identify.setEnabled(not busy)
         self.btn_identify.setToolTip("há um job de LLM em andamento para esta reunião" if busy
                                      else "a LLM sugere de novo quem é cada voz pendente, pelo contexto da conversa")
-        badge = cost_badge(self.store, self.meeting_id)
-        parts = [badge] if badge else []
-        if busy:
-            parts.append("LLM em andamento")
-        elif info.get("status") == "erro" and info.get("error"):
-            parts.append(f"última LLM falhou: {info['error']}")
-        self.cost.setText(" · ".join(parts))
 
     def regenerate(self, step: JobStep) -> int | None:
         """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
-        job_id, message = request_llm_step(self.store, self.meeting_id, step)
-        self.header.setText(message)
-        if job_id is None:
-            return None
-        self.regenerated.append(job_id)
-        if self.on_launch is not None:
-            self.on_launch(True)
-        self.reload_llm()
-        return job_id
+        return self.llm.regenerate(step)
+
+    @property
+    def regenerated(self) -> list[int]:
+        """Ids dos jobs `llm` criados por "gerar de novo" (instrumentação dos testes)."""
+        return self.llm.regenerated
 
     # ---------------------------------------------------------------- estado
     def reload(self, keep: int | None = None, focus: bool = False) -> None:
@@ -290,20 +277,15 @@ class ReviewDialog(QDialog):
             return
         channel, t0, t1 = rng
         self.played.append(rng)
-        run_task(lambda: review.decode_clip(self.store, self.meeting_id, channel, t0, t1), self.store, self._on_clip)
-
-    def _on_clip(self, result: Any) -> None:
-        if isinstance(result, BaseException):
-            self.header.setText(f"Não consegui decodificar o trecho: {result}")
+        if self.player is None:
+            self.header.setText("Reprodução indisponível nesta janela.")
             return
-        samples, sr = result
-        from ..store import playback
+        self.player.play_from(self.meeting_id, t0, end_ms=t1, channel=channel, title=f"{it.title} (5 s)")
 
-        try:
-            playback.play(samples, sr)
-        except Exception as e:
-            log.warning("reprodução indisponível: %s", e)
-            self.header.setText(f"Reprodução indisponível: {e}")
+    def _on_player(self, st: object) -> None:
+        """Sem dispositivo de saída ou sem o arquivo de áudio: o motivo no cabeçalho, como antes."""
+        if isinstance(st, PlayerState) and st.state == ERROR and st.meeting_id in (None, self.meeting_id) and st.message:
+            self.header.setText(f"Reprodução indisponível: {st.message}")
 
     def _open_transcript(self) -> None:
         if self.on_transcript is not None:

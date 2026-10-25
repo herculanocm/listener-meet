@@ -1,4 +1,4 @@
-"""Utilidades da interface: níveis em dB, cores de saúde, formatação."""
+"""Utilidades da interface: níveis em dB, cores de saúde, formatação; F5: área de transferência com texto e HTML."""
 from __future__ import annotations
 
 import math
@@ -38,3 +38,33 @@ def clamp_to_screens(x: int, y: int, w: int, h: int, screens: list[tuple[int, in
         return None
     sx, sy, sw, sh = best
     return int(min(max(x, sx), sx + sw - w)), int(min(max(y, sy), sy + sh - h))
+
+
+def copy_rich(plain: str, rich_html: str | None = None) -> None:
+    """Põe na área de transferência o texto e, quando dado, o mesmo em HTML (`QMimeData`): o Outlook e o Teams colam com
+    formatação, o bloco de notas cola o texto (U-011, U-029).
+
+    O `QMimeData` nasce no C++ (`QStandardItemModel.mimeData`, esvaziado em seguida) e não pelo construtor do Python: um
+    `QMimeData()` do Python é a subclasse-ponte do PySide, que a área de transferência destrói na saída do app, depois da
+    finalização do interpretador, e o destrutor dela chama o Python já finalizado (falha de segmentação ao sair, vista no
+    offscreen com o app saindo pelo `aboutToQuit`)."""
+    from PySide6.QtGui import QGuiApplication, QStandardItem, QStandardItemModel
+
+    model = QStandardItemModel()
+    model.appendRow(QStandardItem(""))
+    data = model.mimeData([model.index(0, 0)])
+    for fmt in list(data.formats()):
+        data.removeFormat(fmt)
+    data.setText(plain)
+    if rich_html:
+        data.setHtml(rich_html)
+    QGuiApplication.clipboard().setMimeData(data)
+
+
+def markdown_html(md: str) -> str:
+    """O Markdown como HTML pelo `QTextDocument` (o que a área de transferência leva junto do texto)."""
+    from PySide6.QtGui import QTextDocument
+
+    doc = QTextDocument()
+    doc.setMarkdown(md)
+    return doc.toHtml()

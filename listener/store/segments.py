@@ -201,6 +201,19 @@ class SegmentsRepo:
                                (meeting_id, job_id))
         return [self._cluster(r) for r in rows]
 
+    def light_clusters(self, meeting_ids: Iterable[int] | None = None) -> list[dict[str, Any]]:
+        """Clusters sem o centroide (id, reunião, job, canal, rótulo, fala, pessoa, estado, mescla): os participantes da lista
+        do Histórico numa consulta só (F5A-26), resolvidos por `resolve_person`."""
+        cols = "id, meeting_id, job_id, channel, cluster, speech_ms, person_id, status, merged_into"
+        if meeting_ids is None:
+            return [dict(r) for r in self.core.q(f"SELECT {cols} FROM clusters ORDER BY meeting_id, id")]  # noqa: S608
+        out: list[dict[str, Any]] = []
+        for part in batched((int(i) for i in meeting_ids), 500):
+            marks = ",".join("?" * len(part))
+            out += [dict(r) for r in self.core.q(f"SELECT {cols} FROM clusters WHERE meeting_id IN ({marks}) ORDER BY meeting_id, id",  # noqa: S608
+                                                 part)]
+        return out
+
     def get_cluster(self, cluster_id: int) -> ClusterRow | None:
         rows = self.core.q("SELECT * FROM clusters WHERE id = ?", (cluster_id,))
         return self._cluster(rows[0]) if rows else None
