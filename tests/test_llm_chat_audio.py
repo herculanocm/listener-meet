@@ -175,6 +175,15 @@ def test_llm_audio_transcriber_interpolates_words_and_models_skip_whisper(tmp_pa
     t2 = llm_audio.LLMAudioTranscriber(lambda: openai_fake, ProviderKind.OPENAI, "gpt-4o-audio", "openai")
     tw2 = t2.transcribe(AudioWindow(0, "R", 0, 4000, samples), language="pt", initial_prompt="")
     assert t2.calls[0][2] == "audio/wav" and len(tw2.words) == 8
+    # R3-14: FLAC acima do limite em linha (20 MB) cai para WAV em fatias, com os tempos de cada fatia
+    monkeypatch.setattr(llm_audio, "MAX_INLINE_BYTES", 1000)
+    monkeypatch.setattr(llm_audio, "WAV_WINDOW_S", 1)
+    big = FakeProvider()
+    t4 = llm_audio.LLMAudioTranscriber(lambda: big, ProviderKind.GEMINI, "fake-fast", "gemini")
+    tw4 = t4.transcribe(AudioWindow(5, "R", 10_000, 14_000, samples), language="pt", initial_prompt="")
+    assert [c[2] for c in t4.calls] == ["audio/wav"] * 4 and all(c[1] > 1000 for c in t4.calls)
+    assert tw4.words[0].start_ms == 10_000 and tw4.words[-1].end_ms <= 14_000 and len(tw4.words) == 32
+    assert [r.messages[1].audio[0].label for r in big.requests] == [f"janela parte {i}" for i in range(1, 5)]
     deaf = FakeProvider(kind=ProviderKind.ANTHROPIC, capabilities=frozenset({Capability.TEXT, Capability.JSON}))
     t3 = llm_audio.LLMAudioTranscriber(lambda: deaf, ProviderKind.ANTHROPIC, "claude", "anthropic")
     with pytest.raises(PermanentError, match="não aceita áudio"):

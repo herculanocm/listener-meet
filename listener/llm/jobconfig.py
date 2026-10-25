@@ -48,7 +48,7 @@ class LlmJobConfig:
             except (ValueError, TypeError):
                 params = {}
             defaults = DEFAULT_MODELS.get(ProviderKind(kind), ("", "")) if kind in ProviderKind.__members__.values() else ("", "")
-            fast = str(row.get("fast_model") or row.get("model") or defaults[0])
+            fast = str(row.get("fast_model") or defaults[0])      # `model` é o de embeddings: nunca vira o rápido (F3.1 R3-09)
             strong = str(row.get("strong_model") or defaults[1] or fast)
         g = store.get
         return cls(pid, kind, fast, strong, params, str(g(SPECS["llm.output_language"])), int(g(SPECS["llm.max_parallel"])),

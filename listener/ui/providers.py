@@ -206,17 +206,9 @@ class ProviderTab(QWidget):
         self.status.setText(f"job {job_id} de teste na fila do worker leve; o resultado aparece na Fila de processamento")
 
     # ---------------------------------------------------------------- gravação
-    def save(self) -> None:
-        params = self.params.text().strip()
-        if params:
-            try:
-                json.loads(params)
-            except ValueError as e:
-                raise ValueError(f"{TITLES.get(self.pid, self.pid)}: parâmetros não são JSON ({e})") from e
-        self.store.providers.update_provider(self.pid, api_key=self.key.text().strip() or None,
-                                             fast_model=self.fast.currentText().strip() or None,
-                                             strong_model=self.strong.currentText().strip() or None, params=params or None,
-                                             model=self.embed_model.text().strip() or None)
+    def _price_rows(self) -> list[tuple[str, list[float]]]:
+        """Linhas preenchidas da tabela de preços; `ValueError` com o texto para o usuário no primeiro preço inválido."""
+        out: list[tuple[str, list[float]]] = []
         for r in range(self.prices.rowCount()):
             cells = [self.prices.item(r, c) for c in range(len(PRICE_COLUMNS))]
             model = (cells[0].text() if cells[0] else "").strip()
@@ -224,10 +216,44 @@ class ProviderTab(QWidget):
                 continue
             values = []
             for cell in cells[1:]:
+                text = (cell.text() if cell else "").strip()
                 try:
-                    values.append(float((cell.text() if cell else "0").replace(",", ".") or 0))
+                    value = float(text.replace(",", ".") or 0)
                 except ValueError as e:
-                    raise ValueError(f"preço inválido para {model}: {cell.text() if cell else ''}") from e
+                    raise ValueError(f"{TITLES.get(self.pid, self.pid)}: preço inválido para {model}: {text}") from e
+                if value < 0:
+                    raise ValueError(f"{TITLES.get(self.pid, self.pid)}: preço negativo para {model}: {text}")
+                values.append(value)
+            out.append((model, values))
+        return out
+
+    def validation_error(self) -> str | None:
+        """Primeiro erro da sub-aba antes de gravar qualquer coisa (F3.1 R3-09, R3-12): parâmetros, modelo rápido e preços."""
+        name = TITLES.get(self.pid, self.pid)
+        params = self.params.text().strip()
+        if params:
+            try:
+                json.loads(params)
+            except ValueError as e:
+                return f"{name}: parâmetros não são JSON ({e})"
+        if not self.fast.currentText().strip():
+            return f"{name}: escolha o modelo rápido (é o das tarefas de todo dia)"
+        try:
+            self._price_rows()
+        except ValueError as e:
+            return str(e)
+        return None
+
+    def save(self) -> None:
+        err = self.validation_error()
+        if err:
+            raise ValueError(err)
+        params = self.params.text().strip()
+        self.store.providers.update_provider(self.pid, api_key=self.key.text().strip() or None,
+                                             fast_model=self.fast.currentText().strip(),
+                                             strong_model=self.strong.currentText().strip() or None, params=params or None,
+                                             model=self.embed_model.text().strip() or None)
+        for model, values in self._price_rows():
             self.store.providers.set_price(self.pid, model, *values)
 
 
@@ -265,12 +291,9 @@ class ProviderTabs(QWidget):
 
     def validation_error(self) -> str | None:
         for tab in self.tab_by_id.values():
-            params = tab.params.text().strip()
-            if params:
-                try:
-                    json.loads(params)
-                except ValueError as e:
-                    return f"{TITLES.get(tab.pid, tab.pid)}: parâmetros não são JSON ({e})"
+            err = tab.validation_error()
+            if err:
+                return err
         return None
 
     def save(self) -> None:

@@ -131,10 +131,12 @@ class Usage:
     output_tokens: int = 0
     cached_tokens: int = 0
     audio_tokens: int = 0
+    cache_write_tokens: int = 0    # parte de `input_tokens` gravada no cache (a Anthropic cobra 1,25 vez a entrada, F3.1 R3-10)
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
-                     self.cached_tokens + other.cached_tokens, self.audio_tokens + other.audio_tokens)
+                     self.cached_tokens + other.cached_tokens, self.audio_tokens + other.audio_tokens,
+                     self.cache_write_tokens + other.cache_write_tokens)
 
 
 @dataclass(frozen=True, slots=True)

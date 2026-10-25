@@ -189,6 +189,17 @@ def test_costs_models_table_and_registry_fake():
              "audio_usd_m": 1.25}]
     p = costs.price_for(rows, "gemini", "gemini-2.5-pro")
     assert costs.cost_usd(Usage(1_000_000, 100_000, 200_000, 0), p) == pytest.approx(0.8 * 1.25 + 0.2 * 0.31 + 0.1 * 10.0)
+    # R3-10: escrita no cache (Anthropic) cobra 1,25 vez a entrada; a leitura, o preço de cache
+    write = Usage(1_000_000, 0, 200_000, 0, 300_000)
+    assert costs.cost_usd(write, p) == pytest.approx(0.5 * 1.25 + 0.2 * 0.31 + 0.3 * 1.25 * 1.25)
+    assert (write + Usage(1, 0, 0, 0, 5)).cache_write_tokens == 300_005
+    from types import SimpleNamespace
+
+    from listener.llm.anthropic import AnthropicProvider
+
+    u = AnthropicProvider._usage(SimpleNamespace(input_tokens=10, cache_read_input_tokens=200, cache_creation_input_tokens=300,
+                                                 output_tokens=7))
+    assert (u.input_tokens, u.cached_tokens, u.cache_write_tokens, u.output_tokens) == (510, 200, 300, 7)
     assert costs.cost_usd(Usage(1000, 10), None) is None and costs.estimate_tokens("a" * 350) == 100 and costs.estimate_tokens(35) == 10
     assert costs.fmt_usd(0.3249) == "US$ 0,32" and costs.fmt_usd(None) == "sem preço cadastrado"
     assert costs.estimate_cost(1_000_000, 0, p, audio_tokens=1_000_000) == pytest.approx(1.25)

@@ -81,6 +81,28 @@ class _MutePoller(QThread):
             self._wake.wait(MUTE_POLL_S)
 
 
+class LateGlossaryLink:
+    """Chamadas do glossário que voltam depois do "Gravar" de um warm-up (F3.1 R3-11): ficam guardadas até a reunião dele
+    existir e então ganham o `meeting_id`; cada warm-up tem o seu (resposta atrasada não cai na reunião seguinte)."""
+
+    def __init__(self, store: Store):
+        self.store = store
+        self.meeting_id: int | None = None
+        self.pending: list[int] = []
+
+    def add(self, call_id: int) -> None:
+        if self.meeting_id is None:
+            self.pending.append(call_id)
+        else:
+            self.store.llm_calls.set_meeting(call_id, self.meeting_id)
+
+    def bind(self, meeting_id: int) -> None:
+        self.meeting_id = meeting_id
+        for call_id in self.pending:
+            self.store.llm_calls.set_meeting(call_id, meeting_id)
+        self.pending.clear()
+
+
 class Controller(QObject):
     hotkey_pressed = Signal(str)
 
@@ -111,6 +133,7 @@ class Controller(QObject):
         self._lease_at: float | None = None
         self._worker_spawned_at: dict[bool, float | None] = {False: None, True: None}     # por classe: pesado, leve (F3)
         self._seen_done: set[int] = set()
+        self._no_llm_warned = False
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
         self._review_sigs: dict[int, tuple[int, ...]] = {}
@@ -199,10 +222,12 @@ class Controller(QObject):
             return
         self._warmup_open = True
         try:
-            dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings)
+            link = LateGlossaryLink(self.store)
+            dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 cfg, fields = dlg.result_config()
-                self.start_recording(cfg, fields)
+                if self.start_recording(cfg, fields) and self.recorder is not None:
+                    link.bind(self.recorder.meeting_id)
         finally:
             self._warmup_open = False
 
@@ -214,8 +239,8 @@ class Controller(QObject):
         meeting_id = self.store.create_meeting(fields.get("title"), fields.get("platform"), fields.get("preset_id"),
                                                fields.get("participants"), fields.get("is_in_room", False),
                                                glossary=fields.get("glossary"), expected_people_json=fields.get("expected_people_json"))
-        if fields.get("glossary_call_id"):                                   # a chamada do glossário nasceu sem reunião (F3A-11)
-            self.store.llm_calls.set_meeting(int(fields["glossary_call_id"]), meeting_id)
+        for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
+            self.store.llm_calls.set_meeting(int(call_id), meeting_id)
         log.info("gravação %s iniciada: mic=%s fonte=%s", meeting_id,
                  cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.label or cfg.source.kind)
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
@@ -565,10 +590,20 @@ class Controller(QObject):
                 self._reviews[mid].reload()
         else:
             self.notify(f"{title}: pronta para revisão de falantes.")
+            self._warn_no_llm(mid, int(job["id"]))
             self._review_offered.add(mid)
             self.open_review(mid)
         if mid in self._transcripts:
             self._transcripts[mid].reload()
+
+    def _warn_no_llm(self, meeting_id: int, job_id: int) -> None:
+        """Uma vez por sessão: o job pesado terminou e não haverá ata porque falta provedor com chave (F3.1 R3-13)."""
+        from ..pipeline.llm_steps import NO_PROVIDER, auto_skip_reason
+
+        if self._no_llm_warned or auto_skip_reason(self.store, meeting_id, job_id) != NO_PROVIDER:
+            return
+        self._no_llm_warned = True
+        self.notify(NO_PROVIDER)
 
     def _llm_done_text(self, job: Any) -> str:
         """"ata pronta · US$ 0,32" (U-020) pelo `timings_json.llm` do job."""

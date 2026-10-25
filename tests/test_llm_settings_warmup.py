@@ -138,7 +138,8 @@ def test_warmup_glossary_debounce_stale_and_no_key(qtbot, store, platform, monke
     assert dlg.glossary_requests == 2 and "FIDC" in dlg.glossary_edit.text() and "termo(s) sugeridos" in dlg.glossary_status.text()
     dlg.glossary_edit.setText(dlg.glossary_edit.text() + ", Cetip")                                        # edição do usuário
     _cfg, fields = dlg.result_config()
-    assert fields["glossary"].endswith("Cetip") and fields["expected_people_json"] == json.dumps([rodrigo]) and fields["glossary_call_id"]
+    assert fields["glossary"].endswith("Cetip") and fields["expected_people_json"] == json.dumps([rodrigo])
+    assert len(fields["glossary_call_ids"]) == 1
     # resposta velha: a sequência anda antes de a Task voltar e o texto do usuário fica
     dlg._glossary_inflight = True
     dlg._glossary_seq += 1
@@ -169,7 +170,7 @@ def test_controller_creates_meeting_with_glossary_and_relinks_the_call(qtbot, qa
     cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
                        retry_base_s=0.001)
     try:
-        assert c.start_recording(cfg, {"title": "t", "glossary": "SRM, FIDC", "expected_people_json": "[3]", "glossary_call_id": call})
+        assert c.start_recording(cfg, {"title": "t", "glossary": "SRM, FIDC", "expected_people_json": "[3]", "glossary_call_ids": [call]})
         rec = c.recorder
         m = store.get_meeting(rec.meeting_id)
         assert m["glossary"] == "SRM, FIDC" and m["expected_people_json"] == "[3]"
@@ -204,3 +205,77 @@ def test_build_prompt_puts_llm_glossary_first_and_matcher_breaks_ties_by_expecte
     assert by_id.status == ClusterStatus.AUTO and by_id.person_id == 20                                  # id esperado desempata
     by_name = ProfileMatcher(0.6, 0.1, expected=("x",), expected_ids=frozenset()).match([cluster], profiles)[0]
     assert by_name.status == ClusterStatus.AMBIGUOUS
+
+
+# ---------------------------------------------------------------- F3.1 (correções da revisão do diff da F3)
+def test_fast_model_never_falls_back_to_embeddings_and_prices_validate_before_saving(qtbot, store, platform, monkeypatch):
+    """R3-09: sem modelo rápido, a config usa o padrão do provedor (nunca o de embeddings em `model`); a sub-aba recusa o
+    rápido vazio. R3-12: preço inválido aparece em `validation_error` e nada é gravado."""
+    from listener.llm.jobconfig import LlmJobConfig
+    from listener.ui.settings_min import SettingsDialog
+
+    store.providers.update_provider("gemini", api_key=KEY, fast_model=None, model="gemini-embedding-001")
+    store.providers.set_active("gemini", llm=True)
+    cfg = LlmJobConfig.from_store(store)
+    assert cfg.fast_model == "gemini-2.5-flash" and cfg.strong_model == "gemini-2.5-pro"
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    dlg = SettingsDialog(store, platform, {})
+    qtbot.addWidget(dlg)
+    tab = dlg.provider_tabs.tab_by_id["gemini"]
+    tab.fast.setCurrentText("")
+    assert "modelo rápido" in (dlg.validation_error() or "")
+    with pytest.raises(ValueError, match="modelo rápido"):
+        tab.save()
+    tab.fast.setCurrentText("gemini-2.5-flash")
+    before = {p["model"]: p["output_usd_m"] for p in store.providers.list_prices("gemini")}
+    tab.prices.item(0, 2).setText("dez")
+    assert "preço inválido" in (dlg.validation_error() or "")
+    tab.prices.item(0, 2).setText("-1")
+    assert "preço negativo" in (dlg.validation_error() or "")
+    dlg._edits["llm.cost_alert_usd"].setText("7")
+    from PySide6.QtWidgets import QMessageBox
+
+    warned: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(str(a[2])))
+    dlg._save()
+    assert warned and "preço negativo" in warned[0] and dlg.result() != dlg.DialogCode.Accepted
+    assert store.get_setting("llm.cost_alert_usd") != "7"                                               # nada gravado
+    assert {p["model"]: p["output_usd_m"] for p in store.providers.list_prices("gemini")} == before
+
+
+def test_warmup_keeps_expected_people_without_llm_and_relinks_late_glossary_call(qtbot, store, platform):
+    """R3-11: os participantes esperados saem do casamento local mesmo sem resposta da LLM; uma resposta que chega depois do
+    "Gravar" vai para `on_late_call` e o `LateGlossaryLink` do controlador religa a chamada à reunião do warm-up."""
+    from listener.model import LlmCallStatus
+    from listener.store.llm_calls import LlmCallInsert
+    from listener.ui import warmup as wu
+    from listener.ui.controller import LateGlossaryLink
+
+    _ana, rodrigo, _paula = _people(store)
+    link = LateGlossaryLink(store)
+    dlg = wu.WarmupDialog(platform, store, on_late_call=link.add)
+    qtbot.addWidget(dlg)
+    dlg.participants_edit.setText("Rodrigo, Carlos")
+    _cfg, fields = dlg.result_config()
+    assert fields["expected_people_json"] == json.dumps([rodrigo]) and fields["glossary_call_ids"] == []
+
+    def call() -> int:
+        return store.llm_calls.insert(LlmCallInsert(None, None, "glossary", "gemini", "fake-fast", None, None, 1, 1, 0, 0, 0.0, 5,
+                                                    LlmCallStatus.OK))
+
+    stale = call()                                                                    # resposta velha, ainda no warm-up
+    dlg._glossary_seq += 1
+    dlg._on_glossary(dlg._glossary_seq - 1, glossary_task.GlossaryResult(("Velho",), (), stale))
+    assert dlg.glossary_call_ids == [stale] and "Velho" not in dlg.glossary_edit.text()
+    dlg._glossary_inflight = True
+    seq = dlg._glossary_seq
+    dlg.accept()                                                                       # "Gravar" com o glossário em voo
+    late = call()
+    dlg._on_glossary(seq, glossary_task.GlossaryResult(("Tarde",), (), late))
+    assert link.pending == [late]
+    mid = store.create_meeting("t", None, None, None)
+    link.bind(mid)
+    assert store.llm_calls.get(late)["meeting_id"] == mid and link.pending == []
+    later = call()
+    link.add(later)
+    assert store.llm_calls.get(later)["meeting_id"] == mid

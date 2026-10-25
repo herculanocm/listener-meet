@@ -113,7 +113,8 @@ class AnthropicProvider:
         plain = int(getattr(usage, "input_tokens", 0) or 0)
         read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
         write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
-        return Usage(plain + read + write, int(getattr(usage, "output_tokens", 0) or 0), read, 0)   # `input_tokens` exclui o cache [fato]
+        # `input_tokens` exclui o cache [fato]; a escrita no cache é cobrada à parte (R3-10)
+        return Usage(plain + read + write, int(getattr(usage, "output_tokens", 0) or 0), read, 0, write)
 
     @staticmethod
     def _parse(msg: Any) -> tuple[str, dict[str, Any] | None]:
@@ -142,7 +143,8 @@ class AnthropicProvider:
 
     def stream(self, req: Request) -> LlmStream:
         kw = self._kwargs(req)
-        state: dict[str, Any] = {"t0": now_ms(), "in": 0, "out": 0, "cached": 0, "finish": "stop", "model": req.model, "id": None}
+        state: dict[str, Any] = {"t0": now_ms(), "in": 0, "out": 0, "cached": 0, "write": 0, "finish": "stop", "model": req.model,
+                                 "id": None}
 
         async def chunks() -> AsyncIterator[str]:
             try:
@@ -152,7 +154,7 @@ class AnthropicProvider:
                     if kind == "message_start":
                         msg = getattr(ev, "message", None)
                         u = self._usage(getattr(msg, "usage", None))
-                        state["in"], state["cached"] = u.input_tokens, u.cached_tokens
+                        state["in"], state["cached"], state["write"] = u.input_tokens, u.cached_tokens, u.cache_write_tokens
                         state["model"] = getattr(msg, "model", None) or state["model"]
                         state["id"] = getattr(msg, "id", None)
                     elif kind == "content_block_delta":
@@ -169,8 +171,8 @@ class AnthropicProvider:
                 raise translate_error(e, self.id) from e
 
         def finish(text: str) -> Completion:
-            return Completion(text, None, Usage(state["in"], state["out"], state["cached"], 0), str(state["model"]), now_ms() - state["t0"],
-                              state["finish"], state["id"])
+            return Completion(text, None, Usage(state["in"], state["out"], state["cached"], 0, state["write"]), str(state["model"]),
+                              now_ms() - state["t0"], state["finish"], state["id"])
 
         return LlmStream(chunks(), finish)
 

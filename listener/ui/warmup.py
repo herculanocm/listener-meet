@@ -2,10 +2,13 @@
 O microfone abre uma vez só (no `showEvent`); a fonte salva é escolhida na primeira lista de apps (M-12).
 F3 (item 4, U-018): ao sair do título ou dos participantes, com 1,5 s de debounce, uma `Task` casa os participantes com
 `people` e pede à LLM os termos prováveis; uma chamada em voo, resposta velha descartada; o campo "Termos prováveis" fica
-editável e vai para `meetings.glossary`; sem chave, aviso discreto com link para as Configurações."""
+editável e vai para `meetings.glossary`; sem chave, aviso discreto com link para as Configurações. Os participantes esperados
+saem do casamento local mesmo sem a LLM, e uma resposta que chega depois do "Gravar" religa a chamada à reunião (F3.1 R3-11)."""
 from __future__ import annotations
 
 import functools
+import json
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
@@ -18,7 +21,7 @@ from ..capture.align import estimate_offset
 from ..capture.audio import resample, rms, to_mono
 from ..capture.recorder import RecordConfig
 from ..config.defaults import SPECS
-from ..llm.glossary_task import GlossaryResult, merge_glossary, request_glossary
+from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glossary, request_glossary, split_names
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
@@ -35,12 +38,16 @@ GLOSSARY_DEBOUNCE_MS = 1500
 
 
 class WarmupDialog(QDialog):
-    def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None, on_settings: Any = None):
+    def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None, on_settings: Any = None,
+                 on_late_call: Callable[[int], Any] | None = None):
         super().__init__(parent)
         self.platform = platform
         self.store = store
         self.on_settings = on_settings
+        self.on_late_call = on_late_call                 # chamada do glossário que volta depois do "Gravar" (F3.1 R3-11)
         self.glossary_result: GlossaryResult | None = None
+        self.glossary_call_ids: list[int] = []           # toda chamada feita aqui, velha ou não, é da reunião que nascer
+        self._accepted = False
         self._glossary_seq = 0
         self._glossary_inflight = False
         self._glossary_pending = False
@@ -170,6 +177,7 @@ class WarmupDialog(QDialog):
 
     @override
     def accept(self) -> None:
+        self._accepted = True
         self._save_last_choice()
         self._shutdown()
         super().accept()
@@ -205,6 +213,13 @@ class WarmupDialog(QDialog):
 
     def _on_glossary(self, seq: int, result: Any) -> None:
         self._glossary_inflight = False
+        call_id = result.call_id if isinstance(result, GlossaryResult) else None
+        if call_id is not None:
+            if self._accepted:                             # "Gravar" já criou a reunião: o controlador religa a chamada
+                if self.on_late_call is not None:
+                    self.on_late_call(call_id)
+            elif call_id not in self.glossary_call_ids:
+                self.glossary_call_ids.append(call_id)
         if seq != self._glossary_seq:                      # velha: o usuário mudou o texto ou fechou
             return
         if self._glossary_pending:
@@ -436,14 +451,18 @@ class WarmupDialog(QDialog):
         spec = cfg.source
         platform_name = (spec.exe or "sistema").removesuffix(".exe") if spec.kind == SourceKind.APP else "sistema"
         result = self.glossary_result
+        participants = self.participants_edit.text().strip()
+        # casamento local sempre (R3-11): gravar com o glossário em voo não perde os participantes esperados
+        ids = {pid for _name, pid in match_people_locally(split_names(participants), [dict(p) for p in self.store.people.list_people()])[0]}
+        ids |= {pid for _name, pid in (result.people if result else ())}
         fields = {
             "title": self.title_edit.text().strip() or None,
-            "participants": self.participants_edit.text().strip() or None,
+            "participants": participants or None,
             "platform": platform_name,
             "preset_id": self.preset_combo.currentData(),
             "is_in_room": self.room_check.isChecked(),
             "glossary": self.glossary_edit.text().strip() or None,
-            "expected_people_json": result.expected_people_json if result else None,
-            "glossary_call_id": result.call_id if result else None,
+            "expected_people_json": json.dumps(sorted(ids)) if ids else None,
+            "glossary_call_ids": list(self.glossary_call_ids),
         }
         return cfg, fields

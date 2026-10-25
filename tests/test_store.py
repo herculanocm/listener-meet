@@ -619,5 +619,6 @@ def test_set_llm_suggestion_refuses_decided_voices_and_json_default_knows_new_ty
     assert store.segments.get_cluster(ids["SPK_1"])["llm_name"] == "Rodrigo"
     out = json.loads(json.dumps({"u": Usage(1, 2), "caps": frozenset({Capability.JSON, Capability.TEXT}), "k": ClusterStatus.AUTO,
                                  "b": b"xyz"}, default=json_default))
-    assert out == {"u": {"input_tokens": 1, "output_tokens": 2, "cached_tokens": 0, "audio_tokens": 0}, "caps": ["json", "text"],
+    assert out == {"u": {"input_tokens": 1, "output_tokens": 2, "cached_tokens": 0, "audio_tokens": 0,
+                          "cache_write_tokens": 0}, "caps": ["json", "text"],
                    "k": "auto", "b": "<3 bytes>"}

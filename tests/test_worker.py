@@ -156,7 +156,9 @@ def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store):
     assert texts[1] == "LLM" and texts[5] == "sem estimativa"
     assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
     row = store.jobs.get(llm)
-    assert row["status"] in ("erro", "concluído") and row["worker_pid"] is None
+    # o pai ainda não rodou: erro permanente antes de qualquer chamada (F3.1 R3-02), sem contar tentativa
+    assert row["status"] == "erro" and "a transcrição mudou ou está vazia" in row["error"] and row["attempts"] == 0
+    assert row["worker_pid"] is None
     assert store.jobs.get(heavy)["status"] == "pendente"                                          # o leve não toca no pesado
     from listener import log as applog
 

@@ -241,7 +241,7 @@ def decision_source_for(c: ClusterRow, pid: int) -> DecisionSource:
     """O que o usuário aceitou (F3 item 5, mede o G3): a sugestão do pyannote, a da LLM, outra pessoa ou nenhuma sugestão."""
     pyannote = c.get("person_id")
     llm = c.get("llm_person_id")
-    if pyannote is not None and int(pyannote) == pid and str(c["status"]) != ClusterStatus.UNNAMED:
+    if pyannote is not None and int(pyannote) == pid:          # inclui o "parecida com" de um card `sem_nome` (F3.1 R3-08)
         return DecisionSource.USER_PYANNOTE
     if llm is not None and int(llm) == pid:
         return DecisionSource.USER_LLM

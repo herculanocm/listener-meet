@@ -1,7 +1,8 @@
 """Custo das chamadas (U-009, U-020; contrato "Custo"): tabela `llm_prices` com sementes do projeto por família de modelo
-(editáveis na sub-aba), fórmula `input * p_in + cached * p_cached + output * p_out + audio * p_audio` (preços por milhão
-de tokens), estimativa prévia por caracteres ÷ 3,5 quando o provedor não conta tokens. Sem linha de preço o custo é nulo e
-a tela diz "sem preço cadastrado". Valores das sementes são [chute] de outubro de 2026: o dono confere contra a fatura."""
+(editáveis na sub-aba), fórmula `input * p_in + cached * p_cached + cache_write * p_in * 1,25 + output * p_out +
+audio * p_audio` (preços por milhão de tokens), estimativa prévia por caracteres ÷ 3,5 quando o provedor não conta
+tokens. Sem linha de preço o custo é nulo e a tela diz "sem preço cadastrado". Valores das sementes são [chute] de
+outubro de 2026: o dono confere contra a fatura."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from .types import Usage
 
 CHARS_PER_TOKEN = 3.5
 AUDIO_TOKENS_PER_SECOND = 32          # Gemini [fato]; os outros provedores informam `audio_tokens` na resposta
+CACHE_WRITE_FACTOR = 1.25             # escrita no cache da Anthropic (TTL de 5 min) custa 1,25 vez a entrada [fato]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,10 +67,12 @@ def price_for(prices: list[Any], provider: str, model: str) -> Price | None:
 
 
 def cost_usd(usage: Usage, price: Price | None) -> float | None:
+    """Entrada simples, lida do cache, gravada no cache (`CACHE_WRITE_FACTOR` vezes a entrada, R3-10), áudio e saída."""
     if price is None:
         return None
-    plain_input = max(0, usage.input_tokens - usage.cached_tokens - usage.audio_tokens)
+    plain_input = max(0, usage.input_tokens - usage.cached_tokens - usage.audio_tokens - usage.cache_write_tokens)
     total = (plain_input * price.input_usd_m + usage.cached_tokens * price.cached_usd_m + usage.output_tokens * price.output_usd_m
+             + usage.cache_write_tokens * price.input_usd_m * CACHE_WRITE_FACTOR
              + usage.audio_tokens * (price.audio_usd_m or price.input_usd_m)) / 1_000_000
     return round(total, 6)
 

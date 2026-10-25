@@ -81,7 +81,11 @@ def llm_done_text(job: dict[str, Any]) -> str:
     done = [str(s) for s in llm.get("done") or []]
     what = "ata pronta" if "minutes" in done else ("LLM concluída" if done else "LLM sem tarefas novas")
     cost = llm.get("cost_usd")
-    return f"{what} · {fmt_usd(float(cost))}" if cost else f"{what}."
+    base = f"{what} · {fmt_usd(float(cost))}" if cost else what
+    skipped = [step_label(s) for s in llm.get("skipped") or {}]
+    if skipped:                                         # puladas pelo alerta de custo; "gerar?" na revisão (F3.1 R3-13)
+        return f"{base}; acima do alerta de custo, não gerado: {', '.join(skipped)} (gere pela revisão)"
+    return base if cost else f"{base}."
 
 
 class TextTab(QWidget):

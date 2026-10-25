@@ -219,11 +219,15 @@ class SettingsDialog(QDialog):
         if err:
             QMessageBox.warning(self, "Configurações", err)
             return
+        try:                                             # validado acima; a sub-aba grava primeiro e recusa sem meio-termo (R3-12)
+            self.provider_tabs.save()
+        except ValueError as e:
+            QMessageBox.warning(self, "Configurações", str(e))
+            return
         for key, edit in self._edits.items():
             self.store.set_setting(key, edit.text().strip())
         for key, combo in self._combos.items():
             self.store.set_setting(key, combo.currentText().strip())
-        self.provider_tabs.save()
         self.store.set_setting("log.path", self.log_path.text().strip())
         self.store.set_setting("log.level", self.log_level.currentText())
         token = self.hf_token.text().strip()

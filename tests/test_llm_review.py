@@ -248,6 +248,35 @@ def test_on_demand_revise_and_identify(qtbot, platform, store):
     review_dlg.reject()
 
 
+def test_enter_on_ambiguous_card_with_both_suggestions_accepts_pyannote(qtbot, platform, store):
+    """R3-14 (CP11): card `ambíguo` com o pyannote sugerindo uma pessoa e a LLM outra: Enter aceita o pyannote; L, a LLM."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui.review import ReviewDialog
+
+    mid, _parent = _ready(platform, store)
+    ana = next(int(p["id"]) for p in store.people.list_people() if p["name"] == "Ana")
+    bia = store.people.create_person("Bia")
+    cids = [i.cluster_id for i in review.review_items(store, mid)]
+    for cid in cids[:2]:
+        store.segments.update_cluster(cid, status="ambíguo", person_id=ana, decision_source=None)
+        store.segments.set_llm_suggestion(cid, bia, None, 0.8, "[]")
+    dlg = ReviewDialog(store, mid)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    order = [i.cluster_id for i in dlg.items]
+    dlg.list.setCurrentRow(order.index(cids[0]))
+    assert "LLM: Bia" in dlg.list.currentItem().text()
+    qtbot.keyClick(dlg.list, Qt.Key.Key_Return)
+    c = store.segments.get_cluster(cids[0])
+    assert c["status"] == "confirmado" and c["person_id"] == ana and c["decision_source"] == DecisionSource.USER_PYANNOTE
+    dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(cids[1]))
+    qtbot.keyClick(dlg.list, Qt.Key.Key_L)
+    c = store.segments.get_cluster(cids[1])
+    assert c["person_id"] == bia and c["decision_source"] == DecisionSource.USER_LLM
+    dlg.reject()
+
+
 def test_queue_texts_and_notification_for_llm_jobs(store):
     from listener.ui.llm_tabs import llm_done_text
     from listener.ui.queue import job_row_texts
@@ -264,3 +293,6 @@ def test_queue_texts_and_notification_for_llm_jobs(store):
     assert job_row_texts(job, None, "{}")[3] == "LLM: ata (4 de 4)" and llm_done_text(dict(job)) == "ata pronta · US$ 0,32"
     assert llm_done_text({"timings_json": json.dumps({"llm": {"done": ["title"], "cost_usd": 0}})}) == "LLM concluída."
     assert llm_done_text({"timings_json": None}) == "LLM sem tarefas novas."
+    skipped = {"llm": {"cost_usd": 0.1, "done": ["minutes"], "skipped": {"executive": "estimado US$ 2,00", "revise": "estimado"}}}
+    text = llm_done_text({"timings_json": json.dumps(skipped)})                                     # R3-13: tarefas puladas pelo alerta
+    assert text == "ata pronta · US$ 0,10; acima do alerta de custo, não gerado: resumo executivo, transcrição revisada (gere pela revisão)"

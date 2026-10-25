@@ -537,3 +537,29 @@ def test_real_anthropic_client_has_no_sdk_retries_and_mock_transport_round_trip(
     assert body["tool_choice"] == {"type": "tool", "name": "emit_result", "disable_parallel_tool_use": True}
     assert body["tools"][0]["input_schema"]["properties"]["n"]["maximum"] == 10 and body["system"] == "You are precise."
     assert body["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"} and body["max_tokens"] == 8192
+
+
+@sdk_tests
+def test_truststore_with_real_clients():
+    """R3-14: com `system_certs` (o padrão), o truststore entra antes de criar os clientes reais dos três SDKs, com e sem cliente
+    HTTP próprio (proxy); o contexto TLS padrão passa a ser o do sistema. A injeção é desfeita no fim do teste."""
+    import ssl
+
+    truststore = pytest.importorskip("truststore")
+    from listener.llm import registry
+
+    registry._ssl_state.update(injected=False, warned=False)
+    try:
+        for net in (NetworkConfig(), NetworkConfig(proxy_url="http://proxy.local:3128")):
+            providers = [registry.load_provider(k, "k-teste", net) for k in ("gemini", "openai", "anthropic")]
+            assert registry._ssl_state["injected"] and isinstance(ssl.create_default_context(), truststore.SSLContext)
+
+            async def build(ps=providers):
+                for p in ps:
+                    assert p._client() is not None
+                    await p.aclose()
+
+            run(build())
+    finally:
+        truststore.extract_from_ssl()
+        registry._ssl_state.update(injected=False, warned=False)

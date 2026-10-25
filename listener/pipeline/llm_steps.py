@@ -55,6 +55,8 @@ TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE) 
 SUMMARY_STEPS: dict[JobStep, SummaryKind] = {JobStep.MINUTES: SummaryKind.MINUTES, JobStep.EXECUTIVE: SummaryKind.EXECUTIVE,
                                              JobStep.PRE_SUMMARY: SummaryKind.PRE_SUMMARY}
 STALE_TRANSCRIPT = "a transcrição mudou ou está vazia: gere de novo pela revisão"
+NO_PROVIDER = "sem provedor de LLM com chave: ata não gerada (Configurações, aba LLM)"
+NO_SPEECH = "a reunião não tem falas: nada para a LLM"
 PENDING = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
 WINDOW_SHARE = 0.6
 BLOCK_SHARE = 0.4
@@ -124,10 +126,25 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
     cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
     if not store.get(SPECS["llm.auto_tasks"]):
         return None
-    if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
-        log.info("reunião %s: o job %s não deixou falas; nenhum job llm criado", meeting_id, parent_job_id)
+    reason = auto_skip_reason(store, meeting_id, parent_job_id)
+    if reason is not None:
+        log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, reason)
         return None
     return enqueue_llm_job(store, meeting_id, auto_tasks_for(store, meeting_id, kind), parent_job_id, auto=True)
+
+
+def auto_skip_reason(store: Store, meeting_id: int, parent_job_id: int) -> str | None:
+    """Por que o job pesado concluído não ganha job `llm` automático (None = ganha, ou `llm.auto_tasks` está desligado).
+    O encadeamento roda no worker; a interface chama isto ao ver o job concluído para avisar o usuário (F3.1 R3-13)."""
+    from ..config.defaults import SPECS
+
+    if not store.get(SPECS["llm.auto_tasks"]):
+        return None
+    if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
+        return NO_SPEECH
+    if store.providers.active_with_key("llm") is None:
+        return NO_PROVIDER
+    return None
 
 
 def auto_tasks_for(store: Store, meeting_id: int, kind: JobKind | str) -> list[JobStep]:

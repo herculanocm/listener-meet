@@ -308,6 +308,10 @@ def test_decision_source_and_accept_llm(platform, store):
     store.segments.update_cluster(other.cluster_id, status=ClusterStatus.AMBIGUOUS, person_id=ana)
     review.confirm(store, other.cluster_id, bia)
     assert store.segments.get_cluster(other.cluster_id)["decision_source"] == DecisionSource.USER_OTHER
+    # R3-08: card `sem_nome` com o "parecida com" do pyannote aceito -> usuario_pyannote
+    store.segments.update_cluster(other.cluster_id, status=ClusterStatus.UNNAMED, person_id=ana)
+    review.confirm(store, other.cluster_id, ana)
+    assert store.segments.get_cluster(other.cluster_id)["decision_source"] == DecisionSource.USER_PYANNOTE
     # sem_nome só com sugestão da LLM por nome novo: Enter aceita e cria a pessoa
     store.segments.update_cluster(with_llm.cluster_id, status=ClusterStatus.UNNAMED, person_id=None)
     store.segments.set_llm_suggestion(with_llm.cluster_id, None, "Rodrigo", 0.7, "[]")
@@ -466,3 +470,66 @@ def test_reprocess_cancels_stale_pending_llm_jobs_and_keeps_what_never_ran(platf
         assert status == JobStatus.DONE
     assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == rep
     assert llm_steps.auto_tasks_for(store, mid, JobKind.REPROCESS) == ["identify", "revise"]          # agora tudo existe (P7)
+
+
+def test_hierarchical_minutes_resumes_from_saved_block_notes(platform, store):
+    """R3-14: a nota do bloco já gravada (`MINUTES` idx 1) não é pedida de novo; só a redução roda, com a nota salva."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    _pipeline(store, mid)
+    store.jobs.request_cancel(next(j["id"] for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"))
+    job_id = llm_steps.enqueue_llm_job(store, mid, ["minutes"])
+    store.providers.update_provider("gemini", models_json=[{"id": "fake-strong", "input_limit": 600}])   # força o hierárquico
+    note = {"context": "NOTA-SALVA-DO-BLOCO", "decisions": [], "actions": [], "risks": [], "open_questions": [], "summary": ""}
+    store.jobs.put_artifact(job_id, JobStep.MINUTES, 1, json.dumps(note).encode("utf-8"))
+    runner, status, fake = _run_llm(store, FakeProvider(input_limit=600))
+    assert runner.job_id == job_id and status == JobStatus.DONE, store.jobs.get(job_id)["error"]
+    minutes = fake.calls(LlmTask.MINUTES)
+    assert len(minutes) == 1 and "Block 1 notes" in minutes[0].messages[-1].text and "NOTA-SALVA-DO-BLOCO" in minutes[0].messages[-1].text
+    assert store.summaries.current(mid, SummaryKind.MINUTES) is not None
+    assert not store.jobs.artifact_indexes(job_id, JobStep.MINUTES)                                 # sucesso limpa
+
+
+def test_identify_blocks_merge_by_best_confidence():
+    """R3-14: no `identify` em blocos, cada voz fica com a sugestão de maior confiança entre os blocos."""
+    from listener.llm.types import Completion, Usage
+
+    def comp(*speakers: dict) -> Completion:
+        return Completion("", {"speakers": list(speakers)}, Usage(), "m", 1)
+
+    best: dict[str, dict] = {}
+    LlmJobRunner._merge_identify(best, comp({"cluster": "SPK_0", "new_name": "Ana", "confidence": 0.4},
+                                            {"cluster": "SPK_1", "new_name": "Bia", "confidence": 0.9}))
+    LlmJobRunner._merge_identify(best, comp({"cluster": "SPK_0", "new_name": "Carla", "confidence": 0.7},
+                                            {"cluster": "SPK_1", "new_name": "Dani", "confidence": 0.5}, {"cluster": "", "confidence": 1}))
+    assert {k: v["new_name"] for k, v in best.items()} == {"SPK_0": "Carla", "SPK_1": "Bia"}
+
+
+def test_controller_warns_once_per_session_without_provider(qapp, platform, store):
+    """R3-13: job pesado concluído sem provedor com chave -> "ata não gerada" uma vez por sessão; reunião sem falas não avisa."""
+    from listener.ui.controller import Controller
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    job = _pipeline(store, mid)
+    assert llm_steps.auto_skip_reason(store, mid, job) == llm_steps.NO_PROVIDER
+    assert llm_steps.auto_skip_reason(store, mid, job + 1000) == llm_steps.NO_SPEECH
+    store.set_setting("llm.auto_tasks", False)
+    assert llm_steps.auto_skip_reason(store, mid, job) is None
+    store.set_setting("llm.auto_tasks", True)
+    c = Controller(qapp, platform, store)
+    c.tray = None
+    notes: list[str] = []
+    c.notify = notes.append                                                                       # type: ignore[method-assign,assignment]
+    c.open_review = lambda m: None                                                                # type: ignore[method-assign,assignment,return-value]
+    try:
+        c._on_job_done(store.jobs.get(job))
+        c._on_job_done(store.jobs.get(job))
+        assert notes.count(llm_steps.NO_PROVIDER) == 1 and len(notes) == 3
+        _provider_ready(store)
+        c._no_llm_warned = False
+        c._on_job_done(store.jobs.get(job))
+        assert notes.count(llm_steps.NO_PROVIDER) == 1                                              # com chave: sem aviso
+    finally:
+        c.emergency_stop()

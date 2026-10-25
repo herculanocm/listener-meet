@@ -3,6 +3,7 @@ F2: o worker em subprocesso real (`--worker --once`, `LISTENER_PIPELINE=fake`) �
 `tests/test_worker.py` está na sessão, para o seu tempo de execução correr em paralelo ao resto da suíte."""
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import shutil
@@ -37,6 +38,16 @@ def restore_logging() -> Iterator[None]:
     logger.handlers[:] = handlers
     logger.setLevel(level)
     logger.propagate = propagate
+
+
+@pytest.fixture(autouse=True)
+def collect_qt_garbage(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Testes de interface terminam com a coleta de lixo na thread principal: um diálogo preso num ciclo de referências,
+    coletado depois por uma thread do gravador, derruba o processo (segfault do Qt fora da thread da GUI, visto em 25/10
+    com `test_llm_review.py` seguido de `test_llm_settings_warmup.py`)."""
+    yield
+    if "qtbot" in request.fixturenames:
+        gc.collect()
 
 
 _TEMPLATE: dict[str, Path] = {}
