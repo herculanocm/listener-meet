@@ -6,6 +6,7 @@ tempo, de forma síncrona: com `Recorder(inline_worker=True)` tudo acontece na t
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import override
 
@@ -127,6 +128,9 @@ class FakePlatform(Platform):
         self._hk = FakeHotkeys()
         self.streams: list[FakeStream] = []
         self.awake: bool | None = None
+        self.spawned: list[tuple[list[str], dict[str, str]]] = []   # F2: o worker nunca é lançado de verdade
+        self.lowered = 0
+        self.next_pid = 5000
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -201,6 +205,21 @@ class FakePlatform(Platform):
     @override
     def root_pid(self, exe: str) -> int | None:
         return 4242 if exe == "meeting.exe" else None
+
+    @override
+    def spawn_detached(self, argv: list[str], env: Mapping[str, str] | None = None) -> int:
+        self.spawned.append((list(argv), dict(env or {})))
+        self.next_pid += 1
+        return self.next_pid
+
+    @override
+    def lower_own_priority(self) -> bool:
+        self.lowered += 1
+        return True
+
+    @override
+    def memory_rss(self) -> int | None:
+        return 123_000_000
 
     @override
     def config_dir(self) -> Path:

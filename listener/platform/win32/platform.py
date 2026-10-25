@@ -6,10 +6,12 @@ Streams voltam paradas (`CaptureHandle.start()`, M-06). COM: `_Win32MicMute` lem
 ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12). Nada daqui roda fora do Windows."""
 from __future__ import annotations
 
+import ctypes
+import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, override
 
@@ -17,7 +19,7 @@ import numpy as np
 
 from ...log import get_logger
 from ..base import AudioCallback, AudioDevice, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
-from ..common import paths
+from ..common import paths, process
 from . import processes
 from .hotkeys import Win32Hotkeys
 
@@ -29,10 +31,18 @@ MEETING_EXES = {"ms-teams.exe", "teams.exe", "zoom.exe", "cpthost.exe", "webex.e
                 "slack.exe", "discord.exe", "skype.exe", "googlemeet.exe"}
 MEETING_TITLE_HINTS = ("meet", "teams", "zoom", "webex", "reunião", "meeting", "chamada", "call")
 ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+CREATE_NO_WINDOW, DETACHED_PROCESS, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00000008, 0x00004000   # worker da F2
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
 MUTE_RETRY_S = 30.0            # após falhar a busca do endpoint do mudo, só tenta de novo depois disto
+
+
+class ProcessMemoryCounters(ctypes.Structure):          # PROCESS_MEMORY_COUNTERS do psapi
+    _fields_ = (("cb", ctypes.c_uint32), ("PageFaultCount", ctypes.c_uint32), ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t))
 
 
 def _com_init() -> None:
@@ -560,6 +570,41 @@ class Win32Platform(Platform):
             return processes.root_pid_for(exe)
         except Exception as e:
             log.debug("root_pid(%s): %s", exe, e)
+            return None
+
+    @override
+    def spawn_detached(self, argv: list[str], env: Mapping[str, str] | None = None) -> int:
+        """Sem console, solto do app e já em prioridade abaixo do normal (F2 item 2)."""
+        if sys.platform != "win32":
+            return process.spawn_detached(argv, env)
+        flags = CREATE_NO_WINDOW | DETACHED_PROCESS | BELOW_NORMAL_PRIORITY_CLASS
+        p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.DEVNULL,  # noqa: S603
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+        return int(p.pid)
+
+    @override
+    def lower_own_priority(self) -> bool:
+        """`SetPriorityClass(BELOW_NORMAL)`; nunca `PROCESS_MODE_BACKGROUND_BEGIN` (derruba I/O e o SQLite sofre, D-F2-14)."""
+        if sys.platform != "win32":
+            return process.lower_own_priority()
+        try:
+            k32 = ctypes.windll.kernel32
+            return bool(k32.SetPriorityClass(k32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
+        except Exception as e:
+            log.debug("SetPriorityClass: %s", e)
+            return False
+
+    @override
+    def memory_rss(self) -> int | None:
+        if sys.platform != "win32":
+            return process.memory_rss()
+        try:
+            pmc = ProcessMemoryCounters()
+            pmc.cb = ctypes.sizeof(pmc)
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
+            return int(pmc.WorkingSetSize) if ok else None
+        except Exception as e:
+            log.debug("GetProcessMemoryInfo: %s", e)
             return None
 
     @override

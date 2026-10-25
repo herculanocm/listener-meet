@@ -44,31 +44,47 @@ class TrayIcon(QSystemTrayIcon):
         self.act_mark = QAction("Marcador", self.menu)
         self.act_mute = QAction("Mudo", self.menu)
         self.act_stop = QAction("Parar", self.menu)
+        self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
         self.act_quit = QAction("Sair", self.menu)
         for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop):
             self.menu.addAction(a)
         self.menu.addSeparator()
+        self.menu.addAction(self.act_queue)
         self.menu.addAction(self.act_settings)
         self.menu.addAction(self.act_quit)
+        self.queue_tip = ""
+        self._state = AppState.IDLE
         self.setContextMenu(self.menu)
         self.act_record.triggered.connect(controller.open_warmup)
         self.act_pause.triggered.connect(controller.toggle_pause)
         self.act_mark.triggered.connect(controller.mark)
         self.act_mute.triggered.connect(controller.toggle_mute)
         self.act_stop.triggered.connect(controller.stop_recording)
+        self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
         self.act_quit.triggered.connect(controller.quit)
         self.activated.connect(self._activated)
         self.set_state(AppState.IDLE)
 
     def set_state(self, state: AppState) -> None:
+        self._state = state
         self.setIcon(make_icon(STATE_COLORS.get(state, "#7f8c8d")))
-        self.setToolTip(STATE_TIPS.get(state, "listener-meet"))
+        self._apply_tip()
         recording = state in (AppState.RECORDING, AppState.PAUSED)
         self.act_record.setEnabled(state == AppState.IDLE)
         for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop):
             a.setEnabled(recording)
+
+    def set_queue_tip(self, text: str) -> None:
+        """"processando 2/6 · 43 %" ao lado do estado (F2 item 15); vazio esconde."""
+        if text != self.queue_tip:
+            self.queue_tip = text
+            self._apply_tip()
+
+    def _apply_tip(self) -> None:
+        base = STATE_TIPS.get(self._state, "listener-meet")
+        self.setToolTip(f"{base} · {self.queue_tip}" if self.queue_tip else base)
 
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.DoubleClick, QSystemTrayIcon.ActivationReason.Trigger):

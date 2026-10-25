@@ -510,18 +510,19 @@ class JobRunner:
         people = {int(p["id"]): p for p in self.store.people.list_people()}
         for channel, windows in transcripts.items():
             words = merge_words(windows)
-            if not words:
-                continue
             if channel in clusters:
                 turns, ids, crows = clusters[channel]
                 by_id = {int(c["id"]): c for c in crows}
                 attribution = Attribution.PYANNOTE
             else:
-                duration = int(self.meeting.get("duration_ms") or words[-1].end_ms)
-                turns, attribution = (Turn(0, max(duration, words[-1].end_ms), USER_CLUSTER),), Attribution.CHANNEL
-                ids = self._user_cluster(words)
+                ids = self._user_cluster(words)                        # existe mesmo sem fala transcrita
+                duration = int(self.meeting.get("duration_ms") or 0)
+                end = max(duration, words[-1].end_ms) if words else duration
+                turns, attribution = (Turn(0, end, USER_CLUSTER),), Attribution.CHANNEL
                 by_id = {int(c["id"]): c for c in self.store.segments.list_clusters(self.meeting_id, self.job_id)
                          if c["channel"] == channel}
+            if not words:
+                continue
             for d in segmenter.run(words, turns):
                 cid = ids.get(d.label) if d.label else None
                 crow = by_id.get(cid) if cid is not None else None

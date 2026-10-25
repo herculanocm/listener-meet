@@ -114,3 +114,102 @@ def test_controller_records_and_stops_async(qtbot, qapp, store, platform, monkey
         c.emergency_stop()                                         # garante que a thread de trabalho não fica viva
     with pytest.raises(RuntimeError):
         store.list_meetings()                                      # o banco foi fechado pelo emergency_stop
+
+
+def test_controller_enqueues_job_launches_worker_and_renews_lease(qtbot, qapp, store, platform, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from listener.capture.recorder import RecordConfig
+    from listener.model import JobStatus
+    from listener.platform.common.process import worker_command
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+
+    store.upsert_me("Eu")
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    t = {"now": datetime.fromisoformat("2026-10-24T10:00:00.000-03:00")}
+    c.now = lambda: t["now"]
+    c.lease_renew_s = 2.0                                      # 60 s no produto; aqui 2 s para não bombear um minuto de áudio
+    notes: list[str] = []
+    opened: list[int] = []
+    monkeypatch.setattr(c, "notify", notes.append)
+    monkeypatch.setattr(c, "open_review", opened.append)
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5,
+                       stop_timeout_s=1.0, retry_base_s=0.001)
+    try:
+        assert c.start_recording(cfg, {"title": "t"})
+        lease = store.get_setting("pipeline.paused_until")
+        assert lease == (t["now"] + timedelta(minutes=10)).isoformat(timespec="milliseconds")           # Q7: lease ao gravar
+        platform.pump(1.0)
+        c._tick()
+        assert store.get_setting("pipeline.paused_until") == lease                                      # ainda não renova
+        platform.pump(1.1)
+        t["now"] += timedelta(seconds=61)
+        c._tick()
+        assert store.get_setting("pipeline.paused_until") == (t["now"] + timedelta(minutes=10)).isoformat(timespec="milliseconds")
+        assert platform.spawned == [] and store.jobs.active() == []
+        rec = c.recorder
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert store.get_setting("pipeline.paused_until") == ""                                         # lease limpa ao parar
+        jobs = store.jobs.active()
+        assert len(jobs) == 1 and jobs[0]["meeting_id"] == rec.meeting_id and jobs[0]["status"] == JobStatus.PENDING
+        assert len(platform.spawned) == 1 and platform.spawned[0][0] == worker_command()
+        assert platform.spawned[0][1]["OMP_NUM_THREADS"] == str(store.get(ctl.SPECS["pipeline.torch_threads"]))
+        assert c.launch_worker() is False                                                               # cooldown: não relança
+        # o worker (simulado aqui) pega e conclui: o poll avisa e abre a revisão uma vez só
+        store.jobs.claim(pid=99)
+        store.jobs.finish(jobs[0]["id"], JobStatus.DONE)
+        c._poll_queue()
+        c._poll_queue()
+        assert [n for n in notes if "pronta para revisão" in n] == ["t: pronta para revisão de falantes."] and opened == [rec.meeting_id]
+        # auto_start desligado: parar não enfileira
+        store.set_setting("pipeline.auto_start", False)
+        assert c.start_recording(cfg, {"title": "u"})
+        rec2 = c.recorder
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert store.jobs.for_meeting(rec2.meeting_id) == [] and len(platform.spawned) == 1
+    finally:
+        c.emergency_stop()
+
+
+def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
+    from listener.model import JobKind, JobStep
+    from listener.ui.queue import QueueDialog, job_row_texts
+
+    mid = store.create_meeting("Diretoria", "teams", None, None)
+    store.finish_meeting(mid, 1_800_000)
+    j1, j2 = store.jobs.enqueue(mid), store.jobs.enqueue(mid)
+    store.jobs.claim(pid=1)
+    store.jobs.set_progress(j1, JobStep.DIARIZE, 0.2)
+    launched: list[int] = []
+    dlg = QueueDialog(store, on_launch=lambda: launched.append(1))
+    qtbot.addWidget(dlg)
+    assert dlg.table.rowCount() == 2
+    row0 = [dlg.table.item(0, c).text() for c in range(7)]
+    assert row0[0].startswith("Diretoria (") and row0[1:5] == ["processar", "rodando", "separando vozes", "20"] and row0[5].startswith("≈ ")
+    assert job_row_texts(store.jobs.get(j2), None, "{}")[0] == f"reunião {mid}" and "sem estimativa" not in row0[5]
+    dlg.table.selectRow(1)
+    assert dlg.selected_job_id() == j2
+    dlg.cancel_selected()
+    assert store.jobs.get(j2)["status"] == "cancelado"
+    dlg.toggle_pause()
+    assert store.get(ctl_specs()["pipeline.paused_manual"]) is True and dlg.btn_pause.text() == "Retomar fila" and launched == []
+    dlg.toggle_pause()
+    assert store.get(ctl_specs()["pipeline.paused_manual"]) is False and launched == [1]
+    dlg.table.selectRow(1)
+    dlg.retry_selected()
+    assert store.jobs.get(j2)["status"] == "pendente" and launched == [1, 1]
+    dlg.table.selectRow(0)
+    dlg.reprocess_selected()
+    assert store.jobs.for_meeting(mid)[0]["kind"] == JobKind.REPROCESS and dlg.table.rowCount() == 3
+    assert "pendente(s)" in dlg.status_label.text()
+
+
+def ctl_specs():
+    from listener.config.defaults import SPECS
+
+    return SPECS

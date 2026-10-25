@@ -4,6 +4,8 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
   --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016),
                                                     pedaços órfãos e arquivos de áudio ausentes; abre o banco só leitura
+  --worker [--db DIR] [--once]                      worker da fila de processamento (F2): o app o lança sozinho; à mão
+                                                    serve para testes (LISTENER_PIPELINE=fake) e diagnóstico
 """
 from __future__ import annotations
 
@@ -142,6 +144,11 @@ def check(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--worker" in argv:                                   # o worker tem o seu próprio parser e log (F2)
+        from .pipeline.worker import main as worker_main
+
+        return worker_main([a for a in argv if a != "--worker"])
     from .log import setup
 
     setup("INFO")

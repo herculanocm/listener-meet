@@ -1,20 +1,29 @@
 """Controlador: estado (ocioso, gravando, pausado, salvando), warm-up, gravador, widget, bandeja, atalhos, mudo global.
 Nada bloqueante na thread da interface (M-26): a parada roda numa QThread com estado "salvando…", o mudo do sistema é
-lido por um poller próprio e os atalhos registram fora da thread do Qt. `emergency_stop` cobre logoff e desligamento (M-05)."""
+lido por um poller próprio e os atalhos registram fora da thread do Qt. `emergency_stop` cobre logoff e desligamento (M-05).
+F2: ao parar cria o job e lança o worker (subprocesso solto) quando couber; lease da pausa enquanto grava (Q7); polling da
+fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reuniões processadas sem revisão."""
 from __future__ import annotations
 
 import functools
 import threading
+import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
+
+from contextlib import suppress
 
 from PySide6.QtCore import QObject, QPoint, QThread, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon
 
 from ..capture.clock import Clock
 from ..capture.recorder import RecordConfig, Recorder
+from ..config.defaults import SPECS
 from ..log import get_logger
-from ..model import AppState, Health
+from ..model import AppState, Health, JobStatus, MeetingStatus
+from ..platform.common import process
+from .queue import QueueDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
@@ -32,6 +41,11 @@ TRAY_TIP = ("No Windows 11 o ícone da bandeja nasce no menu oculto (seta ao lad
             "para ver o estado da gravação.")
 EMERGENCY_STOP_BUDGET_S = 10.0
 MUTE_POLL_S = 2.0
+LEASE_S = 600.0                      # pipeline.paused_until = agora + 10 min enquanto grava (Q7)
+LEASE_RENEW_S = 60.0
+QUEUE_POLL_ACTIVE_MS = 2000
+QUEUE_POLL_IDLE_MS = 30000
+WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
 _live_threads: set[QThread] = set()     # QThreads sem parent ficam referenciadas até `finished` (senão o Qt aborta)
 
 
@@ -111,6 +125,16 @@ class Controller(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(200)
         self._timer.timeout.connect(self._tick)
+        # F2: fila de processamento
+        self.now: Callable[[], datetime] = lambda: datetime.now().astimezone()
+        self.lease_renew_s = LEASE_RENEW_S
+        self._lease_at: float | None = None
+        self._worker_spawned_at: float | None = None
+        self._seen_done: set[int] = set()
+        self._queue_dialog: QueueDialog | None = None
+        self._queue_timer = QTimer(self)
+        self._queue_timer.setInterval(QUEUE_POLL_IDLE_MS)
+        self._queue_timer.timeout.connect(self._poll_queue)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -131,7 +155,14 @@ class Controller(QObject):
             if self.first_run:
                 self.notify(TRAY_TIP)
         self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
-        log.info("app iniciado; %d gravação(ões) interrompida(s)", interrupted)
+        self._seen_done = {int(j["id"]) for j in self.store.jobs.list_jobs(limit=500) if j["status"] == JobStatus.DONE}
+        waiting = self.store.meetings.list_by_status(MeetingStatus.PROCESSED)
+        if waiting:
+            self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
+        self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
+        self._poll_queue()
+        self._queue_timer.start()
+        log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
 
     def notify(self, message: str) -> None:
         if self.tray is not None:
@@ -231,6 +262,7 @@ class Controller(QObject):
             self.tray.set_state(AppState.RECORDING)
         self._timer.start()
         self._start_mute_poller()
+        self._write_lease(rec)
         notices = list(rec.warnings)
         if not mute_ok and cfg.mic_device is not None:
             notices.append(f"Não achei o endpoint de '{cfg.mic_device.name}': o mudo global vai no microfone padrão do sistema.")
@@ -319,6 +351,8 @@ class Controller(QObject):
         if rec.muted:
             self.platform.mic_mute().set(False)
         self._finish(rec)
+        self._clear_lease()
+        self._enqueue_processing(rec.meeting_id)
         if not self._quitting:
             SummaryDialog(self.store, rec.meeting_id, stats).exec()
 
@@ -336,6 +370,7 @@ class Controller(QObject):
             self.platform.mic_mute().set(False)
         log.info("gravação %s cancelada pelo usuário", rec.meeting_id)
         self._finish(rec)
+        self._clear_lease()
 
     def emergency_stop(self) -> None:
         """Logoff, desligamento ou `quit()` por fora: para e salva sem diálogo (M-05); o resumo fica para a próxima vez."""
@@ -352,7 +387,11 @@ class Controller(QObject):
             self.platform.keep_awake(False)
             self.recorder = None
             self.state = AppState.IDLE
+            with suppress(Exception):
+                self._clear_lease()
+                self._enqueue_processing(rec.meeting_id)
         self._quitting = True
+        self._queue_timer.stop()
         try:
             self.platform.hotkeys().stop()
         except Exception as e:
@@ -407,6 +446,8 @@ class Controller(QObject):
         if saving:
             return
         rec.check_devices()
+        if self._lease_at is not None and rec.elapsed() - self._lease_at >= self.lease_renew_s:
+            self._write_lease(rec)
         snap = rec.snapshot
         db = health.get("db", Health.OK)
         if db == Health.ALERT:
@@ -424,6 +465,101 @@ class Controller(QObject):
             w.show_alert(f"banco lento: {snap.pending} pedaço(s) na fila")
         else:
             w.show_alert(None)
+
+    # ---------------------------------------------------------------- fila de processamento (F2)
+    def _write_lease(self, rec: Recorder) -> None:
+        """O worker lê entre janelas e espera; vencida (app caiu), segue sozinho (F2A-05)."""
+        if not self.store.get(SPECS["pipeline.pause_on_record"]):
+            return
+        until = (self.now() + timedelta(seconds=LEASE_S)).isoformat(timespec="milliseconds")
+        self.store.set_setting("pipeline.paused_until", until)
+        self._lease_at = rec.elapsed()
+
+    def _clear_lease(self) -> None:
+        self._lease_at = None
+        if self.store.get_setting("pipeline.paused_until"):
+            self.store.set_setting("pipeline.paused_until", "")
+
+    def _enqueue_processing(self, meeting_id: int) -> None:
+        """Parou: a reunião `gravada` entra na fila (D-014) e o worker é lançado se couber."""
+        m = self.store.get_meeting(meeting_id)
+        if m is None or m.get("status") not in (MeetingStatus.RECORDED, MeetingStatus.INTERRUPTED):
+            return
+        if not self.store.get(SPECS["pipeline.auto_start"]):
+            log.info("reunião %s gravada; processamento automático desligado", meeting_id)
+            return
+        job_id = self.store.jobs.enqueue(meeting_id)
+        log.info("reunião %s na fila de processamento (job %s)", meeting_id, job_id)
+        self.launch_worker()
+        self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS)
+
+    def launch_worker(self) -> bool:
+        """Só se há `pendente`, nenhum job com heartbeat fresco e o último lançamento já teve tempo de se anunciar."""
+        if not self.store.jobs.has_pending() or self.store.jobs.held_fresh():
+            return False
+        if self.store.get(SPECS["pipeline.paused_manual"]):
+            return False
+        if self._worker_spawned_at is not None and time.monotonic() - self._worker_spawned_at < WORKER_SPAWN_COOLDOWN_S:
+            return False
+        argv = process.worker_command()
+        env = process.worker_env(self.store.get(SPECS["pipeline.torch_threads"]))
+        try:
+            pid = self.platform.spawn_detached(argv, env)
+        except Exception as e:
+            log.exception("não consegui lançar o worker")
+            self.notify(f"Não consegui iniciar o processamento: {e}")
+            return False
+        self._worker_spawned_at = time.monotonic()
+        log.info("worker lançado (pid %s): %s", pid, " ".join(argv))
+        return True
+
+    def _poll_queue(self) -> None:
+        """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão" e relançamento do worker se preciso."""
+        try:
+            summary = self.store.jobs.summary()
+            done_now = {int(j["id"]): j for j in self.store.jobs.list_jobs(limit=50) if j["status"] == JobStatus.DONE}
+        except Exception as e:
+            log.debug("fila: %s", e)
+            return
+        active = int(summary["active"])
+        running = summary.get("running")
+        if self.tray is not None:
+            if running is not None:
+                pct = float(running["progress"] or 0) * 100
+                self.tray.set_queue_tip(f"processando {len(done_now) + 1}/{len(done_now) + active} · {pct:.0f} %")
+            elif active:
+                self.tray.set_queue_tip(f"{active} na fila")
+            else:
+                self.tray.set_queue_tip("")
+        for jid, job in sorted(done_now.items()):
+            if jid not in self._seen_done:
+                self._seen_done.add(jid)
+                self._on_job_done(job)
+        if active and self.recorder is None:
+            self.launch_worker()
+        self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active else QUEUE_POLL_IDLE_MS)
+
+    def _on_job_done(self, job: Any) -> None:
+        m = self.store.get_meeting(int(job["meeting_id"])) or {}
+        title = m.get("title") or f"reunião {job['meeting_id']}"
+        self.notify(f"{title}: pronta para revisão de falantes.")
+        self.open_review(int(job["meeting_id"]))
+
+    def open_review(self, meeting_id: int) -> None:
+        """Revisão mínima de falantes (F2 item 13, L6)."""
+        log.info("revisão da reunião %s disponível", meeting_id)
+
+    def open_queue(self) -> None:
+        if self._queue_dialog is None:
+            self._queue_dialog = QueueDialog(self.store, None, on_launch=self.launch_worker)
+            self._queue_dialog.finished.connect(self._queue_closed)
+        self._queue_dialog.show()
+        self._queue_dialog.raise_()
+
+    def _queue_closed(self, _result: int) -> None:
+        if self._queue_dialog is not None:
+            self._queue_dialog.deleteLater()
+            self._queue_dialog = None
 
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:

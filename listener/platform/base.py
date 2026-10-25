@@ -1,7 +1,7 @@
 """Interfaces da camada de plataforma. Nada específico de sistema operacional aqui."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -108,6 +108,9 @@ class Platform(Protocol):
 
     # processos
     def root_pid(self, exe: str) -> int | None: ...
+    def spawn_detached(self, argv: list[str], env: Mapping[str, str] | None = None) -> int: ...   # worker da F2 solto do app; pid
+    def lower_own_priority(self) -> bool: ...        # o worker se rebaixa ao nascer (nunca `preexec_fn`)
+    def memory_rss(self) -> int | None: ...          # RSS do próprio processo em bytes, só para o log
 
     # pastas do sistema
     def config_dir(self) -> Path: ...
