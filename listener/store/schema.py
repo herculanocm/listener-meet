@@ -149,21 +149,25 @@ MAIN_V7_INDEXES: tuple[str, ...] = (          # depois do ALTER, como na v6
 
 # F5 (v8): base consultável. Tudo em Python (`core._main_v8_rag`): a guarda da CP3 antes de recriar as tabelas da v1 e a
 # reconstrução de `chat_messages` (o `meeting_id` deixa de ser NOT NULL) não cabem numa lista fixa de statements.
+# `rag_chunks` e `rag_vectors` com AUTOINCREMENT: um id nunca volta com outro conteúdo (o cache das assinaturas e a
+# reordenação da busca casam por id). `rag_models.backfill` = o modelo foi confirmado para completar as reuniões antigas
+# ("reindexar agora", L5). O índice de `processing_jobs` por reunião serve à varredura e ao `current_job_id` (R5-02).
 RAG_FTS_WEIGHTS: tuple[float, float, float] = (3.0, 2.0, 1.0)      # bm25 de título, falantes e texto (F5 item 2)
 RAG_TABLES: tuple[str, ...] = ("rag_vectors", "rag_models", "rag_chunks")   # ordem da guarda: filhas antes de `rag_chunks`
 RAG_TRIGGERS: tuple[str, ...] = ("rag_chunks_ai", "rag_chunks_ad", "rag_chunks_au")
 MAIN_V8_RAG: tuple[str, ...] = (
     ("CREATE TABLE rag_chunks ("
-    "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE, kind TEXT NOT NULL,"
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE, kind TEXT NOT NULL,"
     "  t_start_ms INTEGER, t_end_ms INTEGER, seg_first INTEGER, seg_last INTEGER, title TEXT, speakers TEXT, person_ids TEXT,"
     "  text TEXT NOT NULL, text_hash TEXT NOT NULL, job_id INTEGER, created_at TEXT NOT NULL)"),
     "CREATE INDEX idx_rag_chunks_meeting ON rag_chunks(meeting_id, t_start_ms)",
     ("CREATE TABLE rag_vectors ("
-    "  id INTEGER PRIMARY KEY, chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE, model TEXT NOT NULL,"
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE, model TEXT NOT NULL,"
     "  dim INTEGER NOT NULL, vector BLOB NOT NULL, sig BLOB NOT NULL, created_at TEXT NOT NULL, UNIQUE (chunk_id, model))"),
     "CREATE INDEX idx_rag_vectors_model ON rag_vectors(model, id)",
     ("CREATE TABLE rag_models ("
-    "  model TEXT PRIMARY KEY, dim INTEGER NOT NULL, mu BLOB, mu_n INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"),
+    "  model TEXT PRIMARY KEY, dim INTEGER NOT NULL, mu BLOB, mu_n INTEGER NOT NULL DEFAULT 0, backfill INTEGER NOT NULL DEFAULT 0,"
+    "  updated_at TEXT NOT NULL)"),
     ("CREATE VIRTUAL TABLE rag_fts USING fts5(title, speakers, text, content='rag_chunks', content_rowid='id',"
     "  tokenize='unicode61 remove_diacritics 2')"),
     f"INSERT INTO rag_fts(rag_fts, rank) VALUES ('rank', 'bm25({', '.join(str(w) for w in RAG_FTS_WEIGHTS)})')",  # noqa: S608
@@ -176,6 +180,7 @@ MAIN_V8_RAG: tuple[str, ...] = (
     "  INSERT INTO rag_fts(rag_fts, rowid, title, speakers, text) VALUES ('delete', old.id, old.title, old.speakers, old.text);"
     "  INSERT INTO rag_fts(rowid, title, speakers, text) VALUES (new.id, new.title, new.speakers, new.text); END"),
     "CREATE TABLE IF NOT EXISTS chat_threads (id INTEGER PRIMARY KEY, title TEXT, created_at TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_meeting ON processing_jobs(meeting_id, kind, status)",
 )
 # `chat_messages` reconstruída: criar a nova, copiar com os ids, apagar a antiga, renomear e recriar os índices
 CHAT_V8_TABLE = ("CREATE TABLE chat_messages_v8 ("

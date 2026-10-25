@@ -12,9 +12,9 @@ import numpy as np
 
 from ..model import ActionStatus, ChatRole, DecisionSource, LlmCallStatus, SummaryKind, SummaryStatus
 
-__all__ = ["TASK_CLASS", "TASK_REASONING", "ActionStatus", "AudioPart", "Capability", "ChatRole", "Completion", "ConnectionTest",
-           "DecisionSource", "EmbedTask", "Embeddings", "LlmCallStatus", "LlmTask", "Message", "ModelClass", "ModelInfo", "ProviderKind",
-           "Reasoning", "Request", "Role", "SummaryKind", "SummaryStatus", "Usage"]
+__all__ = ["LLM_JOB_TASKS", "TASK_CLASS", "TASK_REASONING", "ActionStatus", "AudioPart", "Capability", "ChatRole", "Completion",
+           "ConnectionTest", "DecisionSource", "EmbedTask", "Embeddings", "LlmCallStatus", "LlmTask", "Message", "ModelClass", "ModelInfo",
+           "ProviderKind", "Reasoning", "Request", "Role", "SummaryKind", "SummaryStatus", "Usage"]
 
 
 class Role(StrEnum):
@@ -79,6 +79,9 @@ TASK_CLASS: dict[LlmTask, ModelClass] = {
     LlmTask.IDENTIFY: ModelClass.STRONG, LlmTask.MINUTES: ModelClass.STRONG, LlmTask.EXECUTIVE: ModelClass.STRONG,
 }
 TASK_REASONING: dict[LlmTask, Reasoning] = {t: (Reasoning.LOW if c == ModelClass.STRONG else Reasoning.NONE) for t, c in TASK_CLASS.items()}
+# as tarefas do job `llm` da reunião (a estimativa da fila mede só elas, não os vetores nem o chat, R5-05)
+LLM_JOB_TASKS: tuple[LlmTask, ...] = (LlmTask.IDENTIFY, LlmTask.MINUTES, LlmTask.EXECUTIVE, LlmTask.PRE_SUMMARY, LlmTask.TITLE,
+                                      LlmTask.REVISE)
 
 
 BYTES_PER_SECOND = {"audio/wav": 32_000, "audio/x-wav": 32_000, "audio/flac": 12_000, "audio/mpeg": 16_000, "audio/mp3": 16_000}

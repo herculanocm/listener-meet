@@ -2,7 +2,10 @@
 `rag.index.sync_text`) e `index_vectors` (os vetores que faltam do modelo ativo, `rag.index.fill_vectors`, com o progresso
 por lote). Nunca espera a lease da gravação (um `index` parado seguraria todos os `llm` da fila leve, F5A-19). Sem embedder
 pronto ou sem rede, conclui com o FTS e a nota "N trechos sem vetor: motivo" em `timings_json.index`, sem laço de
-retentativa (a varredura da próxima abertura tenta de novo). Não grava `job_start`, `job_step` nem `job_done` em `events`:
+retentativa (a varredura da próxima abertura tenta de novo). Com os vetores automáticos desligados (`rag.auto_index`), só
+o FTS, com a nota "vetores automáticos desligados", salvo o pedido forçado (`params_json.force`, "reindexar"). Dentro do
+laço dos lotes só heartbeat e cancelamento, sem bloquear; a pausa manual da fila deixa os lotes no ar terminarem e espera
+fora do laço (R5-04). Não grava `job_start`, `job_step` nem `job_done` em `events`:
 o índice roda a cada edição e encheria a história da reunião; erro e cancelamento continuam lá."""
 from __future__ import annotations
 
@@ -51,7 +54,7 @@ class IndexJobRunner(BaseJobRunner):
 
     @override
     def _execute(self) -> JobStatus:
-        from ..rag.index import fill_vectors, sync_text
+        from ..rag.index import AUTO_OFF, FillResult, auto_index_enabled, embedder_status, fill_vectors, sync_text
 
         self._enter(JobStep.INDEX_TEXT)
         t0 = time.perf_counter()
@@ -62,8 +65,14 @@ class IndexJobRunner(BaseJobRunner):
         self.checkpoint()
         self._enter(JobStep.INDEX_VECTORS)
         t0 = time.perf_counter()
-        filled = fill_vectors(self.store, self.meeting_id, provider=self._provider_override, check=self.checkpoint,
-                              on_progress=lambda done, total: self._progress(JobStep.INDEX_VECTORS, done / max(1, total)))
+        if self.forced or auto_index_enabled(self.store):
+            filled = fill_vectors(self.store, self.meeting_id, provider=self._provider_override, check=self._beat, paused=self._paused,
+                                  wait=self.checkpoint,             # a espera da pausa, fora do laço (volta a `rodando` sozinho)
+                                  on_progress=lambda done, total: self._progress(JobStep.INDEX_VECTORS, done / max(1, total)))
+        else:                                                  # vetores automáticos desligados: o FTS já foi; os vetores, não
+            key = embedder_status(self.store).model_key
+            n = self.store.rag.count_missing(self.meeting_id, key) if key else self.store.rag.count_chunks(self.meeting_id)
+            filled = FillResult(key, n, 0, n, AUTO_OFF)
         timing = self._timing(JobStep.INDEX_VECTORS, filled.model_key or "")
         timing.wall_s += time.perf_counter() - t0
         self.info.update(model=filled.model_key, wanted=filled.wanted, vectors=filled.written, missing=filled.missing,
@@ -71,6 +80,21 @@ class IndexJobRunner(BaseJobRunner):
         if filled.note:
             log.info("job index %s (reunião %s): %s", self.job_id, self.meeting_id, filled.note)
         return self._finish_ok()
+
+    @property
+    def forced(self) -> bool:
+        """O pedido do usuário ("reindexar", L5): os vetores saem mesmo com os vetores automáticos desligados."""
+        try:
+            params = json.loads(self.job.get("params_json") or "{}")
+        except ValueError:
+            return False
+        return isinstance(params, dict) and bool(params.get("force"))
+
+    def _beat(self) -> None:
+        """O que roda dentro do laço dos lotes: heartbeat e cancelamento, sem bloquear (R5-04)."""
+        self.store.jobs.heartbeat(self.job_id)
+        if self.store.jobs.cancel_requested(self.job_id):
+            raise JobCancelledError
 
     def _enter(self, step: JobStep) -> None:
         """`_begin_step` sem o evento `job_step` (ver o docstring do módulo)."""

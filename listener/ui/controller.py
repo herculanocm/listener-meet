@@ -7,8 +7,10 @@ F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da grava�
 `_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão).
 F5: o leve roda também os `index` (índice da busca); a detecção de job concluído e a dica da bandeja os ignoram (a dica
 acrescenta "· índice N"), e um `index` concluído nunca abre a revisão (F5A-05). Na abertura, a varredura do índice roda numa
-`Task` e lança o leve se enfileirou algo (F5A-12); as edições da revisão e das abas da LLM (`on_edited`) reindexam a
-reunião 30 s depois da última, e "Concluir", fechar a revisão e sair do app disparam na hora.
+`Task` interrompível e lança o leve se enfileirou algo (F5A-12, R5-02); a saída a interrompe e espera antes de fechar o
+banco. As edições da revisão, das abas da LLM e do título em "Gravação salva" (`on_edited`) põem o `index` da reunião na
+fila na hora, com uma espera durável de 30 s renovada a cada edição ("não antes de" no job, R5-07); "Concluir" e fechar a
+revisão tiram a espera.
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -78,8 +80,6 @@ QUEUE_POLL_IDLE_MS = 30000
 WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
 REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
 INDEX_KINDS: tuple[str, ...] = (str(JobKind.INDEX),)    # F5: fora da detecção de concluídos e da dica (seriam dezenas)
-INDEX_DEBOUNCE_MS = 30_000           # F5: edição de falantes, título, ata ou ações: reindexa 30 s depois da última
-SWEEP_WAIT_MS = 5000                 # sair do app: espera a varredura do índice antes de fechar o banco
 LIVE_MODELS_MISSING = "modelos do ao vivo ausentes: prepare nas Configurações (Ao vivo)"
 LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente."
 PREPARE_INTERRUPTED = "interrompido pela gravação: prepare de novo depois dela (continua de onde parou)"
@@ -213,10 +213,10 @@ class Controller(QObject):
         self._partial_timer.setInterval(PARTIAL_TICK_MS)
         self._partial_timer.timeout.connect(self._partial_tick)
         # F5: índice da busca (reindexação por edição com espera e varredura da abertura)
-        self.index_debounce_ms = INDEX_DEBOUNCE_MS
-        self._index_timers: dict[int, QTimer] = {}
-        self._index_reasons: dict[int, str] = {}
+        self.index_delay_s: float | None = None             # espera das edições; None = `rag.index.EDIT_DELAY_S` (30 s)
+        self._index_edited: set[int] = set()                 # reuniões com edição esperando nesta sessão (fechar a revisão)
         self._sweeps: set[Task] = set()
+        self._sweep_stop = threading.Event()                 # a saída interrompe a varredura entre reuniões (R5-02)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -255,13 +255,23 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- índice da busca (F5)
     def _start_sweep(self) -> None:
-        """Varredura do índice numa `Task` (F5A-12): reuniões processadas sem trechos e, com embedder pronto, as que têm trecho
-        sem vetor do modelo ativo; com algo na fila, o worker leve sobe."""
+        """Varredura do índice numa `Task` (F5A-12): reuniões processadas sem trechos, as de `index` com erro e, com o
+        embedder pronto e o modelo confirmado, as que têm trecho sem vetor dele; com algo na fila, o worker leve sobe. A
+        saída pede a interrupção (`_sweep_stop`) e espera a `Task` antes de fechar o banco (R5-02)."""
         from ..rag import index as rag_index
 
-        task = run_task(lambda: rag_index.sweep(self.store), self.store, self._on_sweep)
+        self._sweep_stop.clear()
+        task = run_task(lambda: rag_index.sweep(self.store, should_stop=self._sweep_stop.is_set), self.store, self._on_sweep)
         self._sweeps.add(task)
         task.finished.connect(functools.partial(self._sweeps.discard, task))   # o `release` destrói a QThread depois
+
+    def _stop_sweeps(self) -> None:
+        """Interrompe a varredura e espera a `Task` terminar: fechar o banco com a QThread rodando derruba o processo no
+        Windows (F3.1)."""
+        self._sweep_stop.set()
+        for task in list(self._sweeps):
+            with suppress(RuntimeError):                 # já destruída pelo `release`
+                task.wait()
 
     def _on_sweep(self, result: Any) -> None:
         if self._quitting:
@@ -272,40 +282,23 @@ class Controller(QObject):
             self.launch_worker(light=True)
 
     def on_edited(self, meeting_id: int, reason: str = "edit", *, now: bool = False) -> None:
-        """Uma edição que muda a busca (falantes, título, ata, executivo, ações): o `index` da reunião entra na fila
-        `index_debounce_ms` depois da última edição (cada uma reinicia a espera); `now` enfileira já ("Concluir")."""
-        self._index_reasons[meeting_id] = reason
-        if now:
-            self._flush_index(meeting_id)
-            return
-        timer = self._index_timers.get(meeting_id)
-        if timer is None:
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(functools.partial(self._flush_index, meeting_id))
-            self._index_timers[meeting_id] = timer
-        timer.setInterval(self.index_debounce_ms)
-        timer.start()
+        """Uma edição que muda a busca (falantes, título, ata, executivo, ações): o `index` da reunião entra na fila já, com
+        "não antes de" agora + 30 s renovado a cada edição (espera durável no job: sobrevive ao app fechar, R5-07); `now` tira
+        a espera ("Concluir", fechar a revisão). O worker leve sobe agora e espera o job vencer. Com os vetores automáticos
+        desligados o `index` entra do mesmo jeito: os trechos e o FTS são locais e grátis."""
+        from ..rag.index import EDIT_DELAY_S, enqueue_index
 
-    def _flush_index(self, meeting_id: int) -> None:
-        from ..rag.index import auto_index_enabled, enqueue_index
-
-        timer = self._index_timers.pop(meeting_id, None)
-        if timer is not None:
-            timer.stop()
-            timer.deleteLater()
-        reason = self._index_reasons.pop(meeting_id, "edit")
+        delay = 0.0 if now else (EDIT_DELAY_S if self.index_delay_s is None else self.index_delay_s)
         try:
-            if enqueue_index(self.store, meeting_id, reason) is None and not auto_index_enabled(self.store):
-                return                                        # índice automático desligado: nada na fila, nada a lançar
+            enqueue_index(self.store, meeting_id, reason, delay_s=delay)
         except Exception as e:  # a busca nunca atrapalha a edição
             log.warning("reunião %s: não enfileirei o índice da busca: %s", meeting_id, e)
             return
+        if now:
+            self._index_edited.discard(meeting_id)
+        else:
+            self._index_edited.add(meeting_id)
         self.launch_worker(light=True)
-
-    def _flush_all_index(self) -> None:
-        for mid in list(self._index_timers):
-            self._flush_index(mid)
 
     def _run_task(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> None:
         run_task(fn, self.store, on_done)
@@ -515,7 +508,7 @@ class Controller(QObject):
         self._clear_lease()
         self._enqueue_processing(rec.meeting_id)
         if not self._quitting:
-            SummaryDialog(self.store, rec.meeting_id, stats).exec()
+            SummaryDialog(self.store, rec.meeting_id, stats, on_edited=self.on_edited).exec()
 
     def cancel_recording(self) -> None:
         if not self.recorder or self.state == AppState.SAVING:
@@ -556,8 +549,6 @@ class Controller(QObject):
             with suppress(Exception):
                 self._clear_lease()
                 self._enqueue_processing(rec.meeting_id)
-        with suppress(Exception):
-            self._flush_all_index()                      # F5: edição recente não espera os 30 s para entrar na busca
         self._quitting = True
         self._queue_timer.stop()
         try:
@@ -566,9 +557,7 @@ class Controller(QObject):
             log.debug("parar atalhos: %s", e)
         shutdown_preparer()                              # F4: o download dos modelos não segue órfão
         self._wait_partials()                            # a chamada do parcial em voo é cancelada antes de o banco fechar
-        for task in list(self._sweeps):                  # F5: a varredura do índice usa o banco numa QThread
-            with suppress(RuntimeError):                 # já destruída pelo `release`
-                task.wait(SWEEP_WAIT_MS)
+        self._stop_sweeps()                              # F5: a varredura usa o banco numa QThread; termina antes do close
         if self.live_window is not None:                 # guarda a posição antes de o banco fechar
             with suppress(Exception):
                 self.live_window.close()
@@ -686,11 +675,12 @@ class Controller(QObject):
     def launch_worker(self, light: bool = False) -> bool:
         """Só se há job ativo da classe (pendente, ou rodando/pausado de um worker que morreu: heartbeat vencido), nenhum
         heartbeat fresco dessa classe e o último lançamento já teve tempo de se anunciar; o claim do worker novo devolve o job
-        morto à fila (R2-01). O leve (`light`, jobs `llm`) é lançado mesmo durante a gravação (F3A-13)."""
+        morto à fila (R2-01). O leve (`light`, jobs `llm`) é lançado mesmo durante a gravação (F3A-13). Um `index` que ainda
+        espera a edição assentar não conta: o polling da fila lança o leve quando ele vence (R5-07; um leve já vivo espera)."""
         kinds = LIGHT_JOB_KINDS if light else HEAVY_JOB_KINDS
         if not light and self.recorder is not None:
             return False                                           # o pesado espera o fim da gravação (Q7)
-        if not self.store.jobs.active(kinds=kinds) or self.store.jobs.held_fresh(kinds=kinds):
+        if not self.store.jobs.active(kinds=kinds, due_only=True) or self.store.jobs.held_fresh(kinds=kinds):
             return False
         if self.store.get(SPECS["pipeline.paused_manual"]):
             return False
@@ -826,8 +816,15 @@ class Controller(QObject):
         self._review_sigs.pop(meeting_id, None)
         if dlg is not None:
             dlg.deleteLater()
-        if meeting_id in self._index_timers:                     # fechar a revisão não espera os 30 s
-            self._flush_index(meeting_id)
+        if meeting_id in self._index_edited:                     # fechar a revisão tira a espera das edições (R5-07)
+            self._index_edited.discard(meeting_id)
+            try:
+                expedited = self.store.jobs.expedite_index(meeting_id)
+            except Exception as e:  # a busca nunca atrapalha fechar a janela
+                log.warning("reunião %s: não tirei a espera do índice da busca: %s", meeting_id, e)
+                expedited = False
+            if expedited:
+                self.launch_worker(light=True)
 
     def open_transcript(self, meeting_id: int) -> TranscriptDialog:
         dlg = self._transcripts.get(meeting_id)

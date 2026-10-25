@@ -8,7 +8,7 @@ centralizar quase todo bit repete o da direção comum. O `mu` é refeito sempre
 2 mil, e então congela (`mu_due`); refazer regrava as assinaturas a partir dos float32, sem rede. A busca pega
 max(200, 1 % de n) candidatos (até 2 mil) pela distância de Hamming (`np.bitwise_count`, numpy 2) e os reordena pelo
 cosseno exato dos float32. O cache das assinaturas no app (`rag.search.SignatureCache`) usa `RagRepo.vector_version` como
-chave: o `mu_n` muda quando o `mu` é refeito e o `created_at` do maior id, quando o SQLite reaproveita o id."""
+chave: o `mu_n` muda quando o `mu` é refeito (com o AUTOINCREMENT da v8 um id não volta com outro vetor)."""
 from __future__ import annotations
 
 import numpy as np

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -110,15 +111,16 @@ def test_sync_text_diff_keeps_vectors_moves_metadata_and_replaces_what_changed(s
 
 
 class ScaledFake(FakeProvider):
-    """Vetores fora da norma (como a OpenAI) e um gancho no meio do pedido."""
+    """Vetores fora da norma (como a OpenAI) e um gancho no meio do pedido número `at` (o de outro processo, o do usuário)."""
 
-    def __init__(self, *a: Any, during: Any = None, **kw: Any):
+    def __init__(self, *a: Any, during: Any = None, at: int = 1, **kw: Any):
         super().__init__(*a, **kw)
         self.during = during
+        self.at = at
 
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
         emb = await super().embed(texts, model=model, dim=dim, task=task)
-        if self.during is not None:
+        if self.during is not None and len(self.embed_calls) >= self.at:
             self.during, hook = None, self.during
             hook()
         return Embeddings(emb.model, emb.dim, emb.vectors * 3.0, emb.usage)
@@ -134,7 +136,7 @@ def test_fill_vectors_batches_normalizes_signs_refreshes_mu_and_records_calls(st
     progress: list[tuple[int, int]] = []
     filled = index.fill_vectors(store, mid, provider=fake, batch_size=2, on_progress=lambda d, t: progress.append((d, t)))
     assert (filled.written, filled.missing, filled.batches, filled.calls) == (5, 0, 3, 3)
-    assert sorted(progress) == [(1, 3), (2, 3), (3, 3)] and 1 <= fake.peak_parallel <= 2
+    assert sorted(progress) == [(2, 5), (4, 5), (5, 5)] and 1 <= fake.peak_parallel <= 2         # gravados de pedidos
     assert [c[0] for c in fake.embed_calls] == [2, 2, 1]
     assert {c[1:] for c in fake.embed_calls} == {("gemini-embedding-001", 768, "document")}
     ids, mat = store.rag.vectors_by_model(MODEL)
@@ -143,7 +145,7 @@ def test_fill_vectors_batches_normalizes_signs_refreshes_mu_and_records_calls(st
     assert model["mu_n"] == 4 and model["dim"] == 768                                            # refeito em 2 e 4; 5 não dobra
     _vids, chunk_ids, sigs = store.rag.signatures(MODEL)
     assert np.array_equal(sigs, vectors.signatures(mat, model["mu"])) and len(chunk_ids) == 5     # todas no `mu` vigente
-    assert store.rag.vector_version(MODEL)[:3] == (5, int(ids.max()), 4)
+    assert store.rag.vector_version(MODEL) == (5, int(ids.max()), 4)
     calls = [c for c in store.llm_calls.list_for_meeting(mid) if c["task"] == "rag_embed"]
     assert len(calls) == 3 and {c["job_id"] for c in calls} == {job} and all(c["status"] == "ok" for c in calls)
     assert sorted(c["strategy"] for c in calls) == ["batch:1", "batch:2", "batch:2"] and all(c["cost_usd"] > 0 for c in calls)
@@ -315,7 +317,15 @@ def _launch_spy(c: Any, monkeypatch: Any) -> list[bool]:
     return launched
 
 
-def test_on_edited_waits_for_the_last_edit_and_flushes_on_conclude_and_close(qtbot, qapp, platform, store, monkeypatch):
+def _not_before(store: Store, job_id: int) -> datetime | None:
+    raw = json.loads(store.jobs.get(job_id)["params_json"]).get("not_before")
+    return datetime.fromisoformat(raw) if raw else None
+
+
+def test_on_edited_queues_a_durable_delayed_index_and_conclude_or_close_expedite(qapp, platform, store, monkeypatch):
+    """R5-07 e R5-12: a edição põe o `index` na fila na hora, com "não antes de" agora + 30 s renovado a cada edição (o
+    job espera, não um timer do app: sobrevive ao app fechar); o leve sobe já; "Concluir" e fechar a revisão tiram a espera.
+    O relógio do claim é injetado: nada dorme de verdade."""
     from listener.ui.controller import Controller
 
     who = _people(store)
@@ -323,25 +333,66 @@ def test_on_edited_waits_for_the_last_edit_and_flushes_on_conclude_and_close(qtb
     c = Controller(qapp, platform, store)
     c.tray = None
     launched = _launch_spy(c, monkeypatch)
-    c.index_debounce_ms = 200
     try:
+        t0 = datetime.now().astimezone()
         c.on_edited(mid, "edit")
-        qtbot.wait(120)
-        c.on_edited(mid, "edit")                                                                   # reinicia a espera
-        qtbot.wait(120)
-        assert not store.jobs.has_pending(kinds=("index",)) and launched == []
-        qtbot.waitUntil(lambda: store.jobs.has_pending(kinds=("index",)), timeout=3000)
-        pending = store.jobs.list_jobs(kinds=("index",))
-        assert len(pending) == 1 and json.loads(pending[0]["params_json"]) == {"reason": "edit"} and launched == [True]
-        store.jobs.request_cancel(int(pending[0]["id"]))
-        c.on_edited(mid, "review", now=True)                                                       # "Concluir": na hora
-        assert json.loads(store.jobs.list_jobs(1, kinds=("index",))[0]["params_json"]) == {"reason": "review"}
-        store.jobs.request_cancel(int(store.jobs.list_jobs(1, kinds=("index",))[0]["id"]))
-        c.on_edited(mid, "edit")
-        c._review_closed(mid, 0)                                                                   # fechar a revisão: na hora
-        assert store.jobs.has_pending(kinds=("index",)) and not c._index_timers
+        (job,) = [int(j["id"]) for j in store.jobs.list_jobs(kinds=("index",))]
+        first = _not_before(store, job)
+        assert first is not None and timedelta(seconds=29) <= first - t0 <= timedelta(seconds=31) and launched == [True]
+        assert store.jobs.claim(pid=1, kinds=LIGHT_JOB_KINDS, now=(first - timedelta(seconds=1)).isoformat()) is None
+        c.on_edited(mid, "edit")                                                                     # renova, mesmo job
+        assert [int(j["id"]) for j in store.jobs.list_jobs(kinds=("index",))] == [job]
+        assert (_not_before(store, job) or first) >= first
+        c._review_closed(mid, 0)                                                                     # fechar: sem espera
+        assert _not_before(store, job) is None and json.loads(store.jobs.get(job)["params_json"])["reason"] == "edit"
+        assert store.jobs.claim(pid=1, kinds=LIGHT_JOB_KINDS)["id"] == job
+        store.jobs.finish(job, JobStatus.DONE)
+        c.on_edited(mid, "review", now=True)                                                         # "Concluir": na hora
+        (done, new) = [int(j["id"]) for j in store.jobs.list_jobs(kinds=("index",))][::-1]
+        assert done == job and _not_before(store, new) is None
+        c._review_closed(mid, 0)                                                                     # nada esperando: não mexe
+        assert len(store.jobs.list_jobs(kinds=("index",))) == 2
     finally:
         c.emergency_stop()
+
+
+def test_app_launches_the_light_worker_only_when_the_delayed_index_is_due(qapp, platform, store):
+    """R5-07: só esperar a edição assentar não lança um worker (seriam vários esperando, um a cada minuto de edição); o
+    polling da fila lança quando o `index` vence, e "Concluir" (sem espera) lança na hora."""
+    from listener.platform.common.process import worker_command
+    from listener.ui.controller import Controller
+
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    c = Controller(qapp, platform, store)
+    c.tray = None
+    try:
+        c.on_edited(mid, "edit")
+        assert platform.spawned == [] and store.jobs.delayed(LIGHT_JOB_KINDS) == 1
+        c._poll_queue()
+        assert platform.spawned == []                                                                # ainda na espera
+        c.on_edited(mid, "review", now=True)
+        assert [argv for argv, _env in platform.spawned] == [worker_command(light=True)]
+    finally:
+        c.emergency_stop()
+
+
+def test_summary_dialog_reports_a_new_title(qtbot, store):
+    """R5-07: o título salvo em "Gravação salva" também reindexa (o pesado pode já ter indexado com o antigo)."""
+    from listener.ui.summary import SummaryDialog
+
+    mid = store.create_meeting("Antigo", None, None, None)
+    store.finish_meeting(mid, 1000)
+    calls: list[tuple[Any, ...]] = []
+    dlg = SummaryDialog(store, mid, {"duration_s": 1.0}, on_edited=lambda *a, **k: calls.append(a))
+    qtbot.addWidget(dlg)
+    dlg.accept()
+    assert calls == []                                                                               # sem mudança: nada
+    dlg = SummaryDialog(store, mid, {"duration_s": 1.0}, on_edited=lambda *a, **k: calls.append(a))
+    qtbot.addWidget(dlg)
+    dlg.title_edit.setText("Orçamento 2027")
+    dlg.accept()
+    assert calls == [(mid, "edit")] and store.get_meeting(mid)["title"] == "Orçamento 2027"
 
 
 def test_review_dialog_and_llm_tabs_report_edits(qtbot, store):
@@ -385,3 +436,173 @@ def test_controller_start_sweeps_in_a_task_and_launches_the_light_worker(qtbot, 
         assert [j["meeting_id"] for j in store.jobs.list_jobs(kinds=("index",))] == [mid]
     finally:
         c.emergency_stop()
+
+
+def test_pause_mid_vectors_lets_batches_in_flight_finish_and_waits_outside_the_loop(store):
+    """R5-04: dentro do laço só `check` (sem bloquear); a pausa para de despachar lotes, os do ar terminam, a espera roda fora
+    do laço asyncio e a rodada recomeça com o que falta: nenhum trecho é pedido duas vezes."""
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _ready(store)
+    index.sync_text(store, mid)
+    state = {"checks": 0, "paused": False, "waits": 0}
+
+    def check() -> None:
+        state["checks"] += 1
+        if state["checks"] == 2:                                                 # o usuário pausa com o 1º lote no ar
+            state["paused"] = True
+
+    def wait() -> None:
+        with pytest.raises(RuntimeError):
+            asyncio.get_running_loop()                                           # fora do laço: pode bloquear à vontade
+        state["waits"] += 1
+        state["paused"] = False
+
+    fake = FakeProvider(delay_s=0.01)
+    filled = index.fill_vectors(store, mid, provider=fake, batch_size=1, check=check, paused=lambda: bool(state["paused"]), wait=wait)
+    assert (filled.written, filled.missing, filled.pauses, state["waits"]) == (5, 0, 1, 0 + 1)
+    assert sum(n for n, *_rest in fake.embed_calls) == 5                         # cada trecho pedido uma vez
+
+
+def test_index_job_waits_for_the_manual_pause_between_batches(store, monkeypatch):
+    """R5-04 no runner: "Pausar fila" no meio dos vetores; o lote no ar termina, o job fica `pausado` e volta sozinho."""
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _ready(store)
+    store.set_setting("llm.max_parallel", 1)
+    monkeypatch.setattr(index, "EMBED_BATCH", 1)
+    statuses: list[str] = []
+
+    def resume(_s: float) -> None:
+        statuses.append(str(store.jobs.get(job_id)["status"]))
+        store.set_setting("pipeline.paused_manual", False)
+
+    fake = ScaledFake(during=lambda: store.set_setting("pipeline.paused_manual", True))
+    job_id = index.enqueue_index(store, mid, "edit")
+    job = store.jobs.claim(pid=3, kinds=LIGHT_JOB_KINDS)
+    status = IndexJobRunner(store, job, provider=fake, heartbeat_thread=False, sleep=resume, wait_poll_s=0.01).run()
+    info = json.loads(store.jobs.get(job_id)["timings_json"])["index"]
+    assert status == JobStatus.DONE and statuses == ["pausado"] and info["vectors"] == 5 and len(fake.embed_calls) == 5
+
+
+def test_each_batch_is_signed_with_the_mu_read_in_its_own_write_transaction(store):
+    """R5-06: o `mu` muda por outro processo no meio do pedido (aqui, no 4º lote: o 3º deixou um `mu` lido para trás);
+    o lote seguinte é assinado com o `mu` lido na transação que o grava, e todas as assinaturas batem com o `mu` final."""
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _ready(store)
+    store.set_setting("llm.max_parallel", 1)
+    index.sync_text(store, mid)
+    frozen = np.full(768, 0.01, np.float32)
+
+    def other_process() -> None:
+        ids, mat = store.rag.vectors_by_model(MODEL)
+        sigs = vectors.signatures(mat, frozen)
+        with store.transaction():
+            store.rag.set_signatures([(int(v), sigs[i].tobytes()) for i, v in enumerate(ids)])
+            store.rag.set_model(MODEL, 768, frozen, 5000)                                         # congelado lá
+
+    index.fill_vectors(store, mid, provider=ScaledFake(during=other_process, at=4), batch_size=1)
+    _ids, mat = store.rag.vectors_by_model(MODEL)
+    _vids, _chunks, sigs = store.rag.signatures(MODEL)
+    model = store.rag.get_model(MODEL)
+    assert model["mu_n"] == 5000 and np.array_equal(sigs, vectors.signatures(mat, model["mu"]))
+
+
+def test_sweep_completes_only_a_confirmed_model_and_reindex_all_confirms_it(store):
+    """R5-09: trocar o embedder ativo não reindexa tudo na próxima abertura; o "reindexar agora" (`reindex_all`) confirma o
+    modelo novo e põe tudo na fila com `force`; depois disso a varredura completa o que faltar dele."""
+    who = _people(store)
+    a, _ = _meeting(store, who, "Primeira")
+    b, _ = _meeting(store, who, "Segunda")
+    _ready(store)
+    for mid in (a, b):
+        index.sync_text(store, mid)
+        index.fill_vectors(store, mid, provider=FakeProvider())
+    store.providers.update_provider("openai", api_key=KEY)
+    store.providers.set_active("openai", embed=True)
+    status = index.embedder_status(store)
+    key = status.model_key
+    assert tuple(status) == (True, "", "openai/text-embedding-3-small@768", "openai") and key is not None
+    assert store.rag.model_confirmed(MODEL) and not store.rag.model_confirmed(key)
+    assert index.sweep(store) == 0                                                                  # sem confirmação: nada
+    assert index.reindex_all(store) == 2
+    pending = store.jobs.list_jobs(kinds=("index",), statuses=(JobStatus.PENDING,))
+    assert {json.dumps(json.loads(j["params_json"]), sort_keys=True) for j in pending} == {'{"force": true, "reason": "reindex"}'}
+    assert store.rag.model_confirmed(key) and store.rag.get_model(key)["backfill"] == 1
+    for j in pending:
+        store.jobs.request_cancel(int(j["id"]))
+    assert index.sweep(store) == 2                                                                  # confirmado: completa
+
+
+def test_fill_vectors_builds_the_provider_by_its_id_and_records_it(store, monkeypatch):
+    """R5-10: o provedor nasce pelo id da linha (`EmbedderStatus.provider_id`), não pelo tipo."""
+    from listener.llm import registry
+
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _ready(store)
+    index.sync_text(store, mid)
+    asked: list[Any] = []
+    real = registry.build_provider
+
+    def spy(store_: Store, provider_id: str | None = None, **kw: Any) -> Any:
+        asked.append(provider_id)
+        return real(store_, provider_id, **kw)
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    monkeypatch.setattr(registry, "build_provider", spy)
+    filled = index.fill_vectors(store, mid)
+    assert asked == ["gemini"] and filled.written == 5
+    assert {c["provider"] for c in store.llm_calls.list_for_meeting(mid) if c["task"] == "rag_embed"} == {"gemini"}
+
+
+def test_sweep_retries_failed_index_and_stops_when_asked(store):
+    """R5-07: a reunião cujo último `index` terminou em erro volta na varredura (uma vez por abertura); R5-02: a saída do
+    app interrompe a varredura entre as consultas e as reuniões."""
+    who = _people(store)
+    a, _ = _meeting(store, who, "Indexada")
+    index.sync_text(store, a)
+    failed = index.enqueue_index(store, a, "edit")
+    store.jobs.claim(pid=1, kinds=LIGHT_JOB_KINDS)
+    store.jobs.finish(failed, JobStatus.ERROR, error="queda no sync_text")
+    b, _ = _meeting(store, who, "Nova")
+    assert index.sweep(store, should_stop=lambda: True) == 0 and not store.jobs.has_pending(kinds=("index",))
+    calls = {"n": 0}
+
+    def stop_after_first() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 3                                                                      # as 2 consultas e 1 reunião
+    assert index.sweep(store, should_stop=stop_after_first) == 1
+    assert index.sweep(store) == 1
+    assert {j["meeting_id"] for j in store.jobs.list_jobs(kinds=("index",), statuses=(JobStatus.PENDING,))} == {a, b}
+
+
+def test_the_first_model_stays_confirmed_after_switching_away_and_back(store):
+    """R5-09: o primeiro modelo do índice (Q1) fica confirmado na varredura; trocar para outro e voltar não o desconfirma."""
+    who = _people(store)
+    a, _ = _meeting(store, who, "Primeira")
+    _ready(store)
+    index.sync_text(store, a)
+    assert index.sweep(store) == 1 and store.rag.get_model(MODEL)["backfill"] == 1
+    index.fill_vectors(store, a, provider=FakeProvider())
+    store.providers.update_provider("openai", api_key=KEY)
+    store.providers.set_active("openai", embed=True)
+    index.fill_vectors(store, a, provider=FakeProvider())                                            # um vetor do outro modelo
+    store.providers.set_active("gemini", embed=True)
+    assert store.rag.model_confirmed(MODEL)
+
+
+def test_sweep_puts_meetings_without_chunks_in_the_fts_even_without_automatic_vectors(store):
+    """R6-09: com os vetores automáticos desligados, a varredura ainda põe na fila as reuniões processadas sem trecho (as
+    anteriores à F5 entram na busca por palavra); só a falta de vetor depende dos vetores automáticos."""
+    who = _people(store)
+    old, _ = _meeting(store, who, "Anterior à F5")
+    vectorless, _ = _meeting(store, who, "Sem vetor")
+    index.sync_text(store, vectorless)
+    _ready(store)
+    store.set_setting("rag.auto_index", False)
+    assert index.sweep(store) == 1
+    assert [j["meeting_id"] for j in store.jobs.list_jobs(kinds=("index",))] == [old]
+    store.set_setting("rag.auto_index", True)
+    assert index.sweep(store) == 1 and {j["meeting_id"] for j in store.jobs.list_jobs(kinds=("index",))} == {old, vectorless}

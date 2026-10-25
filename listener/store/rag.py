@@ -45,6 +45,7 @@ class RagModelRow(TypedDict, total=False):
     dim: int
     mu: np.ndarray | None
     mu_n: int
+    backfill: int                # 1 = confirmado para completar as reuniões antigas ("reindexar agora", R5-09)
     updated_at: str
 
 
@@ -85,11 +86,11 @@ class VectorInsert:
 
 
 class VectorVersion(NamedTuple):
-    """Chave do cache das assinaturas de um modelo (`rag.search.SignatureCache`)."""
+    """Chave do cache das assinaturas de um modelo (`rag.search.SignatureCache`). Com o AUTOINCREMENT da v8 (R5-03) um id
+    nunca volta: entrar vetor muda o maior id, sair muda a contagem e refazer o `mu` muda o `mu_n` (R6-10)."""
     size: int                    # quantos vetores do modelo
     max_id: int
     mu_n: int                    # muda quando o `mu` é refeito (todas as assinaturas mudam)
-    stamp: str                   # `created_at` do maior id: o SQLite reaproveita o maior id depois de um DELETE
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,19 +276,12 @@ class RagRepo:
         return ids, chunk_ids, sigs
 
     def vector_version(self, model: str) -> VectorVersion:
-        """Chave do cache das assinaturas do modelo: (quantos, maior id, `mu_n`, `created_at` do maior id). Muda quando entra
-        ou sai vetor (o leve grava em outro processo), quando o `mu` é refeito (todas as assinaturas mudam) e quando o maior id
-        sai e volta com outro vetor (sem AUTOINCREMENT o SQLite reaproveita o id: contagem e maior id iguais, conteúdo outro).
-        Só o índice (model, id) e duas buscas por chave: barato a cada busca."""
-        row = self.core.q("SELECT n, top, COALESCE((SELECT mu_n FROM rag_models WHERE model = ?), 0), "
-                          "COALESCE((SELECT created_at FROM rag_vectors WHERE id = top), '') "
-                          "FROM (SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS top FROM rag_vectors WHERE model = ?)", (model, model))[0]
-        return VectorVersion(int(row[0]), int(row[1]), int(row[2]), str(row[3]))
-
-    def vector_stamp(self, model: str, vector_id: int) -> str | None:
-        """`created_at` de um vetor do modelo (None se saiu): o cache confere que o maior id que carregou ainda é o mesmo."""
-        rows = self.core.q("SELECT created_at FROM rag_vectors WHERE id = ? AND model = ?", (int(vector_id), model))
-        return str(rows[0][0]) if rows else None
+        """Chave do cache das assinaturas do modelo: (quantos, maior id, `mu_n`). Muda quando entra ou sai vetor (o leve grava
+        em outro processo) e quando o `mu` é refeito (todas as assinaturas mudam); o AUTOINCREMENT da v8 garante que um id
+        não volta com outro vetor (R5-03). Só o índice (model, id) e uma busca por chave: barato a cada busca."""
+        row = self.core.q("SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE((SELECT mu_n FROM rag_models WHERE model = ?), 0) "
+                          "FROM rag_vectors WHERE model = ?", (model, model))[0]
+        return VectorVersion(int(row[0]), int(row[1]), int(row[2]))
 
     def set_signatures(self, rows: Sequence[tuple[int, bytes]]) -> int:
         """Regrava assinaturas (id de `rag_vectors`, sig) na transação de quem chama (o `mu` refeito vale para todas)."""
@@ -308,6 +302,20 @@ class RagRepo:
                           "SET dim = excluded.dim, mu = excluded.mu, mu_n = excluded.mu_n, updated_at = excluded.updated_at",
                           (model, int(dim), np.asarray(mu, np.float32).tobytes(), int(mu_n), _now()))
 
+    def mark_backfill(self, model: str, dim: int) -> None:
+        """"Reindexar agora" (L5): o modelo passa a ser completado pela varredura nas reuniões antigas (R5-09). Cria a linha
+        sem `mu` quando o modelo ainda não tem vetor; nunca mexe no `mu`."""
+        self.core.execute("INSERT INTO rag_models(model, dim, mu_n, backfill, updated_at) VALUES (?, ?, 0, 1, ?) ON CONFLICT(model) "
+                          "DO UPDATE SET backfill = 1, updated_at = excluded.updated_at", (model, int(dim), _now()))
+
+    def model_confirmed(self, model: str) -> bool:
+        """A varredura pode completar este modelo nas reuniões antigas? Sim quando ele é o primeiro do índice (nenhum vetor de
+        outro modelo: a primeira abertura depois da F5, padrão da Q1) ou foi confirmado pelo "reindexar agora" (R5-09). As
+        duas buscas por intervalo usam o índice (model, id)."""
+        row = self.core.q("SELECT EXISTS (SELECT 1 FROM rag_vectors WHERE model < ?) OR EXISTS (SELECT 1 FROM rag_vectors "
+                          "WHERE model > ?), COALESCE((SELECT backfill FROM rag_models WHERE model = ?), 0)", (model, model, model))[0]
+        return not bool(row[0]) or bool(row[1])
+
     def list_models(self) -> list[RagModelRow]:
         out: list[RagModelRow] = []
         for r in self.core.q("SELECT * FROM rag_models ORDER BY model"):
@@ -318,10 +326,17 @@ class RagRepo:
 
     # ---------------------------------------------------------------- cobertura e varredura
     def meetings_without_chunks(self) -> list[int]:
-        """Reuniões com pipeline concluído (`meeting` ou `reprocess`) e nenhum trecho: a varredura da abertura (F5A-12)."""
+        """Reuniões com pipeline concluído (`meeting` ou `reprocess`) e nenhum trecho: a varredura da abertura (F5A-12). O
+        `NOT EXISTS` dos trechos vem antes (a maioria das reuniões tem trecho) e o job usa o índice por reunião (R5-02)."""
+        rows = self.core.q("SELECT m.id FROM meetings m WHERE NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.meeting_id = m.id) "
+                           "AND EXISTS (SELECT 1 FROM processing_jobs j WHERE j.meeting_id = m.id AND j.kind IN (?, ?) AND j.status = ?) "
+                           "ORDER BY m.id", (*PIPELINE_JOB_KINDS, JobStatus.DONE))
+        return [int(r[0]) for r in rows]
+
+    def processed_meetings(self) -> list[int]:
+        """Reuniões com pipeline concluído (as que o "reindexar agora" põe na fila)."""
         rows = self.core.q("SELECT m.id FROM meetings m WHERE EXISTS (SELECT 1 FROM processing_jobs j WHERE j.meeting_id = m.id "
-                           "AND j.status = ? AND j.kind IN (?, ?)) AND NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.meeting_id = m.id) "
-                           "ORDER BY m.id", (JobStatus.DONE, *PIPELINE_JOB_KINDS))
+                           "AND j.kind IN (?, ?) AND j.status = ?) ORDER BY m.id", (*PIPELINE_JOB_KINDS, JobStatus.DONE))
         return [int(r[0]) for r in rows]
 
     def meetings_missing_vectors(self, model: str) -> list[int]:

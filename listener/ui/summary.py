@@ -1,7 +1,9 @@
 """Resumo de fim de gravação (F1): duração, pedaços, tamanho, marcadores; título editável (vai para revisions);
-pedaços não gravados, se houver (M-04)."""
+pedaços não gravados, se houver (M-04). F5: o título salvo aqui chama `on_edited` (o índice da busca usa o título em todo
+trecho; o pesado pode já ter indexado com o antigo, R5-07)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget, QWidget
@@ -14,10 +16,12 @@ if TYPE_CHECKING:
 
 
 class SummaryDialog(QDialog):
-    def __init__(self, store: Store, meeting_id: int, stats: dict[str, Any], parent: QWidget | None = None):
+    def __init__(self, store: Store, meeting_id: int, stats: dict[str, Any], parent: QWidget | None = None,
+                 on_edited: Callable[..., Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
+        self.on_edited = on_edited                     # F5: `on_edited(meeting_id, motivo)` reindexa a reunião
         self.setWindowTitle("Gravação salva")
         self.setMinimumWidth(480)
         m = store.get_meeting(meeting_id) or {}
@@ -59,6 +63,9 @@ class SummaryDialog(QDialog):
     @override
     def accept(self) -> None:
         title = self.title_edit.text().strip()
-        if title:
+        changed = bool(title) and title != str((self.store.get_meeting(self.meeting_id) or {}).get("title") or "")
+        if changed:
             self.store.update_title(self.meeting_id, title, author="usuario")
+            if self.on_edited is not None:
+                self.on_edited(self.meeting_id, "edit")
         super().accept()

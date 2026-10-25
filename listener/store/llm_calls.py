@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
@@ -126,13 +127,19 @@ class LlmCallsRepo:
                               (month, provider))[0]
         return float(row[0] or 0.0)
 
-    def avg_latency_ms(self, task: str | None = None, model: str | None = None, last: int = 20) -> float | None:
-        """Latência média das últimas chamadas bem-sucedidas (estimativa de tempo do job `llm`, F3 item 16)."""
+    def avg_latency_ms(self, task: str | None = None, model: str | None = None, last: int = 20, *,
+                       tasks: Iterable[str] | None = None) -> float | None:
+        """Latência média das últimas chamadas bem-sucedidas (estimativa de tempo do job `llm`, F3 item 16); `tasks` limita às
+        tarefas dadas (a fila passa as do job `llm`: os lotes de vetores e o chat derrubariam a média, R5-05)."""
         sql = "SELECT latency_ms FROM llm_calls WHERE status = ?"
         params: list[Any] = [str(LlmCallStatus.OK)]
         if task is not None:
             sql += " AND task = ?"
             params.append(task)
+        wanted = [str(t) for t in tasks] if tasks is not None else []
+        if wanted:
+            sql += f" AND task IN ({','.join('?' * len(wanted))})"
+            params += wanted
         if model is not None:
             sql += " AND model = ?"
             params.append(model)

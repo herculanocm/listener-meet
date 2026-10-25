@@ -211,7 +211,9 @@ def _main_v8_rag(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
     """F5: base consultável, numa transação só (F5A-21). Sem FTS5, falha antes de tocar em qualquer tabela (é requisito).
     `rag_chunks` e `rag_vectors` da v1 (nunca escritas) são recriadas; com linhas, viram `*_v1` em vez de sumir (CP3), sem os
     índices e gatilhos (os nomes ficam livres para as novas). `rag_fts` é derivado de `rag_chunks` e nasce de novo. A
-    `chat_messages` é reconstruída com os mesmos ids (nada referencia a tabela: seguro com a FK ligada)."""
+    `chat_messages` é reconstruída com os mesmos ids (nada referencia a tabela: seguro com a FK ligada); a mensagem órfã (a
+    reunião sumiu com a FK desligada, por uma ferramenta de fora) fica com a reunião nula e o texto intacto (CP3), em vez
+    de derrubar a migração pela FK (R5-01)."""
     error = fts5_error()
     if error is not None:
         raise RuntimeError(FTS5_MISSING.format(error=error))
@@ -238,9 +240,20 @@ def _main_v8_rag(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
     conn.execute(f"DROP TABLE IF EXISTS {schema}.chat_messages_v8")
     conn.execute(CHAT_V8_TABLE)
     new_cols = {r[1] for r in conn.execute(f"PRAGMA {schema}.table_info(chat_messages_v8)")}
-    common = ", ".join(c for c in old_cols if c in new_cols)
+    common = [c for c in old_cols if c in new_cols]
     if common:
-        conn.execute(f"INSERT INTO {schema}.chat_messages_v8({common}) SELECT {common} FROM {schema}.chat_messages")  # noqa: S608
+        parents = {"meeting_id": "meetings", "thread_id": "chat_threads"}           # a FK das duas: órfã vira nula
+        for col, parent in parents.items():
+            if col in common:
+                orphans = conn.execute(f"SELECT COUNT(*) FROM {schema}.chat_messages o WHERE o.{col} IS NOT NULL AND NOT EXISTS "  # noqa: S608
+                                       f"(SELECT 1 FROM {schema}.{parent} p WHERE p.id = o.{col})").fetchone()[0]
+                if orphans:
+                    log.warning("chat_messages: %d mensagem(ns) com %s apontando para linha que não existe; ficam com %s nulo (CP3)",
+                                orphans, col, col)
+        picks = ", ".join(f"(SELECT p.id FROM {schema}.{parents[c]} p WHERE p.id = o.{c})" if c in parents else f"o.{c}"  # noqa: S608
+                          for c in common)
+        conn.execute(f"INSERT INTO {schema}.chat_messages_v8({', '.join(common)}) SELECT {picks} "  # noqa: S608
+                     f"FROM {schema}.chat_messages o")
     conn.execute(f"DROP TABLE IF EXISTS {schema}.chat_messages")
     conn.execute(f"ALTER TABLE {schema}.chat_messages_v8 RENAME TO chat_messages")
     for sql in CHAT_V8_INDEXES:
@@ -377,6 +390,25 @@ class Core:
             c.execute("COMMIT")
         finally:
             self._local.in_tx = False
+
+    @contextmanager
+    def snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Leitura consistente (`BEGIN` adiado ... `COMMIT`): todas as consultas dentro veem o mesmo estado do banco, mesmo
+        com outro processo gravando no meio (WAL); não trava quem grava. Só leitura (nada de `ATTACH` nem escrita dentro).
+        Reentrante: dentro de uma transação já aberta nesta thread, só a reaproveita (F5 R5-03: o cache das assinaturas lê a
+        versão, as assinaturas e o `mu` do mesmo instante)."""
+        c = self.conn()
+        if self._local.in_tx:
+            yield c
+            return
+        c.execute("BEGIN")
+        self._local.in_tx = True
+        try:
+            yield c
+        finally:
+            self._local.in_tx = False
+            with suppress(sqlite3.Error):
+                c.execute("COMMIT")
 
     # ---------------------------------------------------------------- linhas
     def q(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:

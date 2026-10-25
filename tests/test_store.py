@@ -617,7 +617,7 @@ def test_v8_rebuilds_chat_creates_rag_index_and_rolls_back_in_the_middle(tmp_pat
             v1_vec = c.execute("SELECT chunk_id, model FROM rag_vectors_v1").fetchall()
             config = c.execute("SELECT v FROM rag_fts_config WHERE k = 'rank'").fetchone()
         assert {"rag_chunks", "rag_vectors", "rag_models", "rag_fts", "chat_threads", "rag_chunks_v1", "rag_vectors_v1"} <= tables
-        assert {"idx_rag_chunks_meeting", "idx_rag_vectors_model", "idx_chat_meeting", "idx_chat_thread"} <= indexes
+        assert {"idx_rag_chunks_meeting", "idx_rag_vectors_model", "idx_chat_meeting", "idx_chat_thread", "idx_jobs_meeting"} <= indexes
         assert triggers == {"rag_chunks_ai", "rag_chunks_ad", "rag_chunks_au"} and config[0] == "bm25(3.0, 2.0, 1.0)"
         assert [tuple(r) for r in v1] == [(mid, "trecho da v1", "Ana")] and [tuple(r) for r in v1_vec] == [(1, "antigo")]   # CP3
         assert chat_cols["meeting_id"][3] == 0 and {"thread_id", "rating"} <= set(chat_cols)              # meeting_id aceita nulo
@@ -655,6 +655,52 @@ def test_v8_rebuilds_chat_creates_rag_index_and_rolls_back_in_the_middle(tmp_pat
             assert s.chat.list_for_meeting(mid) == [] and s.chat.list_for_thread(thread)[0]["id"] == g     # o global fica
     with Store.open_worker(tmp_path) as w:
         assert w.schema_version() == LATEST
+
+
+def test_v8_keeps_orphan_chat_messages_with_a_null_meeting(tmp_path, caplog):
+    """R5-01: uma mensagem cuja reunião sumiu com a FK desligada (ferramenta de fora) não derruba a v8: fica com a reunião
+    nula e o texto (CP3), e o log diz quantas eram."""
+    from listener.model import ChatRole
+
+    with Store(tmp_path) as s:
+        mid = s.create_meeting("Teste", None, None, None)
+        keep = s.create_meeting("Fica", None, None, None)
+        orphan = s.chat.add(mid, ChatRole.USER, "pergunta antiga")
+        kept = s.chat.add(keep, ChatRole.USER, "outra pergunta")
+    _back_to_v7(tmp_path)
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("DELETE FROM meetings WHERE id = ?", (mid,))                                     # FK desligada por padrão
+    raw.close()
+    with caplog.at_level("WARNING", logger="listener.store"), Store(tmp_path) as s:
+        assert s.schema_version() == LATEST
+        rows = {int(r["id"]): dict(r) for r in s._q("SELECT * FROM chat_messages")}
+        assert rows[orphan]["meeting_id"] is None and rows[orphan]["text"] == "pergunta antiga"
+        assert rows[kept]["meeting_id"] == keep
+        with s.connection() as c:
+            assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert any("1 mensagem(ns) com meeting_id" in r.getMessage() for r in caplog.records)
+
+
+def test_v8_ids_never_repeat_and_snapshot_reads_one_state(tmp_path):
+    """R5-03: `rag_chunks` e `rag_vectors` com AUTOINCREMENT (o id de um trecho apagado não volta com outro conteúdo); a
+    leitura consistente (`Store.snapshot`) vê o mesmo estado do começo ao fim, com outra conexão gravando no meio."""
+    from listener.store.rag import ChunkInsert
+
+    with Store(tmp_path) as s, Store(tmp_path) as other:
+        mid = s.create_meeting("r", None, None, None)
+        (a, b) = s.rag.insert_chunks([ChunkInsert(mid, "ata", None, None, None, None, "r", "", (), f"t{i}", f"h{i}", None)
+                                      for i in range(2)])
+        with s.transaction():
+            s.rag.delete_chunks([b])
+        (c,) = s.rag.insert_chunks([ChunkInsert(mid, "ata", None, None, None, None, "r", "", (), "outro", "h9", None)])
+        assert c > b > a
+        with s.snapshot():
+            first = s._q("SELECT COUNT(*) FROM meetings")[0][0]
+            other.create_meeting("gravada por outro processo", None, None, None)
+            assert s._q("SELECT COUNT(*) FROM meetings")[0][0] == first
+            with s.snapshot():                                                                   # reentrante
+                assert s._q("SELECT COUNT(*) FROM meetings")[0][0] == first
+        assert s._q("SELECT COUNT(*) FROM meetings")[0][0] == first + 1
 
 
 def test_captions_repo_inserts_lists_after_id_and_cascades(store):

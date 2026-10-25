@@ -158,10 +158,12 @@ class CacheView(NamedTuple):
 
 class SignatureCache:
     """Assinaturas de um modelo na memória do processo (F5A-20 item 3). A chave é `RagRepo.vector_version` (quantos, maior
-    id, `mu_n` e o `created_at` do maior id), relida a cada busca: o worker leve grava em outro processo. Carrega em lotes de
-    `LOAD_BATCH`; depois, só o que entrou acima do maior id carregado, desde que esse id ainda seja o mesmo vetor (sem
-    AUTOINCREMENT o SQLite reaproveita o maior id depois de um DELETE: o `created_at` dele confere) e que a contagem feche;
-    senão (algo saiu, a contagem caiu, ou o `mu` foi refeito e todas as assinaturas mudaram), recarga total.
+    id e `mu_n`), relida a cada busca: o worker leve grava em outro processo. Carrega em lotes de `LOAD_BATCH`; depois, só o
+    que entrou acima do maior id carregado (a v8 tem AUTOINCREMENT: o id não volta, R5-03), desde que a contagem feche;
+    senão (algo saiu, ou o `mu` foi refeito e todas as assinaturas mudaram), recarga total.
+
+    A sincronia roda numa leitura consistente (`Store.snapshot`): a versão, as assinaturas e o `mu` vêm do mesmo instante,
+    mesmo que o leve refaça o `mu` (e regrave todas as assinaturas) no meio da carga em lotes.
 
     Concorrência: pensado para uma `Task` de busca por vez (a tela descarta o resultado velho pelo contador de geração);
     duas ao mesmo tempo também funcionam, porque `view` sincroniza sob um `Lock` e os vetores são trocados inteiros (quem já
@@ -177,12 +179,12 @@ class SignatureCache:
         self.mu: np.ndarray | None = None
         self.full_loads = 0                        # instrumentação (testes e log)
         self.appends = 0
-        self._top: tuple[int, str] = (0, "")       # (maior id carregado, `created_at` dele)
+        self._top = 0                              # maior id carregado
         self._lock = threading.Lock()
 
     def view(self, store: Store) -> CacheView:
-        with self._lock:
-            self._sync(store)
+        with self._lock, store.snapshot():            # a versão, as assinaturas e o `mu` do mesmo instante (R5-03): o leve
+            self._sync(store)                         # pode refazer o `mu` e regravar todas as assinaturas no meio da carga
             return CacheView(self.vids, self.chunk_ids, self.words, self.mu)
 
     def _sync(self, store: Store) -> None:
@@ -190,8 +192,7 @@ class SignatureCache:
         if v == self.version:
             return
         old = self.version
-        if (old is not None and v.mu_n == old.mu_n and self._top[0] and v.size >= len(self.vids)
-                and store.rag.vector_stamp(self.model, self._top[0]) == self._top[1] and self._append(store, v.size)):
+        if old is not None and v.mu_n == old.mu_n and self._top and v.size >= len(self.vids) and self._append(store, v.size):
             self.version = v
             return
         self._full(store)
@@ -209,29 +210,28 @@ class SignatureCache:
                 break
         return parts
 
-    def _set(self, parts: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray]], store: Store) -> None:
+    def _set(self, parts: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray]]) -> None:
         if parts:
             self.vids = np.concatenate([p[0] for p in parts])
             self.chunk_ids = np.concatenate([p[1] for p in parts])
             self.words = np.ascontiguousarray(np.concatenate([p[2] for p in parts]))
-        top = int(self.vids[-1]) if len(self.vids) else 0
-        self._top = (top, store.rag.vector_stamp(self.model, top) or "") if top else (0, "")
+        self._top = int(self.vids[-1]) if len(self.vids) else 0
 
     def _full(self, store: Store) -> None:
         t0 = time.perf_counter()
         self.vids, self.chunk_ids, self.words = np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 0), np.uint64)
-        self._set(self._read(store, 0), store)
+        self._set(self._read(store, 0))
         row = store.rag.get_model(self.model)
         self.mu = row["mu"] if row is not None else None
         self.full_loads += 1
         log.info("assinaturas de %s carregadas: %d vetor(es) em %.1f ms", self.model, len(self.vids), _ms(t0))
 
     def _append(self, store: Store, count: int) -> bool:
-        parts = self._read(store, self._top[0])
+        parts = self._read(store, self._top)
         if len(self.vids) + sum(len(p[0]) for p in parts) != count:
-            return False                          # algo saiu (ou entrou abaixo do maior id): recarga total
+            return False                          # algo saiu: recarga total
         if parts:
-            self._set([(self.vids, self.chunk_ids, self.words), *parts] if len(self.vids) else parts, store)
+            self._set([(self.vids, self.chunk_ids, self.words), *parts] if len(self.vids) else parts)
         self.appends += 1
         return True
 
@@ -294,18 +294,19 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None)
             _QUERY_CACHE.move_to_end(key)
             return QueryVector(hit, status.model_key, "", cached=True, cost_usd=0.0)
     kind, model, dim = index.parse_model_key(status.model_key)
-    redact.GLOBAL.add(store.providers.key(kind))              # CP10: a chave nunca vai para o motivo nem para `llm_calls`
+    pid = status.provider_id or kind                          # a linha de `providers` (R5-10); o preço é pelo tipo
+    redact.GLOBAL.add(store.providers.key(pid))               # CP10: a chave nunca vai para o motivo nem para `llm_calls`
     t0 = time.perf_counter()
     try:
-        emb = run_async(_embed(store, provider, kind, model, dim, text))
+        emb = run_async(_embed(store, provider, pid, model, dim, text))
         vec = vectors.normalize(index._checked(emb.vectors, 1, dim))[0]
     except Exception as e:  # rede, chave, SDK ausente, dimensão errada: a busca segue por palavras
         reason = f"tempo esgotado ({QUERY_TIMEOUT_S:g} s)" if isinstance(e, TimeoutError) else index._reason(e)
-        _record(store, kind, model, 0, None, _ms(t0), LlmCallStatus.ERROR, reason)
+        _record(store, pid, model, 0, None, _ms(t0), LlmCallStatus.ERROR, reason)
         log.warning("vetor da consulta indisponível: %s", reason)
         return QueryVector(None, status.model_key, reason)
     cost = cost_usd(emb.usage, price_for(store.providers.list_prices(kind), kind, model))
-    _record(store, kind, model, emb.usage.input_tokens, cost, _ms(t0), LlmCallStatus.OK, None)
+    _record(store, pid, model, emb.usage.input_tokens, cost, _ms(t0), LlmCallStatus.OK, None)
     vec.setflags(write=False)
     with _QUERY_LOCK:
         _QUERY_CACHE[key] = vec
@@ -314,13 +315,13 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None)
     return QueryVector(vec, status.model_key, "", cost_usd=cost)
 
 
-async def _embed(store: Store, provider: LLMProvider | None, kind: str, model: str, dim: int, text: str) -> Embeddings:
+async def _embed(store: Store, provider: LLMProvider | None, provider_id: str, model: str, dim: int, text: str) -> Embeddings:
     from ..llm.registry import RetryingProvider, build_provider
     from ..llm.types import EmbedTask
 
     own = provider is None
     if provider is None:
-        provider = RetryingProvider(build_provider(store, kind, role="embed", retrying=False)[0], attempts=QUERY_ATTEMPTS,
+        provider = RetryingProvider(build_provider(store, provider_id, role="embed", retrying=False)[0], attempts=QUERY_ATTEMPTS,
                                     delays=QUERY_DELAYS)
     try:
         async with asyncio.timeout(QUERY_TIMEOUT_S):
@@ -330,12 +331,12 @@ async def _embed(store: Store, provider: LLMProvider | None, kind: str, model: s
             await provider.aclose()
 
 
-def _record(store: Store, kind: str, model: str, tokens: int, cost: float | None, latency_ms: float, status: LlmCallStatus,
+def _record(store: Store, provider_id: str, model: str, tokens: int, cost: float | None, latency_ms: float, status: LlmCallStatus,
             error: str | None) -> None:
     from ..llm.types import LlmTask
 
     try:
-        store.llm_calls.insert(LlmCallInsert(None, None, str(LlmTask.RAG_EMBED), kind, model, None, None, int(tokens), 0, 0, 0, cost,
+        store.llm_calls.insert(LlmCallInsert(None, None, str(LlmTask.RAG_EMBED), provider_id, model, None, None, int(tokens), 0, 0, 0, cost,
                                              int(latency_ms), status, error, "query"), store_payloads=False)
     except sqlite3.Error as e:  # o registro do custo nunca derruba a busca
         log.warning("não registrei a chamada do vetor da consulta: %s", e)

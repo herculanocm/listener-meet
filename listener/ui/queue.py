@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, Q
 
 from ..config.defaults import SPECS
 from ..llm.costs import fmt_usd
+from ..llm.types import LLM_JOB_TASKS
 from ..model import JOB_STEP_LABELS, LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..store.jobs import HELD
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
@@ -137,7 +138,8 @@ class QueueDialog(QDialog):
         self.jobs = self.store.jobs.list_jobs(exclude_kinds=INDEX_KINDS)
         rtf = self.store.get_setting("pipeline.rtf_json")
         meetings = {m["id"]: dict(m) for m in self.store.list_meetings()}
-        latency_ms = self.store.llm_calls.avg_latency_ms() if any(str(j.get("kind")) == JobKind.LLM for j in self.jobs) else None
+        latency_ms = (self.store.llm_calls.avg_latency_ms(tasks=LLM_JOB_TASKS) if any(str(j.get("kind")) == JobKind.LLM for j in self.jobs)
+                      else None)
         latency_s = latency_ms / 1000 if latency_ms else None
         running = self.store.jobs.list_jobs(1, kinds=INDEX_KINDS, statuses=HELD)
         aggregated = index_row_texts(self.store.jobs.index_summary(), running[0] if running else None)

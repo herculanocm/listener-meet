@@ -158,9 +158,10 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min; 0 desliga)", int, low=0, high=60,
                 phase="F4"),                                   # 0: sem o custo do parcial, a ata segue (desvio do orquestrador, L5)
     SettingSpec("live.in_widget", True, _NEXT, "Mostrar a última legenda no widget", _bool, phase="F4"),
-    # F5 (Dados): grupo "Busca" (a tela é do L5). Índice automático desligado = nenhum job `index` sozinho (pipeline, `llm`,
-    # edições, varredura); os trechos e o FTS do fim do pipeline continuam (locais e grátis); "reindexar" passa mesmo assim
-    SettingSpec("rag.auto_index", True, _NOW, "Indexar sozinho para a busca (custo dos embeddings)", _bool, phase="F5"),
+    # F5 (Dados): grupo "Busca" (a tela é do L5). `rag.auto_index` = vetores automáticos (o custo dos embeddings, Q1):
+    # desligado, os jobs `index` continuam e gravam trechos e FTS (locais e grátis), só os vetores ficam de fora, salvo no
+    # "reindexar" (pedido forçado)
+    SettingSpec("rag.auto_index", True, _NOW, "Vetores automáticos da busca por sentido (embeddings, com custo)", _bool, phase="F5"),
     SettingSpec("rag.top_k", 12, _NOW, "Trechos por pergunta no chat sobre todas as reuniões (4 a 30)", int, low=4, high=30,
                 phase="F5"),
     SettingSpec("rag.max_per_meeting", 3, _NOW, "Trechos por reunião no chat sobre todas as reuniões (1 a 10)", int, low=1, high=10,

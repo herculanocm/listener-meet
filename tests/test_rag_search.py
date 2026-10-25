@@ -1,13 +1,12 @@
 """F5 L3, busca: a consulta FTS5 segura (aspas, sintaxe crua vira texto, prefixo na última, palavras vazias, E -> OU abaixo de
 10), o destaque seguro contra HTML (`snippet()` e `preview`), a busca por palavra e a híbrida (RRF, ordem e empates), os
 filtros (pessoa, período, reunião, tipo) nas duas listas, "por palavras" sem vetor da consulta ou sem vetores do modelo
-ativo, o cache das assinaturas (μ refeito, vetor novo de outro processo, trecho apagado, id reaproveitado), o vetor da
+ativo, o cache das assinaturas (μ refeito, vetor novo de outro processo, trecho apagado, maior id trocado), o vetor da
 consulta (cache, `llm_calls` com reunião nula, falha e tempo esgotado viram o motivo), `group_by_meeting` e
-`limit_per_meeting`, as configurações `rag.*` com o índice automático desligado e o `fmt_usd` abaixo de um centavo."""
+`limit_per_meeting`, as configurações `rag.*` com os vetores automáticos desligados e o `fmt_usd` abaixo de um centavo."""
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 import numpy as np
@@ -242,23 +241,23 @@ def test_signature_cache_mu_change_new_vector_from_another_process_deleted_chunk
         store.rag.delete_chunks([gone])
     view = cache.view(store)
     assert cache.full_loads == 3 and gone not in view.chunk_ids.tolist() and len(view.vids) == 5
-    # o maior id sai e volta com outro vetor (o SQLite reaproveita o id do vetor e o do trecho): contagem, maior id e `mu_n`
-    # iguais; só o `created_at` do maior id denuncia (sem ele o cache seguiria com a assinatura do texto antigo)
+    # o maior id sai e entra outro vetor: com o AUTOINCREMENT da v8 (R5-03) o id não se repete, a versão muda pelo maior id
+    # e a contagem não fecha com o que entrou acima do maior carregado: recarga total (sem depender do relógio, R6-10)
     before = cache.version
     top_vid = int(view.vids.max())
     with store.transaction():
         store.rag.delete_chunks([int(view.chunk_ids[int(np.argmax(view.vids))])])
-    time.sleep(0.005)
     store._x("INSERT INTO rag_chunks(meeting_id, kind, title, speakers, person_ids, text, text_hash, created_at) "
              "VALUES (?, 'ata', 'Sem fala', '', '[]', 'um texto bem diferente', 'h-novo', '2026-10-25T10:00:00.000-03:00')", (silent,))
     fresh = int(store._q("SELECT MAX(id) FROM rag_chunks")[0][0])
     index.fill_vectors(store, silent, provider=FakeProvider())
-    assert int(store._q("SELECT id FROM rag_vectors WHERE chunk_id = ?", (fresh,))[0][0]) == top_vid       # id reaproveitado
+    fresh_vid = int(store._q("SELECT id FROM rag_vectors WHERE chunk_id = ?", (fresh,))[0][0])
     after = store.rag.vector_version(MODEL)
-    assert after[:3] == before[:3] and after != before
+    assert fresh_vid > top_vid and after.size == before.size and after.max_id == fresh_vid      # id novo, nunca o reaproveitado
     view = cache.view(store)
     _vids, _chunks, sigs = store.rag.signatures(MODEL)
     assert cache.full_loads == 4 and fresh in view.chunk_ids.tolist() and np.array_equal(view.words, vectors.as_words(sigs))
+    assert top_vid not in view.vids.tolist() and cache.version == after
 
 
 def test_embed_query_caches_records_calls_without_meeting_and_falls_back(store, monkeypatch):
@@ -302,6 +301,9 @@ def test_group_by_meeting_and_limit_per_meeting():
 
 
 def test_rag_settings_and_the_auto_index_switch(qtbot, qapp, platform, store, monkeypatch):
+    """`rag.auto_index` = vetores automáticos (decisão da revisão do L0 a L2): desligado, o `index` entra do mesmo jeito e
+    grava trechos e FTS; só os vetores ficam de fora, com a nota, salvo o "reindexar" (forçado)."""
+    from listener.pipeline.index_steps import IndexJobRunner
     from listener.ui.controller import Controller
 
     specs = defaults.SPECS
@@ -311,23 +313,31 @@ def test_rag_settings_and_the_auto_index_switch(qtbot, qapp, platform, store, mo
     assert specs["rag.top_k"].error("3") and specs["rag.top_k"].error("31") and specs["rag.top_k"].error("30") is None
     per = specs["rag.max_per_meeting"]
     assert per.error("0") and per.error("11") and per.error("1") is None
+    assert "Vetores automáticos" in specs["rag.auto_index"].label and "custo" in specs["rag.auto_index"].label
     who = _people(store)
     mid, _job = _meeting(store, who)
+    _ready(store)
     store.set_setting("rag.auto_index", False)
-    assert index.enqueue_index(store, mid, "pipeline") is None and index.sweep(store) == 0       # nada automático
-    assert not store.jobs.has_pending(kinds=("index",))
+
+    def run_index(job_id: int) -> dict[str, Any]:
+        job = store.jobs.claim(pid=3, kinds=("llm", "index"))
+        assert job is not None and int(job["id"]) == job_id
+        IndexJobRunner(store, job, provider=FakeProvider(), heartbeat_thread=False).run()
+        return json.loads(store.jobs.get(job_id)["timings_json"])["index"]
+
+    job = index.enqueue_index(store, mid, "pipeline")                                             # entra mesmo desligado
+    info = run_index(job)
+    assert info["chunks"] == 5 and info["vectors"] == 0 and info["note"] == "5 trechos sem vetor: vetores automáticos desligados"
+    assert store.rag.count_chunks(mid) == 5 and store.llm_calls.list_for_meeting(mid) == []       # o FTS foi; vetor, não
+    assert index.sweep(store) == 0                                                                # sem vetores automáticos
+    info = run_index(index.enqueue_index(store, mid, "reindex", force=True))                       # o pedido do usuário pede
+    assert info["vectors"] == 5 and info["note"] == ""
     c = Controller(qapp, platform, store)
     c.tray = None
     launched = _launch_spy(c, monkeypatch)
     try:
         c.on_edited(mid, "review", now=True)
-        assert launched == [] and not store.jobs.has_pending(kinds=("index",))                   # edição: nem fila nem worker
-        job = index.enqueue_index(store, mid, "reindex", force=True)                              # o pedido do usuário passa
-        assert job is not None and json.loads(store.jobs.get(job)["params_json"]) == {"reason": "reindex"}
-        store.set_setting("rag.auto_index", True)
-        assert index.sweep(store) == 0 and index.enqueue_index(store, mid, "edit") is None        # já há um pendente
-        c.on_edited(mid, "review", now=True)
-        assert launched == [True]                                                                 # ligado: lança o leve
+        assert launched == [True] and store.jobs.has_pending(kinds=("index",))                    # edição: fila e worker
     finally:
         c.emergency_stop()
 

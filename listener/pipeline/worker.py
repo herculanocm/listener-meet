@@ -7,7 +7,8 @@ houver fila). `LISTENER_PIPELINE=fake` usa os fakes de `tests/fake_pipeline.py` 
 F3: `--light` é o worker da classe leve (só jobs `llm`): nunca importa torch, tem log próprio (`listener-llm.log`) e roda
 mesmo durante uma gravação; o pesado, ao concluir um job que enfileirou tarefas de LLM, lança o leve se ele não estiver vivo.
 F5: o leve também roda o `index` (despacho por `kind`); com `--once` nenhum worker lança o leve (os testes com subprocesso
-não deixam um worker solto, F5A-16).
+não deixam um worker solto, F5A-16). O leve não sai ocioso enquanto houver `index` esperando o "não antes de" das edições
+(R5-07): a espera é do job, não do app.
 """
 from __future__ import annotations
 
@@ -200,6 +201,10 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
             continue
         if once:
             break
+        if light and store.jobs.delayed(kinds):                    # há `index` esperando a edição assentar (R5-07): fica
+            idle_since = None
+            time.sleep(poll_s)
+            continue
         now = time.monotonic()
         idle_since = idle_since if idle_since is not None else now
         if now - idle_since >= idle_exit_s:

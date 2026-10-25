@@ -7,7 +7,9 @@ embedder pronto (F5A-07: só os pagos nesta entrega; o local é da F5.1); `sweep
 Regras duras: nunca `await` dentro de `store.transaction()`; o vetor só entra se o trecho ainda existe com o mesmo hash;
 normaliza sempre; uma linha em `llm_calls` por lote (tarefa `rag_embed`, a reunião e o job do pipeline vigente); sem
 embedder pronto ou sem rede, o job conclui com o FTS e a nota "N trechos sem vetor: motivo" (sem laço de retentativa: a
-varredura da próxima abertura tenta de novo)."""
+varredura da próxima abertura tenta de novo). `rag.auto_index` = "vetores automáticos": desligado, o `index` grava trechos
+e FTS e pula os vetores ("vetores automáticos desligados"), salvo o pedido forçado ("reindexar"). As edições entram na fila
+na hora, com uma espera durável de 30 s ("não antes de", renovada a cada edição; R5-07)."""
 from __future__ import annotations
 
 import asyncio
@@ -46,6 +48,7 @@ class EmbedderStatus(NamedTuple):
     ready: bool
     reason: str                  # vazio quando pronto
     model_key: str | None        # "gemini/gemini-embedding-001@768": o `model` de `rag_vectors` (D-009)
+    provider_id: str | None = None   # a linha de `providers` que atende (R5-10; hoje igual ao tipo nos pagos)
 
 
 def model_key(kind: str, model: str, dim: int = EMBED_DIM) -> str:
@@ -68,20 +71,20 @@ def embedder_status(store: Store) -> EmbedderStatus:
     row = store.providers.active_provider("embed")
     if row is None:
         return EmbedderStatus(False, "nenhum provedor ativo para embeddings (Configurações, LLM)", None)
-    kind = str(row["kind"])
+    kind, pid = str(row["kind"]), str(row["id"])
     if kind in NO_EMBEDDINGS:
-        return EmbedderStatus(False, NO_EMBEDDINGS[kind], None)
+        return EmbedderStatus(False, NO_EMBEDDINGS[kind], None, pid)
     try:
         default = DEFAULT_EMBED_MODELS.get(ProviderKind(kind), "")
     except ValueError:
         default = ""
     model = str(row.get("model") or default).strip()
     if not model:
-        return EmbedderStatus(False, f"o provedor {row['id']} não tem modelo de embeddings (Configurações, LLM)", None)
+        return EmbedderStatus(False, f"o provedor {pid} não tem modelo de embeddings (Configurações, LLM)", None, pid)
     key = model_key(kind, model)
     if not str(row.get("api_key") or "").strip():
-        return EmbedderStatus(False, f"sem chave do provedor {row['id']} para embeddings (Configurações, LLM)", key)
-    return EmbedderStatus(True, "", key)
+        return EmbedderStatus(False, f"sem chave do provedor {pid} para embeddings (Configurações, LLM)", key, pid)
+    return EmbedderStatus(True, "", key, pid)
 
 
 # ---------------------------------------------------------------- texto (trechos e FTS)
@@ -192,16 +195,20 @@ def _insert(meeting_id: int, c: Chunk, job_id: int | None) -> ChunkInsert:
 
 
 # ---------------------------------------------------------------- vetores
+AUTO_OFF = "vetores automáticos desligados"
+
+
 @dataclass(slots=True)
 class FillResult:
     model_key: str | None
     wanted: int = 0                      # trechos sem vetor do modelo no começo
     written: int = 0
     missing: int = 0                     # trechos sem vetor do modelo no fim
-    reason: str = ""                     # por que faltou (sem embedder, sem rede...)
+    reason: str = ""                     # por que faltou (sem embedder, sem rede, vetores automáticos desligados...)
     calls: int = 0
     cost_usd: float = 0.0
     batches: int = 0
+    pauses: int = 0                      # quantas vezes a fila foi pausada no meio (os lotes no ar terminaram antes)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -214,12 +221,12 @@ class FillResult:
 
 def refresh_mu(store: Store, key: str, dim: int) -> bool:
     """Refaz o `mu` do modelo quando os vetores dobraram (até 2 mil, depois congela) e regrava todas as assinaturas a partir
-    dos float32 numa transação (sem rede)."""
-    row = store.rag.get_model(key)
-    count = store.rag.count_vectors(key)
-    if not vectors.mu_due(count, int(row["mu_n"]) if row is not None else 0):
-        return False
+    dos float32, numa transação que também decide se é a hora (dois processos não refazem com contas velhas; sem rede).
+    Reentrante: dentro da transação do lote, vale junto com ele."""
     with store.transaction():
+        row = store.rag.get_model(key)
+        if not vectors.mu_due(store.rag.count_vectors(key), int(row["mu_n"]) if row is not None else 0):
+            return False
         ids, mat = store.rag.vectors_by_model(key)
         if not len(ids):
             return False
@@ -233,11 +240,14 @@ def refresh_mu(store: Store, key: str, dim: int) -> bool:
 
 def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None = None, status: EmbedderStatus | None = None,
                  on_progress: Callable[[int, int], None] | None = None, check: Callable[[], None] | None = None,
-                 batch_size: int = EMBED_BATCH) -> FillResult:
+                 paused: Callable[[], bool] | None = None, wait: Callable[[], None] | None = None,
+                 batch_size: int | None = None) -> FillResult:
     """Pede os vetores que faltam do modelo ativo em lotes de `batch_size` num `TaskGroup` sob `llm.max_parallel`, fora de
-    transação; grava lote a lote. `check` roda antes de cada lote (heartbeat, pausa, cancelamento): se levantar, os lotes
-    seguintes não saem e a exceção sobe depois dos que estavam no ar. Erro de rede ou de provedor não sobe: para os lotes
-    seguintes e vira o motivo da nota."""
+    transação; grava lote a lote. Antes de cada lote, dentro do laço asyncio e sem bloquear: `check` (heartbeat e
+    cancelamento; se levantar, os lotes seguintes não saem e a exceção sobe depois dos que estavam no ar) e `paused` (a fila
+    foi pausada: os lotes seguintes não saem, os do ar terminam). Na pausa, `wait` espera FORA do laço (bloqueante, como o
+    `checkpoint` do runner: "entre tarefas, nunca no meio", F3) e a rodada recomeça com o que ainda falta (R5-04). Erro de
+    rede ou de provedor não sobe: para os lotes seguintes e vira o motivo da nota. `on_progress(gravados, pedidos)`."""
     from ..llm.aio import run_async
 
     status = status or embedder_status(store)
@@ -245,18 +255,29 @@ def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None 
     if not status.ready or key is None:
         n = store.rag.count_missing(meeting_id, key) if key else store.rag.count_chunks(meeting_id)
         return FillResult(key, n, 0, n, status.reason)
-    rows = store.rag.missing_vectors(meeting_id, key)
-    result = FillResult(key, len(rows))
-    if not rows:
-        return result
+    result = FillResult(key, store.rag.count_missing(meeting_id, key))
     meeting = store.get_meeting(meeting_id) or {}
     date = str(meeting.get("started_at") or "")[:10]
-    plan = _Plan(store, meeting_id, key, date, store.segments.current_job_id(meeting_id), list(batched(rows, max(1, batch_size))),
-                 result, on_progress, check)
-    run_async(plan.run(provider))
+    job_id = store.segments.current_job_id(meeting_id)
+    while True:
+        rows = store.rag.missing_vectors(meeting_id, key)
+        if not rows:
+            break
+        plan = _Plan(store, meeting_id, key, status.provider_id or parse_model_key(key)[0], date, job_id,
+                     list(batched(rows, max(1, batch_size or EMBED_BATCH))), result, on_progress, check, paused)
+        run_async(plan.run(provider))
+        if plan.stop_exc is not None:
+            result.missing = store.rag.count_missing(meeting_id, key)
+            raise plan.stop_exc
+        if plan.stop or not plan.paused:
+            break
+        result.pauses += 1
+        log.info("reunião %s: fila pausada no meio dos vetores; os lotes no ar terminaram e a rodada espera", meeting_id)
+        if wait is None:                                          # sem quem espere, a rodada para aqui (o resto fica na nota)
+            result.reason = "fila pausada"
+            break
+        wait()                                                    # bloqueante, fora do laço asyncio; levanta no cancelamento
     result.missing = store.rag.count_missing(meeting_id, key)
-    if plan.stop_exc is not None:
-        raise plan.stop_exc
     if result.missing and not result.reason:
         result.reason = "o trecho mudou durante o pedido"            # o próximo `index` pede de novo
     return result
@@ -265,26 +286,28 @@ def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None 
 class _Plan:
     """Uma rodada de `fill_vectors`: os lotes, o semáforo e o que parou a rodada."""
 
-    def __init__(self, store: Store, meeting_id: int, key: str, date: str, job_id: int | None, batches: list[tuple[RagChunkRow, ...]],
-                 result: FillResult, on_progress: Callable[[int, int], None] | None, check: Callable[[], None] | None):
+    def __init__(self, store: Store, meeting_id: int, key: str, provider_id: str, date: str, job_id: int | None,
+                 batches: list[tuple[RagChunkRow, ...]], result: FillResult, on_progress: Callable[[int, int], None] | None,
+                 check: Callable[[], None] | None, paused: Callable[[], bool] | None):
         from ..config.defaults import SPECS
 
         self.store = store
         self.meeting_id = meeting_id
         self.key = key
         self.kind, self.model, self.dim = parse_model_key(key)
+        self.provider_id = provider_id
         self.date = date
         self.job_id = job_id
         self.batches = batches
         self.result = result
         self.on_progress = on_progress
         self.check = check
+        self.is_paused = paused
         self.max_parallel = max(1, int(store.get(SPECS["llm.max_parallel"])))
         self.prices = store.providers.list_prices(self.kind)
-        self.stop = False
+        self.stop = False                                          # erro do provedor: nenhum lote novo, nota com o motivo
+        self.paused = False                                        # fila pausada: nenhum lote novo, espera fora do laço
         self.stop_exc: BaseException | None = None
-        self.done = 0
-        self.mu: np.ndarray | None = None
 
     async def run(self, provider: LLMProvider | None) -> None:
         own = provider is None
@@ -292,8 +315,9 @@ class _Plan:
             try:
                 from ..llm.registry import build_provider
 
-                provider = build_provider(self.store, self.kind, role="embed")[0]
+                provider = build_provider(self.store, self.provider_id, role="embed")[0]
             except Exception as e:  # SDK ausente, chave apagada no meio: vira a nota, sem derrubar o job
+                self.stop = True
                 self.result.reason = _reason(e)
                 return
         sem = asyncio.Semaphore(self.max_parallel)
@@ -305,6 +329,22 @@ class _Plan:
             if own:
                 await provider.aclose()
 
+    def _gate(self) -> bool:
+        """Antes de cada lote, dentro do laço e sem bloquear: heartbeat e cancelamento (`check`) e a pausa da fila. False =
+        este lote não sai."""
+        if self.stop or self.paused or self.stop_exc is not None:
+            return False
+        try:
+            if self.check is not None:
+                self.check()
+            if self.is_paused is not None and self.is_paused():
+                self.paused = True
+                return False
+        except BaseException as e:  # cancelamento (ou o banco): sobe depois dos lotes no ar
+            self.stop, self.stop_exc = True, e
+            return False
+        return True
+
     async def _one(self, provider: LLMProvider, sem: asyncio.Semaphore, idx: int, rows: tuple[RagChunkRow, ...]) -> None:
         """Um lote: nunca levanta dentro do `TaskGroup` (as irmãs seguem até o fim delas). Falha do provedor vira o motivo da
         nota; falha ao gravar (banco) para os lotes seguintes e sobe depois, com a mensagem dela."""
@@ -313,14 +353,8 @@ class _Plan:
         from ..llm.types import EmbedTask
 
         async with sem:
-            if self.stop:
+            if not self._gate():
                 return
-            if self.check is not None:
-                try:
-                    self.check()
-                except BaseException as e:  # cancelamento ou pausa interrompida: sobe depois dos lotes no ar
-                    self.stop, self.stop_exc = True, e
-                    return
             texts = [chunker.embed_input(str(r.get("title") or ""), self.date, str(r["text"])) for r in rows]
             t0 = time.perf_counter()
             try:
@@ -347,34 +381,33 @@ class _Plan:
                 self.stop_exc = e
 
     def _store(self, rows: tuple[RagChunkRow, ...], usage: Usage, mat: np.ndarray, latency: int) -> None:
-        """Grava o lote (fora do semáforo, sem `await`): a chamada em `llm_calls`, os vetores normalizados com a assinatura do
-        `mu` vigente e, se os vetores do modelo dobraram, o `mu` novo com todas as assinaturas."""
+        """Grava o lote (fora do semáforo, sem `await`): primeiro a chamada paga em `llm_calls`; depois, numa transação só,
+        o `mu` vigente lido de novo, os vetores normalizados assinados com ele e, se os vetores do modelo dobraram, o `mu`
+        novo com todas as assinaturas (R5-06: nenhuma assinatura fica com um `mu` que outro processo já trocou)."""
         from ..llm.costs import cost_usd, price_for
 
         cost = cost_usd(usage, price_for(self.prices, self.kind, self.model))
         self._call(len(rows), usage.input_tokens, cost, latency, LlmCallStatus.OK, None)
         self.result.cost_usd += cost or 0.0
         unit = vectors.normalize(mat)
-        if self.mu is None:
+        with self.store.transaction():
             row = self.store.rag.get_model(self.key)
-            self.mu = row["mu"] if row is not None else None
-        sigs = vectors.signatures(unit, self.mu)
-        written = self.store.rag.insert_vectors(self.key, self.dim, [
-            VectorInsert(int(r["id"]), str(r["text_hash"]), unit[i].tobytes(), sigs[i].tobytes()) for i, r in enumerate(rows)])
+            sigs = vectors.signatures(unit, row["mu"] if row is not None else None)
+            written = self.store.rag.insert_vectors(self.key, self.dim, [
+                VectorInsert(int(r["id"]), str(r["text_hash"]), unit[i].tobytes(), sigs[i].tobytes()) for i, r in enumerate(rows)])
+            refresh_mu(self.store, self.key, self.dim)
         self.result.written += written
         self.result.batches += 1
-        if refresh_mu(self.store, self.key, self.dim):
-            self.mu = None                                         # o próximo lote relê o `mu` novo
-        self.done += 1
         if self.on_progress is not None:
-            self.on_progress(self.done, len(self.batches))
+            self.on_progress(self.result.written, self.result.wanted)
 
     def _call(self, n: int, tokens: int, cost: float | None, latency: int, status: LlmCallStatus, error: str | None) -> None:
         from ..llm.types import LlmTask
 
         self.result.calls += 1
-        self.store.llm_calls.insert(LlmCallInsert(self.meeting_id, self.job_id, str(LlmTask.RAG_EMBED), self.kind, self.model, None, None,
-                                                  int(tokens), 0, 0, 0, cost, latency, status, error, f"batch:{n}"), store_payloads=False)
+        self.store.llm_calls.insert(LlmCallInsert(self.meeting_id, self.job_id, str(LlmTask.RAG_EMBED), self.provider_id, self.model,
+                                                  None, None, int(tokens), 0, 0, 0, cost, latency, status, error, f"batch:{n}"),
+                                    store_payloads=False)
 
 
 def _checked(raw: np.ndarray, n: int, dim: int) -> np.ndarray:
@@ -398,42 +431,69 @@ def _reason(e: BaseException) -> str:
 
 
 # ---------------------------------------------------------------- fila
+EDIT_DELAY_S = 30.0                  # edição de falantes, título, ata ou ações: o `index` espera 30 s sem edição (R5-07)
+
+
 def auto_index_enabled(store: Store) -> bool:
-    """`rag.auto_index` (F5, Q1): desligado, nenhum `index` entra sozinho (pipeline, `llm`, edições, varredura)."""
+    """`rag.auto_index` (Q1): "vetores automáticos" (o custo dos embeddings). Desligado, os jobs `index` continuam e gravam
+    trechos e FTS (locais e grátis); só a etapa de vetores fica de fora, salvo no pedido forçado ("reindexar")."""
     from ..config.defaults import SPECS
 
     return bool(store.get(SPECS["rag.auto_index"]))
 
 
-def enqueue_index(store: Store, meeting_id: int, reason: str, *, force: bool = False) -> int | None:
-    """Ponto único de entrada do `index` (F5A-04): um pendente por reunião; devolve o id do job novo, ou None quando já
-    havia um pendente ou quando o índice automático está desligado (`rag.auto_index`). `force` é o pedido do usuário
-    ("reindexar", L5), que passa mesmo desligado."""
-    if not force and not auto_index_enabled(store):
-        log.debug("reunião %s: índice automático desligado; %s não enfileira", meeting_id, reason)
-        return None
-    job_id = store.jobs.enqueue_index(meeting_id, reason)
+def enqueue_index(store: Store, meeting_id: int, reason: str, *, force: bool = False, delay_s: float | None = None,
+                  now: str | None = None) -> int | None:
+    """Ponto único de entrada do `index` (F5A-04): um pendente por reunião; devolve o id do job novo, ou None quando já havia
+    um pendente (que fica com a espera e o `force` deste pedido). `delay_s` é a espera durável das edições (R5-07): o job
+    entra já, com "não antes de" agora + `delay_s`, renovado a cada edição; 0 tira a espera ("Concluir", fechar a revisão).
+    `force` é o pedido do usuário ("reindexar", L5): pede os vetores mesmo com os vetores automáticos desligados."""
+    job_id = store.jobs.enqueue_index(meeting_id, reason, force=force, delay_s=delay_s, now=now)
     if job_id is not None:
-        log.info("reunião %s: índice na fila (job %s, %s)", meeting_id, job_id, reason)
+        log.info("reunião %s: índice na fila (job %s, %s%s)", meeting_id, job_id, reason,
+                 f", espera {delay_s:.0f} s" if delay_s else "")
     return job_id
 
 
-def sweep(store: Store) -> int:
+def sweep(store: Store, should_stop: Callable[[], bool] | None = None) -> int:
     """Varredura da abertura (F5A-12): reuniões com pipeline concluído e nenhum trecho (todo índice grava ao menos o trecho
-    `reuniao`, logo a reunião sem fala não volta a cada abertura) e, só com o embedder pronto, as que têm trecho sem vetor do
-    modelo ativo (as anteriores à F5, as que ficaram sem rede). Devolve quantos `index` entraram na fila (nenhum com o
-    índice automático desligado)."""
-    if not auto_index_enabled(store):
-        return 0
+    `reuniao`, logo a reunião sem fala não volta a cada abertura), reuniões cujo último `index` terminou em erro (uma vez
+    por abertura, R5-07) e, só com os vetores automáticos ligados, o embedder pronto e o modelo confirmado (o primeiro do
+    índice, ou o marcado pelo "reindexar agora": `reindex_all`, R5-09), as que têm trecho sem vetor dele (as anteriores à
+    F5, as que ficaram sem rede). `should_stop` (a saída do app) interrompe entre as consultas e entre as reuniões (R5-02).
+    Devolve quantos `index` entraram na fila."""
+    stop = should_stop or (lambda: False)
     meetings = set(store.rag.meetings_without_chunks())
+    if stop():
+        return 0
+    meetings |= set(store.jobs.failed_index_meetings())
+    if stop():
+        return 0
     status = embedder_status(store)
-    if status.ready and status.model_key:
+    if auto_index_enabled(store) and status.ready and status.model_key and store.rag.model_confirmed(status.model_key):
+        store.rag.mark_backfill(status.model_key, parse_model_key(status.model_key)[2])   # o primeiro fica confirmado de vez
         meetings |= set(store.rag.meetings_missing_vectors(status.model_key))
-    n = sum(1 for mid in sorted(meetings) if enqueue_index(store, mid, "sweep") is not None)
+    n = 0
+    for mid in sorted(meetings):
+        if stop():
+            log.info("varredura do índice interrompida (saída do app) depois de %d reunião(ões)", n)
+            break
+        if enqueue_index(store, mid, "sweep") is not None:
+            n += 1
     if n:
         log.info("varredura do índice: %d reunião(ões) na fila", n)
     return n
 
 
-__all__ = ["EMBED_DIM", "EmbedderStatus", "FillResult", "SyncResult", "auto_index_enabled", "embedder_status", "enqueue_index",
-           "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu", "sweep", "sync_text"]
+def reindex_all(store: Store) -> int:
+    """"Reindexar agora" (L5): confirma o modelo ativo para completar as reuniões antigas (a varredura passa a pedir os
+    vetores dele, R5-09) e põe todas as reuniões processadas na fila com `force` (vale mesmo com os vetores automáticos
+    desligados). Devolve quantos `index` novos entraram (os já pendentes ficam com o `force`)."""
+    status = embedder_status(store)
+    if status.model_key:
+        store.rag.mark_backfill(status.model_key, parse_model_key(status.model_key)[2])
+    return sum(1 for mid in store.rag.processed_meetings() if enqueue_index(store, mid, "reindex", force=True) is not None)
+
+
+__all__ = ["AUTO_OFF", "EDIT_DELAY_S", "EMBED_DIM", "EmbedderStatus", "FillResult", "SyncResult", "auto_index_enabled", "embedder_status",
+           "enqueue_index", "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu", "reindex_all", "sweep", "sync_text"]

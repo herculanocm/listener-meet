@@ -91,6 +91,10 @@ class Store:
     def transaction(self) -> Any:
         return self.core.transaction()
 
+    def snapshot(self) -> Any:
+        """Leitura consistente entre várias consultas (`Core.snapshot`)."""
+        return self.core.snapshot()
+
     @contextmanager
     def connection(self) -> Iterator[Connection]:
         yield self.core.conn()

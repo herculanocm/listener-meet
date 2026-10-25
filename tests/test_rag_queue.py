@@ -28,8 +28,9 @@ def _meeting(store: Store, title: str = "r") -> int:
 
 
 def test_index_jobs_wait_for_llm_dedup_per_meeting_and_aggregate(store):
-    """F5A-02: o `llm` passa na frente dos `index` (mesmo mais novo); F5A-04: um pendente por reunião numa instrução só, o
-    rodando não conta, motivo em `params_json`; F5A-05: filtros da lista e o resumo agregado com os erros vigentes."""
+    """F5A-02: o `llm` passa na frente dos `index` (mesmo mais novo) e, entre os `index`, os da varredura vão por último
+    (R5-08); F5A-04: um pendente por reunião, o rodando não conta, motivo em `params_json`; F5A-05: filtros da lista e o
+    resumo agregado com os erros vigentes."""
     assert JobKind.INDEX in LIGHT_JOB_KINDS and JobKind.INDEX not in HEAVY_JOB_KINDS and JobKind.INDEX not in PIPELINE_JOB_KINDS
     mid, other = _meeting(store), _meeting(store)
     i1 = store.jobs.enqueue_index(mid, "pipeline")
@@ -52,12 +53,44 @@ def test_index_jobs_wait_for_llm_dedup_per_meeting_and_aggregate(store):
     assert {j["id"] for j in store.jobs.list_jobs(kinds=("index",), statuses=(JobStatus.PENDING,))} == {i2, i3}
     store.jobs.finish(i1, JobStatus.ERROR, error="queda")
     assert store.jobs.index_summary()["errors"] == 0                                            # há um `index` mais novo na reunião
-    store.jobs.claim(pid=1, now=_at(4), kinds=LIGHT_JOB_KINDS)
+    assert store.jobs.claim(pid=1, now=_at(4), kinds=LIGHT_JOB_KINDS)["id"] == i3                # a edição antes da varredura
     store.jobs.finish(i2, JobStatus.ERROR, error="queda")
-    assert store.jobs.index_summary() == {"pending": 1, "running": 0, "meetings": 1, "errors": 1}
+    assert store.jobs.index_summary() == {"pending": 0, "running": 1, "meetings": 1, "errors": 1}
     assert store.jobs.summary(exclude_kinds=("index",))["errors"] == 0 and store.jobs.summary()["errors"] == 2
     assert store.segments.current_job_id(mid) is None                                           # o índice não é job vigente
     assert estimate.remaining_seconds("index_vectors", 0.1, 3600, "{}", kind="index") is None     # sem estimativa no leve
+
+
+def test_index_delay_is_durable_renewed_cleared_and_forced(store):
+    """R5-07: a edição entra na fila já, com "não antes de" agora + espera; cada edição renova; um pedido sem espera não
+    mexe nela; "Concluir" (espera 0) a tira; o claim só pega depois; o `force` do "reindexar" fica no pendente."""
+    mid = _meeting(store)
+    job = store.jobs.enqueue_index(mid, "edit", delay_s=30, now=_at(0))
+    assert json.loads(store.jobs.get(job)["params_json"]) == {"reason": "edit", "not_before": _at(30)}
+    assert store.jobs.claim(pid=1, now=_at(10), kinds=LIGHT_JOB_KINDS) is None
+    assert store.jobs.delayed(LIGHT_JOB_KINDS, now=_at(10)) == 1 and store.jobs.delayed(HEAVY_JOB_KINDS, now=_at(10)) == 0
+    assert store.jobs.enqueue_index(mid, "edit", delay_s=30, now=_at(20)) is None                # renova
+    assert json.loads(store.jobs.get(job)["params_json"])["not_before"] == _at(50)
+    assert store.jobs.claim(pid=1, now=_at(40), kinds=LIGHT_JOB_KINDS) is None
+    assert store.jobs.enqueue_index(mid, "pipeline", now=_at(41)) is None                        # sem espera: não mexe
+    assert json.loads(store.jobs.get(job)["params_json"])["not_before"] == _at(50)
+    assert store.jobs.enqueue_index(mid, "reindex", force=True, now=_at(42)) is None
+    assert store.jobs.enqueue_index(mid, "review", delay_s=0, now=_at(43)) is None               # "Concluir": tira a espera
+    assert json.loads(store.jobs.get(job)["params_json"]) == {"reason": "edit", "force": True}
+    assert store.jobs.delayed(LIGHT_JOB_KINDS, now=_at(43)) == 0
+    assert store.jobs.claim(pid=1, now=_at(44), kinds=LIGHT_JOB_KINDS)["id"] == job
+    store._x("UPDATE processing_jobs SET params_json = 'não é json' WHERE id = ?", (store.jobs.enqueue(mid, JobKind.LLM),))
+    store.jobs.finish(job, JobStatus.DONE)
+    assert store.jobs.claim(pid=1, now=_at(45), kinds=LIGHT_JOB_KINDS)["kind"] == "llm"           # JSON inválido não trava o claim
+
+
+def test_light_worker_waits_for_a_delayed_index_instead_of_leaving(tmp_path, store):
+    """R5-07: o leve não sai ocioso enquanto um `index` espera a edição assentar; quando vence, ele pega e conclui."""
+    store.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
+    mid = _meeting(store)
+    job = store.jobs.enqueue_index(mid, "edit", delay_s=0.15)
+    assert worker._serve(store, once=False, idle_exit_s=0.0, poll_s=0.02, light=True) == 0
+    assert store.jobs.get(job)["status"] == JobStatus.DONE
 
 
 def test_light_worker_dispatches_by_kind(tmp_path, store, monkeypatch):
@@ -182,6 +215,7 @@ def test_queue_dialog_shows_index_as_one_aggregated_row_and_retries_by_class(qtb
     launched: list[bool] = []
     dlg = QueueDialog(store, on_launch=launched.append)
     qtbot.addWidget(dlg)
+    dlg._timer.stop()                                                                              # o banco fecha no fim do teste
     assert dlg.table.rowCount() == 2                                                                 # o llm e a linha agregada
     last = [dlg.table.item(1, c).text() for c in range(7)]
     assert last[:5] == ["Índice: 2 reuniões", "índice", "rodando", "índice: vetores", "40"]
@@ -218,3 +252,29 @@ def test_chat_threads_rating_and_meeting_chat_unchanged(store):
         store.chat.set_rating(a, 5)
     assert [m["text"] for m in store.chat.list_for_meeting(mid)] == ["pergunta da reunião"]
     assert store.chat.clear(mid) == 1 and len(store.chat.list_for_thread(first)) == 2
+
+
+def test_queue_estimates_llm_jobs_only_by_the_llm_job_tasks(qtbot, store, monkeypatch):
+    """R5-05: os lotes de vetores (e o chat global) não entram na média que estima o job `llm` na fila."""
+    from listener.llm.types import LLM_JOB_TASKS
+    from listener.model import LlmCallStatus
+    from listener.store.llm_calls import LlmCallInsert
+    from listener.ui.queue import QueueDialog
+
+    mid = _meeting(store)
+    for task, ms in [("minutes", 40_000), ("title", 40_000)] + [("rag_embed", 50)] * 18 + [("rag_chat", 900)]:
+        store.llm_calls.insert(LlmCallInsert(mid, None, task, "gemini", "m", None, None, 1, 1, 0, 0, None, ms, LlmCallStatus.OK))
+    assert store.llm_calls.avg_latency_ms(tasks=LLM_JOB_TASKS) == 40_000.0 and (store.llm_calls.avg_latency_ms() or 0) < 5000
+    seen: list[Any] = []
+    real = store.llm_calls.avg_latency_ms
+
+    def spy(*a: Any, **k: Any) -> float | None:
+        seen.append(k.get("tasks"))
+        return real(*a, **k)
+
+    monkeypatch.setattr(store.llm_calls, "avg_latency_ms", spy)
+    store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"]})
+    dlg = QueueDialog(store)
+    qtbot.addWidget(dlg)
+    dlg._timer.stop()                                                                              # o banco fecha no fim do teste
+    assert seen and tuple(seen[0]) == LLM_JOB_TASKS
