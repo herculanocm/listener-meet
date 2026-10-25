@@ -8,8 +8,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   decisões técnicas na seção Implementação de `features/F3.1-correcoes-revisao.md`.
 - **F4 (ao vivo) implementada em 25/10** (D-044): L0 a L6 em sete commits (`b5cdab7` a `64ad255`), ajustes e as
   correções das duas revisões; desvios e o que só o Windows verifica na seção Implementação de `features/F4-ao-vivo.md`.
-- **Próximo passo: a F5 (RAG e histórico)** pelo fluxo D-040: a spec está em rascunho inicial
-  (`features/F5-rag-historico.md`); escrever, passar pela revisão de arquitetura e levar ao dono para aprovar (CP13).
+- **F5 (busca, histórico e chat global) em revisão em 25/10:** spec reescrita e revisada pelo arquiteto contra o código
+  (`features/F5-rag-historico.md`: índice em dois tempos, job `index` na fila leve, FTS5 obrigatório, vetores sem
+  sqlite-vec, v8); **próximo passo: o dono responde Q1 a Q11 e U-024 a U-029 (B16)**; só então o código (CP13), por
+  lotes L0 a L5 (mais a F5.1 se a Q10 for sim). Correção da F4 no mesmo dia: mypy limpo de novo (`3feff42`).
 - **Windows pendente por decisão do dono (D-046):** B1, B2, B4, B13, B15 e os gates G1 a G4 esperam a sessão no
   Windows, na ordem de "Verificar no Windows" (abaixo). Toda sessão começa verificando o ambiente (D-045, `AGENTS.md`).
 
@@ -25,7 +27,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `main` local); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
-  Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · F5 e F6 rascunho inicial · F7 futuro.
+  Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 em revisão** (B16) · F6 rascunho inicial ·
+  F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
@@ -41,6 +44,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
 | B13 | chave do Gemini (plano pago) colada em Configurações › LLM › Gemini e "testar conexão" ok | adaptadores reais, canário dos esquemas, latências e preços, G3 |
+| B16 | responder Q1 a Q11 e U-024 a U-029 de `features/F5-rag-historico.md` ("Ok para tudo" = os padrões) | libera o código da F5 (CP13) |
 | B15 | no Windows: `python scripts/live_probe.py all <gravação real>` (L0 da F4; com `HF_TOKEN` para o torch) e colar as linhas JSON; depois do B1, "Preparar modelos do ao vivo" nas Configurações e uma gravação com a legenda ligada | números do Whisper, do VAD e do torch no Windows; o filho real, o EcoQoS e a ordem de carga torch/CTranslate2; abre o G4 |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·

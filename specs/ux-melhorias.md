@@ -1,7 +1,8 @@
 # Melhorias de UX (U-nnn), CP12
 
 Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 aprovadas e
-implementadas na F1.1 (D-035). Status: proposta | aprovada | vetada | implementada. Tamanho-alvo: 3 KB.
+implementadas na F1.1 (D-035); U-024 a U-029 propostas na F5. Status: proposta | aprovada | vetada | implementada.
+Tamanho-alvo: 3 KB.
 
 | # | Melhoria | Onde | Status |
 | --- | --- | --- | --- |
@@ -25,3 +26,9 @@ implementadas na F1.1 (D-035). Status: proposta | aprovada | vetada | implementa
 | U-021 | Janela "Ao vivo": legendas rolando com nome e cargo e o resumo parcial, com "atualizar agora" | Ao vivo | implementada (F4) |
 | U-022 | Clique numa legenda cria um marcador naquele instante com o texto dela | Ao vivo | implementada (F4) |
 | U-023 | Possíveis decisões e ações do parcial com "marcar" (marcador que a ata lê) | Ao vivo | implementada (F4) |
+| U-024 | Trechos da busca agrupados por reunião, termo destacado e "abrir neste ponto" (abre, rola até a fala e toca) | Histórico | proposta (F5) |
+| U-025 | Destaque contínuo: a fala que toca acompanha o áudio na transcrição e na linha do tempo | Reunião aberta | proposta (F5.1) |
+| U-026 | "Ações abertas" de todas as reuniões: dono, prazo, origem, atrasadas em destaque, marcar feita | Histórico | proposta (F5) |
+| U-027 | "Citação certa?" sim/não em cada resposta do chat global (mede o G5) | Histórico | proposta (F5) |
+| U-028 | Atalho global para abrir o Histórico com o cursor na busca | Atalhos | proposta (F5) |
+| U-029 | "Copiar com citação": fala, trecho ou resposta com reunião, data e [mm:ss] | Histórico | proposta (F5) |
