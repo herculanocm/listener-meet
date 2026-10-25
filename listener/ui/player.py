@@ -381,7 +381,13 @@ class PlaybackEngine:
         start = int(req.t_ms)
         if start >= new.end_t:
             start = max(0, new.end_t - 1)
-        self._start_run(new, start)
+        try:
+            self._start_run(new, start)
+        except Exception as e:  # o dispositivo recusou começar (sumiu entre abrir e tocar): o fluxo fecha e a barra avisa
+            log.warning("player: %s: %s", NO_DEVICE, e)
+            self._close(new)
+            self._error(f"{NO_DEVICE} ({e})")
+            return None
         return new
 
     def _meeting(self, req: PlayRequest) -> tuple[int, tuple[str, ...], int, int | None, list[tuple[int, int | None]]]:

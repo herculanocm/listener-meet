@@ -5,6 +5,11 @@ sub-abas por provedor (`ProviderTabs`); o transcritor `llm` só habilita quando 
 F4: grupo "Ao vivo" gerado da tabela (`live.*`) e o botão "Preparar modelos do ao vivo" (`ModelPreparer`, um download por
 vez no app inteiro, com progresso e o estado da pasta), desabilitado durante a gravação; o diálogo se desconecta do
 preparador ao fechar, e o download segue.
+F5 L5: grupo "Busca" gerado da tabela (`rag.*`) com o estado do índice (reuniões indexadas, trechos, vetores do modelo
+ativo, faltantes e o motivo quando os embeddings não estão prontos), "Completar índice" (as reuniões com trecho sem vetor do
+modelo ativo, na hora) e "Reindexar tudo…" (com a estimativa de trechos, tokens, US$ e minutos e a confirmação antes);
+trocar o "ativo para embeddings" ou o modelo de embeddings e salvar mostra a mesma estimativa com "Reindexar agora" e
+"Depois" (comportamento 4: os vetores do modelo anterior ficam).
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
@@ -18,7 +23,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
                                QWidget)
 
 from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LIVE_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES,
-                               PIPELINE_KEYS, SPECS, validate_setting)
+                               PIPELINE_KEYS, RAG_KEYS, SPECS, validate_setting)
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
@@ -30,6 +35,38 @@ if TYPE_CHECKING:
     from ..store import Store
 
 SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na próxima gravação"}
+REINDEX_TITLE = "Busca por sentido"
+
+
+def index_status_text(store: Store) -> str:
+    """"42 de 45 reuniões processadas no índice · 3.120 trechos", "2.980 vetores de gemini/... · faltam 140" e se os
+    embeddings estão prontos (com o motivo quando não), uma informação por linha."""
+    from ..rag.index import embedder_status
+
+    status = embedder_status(store)
+    cov = store.rag.coverage(status.model_key)
+    processed = len(store.rag.processed_meetings())
+    text = f"{cov['meetings']} de {processed} reuniões processadas no índice · {_thousands(cov['chunks'])} trechos"
+    if status.model_key is not None:
+        text += (f"\n{_thousands(cov.get('vectors', 0))} vetores de {status.model_key}"
+                 + (f" · faltam {_thousands(cov.get('missing', 0))}" if cov.get("missing") else " · nenhum faltando"))
+    text += "\nembeddings prontos (busca por sentido ligada)" if status.ready else f"\nembeddings indisponíveis: {status.reason}"
+    return text
+
+
+def _thousands(n: int | None) -> str:
+    return f"{int(n or 0):,}".replace(",", ".")
+
+
+def ask_reindex(parent: QWidget | None, text: str, yes: str, no: str) -> bool:
+    """Pergunta com dois botões nomeados ("Reindexar agora" e "Depois", ou "Reindexar" e "Cancelar"); True = o primeiro.
+    Separada para os testes trocarem."""
+    box = QMessageBox(QMessageBox.Icon.Question, REINDEX_TITLE, text, parent=parent)
+    accept = box.addButton(yes, QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(no, QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(accept)
+    box.exec()
+    return box.clickedButton() is accept
 
 
 def audio_cost_text(store: Store) -> str:
@@ -51,6 +88,8 @@ class SettingsDialog(QDialog):
         self.platform = platform
         self.hotkey_errors = hotkey_errors or {}
         self.recording = recording
+        self.on_launch = on_launch
+        self.reindexed = 0                                   # instrumentação dos testes: `index` postos na fila daqui
         self.preparer = model_preparer or preparer()
         self.setWindowTitle("Configurações")
         self.setMinimumWidth(680)
@@ -118,6 +157,28 @@ class SettingsDialog(QDialog):
         self._preparer_connected = True
         self._on_prepare_changed(self.preparer.state)        # download em curso de uma abertura anterior: segue mostrando
 
+        busca = QGroupBox("Busca (F5: vale já; o índice por palavra é local e grátis, os vetores têm custo)")
+        buscaf = QFormLayout(busca)
+        for key in RAG_KEYS:
+            buscaf.addRow(SPECS[key].label, self._row(key))
+        self.index_status = QLabel("")
+        self.index_status.setWordWrap(True)
+        self.index_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.complete_btn = QPushButton("Completar índice")
+        self.complete_btn.setToolTip("Põe na fila as reuniões com trecho sem vetor do modelo ativo (e as ainda sem índice)")
+        self.complete_btn.clicked.connect(self.complete_index)
+        self.reindex_btn = QPushButton("Reindexar tudo…")
+        self.reindex_btn.setToolTip("Refaz o índice de todas as reuniões processadas e pede os vetores que faltam (mostra o custo antes)")
+        self.reindex_btn.clicked.connect(self.reindex_all)
+        brow = QHBoxLayout()
+        brow.addWidget(self.complete_btn)
+        brow.addWidget(self.reindex_btn)
+        brow.addStretch(1)
+        buscaf.addRow("Índice", self.index_status)
+        buscaf.addRow(brow)
+        lay.addWidget(busca)
+        self.refresh_index_status()
+
         lg = QGroupBox("Log (aplica agora)")
         lgf = QFormLayout(lg)
         self.log_path = QLineEdit(store.get_setting("log.path") or str(store.default_log_path()))
@@ -160,6 +221,81 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+
+    # ---------------------------------------------------------------- busca (F5 L5)
+    def refresh_index_status(self) -> None:
+        """O estado do índice e a estimativa do que falta (o botão "Completar" só com algo a completar)."""
+        from ..rag.index import reindex_estimate
+
+        try:
+            text = index_status_text(self.store)
+            est = reindex_estimate(self.store)
+        except Exception as e:  # banco ocupado: o grupo fica sem o estado, as configurações seguem
+            self.index_status.setText(f"estado do índice indisponível agora: {e}")
+            return
+        missing = est.chunks if est.ready else 0
+        if missing:
+            text += f"\ncompletar: {est.text()}"
+        self.index_status.setText(text)
+        self.complete_btn.setEnabled(bool(missing or est.without_chunks))
+        self.reindex_btn.setEnabled(est.model_key is not None or bool(est.without_chunks))
+
+    def _launch_light(self) -> None:
+        if self.on_launch is not None:
+            self.on_launch(True)
+
+    def complete_index(self) -> int:
+        """"Completar índice": as reuniões com trecho sem vetor do modelo ativo (e as sem trechos) entram na fila já."""
+        from ..rag.index import complete_index
+
+        n = complete_index(self.store)
+        self.reindexed += n
+        if n:
+            self._launch_light()
+        self.refresh_index_status()
+        self.index_status.setText(self.index_status.text() + f"\n{n} reunião(ões) na fila do índice.")
+        return n
+
+    def reindex_all(self) -> int:
+        """"Reindexar tudo…": a estimativa e a confirmação antes; confirma o modelo ativo para a varredura completar as reuniões
+        antigas (`rag.index.reindex_all`)."""
+        from ..rag.index import reindex_all, reindex_estimate
+
+        est = reindex_estimate(self.store)
+        if not est.ready and est.model_key is not None:
+            extra = f"\n\nOs embeddings não estão prontos ({est.reason}): só o índice por palavra é refeito agora."
+        else:
+            extra = ""
+        text = (f"Refazer o índice de todas as reuniões processadas?\n\n{est.text()}.\n\nOs vetores que já existem ficam; só os que "
+                f"faltam são pedidos ao provedor.{extra}")
+        if not ask_reindex(self, text, "Reindexar", "Cancelar"):
+            return 0
+        n = reindex_all(self.store)
+        self.reindexed += n
+        if n:
+            self._launch_light()
+        self.refresh_index_status()
+        return n
+
+    def offer_reindex(self, before: str | None) -> int:
+        """Comportamento 4: o modelo de embeddings ativo mudou (outro provedor ou outro modelo) e está pronto: a estimativa com
+        "Reindexar agora" e "Depois"; os vetores do modelo anterior ficam (voltar não custa)."""
+        from ..rag.index import embedder_status, reindex_all, reindex_estimate
+
+        status = embedder_status(self.store)
+        if not status.ready or status.model_key is None or status.model_key == before:
+            return 0
+        est = reindex_estimate(self.store)
+        text = (f"O modelo da busca por sentido agora é {status.model_key}.\n\nReindexar as reuniões neste modelo: {est.text()}."
+                "\n\nOs vetores do modelo anterior ficam guardados: voltar para ele não custa nada. A busca por palavra segue "
+                "funcionando enquanto isso.")
+        if not ask_reindex(self, text, "Reindexar agora", "Depois"):
+            return 0
+        n = reindex_all(self.store)
+        self.reindexed += n
+        if n:
+            self._launch_light()
+        return n
 
     # ---------------------------------------------------------------- ao vivo (F4)
     def prepare_models(self) -> None:
@@ -280,10 +416,13 @@ class SettingsDialog(QDialog):
         return self.provider_tabs.validation_error()
 
     def _save(self) -> None:
+        from ..rag.index import embedder_status
+
         err = self.validation_error()
         if err:
             QMessageBox.warning(self, "Configurações", err)
             return
+        before = embedder_status(self.store).model_key   # comportamento 4: trocar o modelo de embeddings oferece reindexar
         try:                                             # validado acima; a sub-aba grava primeiro e recusa sem meio-termo (R3-12)
             self.provider_tabs.save()
         except ValueError as e:
@@ -298,4 +437,5 @@ class SettingsDialog(QDialog):
         token = self.hf_token.text().strip()
         if token != self.store.settings.provider_key(HF_PROVIDER_ID):
             self.store.upsert_provider(HF_PROVIDER_ID, "huggingface", api_key=token or None)
+        self.offer_reindex(before)
         self.accept()

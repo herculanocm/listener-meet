@@ -159,6 +159,16 @@ def test_errors_without_device_without_audio_file_and_without_audio(store):
     _wait(lambda: not eng.alive)
     assert eng.snapshot().message == "a saída de áudio parou (dispositivo removido)" and dying.calls[-1] == "close"
 
+    class Refuses(FakeOutput):                                         # some entre abrir e começar
+        def start(self) -> None:
+            raise OSError("Invalid device")
+
+    refused = Refuses()
+    eng = PlaybackEngine(store, lambda: refused)
+    eng.play(PlayRequest(mid, 0))
+    _wait(lambda: not eng.alive)
+    assert eng.snapshot().message == "sem dispositivo de saída de áudio (Invalid device)" and refused.calls[-1] == "close"
+
 
 def test_player_signals_guard_and_bar(qtbot, store):
     from listener.ui.player import Player, PlayerBar

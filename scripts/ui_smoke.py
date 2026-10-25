@@ -1,5 +1,6 @@
-"""Verificação das telas da F1 sem monitor (QT_QPA_PLATFORM=offscreen). Desenvolvimento; não é o produto.
-Com a plataforma real (Windows) por padrão; `--fake` usa a plataforma simulada dos testes (qualquer sistema)."""
+"""Verificação das telas sem monitor (QT_QPA_PLATFORM=offscreen). Desenvolvimento; não é o produto.
+Com a plataforma real (Windows) por padrão; `--fake` usa a plataforma simulada dos testes (qualquer sistema).
+F5: abre também a reunião aberta (com a barra do player) e o Histórico (lista, ações abertas e o chat global)."""
 import os
 import sys
 import tempfile
@@ -14,6 +15,9 @@ app = QApplication([])
 from listener.log import log_versions, setup  # noqa: E402
 from listener.store import Store  # noqa: E402
 from listener.ui.controller import Controller  # noqa: E402
+from listener.ui.history import HistoryWindow  # noqa: E402
+from listener.ui.meeting import MeetingWindow  # noqa: E402
+from listener.ui.player import Player  # noqa: E402
 from listener.ui.settings_min import SettingsDialog  # noqa: E402
 from listener.ui.summary import SummaryDialog  # noqa: E402
 from listener.ui.tray import make_icon  # noqa: E402
@@ -55,6 +59,14 @@ print("settings ok")
 mid = store.create_meeting("t", "sistema", None, None); store.finish_meeting(mid, 1000)
 su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []}); su.show(); app.processEvents(); su.close()
 print("summary ok")
+player = Player(store)
+mw = MeetingWindow(store, mid, player=player); mw.show(); app.processEvents(); mw.show_tab("marcadores"); app.processEvents(); mw.close()
+print("reunião ok")
+hw = HistoryWindow(store); hw.show(); app.processEvents()
+for i in range(3):
+    hw.page.tabs.setCurrentIndex(i); app.processEvents()
+hw.page.shutdown(); hw.close(); player.shutdown()
+print("histórico ok")
 make_icon("#e74c3c")
 c = Controller(app, p, store)
 errors = c.register_hotkeys()

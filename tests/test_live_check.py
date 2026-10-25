@@ -90,7 +90,7 @@ def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
                                                  LlmCallStatus.ERROR, err))
     before = _contents(db)
     assert main(["--check", str(db)]) == 0
-    reports = {r["meeting"]: r for r in _reports(capsys.readouterr().out)}
+    reports = {r["meeting"]: r for r in _reports(capsys.readouterr().out) if "meeting" in r}    # o fim é o objeto `rag` geral
     assert reports[plain]["live"] == {"enabled": False}
     live = reports[mid]["live"]
     assert live["enabled"] and live["captions"] == {"n": 6, "by_model": {"faster-whisper:small:int8": 4, "faster-whisper:base:int8": 2}}

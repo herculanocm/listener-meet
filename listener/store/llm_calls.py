@@ -128,14 +128,18 @@ class LlmCallsRepo:
         return float(row[0] or 0.0)
 
     def avg_latency_ms(self, task: str | None = None, model: str | None = None, last: int = 20, *,
-                       tasks: Iterable[str] | None = None) -> float | None:
+                       tasks: Iterable[str] | None = None, strategy_prefix: str | None = None) -> float | None:
         """Latência média das últimas chamadas bem-sucedidas (estimativa de tempo do job `llm`, F3 item 16); `tasks` limita às
-        tarefas dadas (a fila passa as do job `llm`: os lotes de vetores e o chat derrubariam a média, R5-05)."""
+        tarefas dadas (a fila passa as do job `llm`: os lotes de vetores e o chat derrubariam a média, R5-05);
+        `strategy_prefix` separa os lotes do índice (`batch:`) do vetor da consulta (F5 L5)."""
         sql = "SELECT latency_ms FROM llm_calls WHERE status = ?"
         params: list[Any] = [str(LlmCallStatus.OK)]
         if task is not None:
             sql += " AND task = ?"
             params.append(task)
+        if strategy_prefix is not None:
+            sql += " AND strategy LIKE ?"
+            params.append(strategy_prefix.replace("%", "") + "%")
         wanted = [str(t) for t in tasks] if tasks is not None else []
         if wanted:
             sql += f" AND task IN ({','.join('?' * len(wanted))})"

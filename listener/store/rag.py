@@ -353,6 +353,25 @@ class RagRepo:
                                              "(SELECT 1 FROM rag_vectors v WHERE v.chunk_id = c.id AND v.model = ?)", (model,))[0][0])
         return out
 
+    def missing_stats(self, model: str) -> list[tuple[int, int, int]]:
+        """(reunião, trechos sem vetor do modelo, caracteres da entrada do embedding) por reunião: a estimativa do "reindexar"
+        (L5). A entrada é o cabeçalho "título · AAAA-MM-DD" (até 200 caracteres; sem título, só a data) e o corpo, como
+        `rag.chunker.embed_input`, contada aqui sem ler os textos para o Python."""
+        rows = self.core.q(
+            "SELECT c.meeting_id, COUNT(*), SUM(LENGTH(c.text) + 1 + MIN(CASE WHEN TRIM(COALESCE(c.title, '')) = '' THEN 10 "
+            "ELSE LENGTH(TRIM(c.title)) + 13 END, 200)) FROM rag_chunks c WHERE NOT EXISTS "
+            "(SELECT 1 FROM rag_vectors v WHERE v.chunk_id = c.id AND v.model = ?) GROUP BY c.meeting_id ORDER BY c.meeting_id", (model,))
+        return [(int(r[0]), int(r[1]), int(r[2] or 0)) for r in rows]
+
+    def vector_counts(self, meeting_id: int | None = None) -> dict[str, int]:
+        """Vetores por modelo (da reunião ou do índice inteiro): o `--check` do G5."""
+        if meeting_id is None:
+            rows = self.core.q("SELECT model, COUNT(*) FROM rag_vectors GROUP BY model ORDER BY model")
+        else:
+            rows = self.core.q("SELECT v.model, COUNT(*) FROM rag_vectors v JOIN rag_chunks c ON c.id = v.chunk_id WHERE c.meeting_id = ? "
+                               "GROUP BY v.model ORDER BY v.model", (meeting_id,))
+        return {str(r[0]): int(r[1]) for r in rows}
+
     # ---------------------------------------------------------------- busca (L3)
     def fts_hits(self, match: str, limit: int, filters: SearchFilters | None = None, *, snippet_tokens: int = 16,
                  per_meeting: int | None = None) -> list[FtsHit]:

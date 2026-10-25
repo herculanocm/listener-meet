@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -485,6 +486,86 @@ def sweep(store: Store, should_stop: Callable[[], bool] | None = None) -> int:
     return n
 
 
+# ---------------------------------------------------------------- "completar" e "reindexar" (L5, comportamento 4)
+CHARS_PER_TOKEN_EMBED = 4.0          # tokens ≈ caracteres da entrada do embedding ÷ 4 (estimativa antes de pedir)
+DEFAULT_BATCH_S = 2.0                # sem lote medido em `llm_calls`, 2 s por lote de 64
+
+
+@dataclass(frozen=True, slots=True)
+class ReindexEstimate:
+    """O que "reindexar" (ou completar) custaria no modelo ativo: os trechos sem vetor dele, tokens, US$ e minutos."""
+    model_key: str | None
+    ready: bool
+    reason: str
+    chunks: int = 0                  # trechos sem vetor do modelo ativo
+    meetings: int = 0                # reuniões com algum desses trechos
+    without_chunks: int = 0          # reuniões processadas ainda sem trechos (o FTS é grátis; os vetores delas vêm depois)
+    tokens: int = 0
+    cost_usd: float | None = None    # None = sem preço cadastrado para o modelo
+    batches: int = 0
+    seconds: float = 0.0
+    measured: bool = False           # latência dos lotes medida (`rag_embed`) ou o padrão de 2 s
+
+    def text(self) -> str:
+        """"1.234 trechos sem vetor em 12 reuniões · ≈ 456.789 tokens · ≈ US$ 0,07 · ≈ 3 min" (o que as Configurações mostram)."""
+        from ..llm.costs import fmt_usd
+
+        if not self.chunks:
+            base = "nenhum trecho sem vetor do modelo ativo"
+        else:
+            cost = f"≈ {fmt_usd(self.cost_usd)}" if self.cost_usd is not None else "sem preço cadastrado"
+            minutes = max(1, round(self.seconds / 60)) if self.seconds else 0
+            base = (f"{_n(self.chunks)} {'trecho' if self.chunks == 1 else 'trechos'} sem vetor em {self.meetings} "
+                    f"{'reunião' if self.meetings == 1 else 'reuniões'} · ≈ {_n(self.tokens)} tokens · {cost} · ≈ {minutes} min"
+                    + ("" if self.measured else " (pela estimativa de 2 s por lote)"))
+        if self.without_chunks:
+            base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos (entram com o índice por palavra)"
+        return base
+
+
+def _n(value: int) -> str:
+    return f"{int(value):,}".replace(",", ".")
+
+
+def reindex_estimate(store: Store) -> ReindexEstimate:
+    """A estimativa do "reindexar tudo" e da troca do embedder (L5, comportamento 4): os trechos sem vetor do modelo ativo
+    (os que já têm vetor ficam: só os que faltam são pedidos), tokens ≈ caracteres da entrada ÷ 4, custo pela tabela de
+    preços do modelo e minutos pelos lotes de 64 de cada reunião (sob `llm.max_parallel`) e pela latência média dos lotes
+    já medidos (`rag_embed`, `batch:`), ou 2 s por lote sem medida. Só leitura."""
+    from ..config.defaults import SPECS
+    from ..llm.costs import price_for
+    from ..llm.types import LlmTask
+
+    status = embedder_status(store)
+    without = len(store.rag.meetings_without_chunks())
+    if status.model_key is None:
+        return ReindexEstimate(None, False, status.reason, without_chunks=without)
+    stats = store.rag.missing_stats(status.model_key)
+    chunks = sum(n for _mid, n, _chars in stats)
+    tokens = math.ceil(sum(chars for _mid, _n, chars in stats) / CHARS_PER_TOKEN_EMBED)
+    kind, model, _dim = parse_model_key(status.model_key)
+    price = price_for(store.providers.list_prices(kind), kind, model)
+    cost = round(tokens * price.input_usd_m / 1_000_000, 6) if price is not None else None
+    parallel = max(1, int(store.get(SPECS["llm.max_parallel"])))
+    batches = sum(math.ceil(n / EMBED_BATCH) for _mid, n, _chars in stats)
+    rounds = sum(math.ceil(math.ceil(n / EMBED_BATCH) / parallel) for _mid, n, _chars in stats)
+    latency = store.llm_calls.avg_latency_ms(task=str(LlmTask.RAG_EMBED), strategy_prefix="batch:")
+    per_batch = latency / 1000 if latency else DEFAULT_BATCH_S
+    return ReindexEstimate(status.model_key, status.ready, status.reason, chunks, len(stats), without, tokens, cost, batches,
+                           rounds * per_batch, latency is not None)
+
+
+def complete_index(store: Store) -> int:
+    """"Completar índice" (L5): põe na fila, com `force` (vale com os vetores automáticos desligados), as reuniões com trecho
+    sem vetor do modelo ativo e as processadas ainda sem trechos. Não confirma o modelo para a varredura (isso é do
+    "reindexar tudo", que mostra a estimativa antes). Devolve quantos `index` novos entraram."""
+    status = embedder_status(store)
+    meetings = set(store.rag.meetings_without_chunks())
+    if status.ready and status.model_key:
+        meetings |= set(store.rag.meetings_missing_vectors(status.model_key))
+    return sum(1 for mid in sorted(meetings) if enqueue_index(store, mid, "reindex", force=True) is not None)
+
+
 def reindex_all(store: Store) -> int:
     """"Reindexar agora" (L5): confirma o modelo ativo para completar as reuniões antigas (a varredura passa a pedir os
     vetores dele, R5-09) e põe todas as reuniões processadas na fila com `force` (vale mesmo com os vetores automáticos
@@ -495,5 +576,6 @@ def reindex_all(store: Store) -> int:
     return sum(1 for mid in store.rag.processed_meetings() if enqueue_index(store, mid, "reindex", force=True) is not None)
 
 
-__all__ = ["AUTO_OFF", "EDIT_DELAY_S", "EMBED_DIM", "EmbedderStatus", "FillResult", "SyncResult", "auto_index_enabled", "embedder_status",
-           "enqueue_index", "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu", "reindex_all", "sweep", "sync_text"]
+__all__ = ["AUTO_OFF", "EDIT_DELAY_S", "EMBED_DIM", "EmbedderStatus", "FillResult", "ReindexEstimate", "SyncResult", "auto_index_enabled",
+           "complete_index", "embedder_status", "enqueue_index", "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu",
+           "reindex_all", "reindex_estimate", "sweep", "sync_text"]
