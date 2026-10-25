@@ -5,7 +5,8 @@ Quando ler: antes de escrever ou alterar qualquer documento. Tamanho-alvo: 3,5 K
 ## Arquivos
 `00-handoff-v4.md` mestre do dono (só ele edita) · `01-clausulas.md` cartão CP1 a CP15 · `decisoes.md` D-nnn, perguntas
 P-nn e medições · `roadmap.md` fases e gates · `backlog.md` estado e o que fazer agora · `dados.md` modelo de dados
-canônico · `ux-melhorias.md` U-nnn · `features/F<n>-<nome>.md`
+canônico · `ux-melhorias.md` U-nnn · `llm-contrato.md` desenho técnico da camada de LLM (dono único; a spec F3 só diz o produto) ·
+`features/F<n>-<nome>.md`
 uma spec por entrega (correções de fase aprovada: `F<n>.<m>-<nome>.md`).
 
 ## Ciclo de vida de uma spec

@@ -53,6 +53,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
+| P25 | F3 (P1 a P9 da spec): idioma pt-BR com `auto`; alerta de custo US$ 2; segunda opinião por áudio desligada; transcrição revisada exibida; geração automática até o alerta; "gerar de novo" pela fila; reprocessar mantém a ata; guardar pedido e resposta; sem `base_url` | sim para tudo, com os padrões |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |

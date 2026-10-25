@@ -11,8 +11,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, fluxo D-040, F2 em onze commits); branch `main`; sem remoto.
   Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
-  pendente) · **F3 em rascunho completo** (25/10; passo 2 do fluxo D-040 em curso: arquiteto revisa a spec contra o
-  código; depois P1 a P6 ao dono) · F4 a F6 rascunho inicial · F7 futuro.
+  pendente) · **F3 em revisão** (25/10: revisão de arquitetura incorporada, 59 itens; contrato técnico em
+  `specs/llm-contrato.md`; aguarda P1 a P9, B12) · F4 a F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -27,6 +27,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B2 | gate G1: 3 reuniões reais com headset em 2 plataformas; `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
+| B12 | aprovar `features/F3-llm-agnostica.md` (P1 a P9; padrões propostos) e `llm-contrato.md` | código da F3 (lotes L0 a L7) |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041).
@@ -36,7 +37,8 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041).
 2. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
 3. Dono instala o extra `pipeline` e cola o token (B4); o primeiro job real verifica o L5, mede RTF e RSS por etapa e a
    sonda Q8; G2 nas gravações do G1; números em `decisoes.md`.
-4. F3 pelo fluxo D-040: LLM rascunha a spec, arquiteto revisa, dono aprova, especialista implementa, revisor lê o diff.
+4. Dono aprova a F3 (B12); especialista implementa L0 a L6 com commit por lote; revisor lê o diff; LLM verifica e fecha;
+   G3 com a chave do Gemini no Windows.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
