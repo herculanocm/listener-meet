@@ -1,6 +1,6 @@
 # F4 — Ao vivo: legenda leve com nome e resumo parcial
 
-Status: em revisão (revisão de arquitetura de 25/10 incorporada; Q1 a Q6 com o dono) · Aprovada por Herculano em: — ·
+Status: aprovada · Aprovada por Herculano em: 2026-10-25 (Q1 a Q6 nos padrões; U-021 a U-023 sim; D-044) ·
 Fase e gate: F4 · G4 · CPs: 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17
 Quando ler: ao detalhar ou implementar esta fase (T2). Origem: D-005. Tabelas: `dados.md`. Tamanho-alvo: 10 KB.
 
