@@ -6,7 +6,8 @@ faltantes; alguma falha -> job `erro` com a lista ("ata e executivo falharam: se
 tarefa a tarefa, só depois de o `Completion` chegar; o provedor nasce e fecha dentro do `asyncio.run()`; a chave é lida na
 hora e nunca entra em `config_json`, eventos ou erros (redação). Modo hierárquico por tokens (60 % da janela) ou quando o
 provedor devolve "request too large". Custo estimado antes de rodar: acima de `llm.cost_alert_usd`, as tarefas opcionais
-(executivo e transcrição revisada) ficam de fora no job automático e a revisão oferece gerá-las (P5)."""
+(executivo e transcrição revisada) ficam de fora no job automático e a revisão oferece gerá-las (P5). O alerta é da reunião:
+soma o que ela já gastou fora deste job (resumo parcial ao vivo, glossário, chat, jobs anteriores; F4 Q6)."""
 from __future__ import annotations
 
 import asyncio
@@ -567,11 +568,16 @@ class LlmJobRunner(BaseJobRunner):
             per_task[step] = est
             total += est or 0.0
         self.estimated_usd = round(total, 4)
-        if self.auto and total > self.config.cost_alert_usd:
+        # F4 Q6: o alerta é da reunião; o que ela já gastou fora deste job (parcial ao vivo, glossário, chat) entra na conta
+        # (as chamadas das tentativas anteriores deste job já estão na estimativa, por isso saem do gasto)
+        spent = max(0.0, (self.store.llm_calls.cost_for_meeting(self.meeting_id)[0] or 0.0) - self.cost_usd)
+        meeting_total = spent + total
+        if self.auto and meeting_total > self.config.cost_alert_usd:
+            before = f", já gastos {fmt_usd(spent)}" if spent > 0 else ""
             for step in self.tasks:
                 if step in OPTIONAL and step not in self._done_steps:
-                    self._skipped[str(step)] = (f"estimado {fmt_usd(per_task.get(step))} (reunião {fmt_usd(total)}), acima do alerta de "
-                                                f"{fmt_usd(self.config.cost_alert_usd)}")
+                    self._skipped[str(step)] = (f"estimado {fmt_usd(per_task.get(step))} (reunião {fmt_usd(meeting_total)}{before}), "
+                                                f"acima do alerta de {fmt_usd(self.config.cost_alert_usd)}")
             if self._skipped:
                 log.info("job llm %s: tarefas opcionais puladas pelo alerta de custo: %s", self.job_id, self._skipped)
 

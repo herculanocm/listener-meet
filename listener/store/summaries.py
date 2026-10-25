@@ -46,6 +46,7 @@ class SummaryInsert:
     call_id: int | None
     language: str | None
     status: SummaryStatus = SummaryStatus.CURRENT
+    t_until_ms: int | None = None      # F4: o resumo parcial cobre a reunião até aqui (fim da última legenda usada)
 
 
 class SummariesRepo:
@@ -61,9 +62,9 @@ class SummariesRepo:
                     self._supersede(int(old["id"]), author)
             return self.core.insert(
                 "INSERT INTO summaries(meeting_id, kind, data_json, text_llm, provider, model, prompt_version, job_id, call_id, language, "
-                "status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, t_until_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row.meeting_id, str(row.kind), row.data_json, row.text_llm, row.provider, row.model, row.prompt_version, row.job_id,
-                 row.call_id, row.language, str(row.status), _now()))
+                 row.call_id, row.language, str(row.status), None if row.t_until_ms is None else int(row.t_until_ms), _now()))
 
     def _supersede(self, summary_id: int, author: str) -> None:
         self.core.execute("UPDATE summaries SET status = ? WHERE id = ?", (SummaryStatus.SUPERSEDED, summary_id))

@@ -44,6 +44,7 @@ class LlmTask(StrEnum):
     TRANSCRIBE = "transcribe"
     CHAT = "chat"
     TEST = "test"
+    PARTIAL = "partial"            # F4: resumo parcial ao vivo
 
 
 class Reasoning(StrEnum):
@@ -72,6 +73,7 @@ class ModelClass(StrEnum):
 TASK_CLASS: dict[LlmTask, ModelClass] = {
     LlmTask.GLOSSARY: ModelClass.FAST, LlmTask.TITLE: ModelClass.FAST, LlmTask.PRE_SUMMARY: ModelClass.FAST,
     LlmTask.REVISE: ModelClass.FAST, LlmTask.TRANSCRIBE: ModelClass.FAST, LlmTask.CHAT: ModelClass.FAST, LlmTask.TEST: ModelClass.FAST,
+    LlmTask.PARTIAL: ModelClass.FAST,
     LlmTask.IDENTIFY: ModelClass.STRONG, LlmTask.MINUTES: ModelClass.STRONG, LlmTask.EXECUTIVE: ModelClass.STRONG,
 }
 TASK_REASONING: dict[LlmTask, Reasoning] = {t: (Reasoning.LOW if c == ModelClass.STRONG else Reasoning.NONE) for t, c in TASK_CLASS.items()}

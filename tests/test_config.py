@@ -44,7 +44,8 @@ def test_live_settings_follow_the_spec(monkeypatch):
     assert SPECS["live.model"].default == "small" and validate_setting("live.model", "medium")
     assert validate_setting("live.model", "base") is None
     assert SPECS["live.threads"].default == 2 and validate_setting("live.threads", "9") and validate_setting("live.threads", "1") is None
-    assert validate_setting("live.summary_interval_min", "0") and validate_setting("live.summary_interval_min", "60") is None
+    assert validate_setting("live.summary_interval_min", "-1") and validate_setting("live.summary_interval_min", "61")
+    assert validate_setting("live.summary_interval_min", "0") is None and validate_setting("live.summary_interval_min", "60") is None
     assert SPECS["live.names"].default is True and SPECS["live.in_widget"].default is True
     monkeypatch.setattr(defaults.os, "cpu_count", lambda: 8)
     assert defaults._default_live() is True

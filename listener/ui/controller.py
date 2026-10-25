@@ -11,7 +11,13 @@ antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A i
 `live_state` (estado) por sinais; com o ao vivo, a lease pede pausa ao pesado mesmo sem `pipeline.pause_on_record`.
 F4 L4: o widget mostra o selo do ao vivo e, com `live.in_widget`, a última legenda; o clique nela (ou "Ao vivo…" na
 bandeja) abre a janela "Ao vivo" (U-021), uma por vez, nunca sozinha (Q5); marcar uma legenda (U-022) ou um item do resumo
-parcial (U-023) passa pelo `Recorder.mark` com o instante dele, uma vez por legenda ou item na gravação."""
+parcial (U-023) passa pelo `Recorder.mark` com o instante dele, uma vez por legenda ou item na gravação.
+F4 L5, resumo parcial: com o ao vivo lançado, um timer confere a cada 15 s se `live.summary_interval_min` (relido a cada
+disparo, vale em uso: CP8; 0 desliga o automático) venceu e, havendo legendas novas e nenhuma chamada em voo, roda
+`llm.partial_task` numa `StreamTask`; "atualizar resumo agora" dispara já. Sem chave ou sem rede: um aviso por gravação e
+nova tentativa no próximo intervalo; no teto do orçamento (Q6), um aviso único e o parcial para nessa reunião. Parar e
+Cancelar param o timer; Cancelar e sair cancelam a chamada em voo (sair espera um pouco por ela); resultado de outra
+gravação só atualiza a janela dela."""
 from __future__ import annotations
 
 import functools
@@ -31,6 +37,7 @@ from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
 from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
 from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
+from ..llm import partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus
@@ -42,7 +49,7 @@ from .review import ReviewDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
-from .tasks import Task, live_threads, release, run_task
+from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task
 from .transcript import TranscriptDialog
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import shutdown_preparer
@@ -71,6 +78,8 @@ LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente.
 LIVE_RETRIES = 1                     # F4: uma nova tentativa por gravação quando o filho cai
 LIVE_CLOSE_GRACE_S = 10.0            # Parar: o filho fecha a janela em curso em até 10 s; depois, kill
 LIVE_EOF_GRACE_S = 8.0               # ...e transcreve a fila até 8 s depois do EOF (sobra folga para o bye)
+PARTIAL_TICK_MS = 15_000             # F4 L5: confere se o resumo parcial venceu (o intervalo é relido a cada disparo, CP8)
+PARTIAL_QUIT_WAIT_MS = 2500          # sair do app: espera a chamada cancelada do parcial terminar (cancelamento a cada 0,2 s)
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
@@ -126,6 +135,7 @@ class Controller(QObject):
     live_state = Signal(object)          # F4: {"state": off | unavailable | starting | live | degraded | skipping | restarting |
                                          #      stopping | stopped | crashed, ...detalhes}; os nomes à parte, sem mudar
                                          #      `live_status`: names_ready | names_unavailable (com `reason`)
+    partial_state = Signal(object)       # F4 L5: {"state": idle | running | done | error | stopped, "meeting_id", "message"}
     _live_message = Signal(object, object)   # (cliente, mensagem): da thread `live-read` para a da interface
 
     def __init__(self, app: QApplication, platform: Platform, store: Store, first_run: bool = False,
@@ -180,6 +190,19 @@ class Controller(QObject):
         self._marked_items: set[tuple[str, str]] = set()
         self.live_caption.connect(self._on_caption_ui)
         self.live_state.connect(self._on_live_state_ui)
+        # F4 L5: resumo parcial (uma chamada por vez; `_partial_tasks` guarda as em voo, inclusive de gravações anteriores)
+        self.monotonic: Callable[[], float] = time.monotonic
+        self.partial_status: dict[str, Any] = {"state": "idle", "meeting_id": None}
+        self._partial_meeting: int | None = None
+        self._partial_last_at = 0.0
+        self._partial_last_caption = 0
+        self._partial_stopped: str | None = None
+        self._partial_warned = False
+        self._partial_task: StreamTask | None = None
+        self._partial_tasks: set[StreamTask] = set()
+        self._partial_timer = QTimer(self)
+        self._partial_timer.setInterval(PARTIAL_TICK_MS)
+        self._partial_timer.timeout.connect(self._partial_tick)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -304,6 +327,7 @@ class Controller(QObject):
         except Exception:                                # o ao vivo nunca impede a gravação
             log.exception("gravação %s segue sem ao vivo", meeting_id)
             self._set_live_status("unavailable", reason="erro")
+        self._start_partial(meeting_id)
         live_line = self.live is not None and bool(self.store.get(SPECS["live.in_widget"]))
         self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos(), live_line=live_line)
         w = self.widget
@@ -400,6 +424,7 @@ class Controller(QObject):
             self.tray.set_state(AppState.SAVING)
         self._stop_mute_poller()
         self._stop_live()
+        self._stop_partial()
         self._end_live_window(rec.meeting_id, "gravação parada: só leitura")
         self._run_task(rec.stop, lambda result: self._on_stopped(rec, result))
 
@@ -429,6 +454,7 @@ class Controller(QObject):
         self._timer.stop()
         self._stop_mute_poller()
         self._terminate_live()                           # antes de apagar: o filho não pode gravar numa reunião apagada
+        self._stop_partial(cancel=True)                  # a resposta que vier depois não grava (a reunião some)
         self._end_live_window(rec.meeting_id, "gravação cancelada (apagada): só leitura")
         rec.cancel()
         if rec.muted:
@@ -446,6 +472,7 @@ class Controller(QObject):
             self._timer.stop()
             self._stop_mute_poller()
             self._stop_live(detach=True)                 # EOF: o filho termina sozinho, mesmo com o app saindo
+            self._stop_partial()
             try:
                 rec.stop()
             except Exception:
@@ -463,6 +490,7 @@ class Controller(QObject):
         except Exception as e:
             log.debug("parar atalhos: %s", e)
         shutdown_preparer()                              # F4: o download dos modelos não segue órfão
+        self._wait_partials()                            # a chamada do parcial em voo é cancelada antes de o banco fechar
         if self.live_window is not None:                 # guarda a posição antes de o banco fechar
             with suppress(Exception):
                 self.live_window.close()
@@ -917,8 +945,10 @@ class Controller(QObject):
             win = self.live_window = None
         if win is None:
             win = LiveWindow(self.store, rec.meeting_id, on_mark_caption=self.mark_caption, on_mark_item=self.mark_partial_item,
-                             marked_captions=self._marked_captions, marked_items=self._marked_items)
+                             on_refresh=self.request_partial_now, marked_captions=self._marked_captions,
+                             marked_items=self._marked_items)
             self.live_caption.connect(win.on_caption)
+            self.partial_state.connect(win.on_partial_state)
             win.closed.connect(functools.partial(self._live_window_closed, win))
             self.live_window = win
         win.set_live_state(self.live_status)
@@ -930,6 +960,8 @@ class Controller(QObject):
     def _live_window_closed(self, win: LiveWindow) -> None:
         with suppress(RuntimeError, TypeError):
             self.live_caption.disconnect(win.on_caption)
+        with suppress(RuntimeError, TypeError):
+            self.partial_state.disconnect(win.on_partial_state)
         if self.live_window is win:
             self.live_window = None
         win.deleteLater()
@@ -971,6 +1003,138 @@ class Controller(QObject):
         self._marked_items.add(key)
         return True, f"marcador criado em [{stamp(t_ms)}]"
 
+    # ---------------------------------------------------------------- resumo parcial (F4 L5)
+    def _start_partial(self, meeting_id: int) -> None:
+        """Só com o ao vivo lançado; o primeiro parcial sai um intervalo depois do começo."""
+        self._partial_task = None                        # a chamada de uma gravação anterior termina sozinha e é ignorada
+        self._partial_stopped = None
+        self._partial_warned = False
+        self._partial_last_at = self.monotonic()
+        self._partial_meeting = meeting_id if self.live is not None else None
+        if self._partial_meeting is None:
+            return
+        try:
+            self._partial_last_caption = partial_task.partial_state(self.store, meeting_id)[1]
+        except Exception as e:
+            log.debug("parcial anterior ilegível: %s", e)
+            self._partial_last_caption = 0
+        self._partial_timer.start()
+        self._set_partial({"state": "idle"})
+
+    def _stop_partial(self, cancel: bool = False) -> None:
+        """Parar e Cancelar param o timer; Cancelar também cancela a chamada em voo desta gravação."""
+        self._partial_timer.stop()
+        self._partial_meeting = None
+        task, self._partial_task = self._partial_task, None
+        if cancel and task is not None:
+            task.cancel()
+
+    def _wait_partials(self) -> None:
+        """Saída do app: cancela as chamadas do parcial em voo e espera (pouco) cada uma gravar o cancelamento."""
+        for task in list(self._partial_tasks):
+            task.cancel()
+            if not task.wait(PARTIAL_QUIT_WAIT_MS):
+                log.warning("a chamada do resumo parcial não terminou em %d ms", PARTIAL_QUIT_WAIT_MS)
+        self._partial_tasks.clear()
+
+    def _set_partial(self, state: dict[str, Any], meeting_id: int | None = None) -> None:
+        st = {"meeting_id": meeting_id if meeting_id is not None else self._partial_meeting, **state}
+        self.partial_status = st
+        self.partial_state.emit(st)
+
+    def _partial_tick(self) -> None:
+        """A cada 15 s: o intervalo relido agora (CP8; 0 desliga o automático); vencido, roda se houver legenda nova."""
+        rec = self.recorder
+        if (self._partial_meeting is None or rec is None or rec.meeting_id != self._partial_meeting
+                or self.state not in (AppState.RECORDING, AppState.PAUSED) or self._partial_stopped):
+            return
+        interval = int(self.store.get(SPECS["live.summary_interval_min"]))
+        if interval <= 0 or self.monotonic() - self._partial_last_at < interval * 60:
+            return
+        self._run_partial(manual=False)
+
+    def request_partial_now(self) -> str:
+        """"Atualizar resumo agora" (U-021): dispara já, se não houver chamada em voo; devolve o texto para a janela."""
+        return self._run_partial(manual=True)
+
+    def _run_partial(self, manual: bool) -> str:
+        mid = self._partial_meeting
+        if mid is None or self.recorder is None or self.state not in (AppState.RECORDING, AppState.PAUSED):
+            return "o resumo parcial só roda durante a gravação com a legenda ao vivo"
+        if self._partial_stopped:
+            return self._partial_stopped
+        if self._partial_tasks:
+            return "o resumo parcial já está sendo atualizado"
+        self._partial_last_at = self.monotonic()           # sem legenda nova, a próxima conferência é no próximo intervalo
+        try:
+            fresh = self.store.captions.last_id(mid) > self._partial_last_caption
+            keyed = self.store.providers.active_with_key("llm") is not None
+        except Exception as e:
+            log.debug("resumo parcial não conferido: %s", e)
+            return "resumo parcial indisponível agora"
+        if not fresh:
+            if manual:
+                self._set_partial({"state": "idle", "message": "nada novo desde o último resumo parcial"})
+            return "nada novo desde o último resumo parcial"
+        if not keyed:
+            self._partial_failed(partial_task.NO_PROVIDER, no_provider=True)
+            return partial_task.NO_PROVIDER
+        box: list[StreamTask] = []
+        store = self.store
+
+        def job(_emit: Callable[[str], None], cancelled: Callable[[], bool]) -> Any:
+            return partial_task.run_partial(store, mid, cancelled=cancelled)
+
+        task = run_stream(job, store, lambda _chunk: None, functools.partial(self._on_partial_done, mid, box))
+        box.append(task)
+        self._partial_tasks.add(task)
+        self._partial_task = task
+        self._set_partial({"state": "running"})
+        log.info("reunião %s: resumo parcial pedido (%s)", mid, "agora" if manual else "intervalo")
+        return "atualizando o resumo parcial…"
+
+    def _on_partial_done(self, meeting_id: int, box: list[StreamTask], result: Any) -> None:
+        for task in box:
+            self._partial_tasks.discard(task)
+            if self._partial_task is task:
+                self._partial_task = None
+        if self._quitting:
+            return
+        current = meeting_id == self._partial_meeting
+        if isinstance(result, BaseException):
+            if current:
+                self._partial_failed(f"{type(result).__name__}: {result}")
+            return
+        res: partial_task.PartialResult = result
+        match res.outcome:
+            case partial_task.Outcome.DONE:
+                if current:
+                    self._partial_last_caption = max(self._partial_last_caption, res.last_caption_id)
+                self._set_partial({"state": "done", "summary_id": res.summary_id, "t_until_ms": res.t_until_ms,
+                                   "left": res.left}, meeting_id)       # a janela da reunião recarrega, mesmo depois de Parar
+            case partial_task.Outcome.BUDGET if current:
+                self._partial_stopped = res.error or partial_task.budget_text(res.spent_usd, res.limit_usd)
+                self._partial_timer.stop()
+                log.warning("reunião %s: %s", meeting_id, self._partial_stopped)
+                self.notify(self._partial_stopped[:1].upper() + self._partial_stopped[1:] + ".")
+                self._set_partial({"state": "stopped", "message": self._partial_stopped})
+            case partial_task.Outcome.NO_PROVIDER if current:
+                self._partial_failed(res.error or partial_task.NO_PROVIDER, no_provider=True)
+            case partial_task.Outcome.ERROR if current:
+                self._partial_failed(res.error or "falha")
+            case partial_task.Outcome.NOTHING if current:
+                self._set_partial({"state": "idle", "message": "nada novo desde o último resumo parcial"})
+            case _:
+                log.debug("resumo parcial da reunião %s: %s (fora da gravação atual)", meeting_id, res.outcome)
+
+    def _partial_failed(self, message: str, no_provider: bool = False) -> None:
+        """Sem chave ou sem rede: um aviso por gravação; a próxima tentativa é no próximo intervalo e as legendas seguem."""
+        text = message if no_provider else f"resumo parcial indisponível agora ({message}); tento de novo no próximo intervalo"
+        if not self._partial_warned:
+            self._partial_warned = True
+            self.notify(text[:1].upper() + text[1:] + ".")
+        self._set_partial({"state": "error", "message": text})
+
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
@@ -997,6 +1161,7 @@ class Controller(QObject):
             self._timer.stop()
             self._stop_mute_poller()
             self._stop_live(detach=True)
+            self._stop_partial()
             rec.stop()                                   # síncrono aqui: o usuário mandou sair
             if rec.muted:
                 self.platform.mic_mute().set(False)

@@ -155,7 +155,8 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("live.names", True, _NEXT, "Nomes ao vivo (padrão do warm-up)", _bool, phase="F4"),
     SettingSpec("live.model", "small", _NEXT, "Modelo da legenda ao vivo", _text, choices=frozenset(LIVE_MODELS), phase="F4"),
     SettingSpec("live.threads", 2, _NEXT, "Threads de CPU da legenda ao vivo", int, low=1, high=8, phase="F4"),
-    SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min)", int, low=1, high=60, phase="F4"),
+    SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min; 0 desliga)", int, low=0, high=60,
+                phase="F4"),                                   # 0: sem o custo do parcial, a ata segue (desvio do orquestrador, L5)
     SettingSpec("live.in_widget", True, _NEXT, "Mostrar a última legenda no widget", _bool, phase="F4"),
 )}
 

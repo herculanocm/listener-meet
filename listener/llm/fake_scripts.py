@@ -1,7 +1,8 @@
 """Respostas padrão do `FakeProvider` por tarefa, derivadas do próprio pedido (contrato "Testes sem rede"): `identify` devolve
 a pessoa cujo nome aparece na transcrição com a citação literal; `minutes` cita segmentos reais e os marcadores; `revise`
 devolve os segmentos do bloco com pontuação; `glossary`, `title`, `executive`, `pre_summary`, `transcribe` e `chat` têm saídas
-estáveis. Tudo válido nos esquemas do projeto, para os testes do runner e o worker leve com `LISTENER_LLM=fake`."""
+estáveis; `partial` (F4) mantém os itens do parcial anterior e acrescenta uma decisão na primeira legenda nova e uma ação na
+última. Tudo válido nos esquemas do projeto, para os testes do runner e o worker leve com `LISTENER_LLM=fake`."""
 from __future__ import annotations
 
 import json
@@ -139,6 +140,24 @@ def transcribe(req: Request) -> dict[str, Any]:
                                              {"start_s": round(seconds / 2, 2), "end_s": round(seconds, 2), "text": "quatro cinco seis"}]}
 
 
+def partial(req: Request) -> dict[str, Any]:
+    text = _user_text(req)
+    lines = parse_lines(_after(text, "New captions (format: #caption_id [mm:ss] speaker: text):\n"))
+    try:
+        previous = json.loads(_after(text, "Previous running summary (JSON):\n").split("\n\nNew captions", 1)[0])
+    except ValueError:
+        previous = {}
+    previous = previous if isinstance(previous, dict) else {}
+    decisions = list(previous.get("decisions") or [])
+    actions = list(previous.get("actions") or [])
+    if lines:
+        decisions.append({"text": f"Decidido: {lines[0].text}"[:300], "caption_id": lines[0].segment_id})
+        owner = lines[-1].speaker if lines[-1].speaker not in ("Participante",) else None
+        actions.append({"text": f"Retomar: {lines[-1].text}"[:300], "caption_id": lines[-1].segment_id, "owner": owner})
+    summary = (str(previous.get("summary") or "") + f" Parcial simulado com {len(lines)} legenda(s) nova(s).").strip()
+    return {"summary": summary[-1000:], "decisions": decisions[-15:], "actions": actions[-15:]}
+
+
 def chat(req: Request) -> str:
     lines = _lines(req)
     stamp = lines[0].stamp if lines else "00:00"
@@ -148,5 +167,5 @@ def chat(req: Request) -> str:
 DEFAULTS: dict[LlmTask, Callable[[Request], Any]] = {
     LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: summary_text("Resumo executivo simulado:", 1500),
     LlmTask.PRE_SUMMARY: summary_text("Pré-resumo simulado:", 600), LlmTask.TITLE: title, LlmTask.REVISE: revise,
-    LlmTask.GLOSSARY: glossary, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat,
+    LlmTask.GLOSSARY: glossary, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat, LlmTask.PARTIAL: partial,
 }

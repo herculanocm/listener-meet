@@ -4,6 +4,7 @@ usuário no canal L); `confidence` é o cosseno do nome escolhido (nulo sem embe
 (mostra a degradação); `latency_ms` = agora - (início da sessão + fim da janela), medida no mesmo relógio da captura."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TypedDict, cast
 
@@ -62,3 +63,17 @@ class CaptionsRepo:
 
     def count(self, meeting_id: int) -> int:
         return int(self.core.q("SELECT COUNT(*) FROM captions WHERE meeting_id = ?", (meeting_id,))[0][0])
+
+    def last_id(self, meeting_id: int) -> int:
+        """Maior id das legendas da reunião (0 sem legenda): o resumo parcial só roda com legendas novas (F4 L5)."""
+        return int(self.core.q("SELECT COALESCE(MAX(id), 0) FROM captions WHERE meeting_id = ?", (meeting_id,))[0][0])
+
+    def start_times(self, meeting_id: int, ids: Iterable[int]) -> dict[int, int]:
+        """id -> `t_start_ms` das legendas pedidas que são desta reunião (o `caption_id` que a LLM citou vira `t_ms`)."""
+        wanted = sorted({int(i) for i in ids})
+        if not wanted:
+            return {}
+        marks = ",".join("?" * len(wanted))
+        rows = self.core.q(f"SELECT id, t_start_ms FROM captions WHERE meeting_id = ? AND id IN ({marks})",  # noqa: S608
+                           (meeting_id, *wanted))
+        return {int(r["id"]): int(r["t_start_ms"] or 0) for r in rows}
