@@ -4,7 +4,7 @@ da palavra fica com `align.merge_words`); janela sem fala (RMS por quadro) sai c
 modelo (R-11). Nunca mais que uma janela (mais a busca) em memória; nada de `blobopen`."""
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -62,18 +62,29 @@ def meeting_duration_ms(store: Store, meeting_id: int) -> int:
     return int(dur)
 
 
+type KnownWindows = Mapping[int, tuple[int, int, int]]     # idx -> (t0_ms, t1_ms, overlap_ms) das janelas já concluídas
+
+
 def iter_windows(store: Store, meeting_id: int, channel: str, window_s: float, overlap_s: float = 0.0, *,
                  silence_rms: float = 0.004, cut_on_silence: bool = True, search_s: float = 15.0, min_silence_ms: int = 300,
-                 target_rate: int = SAMPLE_RATE, duration_ms: int | None = None) -> Iterator[AudioWindow]:
+                 target_rate: int = SAMPLE_RATE, duration_ms: int | None = None,
+                 known: KnownWindows | None = None) -> Iterator[AudioWindow]:
     """Janelas consecutivas de até `window_s` sobre a linha do tempo da sessão. Com `cut_on_silence`, o fim de cada janela
     cai no maior silêncio perto do ponto nominal e não há sobreposição; sem silêncio (ou com `cut_on_silence=False`), a
-    próxima janela começa `overlap_s` antes do fim desta e carrega `overlap_ms`."""
+    próxima janela começa `overlap_s` antes do fim desta e carrega `overlap_ms`. `known` (retomada, R2-21): janelas já
+    gravadas saem sem decodificar (amostras vazias) enquanto a seguinte também for conhecida; a última conhecida é
+    decodificada para o corte da próxima sair igual."""
     total = int(duration_ms if duration_ms is not None else meeting_duration_ms(store, meeting_id))
     if total <= 0:
         return
     win_ms, ov_ms, search_ms = int(window_s * 1000), int(overlap_s * 1000), int(search_s * 1000)
     t, idx, overlap = 0, 0, 0
     while t < total:
+        if known and idx in known and (idx + 1) in known:
+            k0, k1, kov = known[idx]
+            yield AudioWindow(idx, channel, k0, k1, np.zeros(0, np.float32), target_rate, False, kov)
+            t, idx, overlap = known[idx + 1][0], idx + 1, known[idx + 1][2]
+            continue
         nominal_end = min(total, t + win_ms)
         last = nominal_end >= total
         fetch_end = nominal_end if last or not cut_on_silence else min(total, nominal_end + search_ms)

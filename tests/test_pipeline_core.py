@@ -218,3 +218,25 @@ def test_artifacts_roundtrip_and_job_config():
     assert cfg.whisper_model == "small" and cfg.threshold == 0.60 and cfg.silence_rms == 0.02 and cfg.diar_window_s == 1200   # R2-15
     assert JobConfig.from_json('{"pipeline.margin": 0.1}').margin == 0.1 and JobConfig.from_json("x").margin == 0.05
     assert JobConfig.from_json(None).to_dict()["whisper_window_s"] == 600
+
+
+def test_known_windows_are_not_decoded_again(store, monkeypatch):
+    """R2-21: na retomada, janelas já gravadas saem sem decodificar; só a última conhecida e as novas tocam o áudio."""
+    from listener.pipeline import windows as windows_mod
+
+    mid = _meeting(store, [(0, _tone(3.0))])
+    calls: list[tuple[int, int]] = []
+    real = windows_mod.decode_range
+
+    def spy(st, m, ch, t0, t1):
+        calls.append((t0, t1))
+        return real(st, m, ch, t0, t1)
+
+    monkeypatch.setattr(windows_mod, "decode_range", spy)
+    known = {0: (0, 1000, 0), 1: (1000, 2000, 0)}
+    wins = list(iter_windows(store, mid, "R", 1.0, 0.25, silence_rms=0.01, search_s=0.2, known=known))
+    # tom contínuo: sem silêncio, as janelas novas saem com 250 ms de sobreposição; a 0 vem do `known`, sem áudio
+    assert [(w.idx, w.t0_ms, w.t1_ms, w.samples.size > 0) for w in wins] == [(0, 0, 1000, False), (1, 1000, 2000, True),
+                                                                             (2, 1750, 2750, True), (3, 2500, 3000, True)]
+    assert [t0 for t0, _ in calls] == [1000, 1750, 2500]                                       # a janela 0 não foi decodificada
+    assert not wins[0].has_speech and wins[1].has_speech

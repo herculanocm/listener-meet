@@ -49,7 +49,8 @@ def _record(platform: FakePlatform, store: Store, seconds_each: float = 1.5) -> 
 def _run(store: Store, deps: FakeDeps, job_id: int | None = None, **kw) -> tuple[JobRunner, JobStatus]:
     job = store.jobs.claim(pid=1) if job_id is None else store.jobs.get(job_id)
     assert job is not None
-    runner = JobRunner(store, deps, job, config=kw.pop("config", CFG), heartbeat_thread=False, **kw)
+    kw.setdefault("heartbeat_thread", False)
+    runner = JobRunner(store, deps, job, config=kw.pop("config", CFG), **kw)
     return runner, runner.run()
 
 
@@ -241,12 +242,18 @@ def test_reprocess_reports_what_could_not_be_transported(platform, store):
     store.segments.update_cluster(old_r[0]["id"], person_id=ana, status=ClusterStatus.CONFIRMED)
     store.segments.update_cluster(old_r[0]["id"], speech_ms=1)
     store._x("UPDATE clusters SET centroid = ? WHERE id = ?", (np.full(256, 1 / 16, np.float32).tobytes(), old_r[0]["id"]))   # outra "voz"
+    store.segments.update_cluster(old_r[1]["id"], merged_into=old_r[0]["id"])                 # mescla cujo alvo não vai casar
     store.jobs.enqueue(mid, JobKind.REPROCESS)
     _, status = _run(store, FakeDeps(SCRIPT))
     assert status == JobStatus.DONE
     rev = store._q("SELECT entity, entity_id, field, before FROM revisions WHERE field = 'transporte'")
-    assert len(rev) == 1 and rev[0]["entity_id"] == old_r[0]["id"] and rev[0]["before"] == f"confirmado:{ana}"
-    assert all(c["person_id"] is None for c in store.segments.list_clusters(mid) if c["channel"] == "R")
+    assert len(rev) == 1 and rev[0]["entity"] == "meeting" and rev[0]["entity_id"] == mid              # R2-25: id estável
+    assert rev[0]["before"] == f"{old_r[0]['cluster']}:confirmado:{ana}"
+    lost = store._q("SELECT entity_id, before FROM revisions WHERE field = 'transporte_mescla'")
+    new_r = {c["cluster"]: c for c in store.segments.list_clusters(mid) if c["channel"] == "R"}
+    assert len(lost) == 1 and lost[0]["before"] == f"{old_r[1]['cluster']}->{old_r[0]['cluster']}"
+    assert lost[0]["entity_id"] in {c["id"] for c in new_r.values()}
+    assert all(c["person_id"] is None and c["merged_into"] is None for c in new_r.values())
 
 
 def test_prompt_and_rtf_helpers():
@@ -462,3 +469,88 @@ def test_current_job_is_the_latest_done_during_and_after_a_failed_reprocess(plat
     store.jobs.retry(rep)
     _, status = _run(store, FakeDeps(SCRIPT))
     assert status == JobStatus.DONE and store.segments.current_job_id(mid) == rep and store.segments.count_segments(mid) == 3
+
+
+def test_in_room_preset_diarizes_l_with_monotonic_progress(platform, store):
+    """R2-20: preset sala: L segue o caminho do R com rótulos próprios e o progresso sobe sem saturar antes do fim."""
+    from listener.pipeline import review
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    store._x("UPDATE meetings SET is_in_room = 1 WHERE id = ?", (mid,))
+    job_id = store.jobs.enqueue(mid)
+    seen: list[tuple[str | None, float]] = []
+    real = store.jobs.set_progress
+
+    def spy(jid, step, progress, timings=None):
+        seen.append((str(step) if step else None, progress))
+        real(jid, step, progress, timings)
+
+    store.jobs.set_progress = spy  # type: ignore[method-assign]
+    _, status = _run(store, FakeDeps(SCRIPT))
+    store.jobs.set_progress = real  # type: ignore[method-assign]
+    assert status == JobStatus.DONE
+    values = [p for _, p in seen]
+    assert values == sorted(values) and max(values) <= 1.0
+    first_transcribe = next(p for st, p in seen if st == "transcribe_r")
+    assert first_transcribe == pytest.approx(0.5, abs=0.01)                                  # 0,45 (R e L) + 0,05, não 0,95
+    clusters = store.segments.list_clusters(mid, job_id)
+    assert sorted((c["channel"], c["cluster"]) for c in clusters) == [("L", "L/SPK_0"), ("R", "SPK_0"), ("R", "SPK_1")]
+    assert all(s["attribution"] == "pyannote" for s in store.segments.list_segments(mid))
+    items = review.review_items(store, mid)
+    assert len(items) == 3 and items[0].channel in ("L", "R") and review.clip_range(store, items[-1].cluster_id) is not None
+
+
+def test_embedder_dim_attribute_is_not_trusted(platform, store):
+    """R2-23: a dimensão vem do primeiro vetor; um `dim` errado no adaptador não quebra a janela."""
+    from tests.fake_pipeline import ToneEmbedder
+
+    class LyingEmbedder:
+        model, dim = "fake-tone-64", 8                                                        # `dim` mente: os vetores têm 64
+
+        def __init__(self):
+            self.inner = ToneEmbedder(dim=64)
+
+        def embed(self, samples, sample_rate):
+            return self.inner.embed(samples, sample_rate)
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    store.jobs.enqueue(mid)
+    deps = FakeDeps(SCRIPT)
+    lying = LyingEmbedder()
+    deps._embedder_factory = lambda: lying
+    _, status = _run(store, deps)
+    assert status == JobStatus.DONE
+    assert all(c["centroid"].shape == (64,) for c in store.segments.list_clusters(mid) if c["channel"] == "R")
+    assert store._q("SELECT length(vector) FROM voice_embeddings WHERE source = 'automatico'")[0][0] == 64 * 4
+
+
+def test_heartbeat_thread_beats_during_a_window(platform, store):
+    """R2-27: o heartbeat em thread própria escreve enquanto uma janela roda (conexão por thread, fechada ao fim)."""
+    import threading
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    store.jobs.enqueue(mid)
+    main = threading.get_ident()
+    beat = threading.Event()
+    real = store.jobs.heartbeat
+
+    def spy(job_id, now=None):
+        if threading.get_ident() != main:
+            beat.set()
+        real(job_id, now)
+
+    store.jobs.heartbeat = spy  # type: ignore[method-assign]
+
+    def wait_for_beat(window):
+        if window.channel == "R" and window.idx == 0:
+            assert beat.wait(5.0), "a thread de heartbeat não escreveu durante a janela"
+
+    try:
+        _, status = _run(store, FakeDeps(SCRIPT, before=wait_for_beat), heartbeat_thread=True, heartbeat_s=0.001)
+    finally:
+        store.jobs.heartbeat = real  # type: ignore[method-assign]
+    assert status == JobStatus.DONE and beat.is_set()
+    assert len(store.core._conns) == 1                                                        # a conexão da thread foi fechada

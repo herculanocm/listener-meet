@@ -262,7 +262,7 @@ def test_two_connections_wait_for_each_other(tmp_path):
 
         t = threading.Thread(target=writer)
         t.start()
-        t.join(0.15)
+        t.join(0.05)
         assert t.is_alive()                                                # está esperando o lock
         order.append("a")
     assert done.wait(5.0) and order == ["a", "b"]

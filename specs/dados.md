@@ -23,8 +23,8 @@ KB.
 | captions | main | id, meeting_id, t_start_ms, t_end_ms, text, person_id | F4 | v1 vazia |
 | summaries | main | id, meeting_id, kind, t_until_ms, text_llm, text_edited, provider, model | F3, F4 | v1 vazia |
 | action_items | main | id, meeting_id, text, owner_person_id, owner_text, due, t_ms, status | F3 | v1 vazia |
-| voice_profiles | main | id, person_id, model, dim, centroid BLOB float32 (só cadastro e confirmacao), n_samples, threshold (calibrado, nulo = global), sim_mean, sim_std (Welford); único (person_id, model) | F2 | v4 |
-| voice_embeddings | main | id, profile_id, meeting_id, segment_id (nulo após reprocessar), vector BLOB, source (cadastro, confirmacao, automatico), platform (Q9) | F2 | v4 |
+| voice_profiles | main | id, person_id, model, dim, centroid BLOB float32 (só cadastro e confirmacao), n_samples, threshold (calibrado, nulo = global), sim_mean, sim_std, calib_n (Welford: só similaridades medidas); único (person_id, model) | F2 | v4 |
+| voice_embeddings | main | id, profile_id, meeting_id, segment_id (nulo após reprocessar), cluster_id, vector BLOB, source (cadastro, confirmacao, automatico; invalidado = confirmação corrigida, fora do centroide, nunca apagado), platform (Q9) | F2 | v4 |
 | rag_chunks | main | id, meeting_id, t_start_ms, t_end_ms, text, speakers; mais `rag_fts` (FTS5) | F5 | v1 vazia |
 | rag_vectors | main | chunk_id PK, model, dim, vector (sqlite-vec `vec0`, D-024; fallback BLOB + numpy) | F5 | v1 vazia |
 | processing_jobs | main | id, meeting_id (FK cascade), kind (meeting, reprocess, embed_range), status (pendente, rodando, pausado, concluído, erro, cancelado), step, progress, error, attempts, params_json, config_json (snapshot `pipeline.*` no claim), cancel_requested, heartbeat_at, worker_pid, claimed_at, started_at, finished_at, timings_json | F2 | v4 |
@@ -44,5 +44,7 @@ toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `
 (`meetings.audio_file`), v4 (F2: fila, clusters, artefatos, colunas dos perfis); áudio: v1 tabela, v2 datas, por
 arquivo; `user_version` acompanha; cada migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo
 `json_default` (numpy e datas; o resto é erro). Papéis do `Store`: APP migra; WORKER (F2) escreve no main sem migrar e
-lê o áudio em `mode=ro` com `mmap_size` 256 MB; READONLY. Fora do SQLite, por decisão: o ponteiro `db-location.json` na
+lê o áudio em `mode=ro` com `mmap_size` 256 MB; READONLY.
+Job vigente de uma reunião (revisão, leitura, trecho de 5 s): o `concluído` mais recente; sem concluído, o ativo.
+Fora do SQLite, por decisão: o ponteiro `db-location.json` na
 pasta de configuração do sistema (D-029) e o arquivo de log rotativo escolhido pelo usuário (D-033).

@@ -113,6 +113,7 @@ class JobRunner:
         self.memory_rss = memory_rss
         self.timings: dict[str, StepTiming] = {}
         self._done_weight = 0.0
+        self._share = 1.0
         self._step: JobStep | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -141,7 +142,7 @@ class JobRunner:
             channels = ["R", "L"] if self.meeting.get("is_in_room") else ["R"]
             clusters_by_channel: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]] = {}
             for ch in channels:
-                windows = self._diarize(ch)
+                windows = self._diarize(ch, share=1.0 / len(channels))          # preset sala: o peso da etapa se divide (R2-20)
                 clusters_by_channel[ch] = self._match(ch, windows)
             if "L" not in channels:
                 self._embed_user_channel()
@@ -264,7 +265,8 @@ class JobRunner:
         except ValueError:
             return False
 
-    def _begin_step(self, step: JobStep) -> None:
+    def _begin_step(self, step: JobStep, share: float = 1.0) -> None:
+        self._share = share
         if self._step != step:
             self._step = step
             self.store.jobs.set_progress(self.job_id, step, self._fraction(0.0), self._timings_dict())
@@ -273,8 +275,8 @@ class JobRunner:
     def _progress(self, step: JobStep, fraction: float) -> None:
         self.store.jobs.set_progress(self.job_id, step, self._fraction(fraction), self._timings_dict())
 
-    def _end_step(self, step: JobStep) -> None:
-        self._done_weight += STEP_WEIGHTS.get(step, 0.0)
+    def _end_step(self, step: JobStep, share: float = 1.0) -> None:
+        self._done_weight += STEP_WEIGHTS.get(step, 0.0) * share
         self._done_weight = min(1.0, self._done_weight)
         rss = self.memory_rss() if self.memory_rss is not None else None
         t = self.timings.get(step)
@@ -282,7 +284,7 @@ class JobRunner:
                  f"; RSS {rss / 1e6:.0f} MB" if rss else "")
 
     def _fraction(self, step_fraction: float) -> float:
-        weight = STEP_WEIGHTS.get(self._step or "", 0.0)
+        weight = STEP_WEIGHTS.get(self._step or "", 0.0) * self._share
         return round(min(1.0, self._done_weight + weight * max(0.0, min(1.0, step_fraction))), 4)
 
     def _timing(self, step: JobStep | str, model: str = "") -> StepTiming:
@@ -315,21 +317,26 @@ class JobRunner:
         self.deps.prepare(progress)
         self._step = None
 
-    def _diarize(self, channel: str) -> list[DiarizationWindow]:
+    def _diarize(self, channel: str, share: float = 1.0) -> list[DiarizationWindow]:
         """Diarização por janela de até `diar_window_s` com embeddings dos turnos limpos na mesma passagem (Q8 se o
-        pipeline os expuser com o mesmo modelo)."""
+        pipeline os expuser com o mesmo modelo). Janelas já gravadas não são decodificadas de novo (R2-21)."""
         step = JobStep.DIARIZE
-        self._begin_step(step)
-        done = self.store.jobs.artifact_indexes(self.job_id, step)
+        self._begin_step(step, share)
+        saved: dict[int, DiarizationWindow] = {}
+        for idx in sorted(self.store.jobs.artifact_indexes(self.job_id, step)):
+            local = idx - 100_000 if channel != "R" else idx
+            if (idx >= 100_000) == (channel != "R"):
+                saved[local] = decode_diarization(self.store.jobs.get_artifact(self.job_id, step, idx) or b"")
+        known = {i: (w.t0_ms, w.t1_ms, self.config.diar_overlap_s * 1000 if i else 0) for i, w in saved.items()}
         out: list[DiarizationWindow] = []
         total_ms = max(1, int(self.meeting.get("duration_ms") or 1))
         expected = expected_names(self.meeting.get("expected_participants"))
         min_spk, max_spk = (1, len(expected) + 1) if expected else (None, None)
         for w in iter_windows(self.store, self.meeting_id, channel, self.config.diar_window_s, self.config.diar_overlap_s,
-                              silence_rms=self.config.silence_rms, cut_on_silence=False):
+                              silence_rms=self.config.silence_rms, cut_on_silence=False, known=known):
             idx = self._artifact_idx(channel, w.idx)
-            if idx in done:
-                out.append(decode_diarization(self.store.jobs.get_artifact(self.job_id, step, idx) or b""))
+            if w.idx in saved:
+                out.append(saved[w.idx])
                 continue
             self._between_windows()
             t0 = time.perf_counter()
@@ -344,7 +351,7 @@ class JobRunner:
             self.store.jobs.put_artifact(self.job_id, step, idx, encode_diarization(dw))
             out.append(dw)
             self._progress(step, w.t1_ms / total_ms)
-        self._end_step(step)
+        self._end_step(step, share)
         return out
 
     def _embed_window(self, w: AudioWindow, dw: DiarizationWindow) -> DiarizationWindow:
@@ -360,12 +367,13 @@ class JobRunner:
         t0 = time.perf_counter()
         vectors: dict[str, np.ndarray] = {}
         for label, turns in clean_turns(dw.turns, dw.overlap).items():
-            acc = np.zeros(embedder.dim, np.float32)
+            acc: np.ndarray | None = None                            # dimensão vem do primeiro vetor, não de `dim` (R2-23)
             for t in turns:
                 a, b = round((t.start_ms - w.t0_ms) * w.sample_rate / 1000), round((t.end_ms - w.t0_ms) * w.sample_rate / 1000)
-                acc += normalize(embedder.embed(w.samples[a:b], w.sample_rate)) * t.duration_ms
+                v = normalize(embedder.embed(w.samples[a:b], w.sample_rate)) * t.duration_ms
+                acc = v if acc is None else acc + v
                 timing.speech_s += t.duration_ms / 1000
-            if np.any(acc):
+            if acc is not None and np.any(acc):
                 vectors[label] = normalize(acc)
         timing.wall_s += time.perf_counter() - t0
         timing.audio_s += w.duration_ms / 1000
@@ -379,14 +387,19 @@ class JobRunner:
         done = self.store.jobs.artifact_indexes(self.job_id, EMBED_L_ARTIFACT)
         embedder = self.deps.embedder()
         timing = self._timing(step, embedder.model)
-        acc = np.zeros(embedder.dim, np.float32)
+        acc: np.ndarray | None = None
         total = 0
+        saved: dict[int, tuple[dict[str, Any], bytes]] = {}
+        for idx in sorted(done):
+            saved[idx] = unpack_artifact(self.store.jobs.get_artifact(self.job_id, EMBED_L_ARTIFACT, idx) or b"")
+        known = {i: (int(h["t0"]), int(h["t1"]), 0) for i, (h, _) in saved.items() if "t0" in h}
         for w in iter_windows(self.store, self.meeting_id, "L", self.config.diar_window_s, 0, silence_rms=self.config.silence_rms,
-                              cut_on_silence=False):
-            if w.idx in done:
-                header, blob = unpack_artifact(self.store.jobs.get_artifact(self.job_id, EMBED_L_ARTIFACT, w.idx) or b"")
+                              cut_on_silence=False, known=known):
+            if w.idx in saved:
+                header, blob = saved[w.idx]
                 if header.get("ms"):
-                    acc += np.frombuffer(blob, dtype="<f4").astype(np.float32) * header["ms"]
+                    v = np.frombuffer(blob, dtype="<f4").astype(np.float32) * header["ms"]
+                    acc = v if acc is None else acc + v
                     total += int(header["ms"])
                 continue
             self._between_windows()
@@ -394,18 +407,19 @@ class JobRunner:
             vec, ms = self._embed_runs(w, embedder)
             timing.wall_s += time.perf_counter() - t0
             timing.speech_s += ms / 1000
-            self.store.jobs.put_artifact(self.job_id, EMBED_L_ARTIFACT, w.idx, pack_artifact({"ms": ms}, vec.tobytes() if ms else b""))
+            self.store.jobs.put_artifact(self.job_id, EMBED_L_ARTIFACT, w.idx,
+                                         pack_artifact({"ms": ms, "t0": w.t0_ms, "t1": w.t1_ms}, vec.tobytes() if ms else b""))
             if ms:
-                acc += vec * ms
+                acc = vec * ms if acc is None else acc + vec * ms
                 total += ms
-        if total and np.any(acc):
+        if total and acc is not None and np.any(acc):
             self.store.profiles.upsert_auto_embedding(int(self.me["id"]), embedder.model, normalize(acc), self.meeting_id,
                                                       self.meeting.get("platform"))
 
     def _embed_runs(self, w: AudioWindow, embedder: Any, min_run_ms: int = 1500, limit: int = 20) -> tuple[np.ndarray, int]:
         """Trechos contíguos com fala (RMS por quadro) do canal L, os mais longos primeiro."""
         if not w.has_speech:
-            return np.zeros(embedder.dim, np.float32), 0
+            return np.zeros(0, np.float32), 0
         frame = max(1, int(w.sample_rate * 20 / 1000))
         loud = frame_rms(w.samples, w.sample_rate) > self.config.silence_rms
         runs: list[tuple[int, int]] = []
@@ -418,19 +432,20 @@ class JobRunner:
                 start = -1
         runs = [(a, b) for a, b in runs if (b - a) * 20 >= min_run_ms]
         runs.sort(key=lambda r: r[0] - r[1])
-        acc = np.zeros(embedder.dim, np.float32)
+        acc: np.ndarray | None = None
         total = 0
         for a, b in runs[:limit]:
             ms = (b - a) * 20
-            acc += normalize(embedder.embed(w.samples[a * frame:b * frame], w.sample_rate)) * ms
+            v = normalize(embedder.embed(w.samples[a * frame:b * frame], w.sample_rate)) * ms
+            acc = v if acc is None else acc + v
             total += ms
-        return (normalize(acc) if total else acc), total
+        return (normalize(acc) if acc is not None and total else np.zeros(0, np.float32)), total
 
     def _match(self, channel: str, windows: list[DiarizationWindow]) -> tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]:
         """Costura, centroides globais, casamento com os perfis e gravação dos clusters (a revisão abre aqui). Na retomada
         depois desta etapa, os clusters do job (talvez já confirmados pelo usuário) são mantidos e só a costura é relida."""
         step = JobStep.MATCH
-        self._begin_step(step)
+        self._begin_step(step, 1.0)
         prefix = "" if channel == "R" else f"{channel}/"
         art_idx = 0 if channel == "R" else 1
         raw = self.store.jobs.get_artifact(self.job_id, STITCH_ARTIFACT, art_idx)
@@ -478,14 +493,17 @@ class JobRunner:
 
     def _transcribe(self, channel: str, step: JobStep) -> list[TranscriptWindow]:
         self._begin_step(step)
-        done = self.store.jobs.artifact_indexes(self.job_id, step)
+        saved: dict[int, TranscriptWindow] = {}
+        for idx in sorted(self.store.jobs.artifact_indexes(self.job_id, step)):
+            saved[idx] = decode_transcript(self.store.jobs.get_artifact(self.job_id, step, idx) or b"")
+        known = {i: (tw.t0_ms, tw.t1_ms, tw.overlap_ms) for i, tw in saved.items()}
         out: list[TranscriptWindow] = []
         total_ms = max(1, int(self.meeting.get("duration_ms") or 1))
         previous: tuple[Word, ...] = ()
         for w in iter_windows(self.store, self.meeting_id, channel, self.config.whisper_window_s, self.config.whisper_overlap_s,
-                              silence_rms=self.config.silence_rms, cut_on_silence=True):
-            if w.idx in done:
-                tw = decode_transcript(self.store.jobs.get_artifact(self.job_id, step, w.idx) or b"")
+                              silence_rms=self.config.silence_rms, cut_on_silence=True, known=known):
+            if w.idx in saved:
+                tw = saved[w.idx]
                 out.append(tw)
                 previous = tw.words
                 if self.language is None and tw.language and tw.language_prob >= MIN_LANGUAGE_PROB:
@@ -589,10 +607,12 @@ class JobRunner:
                     pairs[int(oc["id"])] = int(match["id"])
         people = {int(p["id"]): p for p in self.store.people.list_people()}
         new_by_id = {int(c["id"]): c for c in new}
+        old_by_id = {int(c["id"]): c for c in old}
         for oc in decided:
             nid = pairs.get(int(oc["id"]))
-            if nid is None:
-                self.store.add_revision("cluster", int(oc["id"]), "transporte", f"{oc['status']}:{oc.get('person_id')}", None, "sistema")
+            if nid is None:                                      # nota na reunião: o cluster antigo some na troca (R2-25)
+                self.store.add_revision("meeting", self.meeting_id, "transporte", f"{oc['cluster']}:{oc['status']}:{oc.get('person_id')}",
+                                        None, "sistema")
                 continue
             nc = new_by_id[nid]
             if str(nc["status"]) in (ClusterStatus.CONFIRMED, ClusterStatus.IGNORED) or nc.get("merged_into") is not None:
@@ -603,6 +623,9 @@ class JobRunner:
                 continue
             mi = oc.get("merged_into")
             merged = pairs.get(int(mi)) if mi is not None else None
+            if mi is not None and merged is None:                # a mescla não tem para onde apontar: fica anotada (R2-25)
+                target = old_by_id.get(int(mi), {}).get("cluster", mi)
+                self.store.add_revision("cluster", nid, "transporte_mescla", f"{oc['cluster']}->{target}", None, "sistema")
             self.store.segments.update_cluster(nid, person_id=oc.get("person_id"), status=str(oc["status"]), merged_into=merged)
             if oc.get("person_id") is not None and str(oc["status"]) == ClusterStatus.CONFIRMED:
                 pid = int(oc["person_id"])  # type: ignore[arg-type]

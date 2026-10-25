@@ -143,3 +143,32 @@ def test_request_cancel_racing_with_a_claim_keeps_artifacts(tmp_path):
     assert ui.jobs.request_cancel(999) is None
     ui.close()
     worker.close()
+
+
+def test_concurrent_claims_from_two_stores_give_the_job_to_exactly_one(tmp_path):
+    """R2-27: dois workers (threads e conexões próprias) disparam o claim ao mesmo tempo: um leva, o outro recebe None."""
+    import threading
+
+    from listener.store import Store
+
+    a, b = Store(tmp_path), Store(tmp_path)
+    mid = _meeting(a)
+    j = a.jobs.enqueue(mid)
+    barrier = threading.Barrier(2)
+    results: dict[str, object] = {}
+
+    def claim(name: str, store: Store) -> None:
+        barrier.wait(5.0)
+        results[name] = store.jobs.claim(pid=1 if name == "a" else 2)
+        store.close_thread()
+
+    threads = [threading.Thread(target=claim, args=("a", a)), threading.Thread(target=claim, args=("b", b))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10.0)
+    got = [r for r in results.values() if r is not None]
+    assert len(results) == 2 and len(got) == 1 and got[0]["id"] == j
+    assert a.jobs.get(j)["status"] == "rodando" and a.jobs.get(j)["worker_pid"] in (1, 2)
+    a.close()
+    b.close()

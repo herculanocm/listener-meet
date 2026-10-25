@@ -32,6 +32,7 @@ class ProfileRow(TypedDict, total=False):
     threshold: float | None
     sim_mean: float | None
     sim_std: float | None
+    calib_n: int | None
     updated_at: str | None
 
 
@@ -159,14 +160,11 @@ class ProfilesRepo:
         p = self.get_profile(profile_id)
         if p is None:
             return None
-        n = int(self.core.q("SELECT COUNT(*) FROM voice_embeddings WHERE profile_id = ? AND source = ?",
-                            (profile_id, EmbeddingSource.CONFIRM))[0][0])
-        if p.get("sim_mean") is None:
-            n = 0
+        n = int(p.get("calib_n") or 0)                     # só amostras de similaridade medidas, não vetores (R2-18)
         n, mean, std = welford_update(n, float(p.get("sim_mean") or 0.0), float(p.get("sim_std") or 0.0), float(similarity))
         threshold = calibrated_threshold(n, mean, std)
-        self.core.execute("UPDATE voice_profiles SET sim_mean = ?, sim_std = ?, threshold = ?, updated_at = ? WHERE id = ?",
-                          (mean, std, threshold, _now(), profile_id))
+        self.core.execute("UPDATE voice_profiles SET sim_mean = ?, sim_std = ?, calib_n = ?, threshold = ?, updated_at = ? WHERE id = ?",
+                          (mean, std, n, threshold, _now(), profile_id))
         return threshold
 
     def confirm(self, person_id: int, model: str, vector: np.ndarray, similarity: float | None, meeting_id: int | None,
@@ -183,11 +181,3 @@ class ProfilesRepo:
                 self.recompute_centroid(pid)
         return pid
 
-    def merge_profiles(self, src_id: int, dst_id: int) -> None:
-        """Move os vetores de um perfil para outro (duas fichas da mesma pessoa) e recalcula; só por ação do usuário."""
-        if src_id == dst_id:
-            return
-        with self.core.transaction():
-            self.core.execute("UPDATE voice_embeddings SET profile_id = ? WHERE profile_id = ?", (dst_id, src_id))
-            self.core.execute("DELETE FROM voice_profiles WHERE id = ?", (src_id,))
-            self.recompute_centroid(dst_id)

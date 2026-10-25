@@ -173,7 +173,7 @@ def test_insert_failing_n_times_loses_nothing(platform, store, recorder_factory)
 
 def test_insert_failing_forever_marks_interrupted_and_lists_idx(platform, store, recorder_factory):
     sink = MemorySink(fail_times=10**9)
-    rec = recorder_factory(sink=sink)
+    rec = recorder_factory(make_config(stop_timeout_s=0.05), sink=sink)         # o prazo é cumprido até o fim: curto no teste
     rec.start()
     platform.pump(1.1)
     assert rec.health()["db"] == Health.WARN

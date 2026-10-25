@@ -56,11 +56,17 @@ def test_profile_centroid_ignores_automatic_and_calibrates(store):
     sources = [s for _, _, s in store.profiles.embeddings(pid)]
     assert sources.count("confirmacao") == 5 and sources.count("automatico") == 1 and sources.count("cadastro") == 1
     assert [x["id"] for x in store.profiles.list_profiles("wespeaker")] == [pid]
+    assert p["calib_n"] == 5 and not hasattr(store.profiles, "merge_profiles")                   # R2-24: código que apagava saiu
+    # R2-18: a média usa só as similaridades medidas (a 1ª confirmação, sem perfil, não entra como amostra)
     bia = store.people.create_person("Bia")
-    other = store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=None, meeting_id=None)
-    store.profiles.merge_profiles(other, pid)
-    assert store.profiles.get_profile(other) is None and store.profiles.get_profile(pid)["n_samples"] == 7
+    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=None, meeting_id=None)
+    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=0.9, meeting_id=None)
+    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=0.5, meeting_id=None)
+    pb = store.profiles.profile_for(bia, "wespeaker")
+    assert pb["calib_n"] == 2 and math.isclose(pb["sim_mean"], 0.7) and pb["n_samples"] == 3
     assert [p["name"] for p in store.people.list_people()] == ["Ana", "Bia"]
+    store.profiles.invalidate_cluster_embeddings(pb["id"], 999)                                   # nada com esse cluster: no-op
+    assert store.profiles.profile_for(bia, "wespeaker")["n_samples"] == 3
 
 
 def test_segments_in_batches_clusters_swap_and_merge_resolution(store):
@@ -87,11 +93,19 @@ def test_segments_in_batches_clusters_swap_and_merge_resolution(store):
                       cluster_id=ids_new["SPK_1"]),
         SegmentInsert(mid, new_job, "L", 1000, 1900, "olá", Attribution.CHANNEL, SegmentSource.FINAL, person_id=me,
                       role_at_time="Gerente")])
-    assert store.segments.count_segments(mid) == 2502 and store.segments.latest_job_id(mid) == new_job
+    store._x("INSERT INTO segments(meeting_id, channel, t_start_ms, t_end_ms, text, source) VALUES (?, 'L', 0, 10, 'ao vivo', 'live')",
+             (mid,))
+    assert store.segments.count_segments(mid) == 2503 and store.segments.latest_job_id(mid) == new_job
     result = store.segments.swap_job(mid, new_job)
-    assert result == {"embeddings_freed": 1, "segments_deleted": 2500, "clusters_deleted": 1}
+    assert result == {"embeddings_freed": 1, "segments_deleted": 2500, "clusters_deleted": 1}        # job_id nulo fica (R2-22)
     assert store.get_meeting(mid)["status"] == MeetingStatus.PROCESSED
-    assert [s["text"] for s in store.segments.list_segments(mid)] == ["oi", "olá"]
+    assert [s["text"] for s in store.segments.list_segments(mid)] == ["oi", "ao vivo", "olá"]
+    store._x("DELETE FROM segments WHERE job_id IS NULL")
+    store.meetings.set_status(mid, MeetingStatus.REVIEWED)
+    store.segments.swap_job(mid, new_job)
+    assert store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED                               # R2-11: não rebaixa
+    store.segments.swap_job(mid, new_job, downgrade_reviewed=True)
+    assert store.get_meeting(mid)["status"] == MeetingStatus.PROCESSED
     assert store.profiles.embeddings(pid)[0][0] and store._q("SELECT segment_id FROM voice_embeddings")[0][0] is None
     # mescla na revisão: SPK_1 é a mesma pessoa que SPK_0 -> resolve pela cadeia merged_into
     store.segments.update_cluster(ids_new["SPK_1"], merged_into=ids_new["SPK_0"], status=ClusterStatus.CONFIRMED)

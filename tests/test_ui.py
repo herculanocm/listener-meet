@@ -263,3 +263,31 @@ def ctl_specs():
     from listener.config.defaults import SPECS
 
     return SPECS
+
+
+def test_start_enqueues_recorded_meetings_without_a_job(qtbot, qapp, store, platform):
+    """R2-24: ao abrir, reuniões `gravada` ou `interrompida` sem job entram na fila (D-014); as que já têm job, não."""
+    from listener.model import MeetingStatus
+    from listener.ui.controller import Controller
+
+    store.upsert_me("Eu")
+    done = store.create_meeting("com job", None, None, None)
+    store.finish_meeting(done, 1000)
+    store.jobs.enqueue(done)
+    a = store.create_meeting("sem job", None, None, None)
+    store.finish_meeting(a, 1000)
+    b = store.create_meeting("interrompida", None, None, None)
+    store.finish_meeting(b, 1000, MeetingStatus.INTERRUPTED)
+    c_ = store.create_meeting("cancelada", None, None, None)
+    store.finish_meeting(c_, 1000, MeetingStatus.CANCELLED)
+    store.set_setting("pipeline.paused_until", "2099-01-01T00:00:00.000-03:00")
+    c = Controller(qapp, platform, store)
+    c.tray = None
+    try:
+        c.start()
+        assert sorted(j["meeting_id"] for j in store.jobs.active()) == sorted([done, a, b])
+        assert store.get_setting("pipeline.paused_until") == "" and len(platform.spawned) == 1
+        c.start()
+        assert len(store.jobs.active()) == 3                                                    # idempotente
+    finally:
+        c.emergency_stop()

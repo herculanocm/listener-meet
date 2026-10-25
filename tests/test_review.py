@@ -86,15 +86,17 @@ def test_clip_range_from_segments_or_stitch_and_transcript_rows(platform, store)
     samples, sr = review.decode_clip(store, mid, *rng)
     assert sr == 16000 and len(samples) == round((rng[2] - rng[1]) * 16)
     assert review.clip_range(store, 9999) is None
-    # antes dos segmentos (Whisper rodando): o trecho vem do artefato da costura
-    job_id = items[0].cluster_id and store.segments.latest_job_id(mid)
-    store._x("DELETE FROM segments WHERE meeting_id = ?", (mid,))
-    assert review.clip_range(store, items[0].cluster_id) is None                      # artefatos já apagados ao concluir
-    from listener.pipeline.types import pack_artifact
-
-    store.jobs.put_artifact(job_id, "stitch", 0, pack_artifact({"turns": [(0, 1500, "SPK_0"), (1500, 3000, "SPK_1")]}))
-    assert review.clip_range(store, items[0].cluster_id) == ("R", 0, 1500)
-    store.jobs.delete_artifacts(job_id)
+    # antes dos segmentos (job interrompido na transcrição): o trecho vem do artefato da costura, com áudio decodificável
+    plat3 = type(platform)(platform.tmp)
+    mid3 = _record(plat3, store)
+    store.jobs.enqueue(mid3)
+    job3 = store.jobs.claim(pid=1)
+    assert JobRunner(store, FakeDeps(SCRIPT, fail_once_at={("R", 0)}), job3, config=CFG, heartbeat_thread=False).run() == "erro"
+    pending_items = review.review_items(store, mid3)
+    assert pending_items and store.segments.count_segments(mid3) == 0
+    rng3 = review.clip_range(store, pending_items[0].cluster_id)
+    assert rng3 is not None and rng3[0] == "R" and 0 < rng3[2] - rng3[1] <= 5000
+    assert review.decode_clip(store, mid3, *rng3)[0].size == round((rng3[2] - rng3[1]) * 16)
     # leitura: nome, cargo e ponto de reprodução (plataforma nova: o relógio manual da anterior já andou 3 s)
     mid2, items2 = _processed(type(platform)(platform.tmp), store)
     review.new_person(store, items2[0].cluster_id, "Ana", role="CFO")
@@ -119,6 +121,7 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     qtbot.addWidget(dlg)
     dlg.show()
     assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 voz(es)" in dlg.header.text()
+    assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
     assert "sugestão: Ana (similaridade 0.70, margem 0.03)" in dlg.list.item(0).text()
     qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: decodifica numa Task
     qtbot.waitUntil(lambda: bool(played), timeout=3000)
@@ -177,8 +180,14 @@ def test_controller_opens_review_when_clusters_exist_and_on_done(qtbot, qapp, pl
         store.jobs.set_progress(job_id, JobStep.TRANSCRIBE_R, 0.6)
         c._poll_queue()
         assert mid in c._reviews and c._reviews[mid].isVisible() and c._reviews[mid].list.count() == 2
+        reloads = c._reviews[mid].reloads
         c._poll_queue()
-        assert len(c._reviews) == 1                                                   # não abre duas vezes
+        c._poll_queue()
+        assert len(c._reviews) == 1 and c._reviews[mid].reloads == reloads              # R2-26: sem mudança, sem reload
+        store.segments.insert_clusters([__import__("listener.store.segments", fromlist=["ClusterInsert"]).ClusterInsert(
+            mid, job_id, "R", "SPK_9", 10, None, None, ClusterStatus.UNNAMED)])
+        c._poll_queue()
+        assert c._reviews[mid].reloads == reloads + 1                                  # clusters mudaram: recarrega
         t = c.open_transcript(mid)
         assert t.model.rowCount() == 3 and c.open_transcript(mid) is t                   # job vigente: o concluído
         store.jobs.finish(job_id, JobStatus.DONE)

@@ -110,6 +110,7 @@ class Controller(QObject):
         self._seen_done: set[int] = set()
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
+        self._review_sigs: dict[int, tuple[int, int]] = {}
         self._transcripts: dict[int, TranscriptDialog] = {}
         self._queue_dialog: QueueDialog | None = None
         self._queue_timer = QTimer(self)
@@ -140,6 +141,7 @@ class Controller(QObject):
         if waiting:
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
         self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
+        self._enqueue_leftovers()
         self._poll_queue()
         self._queue_timer.start()
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
@@ -469,6 +471,19 @@ class Controller(QObject):
         self.launch_worker()
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS)
 
+    def _enqueue_leftovers(self) -> int:
+        """Reuniões `gravada` ou `interrompida` sem nenhum job (Sair gravando, queda, versão anterior): entram na fila (D-014, R2-24)."""
+        if not self.store.get(SPECS["pipeline.auto_start"]):
+            return 0
+        n = 0
+        for m in self.store.meetings.list_by_status(MeetingStatus.RECORDED, MeetingStatus.INTERRUPTED):
+            if not self.store.jobs.for_meeting(int(m["id"])):
+                self.store.jobs.enqueue(int(m["id"]))
+                n += 1
+        if n:
+            log.info("%d reunião(ões) sem processamento entraram na fila", n)
+        return n
+
     def launch_worker(self) -> bool:
         """Só se há job ativo (pendente, ou rodando/pausado de um worker que morreu: heartbeat vencido), nenhum heartbeat
         fresco e o último lançamento já teve tempo de se anunciar; o claim do worker novo devolve o job morto à fila (R2-01)."""
@@ -517,8 +532,11 @@ class Controller(QObject):
             if mid not in self._review_offered:
                 self._review_offered.add(mid)                         # P1: a revisão abre enquanto o Whisper roda
                 self.open_review(mid)
-        for dlg in list(self._reviews.values()):
-            dlg.reload()
+        for mid, dlg in list(self._reviews.items()):            # só quando os clusters mudaram: não rouba o foco (R2-26)
+            sig = self._clusters_signature(mid)
+            if sig != self._review_sigs.get(mid):
+                self._review_sigs[mid] = sig
+                dlg.reload()
         if active and self.recorder is None:
             self.launch_worker()
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active else QUEUE_POLL_IDLE_MS)
@@ -540,6 +558,7 @@ class Controller(QObject):
             dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript)
             dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
             self._reviews[meeting_id] = dlg
+            self._review_sigs[meeting_id] = self._clusters_signature(meeting_id)
             if not review.pending(dlg.items):
                 log.info("reunião %s: nenhuma voz pendente (tudo confirmado)", meeting_id)
         else:
@@ -548,8 +567,13 @@ class Controller(QObject):
         dlg.raise_()
         return dlg
 
+    def _clusters_signature(self, meeting_id: int) -> tuple[int, int]:
+        row = self.store._q("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM clusters WHERE meeting_id = ?", (meeting_id,))[0]
+        return int(row[0]), int(row[1])
+
     def _review_closed(self, meeting_id: int, _result: int) -> None:
         dlg = self._reviews.pop(meeting_id, None)
+        self._review_sigs.pop(meeting_id, None)
         if dlg is not None:
             dlg.deleteLater()
 

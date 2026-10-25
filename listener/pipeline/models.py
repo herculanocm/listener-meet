@@ -7,7 +7,9 @@ rede). Só o worker importa este módulo; torch e companhia entram preguiçosame
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -48,11 +50,17 @@ def apply_environment(config: JobConfig) -> dict[str, str]:
     values = {"HF_HOME": str(home), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "HF_HUB_DISABLE_TELEMETRY": "1",
               "OMP_NUM_THREADS": str(max(1, config.torch_threads)), "MKL_NUM_THREADS": str(max(1, config.torch_threads)),
               "CT2_VERBOSE": "0", "TOKENIZERS_PARALLELISM": "false"}
-    if ready_mark(config, "pyannote").exists() and whisper_dir(config).exists():
+    offline = ready_mark(config, "pyannote").exists() and whisper_dir(config).exists()
+    if offline:
         values["HF_HUB_OFFLINE"] = "1"                       # tudo baixado: nada de bater na rede ao abrir
     else:
         os.environ.pop("HF_HUB_OFFLINE", None)
     os.environ.update(values)
+    hub = sys.modules.get("huggingface_hub")                 # a constante é lida na importação: ajustar no módulo vivo (R2-19)
+    constants = getattr(hub, "constants", None)
+    if constants is not None:
+        with suppress(Exception):
+            constants.HF_HUB_OFFLINE = offline
     return values
 
 

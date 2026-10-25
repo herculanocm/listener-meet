@@ -28,6 +28,7 @@ class ReviewDialog(QDialog):
         self.on_transcript = on_transcript
         self.items: list[review.ReviewItem] = []
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
+        self.reloads = 0
         m = store.get_meeting(meeting_id) or {}
         self.setWindowTitle(f"Quem falou — {m.get('title') or f'reunião {meeting_id}'}")
         self.setMinimumSize(640, 380)
@@ -65,10 +66,12 @@ class ReviewDialog(QDialog):
         lay.addLayout(row1)
         lay.addLayout(row2)
         self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
-        self.reload()
+        self.reload(focus=True)
 
     # ---------------------------------------------------------------- estado
-    def reload(self, keep: int | None = None) -> None:
+    def reload(self, keep: int | None = None, focus: bool = False) -> None:
+        """Relê os cards; `focus` só nas ações do próprio diálogo (o polling do app não rouba o foco, R2-26)."""
+        self.reloads += 1
         current = keep if keep is not None else self.current_cluster_id()
         self.items = review.review_items(self.store, self.meeting_id)
         self.list.clear()
@@ -89,7 +92,8 @@ class ReviewDialog(QDialog):
                 break
         if self.list.currentRow() < 0 and self.list.count():
             self.list.setCurrentRow(0)
-        self.list.setFocus()
+        if focus:
+            self.list.setFocus()
 
     def current_cluster_id(self) -> int | None:
         item = self.list.currentItem()
@@ -101,7 +105,7 @@ class ReviewDialog(QDialog):
 
     def _next_pending(self) -> None:
         waiting = review.pending(review.review_items(self.store, self.meeting_id))
-        self.reload(waiting[0].cluster_id if waiting else self.current_cluster_id())
+        self.reload(waiting[0].cluster_id if waiting else self.current_cluster_id(), focus=True)
 
     # ---------------------------------------------------------------- ações
     def _confirm_clicked(self) -> None:

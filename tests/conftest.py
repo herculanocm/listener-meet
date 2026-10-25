@@ -86,12 +86,13 @@ def recorder_factory(platform: FakePlatform, store: Store):
 WORKER_RUN: dict[str, Any] = {}      # preenchido por `start_worker_process`; lido por tests/test_worker.py
 
 
-def start_worker_process(root: Path) -> dict[str, Any]:
-    """Grava uma reunião de 3 s (dois tons no R), enfileira o job e lança `python -m listener --worker --db DIR --once`."""
+def start_worker_process(root: Path, fake: bool = True) -> dict[str, Any]:
+    """Grava uma reunião de 3 s (dois tons no R), enfileira o job e lança `python -m listener --worker --db DIR --once`.
+    Com `fake=False` o worker tenta os adaptadores reais: sem o extra `pipeline` o job termina em erro permanente."""
     from listener.capture.recorder import SourceSpec
 
     db = root / "db"
-    platform = FakePlatform(root)
+    platform = FakePlatform(root, r_format=(16000, 1), system_format=(16000, 1))
     with Store(db) as store:
         store.upsert_me("Eu", role="Gerente")
         store.set_setting("log.path", str(root / "logs" / "listener.log"))
@@ -103,7 +104,9 @@ def start_worker_process(root: Path) -> dict[str, Any]:
         platform.pump(1.5)
         rec.stop()
         job_id = store.jobs.enqueue(mid)
-    env = {**os.environ, "LISTENER_PIPELINE": "fake", "PYTHONUTF8": "1"}
+    env = {k: v for k, v in os.environ.items() if k != "LISTENER_PIPELINE"} | {"PYTHONUTF8": "1"}
+    if fake:
+        env["LISTENER_PIPELINE"] = "fake"
     argv = [sys.executable, "-m", "listener", "--worker", "--db", str(db), "--once"]
     proc = subprocess.Popen(argv, env=env, cwd=str(Path(__file__).resolve().parent.parent), stdin=subprocess.DEVNULL,  # noqa: S603
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
@@ -112,17 +115,17 @@ def start_worker_process(root: Path) -> dict[str, Any]:
 
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     if any(item.path.name == "test_worker.py" for item in items) and not WORKER_RUN:
-        root = Path(tempfile.mkdtemp(prefix="listener-worker-test-"))
-        WORKER_RUN.update(start_worker_process(root))
+        WORKER_RUN.update(start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-test-"))))
+        WORKER_RUN["real"] = start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-real-")), fake=False)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    run = WORKER_RUN
-    if run:
-        proc = run["proc"]
-        if proc.poll() is None:
-            proc.kill()
-            proc.communicate()
-        shutil.rmtree(run["root"], ignore_errors=True)
+    for run in (WORKER_RUN, WORKER_RUN.get("real") or {}):
+        if run and "proc" in run:
+            proc = run["proc"]
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+            shutil.rmtree(run["root"], ignore_errors=True)
     if "dir" in _TEMPLATE:
         shutil.rmtree(_TEMPLATE["dir"].parent, ignore_errors=True)

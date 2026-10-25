@@ -40,8 +40,23 @@ def test_worker_process_runs_one_job_with_own_log_and_low_priority():
     log_path = Path(run["root"]) / "logs" / "listener-worker.log"
     text = log_path.read_text(encoding="utf-8")
     assert "papel worker" in text and "prioridade baixa: ok" in text and "job 1 concluído" in text
+    assert "RSS" in text                                                                           # memória logada por etapa
     app_log = Path(run["root"]) / "logs" / "listener.log"
     assert not app_log.exists() or "papel worker" not in app_log.read_text(encoding="utf-8")       # log próprio, não o do app
+
+
+def test_worker_without_the_pipeline_extra_fails_permanently_with_a_clear_message():
+    """R2-27: `--worker` sem LISTENER_PIPELINE=fake nesta máquina (sem torch): erro permanente, attempts 0, sem traceback."""
+    run = conftest.WORKER_RUN.get("real")
+    assert run, "o segundo worker devia ter sido lançado na coleta"
+    _out, err = run["proc"].communicate(timeout=90)
+    assert run["proc"].returncode == 0 and "erro permanente" in err                           # o traceback vai para o log, de propósito
+    with Store.open_readonly(run["db"]) as store:
+        job = store.jobs.get(run["job_id"])
+        assert job["status"] == JobStatus.ERROR and job["attempts"] == 0 and "pip install" in job["error"]
+        assert store.segments.list_clusters(run["meeting_id"]) == [] and store.get_meeting(run["meeting_id"])["status"] == "gravada"
+    text = (Path(run["root"]) / "logs" / "listener-worker.log").read_text(encoding="utf-8")
+    assert "erro permanente" in text
 
 
 def test_worker_command_env_and_memory():
@@ -50,7 +65,10 @@ def test_worker_command_env_and_memory():
     assert env["OMP_NUM_THREADS"] == env["MKL_NUM_THREADS"] == "6" and env["CT2_VERBOSE"] == "0" and env["PATH"] == "/x"
     assert process.worker_env(0)["OMP_NUM_THREADS"] == "1"
     rss = process.memory_rss()
-    assert rss is None or rss > 10_000_000
+    if sys.platform in ("linux", "win32"):
+        assert rss is not None and rss > 10_000_000                                          # R2-27: aqui tem de medir
+    else:
+        assert rss is None or rss > 0
     from listener.__main__ import main
 
     assert main(["--worker", "--db", "/caminho/que/nao/existe"]) == 3                             # banco ausente: erro claro, sem traceback
@@ -67,7 +85,12 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     (tmp_path / "m" / "faster-whisper-small").mkdir(parents=True)
     (tmp_path / "m" / "faster-whisper-small" / "model.bin").write_bytes(b"x")
     models.ready_mark(cfg, "pyannote").write_text("ok")
+    from types import SimpleNamespace
+
+    fake_hub = SimpleNamespace(constants=SimpleNamespace(HF_HUB_OFFLINE=False))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
     assert models.apply_environment(cfg)["HF_HUB_OFFLINE"] == "1"                                 # tudo baixado: offline
+    assert fake_hub.constants.HF_HUB_OFFLINE is True                                              # R2-19: no módulo já importado
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     models.ready_mark(cfg, "pyannote").unlink()
     with pytest.raises(PermanentError, match="token do Hugging Face ausente"):
