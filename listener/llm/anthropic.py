@@ -14,7 +14,8 @@ from typing import Any
 
 from ..log import get_logger
 from . import models_table
-from .adapters_common import canary, has_audio, http_client_kwargs, needs_own_http_client, now_ms, split_system, translate_error
+from .adapters_common import (AUX_TIMEOUT_S, canary, has_audio, http_client_kwargs, needs_own_http_client, now_ms, split_system,
+                             translate_error)
 from .base import LlmStream, ProviderUnavailableError
 from .registry import NetworkConfig
 from .schema import provider_schema
@@ -89,7 +90,8 @@ class AnthropicProvider:
 
     def _kwargs(self, req: Request) -> dict[str, Any]:
         system, messages = self._messages(req)
-        kw: dict[str, Any] = {"model": req.model, "max_tokens": req.max_output_tokens, "messages": messages}
+        kw: dict[str, Any] = {"model": req.model, "max_tokens": req.max_output_tokens, "messages": messages,
+                              "timeout": req.timeout_s}                     # por chamada; o cliente tem só o teto (R3-03)
         if system:
             kw["system"] = system
         thinking = (req.json_schema is None and req.reasoning in THINKING_BUDGET and models_table.supports_reasoning(self.kind, req.model))
@@ -180,6 +182,7 @@ class AnthropicProvider:
         kw = self._kwargs(req)
         for key in ("max_tokens", "service_tier"):
             kw.pop(key, None)
+        kw["timeout"] = AUX_TIMEOUT_S
         try:
             resp = await self._client().messages.count_tokens(**kw)
         except Exception as e:
@@ -191,7 +194,7 @@ class AnthropicProvider:
     async def list_models(self) -> tuple[ModelInfo, ...]:
         out: list[ModelInfo] = []
         try:
-            page = await self._client().models.list(limit=100)
+            page = await self._client().models.list(limit=100, timeout=AUX_TIMEOUT_S)
             async for m in page:
                 mid = str(getattr(m, "id", "") or "")
                 if not mid:

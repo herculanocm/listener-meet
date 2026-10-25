@@ -220,3 +220,46 @@ def test_registry_loads_fake_or_refuses_without_key(monkeypatch):
     from listener.llm import registry
 
     assert registry.prepare_ssl(NetworkConfig(system_certs=False)) is False
+
+
+def test_redaction_reaches_traceback_chain_and_proxy_password(tmp_path, store):
+    """R3-04: a chave no `__cause__` de um `raise ... from e` some do arquivo de log (o traceback inteiro passa pelo redator);
+    a senha de `llm.proxy_url` entra na redação ao ler a configuração de rede."""
+    from listener import log as applog
+    from listener.llm.base import TransientError
+
+    key = "AIzaSyD-chave-do-traceback-9876QRST"
+    redact.GLOBAL.clear()
+    redact.GLOBAL.add(key)
+    applog.setup("INFO")
+    path = applog.attach_file(tmp_path / "logs" / "listener.log")
+
+    def sdk_call() -> None:
+        raise ValueError(f"403 for url https://api.exemplo/v1?key={key}")
+
+    try:
+        try:
+            sdk_call()
+        except ValueError as e:
+            raise TransientError("rede: falhou") from e
+    except TransientError as err:
+        applog.get_logger("pipeline.llm").error("tarefa falhou", exc_info=err)
+    applog.get_logger("llm.registry").warning("sem cadeia, com a chave %s na mensagem", key, stack_info=True)
+    applog.flush()
+    text = path.read_text(encoding="utf-8")
+    assert "Traceback" in text and "The above exception was the direct cause" in text and "sdk_call" in text
+    assert key not in text and key[-8:] not in text and text.count("«chave»") >= 2
+    redact.GLOBAL.clear()
+    # senha do proxy: a pura, a decodificada e o par usuário:senha
+    store.set_setting("llm.proxy_url", "http://ana.lima:s3nh4%40proxy-corp@proxy.local:3128")
+    net = NetworkConfig.from_store(store)
+    assert net.proxy_url.startswith("http://ana.lima:") and net.timeout_s == 600.0                       # teto do cliente (R3-03)
+    leaked = redact.GLOBAL.redact("407 em http://ana.lima:s3nh4%40proxy-corp@proxy.local:3128 (senha s3nh4@proxy-corp)")
+    assert "s3nh4" not in leaked and "proxy-corp" not in leaked and "proxy.local:3128" in leaked
+    redact.GLOBAL.clear()
+    from listener.llm import registry
+
+    registry.register_proxy_secret("proxy.local:3128")                                                    # sem senha: nada
+    registry.register_proxy_secret("usuario:outra-senha-123@proxy.local:3128")                           # sem esquema
+    assert redact.GLOBAL.redact("outra-senha-123") == "«chave»"
+    redact.GLOBAL.clear()

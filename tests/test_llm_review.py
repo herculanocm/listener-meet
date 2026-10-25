@@ -161,6 +161,93 @@ def test_transcript_dialog_toggles_revised_and_original(qtbot, platform, store):
     assert not dlg.toggle.isEnabled() and "0 revisada(s)" in dlg.status.text()
 
 
+def test_reload_never_overwrites_unsaved_edits(qtbot, platform, store):
+    """R3-01: com o editor modificado, uma versão nova do mesmo resumo só acende o aviso e "Recarregar"; "Salvar edição" grava
+    na versão aberta; "Recarregar" mostra a nova. As ações em edição também não são reconstruídas."""
+    from PySide6.QtCore import Qt
+
+    from listener.store.summaries import SummaryInsert
+    from listener.ui.review import ReviewDialog
+
+    mid, _parent = _ready(platform, store)
+    dlg = ReviewDialog(store, mid)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    # ações: célula em edição -> aviso; recarregar reconstrói
+    actions_tab = dlg.actions_tab
+    dlg.tabs.setCurrentWidget(actions_tab)                                       # só a aba visível abre o editor da célula
+    first = actions_tab.table.item(0, 0)
+    actions_tab.table.editItem(first)
+    assert actions_tab.editing()
+    store.actions.set_text(int(first.data(Qt.ItemDataRole.UserRole)), "mudou por fora")
+    dlg.reload()
+    assert actions_tab.newer and "recarregar" in actions_tab.note.text() and actions_tab.table.item(0, 0).text() != "mudou por fora"
+    actions_tab.btn_reload.click()
+    assert not actions_tab.newer and actions_tab.table.item(0, 0).text() == "mudou por fora"
+    dlg.tabs.setCurrentIndex(0)
+    tab = dlg.text_tabs["minutes"]
+    old_id = tab.summary_id
+    tab.editor.moveCursor(tab.editor.textCursor().MoveOperation.End)
+    tab.editor.insertPlainText("\n\nminha correção")
+    assert tab.editing()
+    store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata nova", "gemini", "m", "minutes/1.0", 1, None, "pt-BR"))
+    dlg.reload()
+    assert tab.editor.toPlainText().endswith("minha correção") and tab.newer and not tab.btn_reload.isHidden()
+    assert "versão nova" in tab.notice.text() and tab.summary_id == old_id
+    assert tab.save() and store.summaries.get(old_id)["text_edited"].endswith("minha correção")
+    dlg.reload()
+    assert tab.editor.toPlainText().endswith("minha correção") and tab.newer                         # salvo, ainda na versão aberta
+    tab.btn_reload.click()
+    assert tab.editor.toPlainText() == "# Ata nova" and not tab.newer and tab.btn_reload.isHidden()
+    assert tab.summary_id == store.summaries.current(mid, SummaryKind.MINUTES)["id"] and not tab.editing()
+    # sem edição em curso a versão nova entra direto
+    store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata 3", "gemini", "m", "minutes/1.0", 1, None, "pt-BR"))
+    dlg.reload()
+    assert tab.editor.toPlainText() == "# Ata 3" and not tab.newer
+    # título digitado e não salvo fica
+    dlg.title_tab.title.setText("meu título")
+    dlg.title_tab.title.setModified(True)
+    store.meetings.set_title_llm(mid, "Outro título")
+    dlg.reload()
+    assert dlg.title_tab.title.text() == "meu título"
+    dlg.reject()
+
+
+def test_on_demand_revise_and_identify(qtbot, platform, store):
+    """R3-05: "Revisar transcrição pela LLM" na leitura (com o motivo de quando foi pulada) e "Identidade por contexto de
+    novo" na aba Vozes viram jobs `llm` de uma tarefa; desabilitados com job `llm` ativo."""
+    from listener.ui.review import ReviewDialog
+    from listener.ui.transcript import TranscriptDialog
+
+    mid, parent = _ready(platform, store)
+    last = max(int(j["id"]) for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
+    store._x("UPDATE processing_jobs SET timings_json = ? WHERE id = ?",
+             (json.dumps({"llm": {"skipped": {"revise": "estimado US$ 2,00, acima do alerta"}}}), last))
+    launched: list[bool] = []
+    dlg = TranscriptDialog(store, mid, on_launch=launched.append)
+    qtbot.addWidget(dlg)
+    assert "não feita: estimado US$ 2,00" in dlg.llm_note.text() and dlg.btn_revise.isEnabled()
+    job_id = dlg.request_revise()
+    job = store.jobs.get(job_id)
+    params = json.loads(job["params_json"])
+    assert params["tasks"] == ["revise"] and params["parent_job_id"] == parent and launched == [True]
+    assert not dlg.btn_revise.isEnabled() and "gerando pela fila" in dlg.llm_note.text()
+    assert dlg.request_revise() is None and "em andamento" in dlg.llm_note.text()
+    review_dlg = ReviewDialog(store, mid, on_launch=launched.append)
+    qtbot.addWidget(review_dlg)
+    assert not review_dlg.btn_identify.isEnabled()
+    _runner, status, fake = _run_llm(store)
+    assert status == JobStatus.DONE and {r.task for r in fake.requests} <= {"revise"}
+    dlg.reload()
+    review_dlg.reload()
+    assert dlg.btn_revise.isEnabled() and dlg.llm_note.text() == "" and review_dlg.btn_identify.isEnabled()
+    review_dlg.btn_identify.click()
+    job = store.jobs.get(review_dlg.regenerated[-1])
+    assert json.loads(job["params_json"])["tasks"] == ["identify"] and launched == [True, True]
+    dlg.close()
+    review_dlg.reject()
+
+
 def test_queue_texts_and_notification_for_llm_jobs(store):
     from listener.ui.llm_tabs import llm_done_text
     from listener.ui.queue import job_row_texts

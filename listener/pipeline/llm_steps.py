@@ -52,6 +52,9 @@ OPTIONAL: frozenset[JobStep] = frozenset({JobStep.EXECUTIVE, JobStep.REVISE})   
 TASKS_AFTER_MEETING: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
                                             JobStep.REVISE)
 TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE)         # P7: ata antiga fica, com aviso
+SUMMARY_STEPS: dict[JobStep, SummaryKind] = {JobStep.MINUTES: SummaryKind.MINUTES, JobStep.EXECUTIVE: SummaryKind.EXECUTIVE,
+                                             JobStep.PRE_SUMMARY: SummaryKind.PRE_SUMMARY}
+STALE_TRANSCRIPT = "a transcrição mudou ou está vazia: gere de novo pela revisão"
 PENDING = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
 WINDOW_SHARE = 0.6
 BLOCK_SHARE = 0.4
@@ -113,13 +116,44 @@ def enqueue_llm_job(store: Store, meeting_id: int, tasks: Sequence[JobStep | str
 
 
 def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, kind: JobKind | str) -> int | None:
-    """Encadeado por `JobRunner._finish_ok` (F3A-01): tarefas automáticas conforme `llm.auto_tasks` e o tipo do job pai."""
+    """Encadeado por `JobRunner._finish_ok` (F3A-01): tarefas automáticas conforme `llm.auto_tasks` e o tipo do job pai. Antes,
+    os jobs `llm` pendentes da reunião com outro job pai são cancelados (rodariam sobre segmentos apagados); sem falas no job
+    pai, nenhum job (F3.1 R3-02)."""
     from ..config.defaults import SPECS
 
+    cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
     if not store.get(SPECS["llm.auto_tasks"]):
         return None
-    tasks = TASKS_AFTER_REPROCESS if str(kind) == JobKind.REPROCESS else TASKS_AFTER_MEETING
-    return enqueue_llm_job(store, meeting_id, tasks, parent_job_id, auto=True)
+    if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
+        log.info("reunião %s: o job %s não deixou falas; nenhum job llm criado", meeting_id, parent_job_id)
+        return None
+    return enqueue_llm_job(store, meeting_id, auto_tasks_for(store, meeting_id, kind), parent_job_id, auto=True)
+
+
+def auto_tasks_for(store: Store, meeting_id: int, kind: JobKind | str) -> list[JobStep]:
+    """P5: tudo depois do primeiro processamento. P7: depois de reprocessar, identidade e trechos sem revisão, mais o que a
+    reunião ainda não tem (um job anterior cancelado ou que nunca rodou não a deixa sem ata, R3-02)."""
+    if str(kind) != JobKind.REPROCESS:
+        return list(TASKS_AFTER_MEETING)
+    missing = {step for step, sk in SUMMARY_STEPS.items() if store.summaries.current(meeting_id, sk) is None}
+    if not (store.get_meeting(meeting_id) or {}).get("title_llm"):
+        missing.add(JobStep.TITLE)
+    return [t for t in TASK_ORDER if t in TASKS_AFTER_REPROCESS or t in missing]
+
+
+def cancel_stale_llm_jobs(store: Store, meeting_id: int, parent_job_id: int) -> list[int]:
+    """Jobs `llm` pendentes da reunião feitos para outro job pai (o reprocessamento trocou os segmentos): cancelados antes de
+    gastar chamadas sobre uma transcrição que não existe mais (R3-02). O de teste (sem job pai) fica."""
+    cancelled: list[int] = []
+    for job in store.jobs.for_meeting(meeting_id):
+        if str(job.get("kind")) != JobKind.LLM or str(job["status"]) != JobStatus.PENDING:
+            continue
+        parent = _job_params(job).get("parent_job_id")
+        if parent is not None and int(parent) != parent_job_id and store.jobs.request_cancel(int(job["id"])) == JobStatus.CANCELLED:
+            cancelled.append(int(job["id"]))
+    if cancelled:
+        log.info("reunião %s: job(s) llm %s cancelado(s): feitos para uma transcrição anterior", meeting_id, cancelled)
+    return cancelled
 
 
 def enqueue_test_job(store: Store, meeting_id: int | None = None) -> int | None:
@@ -136,13 +170,17 @@ def llm_config_snapshot(store: Store) -> str:
     return LlmJobConfig.from_store(store).to_json()
 
 
-def tasks_of(job: JobRow) -> list[JobStep]:
+def _job_params(job: JobRow) -> dict[str, Any]:
     try:
-        params = json.loads(job.get("params_json") or "{}")
+        data = json.loads(job.get("params_json") or "{}")
     except ValueError:
-        params = {}
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def tasks_of(job: JobRow) -> list[JobStep]:
     out: list[JobStep] = []
-    for t in params.get("tasks") or []:
+    for t in _job_params(job).get("tasks") or []:
         try:
             out.append(JobStep(str(t)))
         except ValueError:
@@ -314,14 +352,20 @@ class LlmJobRunner(BaseJobRunner):
 
     @override
     def _execute(self) -> JobStatus:
-        params = self._params()
+        params = _job_params(self.job)
         self.tasks = [t for t in TASK_ORDER if t in tasks_of(self.job)]
         self.auto = bool(params.get("auto"))
         parent = params.get("parent_job_id")
         if parent is None:
             parent = self.store.segments.current_job_id(self.meeting_id)
-        if parent is None and any(t != JobStep.TEST for t in self.tasks):
-            raise ProviderUnavailableError("a reunião ainda não foi processada: sem transcrição para a LLM")
+        if any(t != JobStep.TEST for t in self.tasks):
+            if parent is None:
+                raise ProviderUnavailableError("a reunião ainda não foi processada: sem transcrição para a LLM")
+            # R3-02: antes de qualquer chamada paga, o job pai tem de ser o vigente e ter falas (um retry depois de
+            # reprocessar rodaria sobre segmentos apagados e gravaria uma ata vazia); erro permanente, sem contar tentativa
+            if (int(parent) != self.store.segments.current_job_id(self.meeting_id)
+                    or not self.store.segments.count_segments(self.meeting_id, int(parent), with_text=True)):
+                raise LlmError(STALE_TRANSCRIPT, permanent=True)
         self.parent_job_id = int(parent or 0)
         if not self.config.ready:
             self.config = LlmJobConfig.from_json(self.job.get("config_json"))
@@ -345,13 +389,6 @@ class LlmJobRunner(BaseJobRunner):
         if failed:
             return self._fail_partial(failed)
         return self._finish_ok()
-
-    def _params(self) -> dict[str, Any]:
-        try:
-            data = json.loads(self.job.get("params_json") or "{}")
-        except ValueError:
-            data = {}
-        return data if isinstance(data, dict) else {}
 
     @override
     def _finish_ok(self) -> JobStatus:

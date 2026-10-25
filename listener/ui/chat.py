@@ -1,6 +1,6 @@
 """Painel de chat da leitura (F3 item 10, U-019): pergunta -> resposta em streaming (`StreamTask`, sinal por pedaço,
-cancelamento ao fechar), citações `[mm:ss]` clicáveis que tocam o segmento (`listener://play?seg=<id>`), histórico de
-`chat_messages`. Chat sobre todas as reuniões é F5."""
+cancelamento ao fechar; a resposta parcial aparece a cada pedaço, F3.1 R3-06), citações `[mm:ss]` clicáveis que tocam o
+segmento (`listener://play?seg=<id>`), histórico de `chat_messages`. Chat sobre todas as reuniões é F5."""
 from __future__ import annotations
 
 import functools
@@ -54,6 +54,7 @@ class ChatPanel(QWidget):
         lay.addLayout(row)
         lay.addWidget(self.status)
         self._partial = ""
+        self._base_html = ""                                # histórico + pergunta em curso; a parcial vai depois dele
         self.reload()
 
     def reload(self) -> None:
@@ -68,7 +69,9 @@ class ChatPanel(QWidget):
             return
         self.question.clear()
         self._partial = ""
-        self.view.append(f"<p><b>Você:</b> {html.escape(text)}</p><p><b>LLM:</b> <span id='streaming'></span></p>")
+        self._base_html = (chat_task.history_html(self.store, self.meeting_id, self.lines)
+                           + f"<p><b>Você:</b> {html.escape(text)}</p>")
+        self._render_partial()
         self.btn_ask.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.status.setText("perguntando…")
@@ -77,7 +80,14 @@ class ChatPanel(QWidget):
 
     def _on_chunk(self, piece: str) -> None:
         self._partial += piece
+        self._render_partial()
         self.status.setText(f"recebendo… {len(self._partial)} caracteres")
+
+    def _render_partial(self) -> None:
+        """Histórico + pergunta + resposta parcial como texto escapado; as citações viram links só no `reload()` final."""
+        partial = html.escape(self._partial).replace("\n", "<br>") or "…"
+        self.view.setHtml(f"{self._base_html}<p><b>LLM:</b> {partial}</p>")
+        self.view.moveCursor(self.view.textCursor().MoveOperation.End)
 
     def _on_done(self, result: Any) -> None:
         self.task = None

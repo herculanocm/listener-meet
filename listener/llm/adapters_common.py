@@ -24,6 +24,10 @@ TEST_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False, 
                                "properties": {"ok": {"type": "boolean"}}}
 TEST_PROMPT = 'Reply with exactly this JSON and nothing else: {"ok": true}'
 TEST_TIMEOUT_S = 30.0
+# timeout por chamada (F3.1 R3-03): o cliente nasce com o teto (`NetworkConfig.timeout_s`, 600 s); geração e streaming levam o
+# `Request.timeout_s`; contar tokens e listar modelos são curtos; embeddings de um lote, no meio-termo
+AUX_TIMEOUT_S = 30.0
+EMBED_TIMEOUT_S = 120.0
 
 
 def split_system(req: Request) -> tuple[str | None, tuple[Message, ...]]:

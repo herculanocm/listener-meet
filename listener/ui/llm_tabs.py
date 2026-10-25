@@ -1,7 +1,8 @@
 """Abas da LLM na revisão (F3 item 11, U-019/U-020): título, pré-resumo, ata, executivo e ações. Texto editável
 (`text_edited` -> `revisions`), "gerar de novo" por aba como job `llm` de uma tarefa (desabilitado enquanto há job `llm` ativo
 para a reunião), marca "gerados antes do reprocessamento" (P7), aviso "não gerado: estimado US$ x, acima do alerta; gerar?"
-(P5) e selo de custo da reunião. Só metadados e texto: nada de SDK nem de rede aqui (chamadas vão pela fila)."""
+(P5) e selo de custo da reunião. A recarga por assinatura nunca apaga uma edição em curso (F3.1 R3-01): com o editor em foco
+ou modificado, a versão nova só acende o aviso "recarregar?". Só metadados e texto: nada de SDK nem de rede aqui."""
 from __future__ import annotations
 
 import json
@@ -9,8 +10,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
 from ..model import JOB_STEP_LABELS, ActionStatus, JobKind, JobStatus, JobStep, SummaryKind
@@ -23,13 +24,31 @@ KIND_STEP: dict[str, JobStep] = {SummaryKind.MINUTES: JobStep.MINUTES, SummaryKi
                                  SummaryKind.PRE_SUMMARY: JobStep.PRE_SUMMARY}
 KIND_TITLE: dict[str, str] = {SummaryKind.PRE_SUMMARY: "Pré-resumo", SummaryKind.MINUTES: "Ata", SummaryKind.EXECUTIVE: "Executivo"}
 STALE_MARK = "gerados antes do reprocessamento"
+NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" guarda o seu texto na versão aberta; "
+                "\"Recarregar\" mostra a nova e descarta o que não foi salvo.")
+ACTIONS_NEWER_NOTICE = "Há ações novas ou alteradas; recarregar?"
 ACTION_COLUMNS = ("Ação", "Dono", "Prazo", "Estado", "Quando")
 STATUS_LABELS = {ActionStatus.OPEN: "aberta", ActionStatus.DONE: "feita", ActionStatus.DISCARDED: "descartada"}
+
+type ActionView = tuple[tuple[int, str, str, str, str, str], ...]     # (id, texto, dono, prazo, estado, quando) por linha
 
 
 def llm_job_active(store: Store, meeting_id: int) -> bool:
     return bool(store._q("SELECT 1 FROM processing_jobs WHERE meeting_id = ? AND kind = ? AND status IN (?, ?, ?) LIMIT 1",
                          (meeting_id, JobKind.LLM, *ACTIVE)))
+
+
+def request_llm_step(store: Store, meeting_id: int, step: JobStep) -> tuple[int | None, str]:
+    """Job `llm` de uma tarefa pela fila, sob demanda (P6; `revise` e `identify` pela leitura e pela aba Vozes, F3.1 R3-05):
+    devolve (id do job, mensagem para o usuário); recusa com job `llm` ativo ou sem provedor com chave."""
+    from ..pipeline.llm_steps import enqueue_llm_job
+
+    if llm_job_active(store, meeting_id):
+        return None, "Já há um job de LLM em andamento para esta reunião; espere terminar."
+    job_id = enqueue_llm_job(store, meeting_id, [step])
+    if job_id is None:
+        return None, "Nenhum provedor de LLM ativo com chave: configure um nas Configurações."
+    return job_id, f"{step_label(step)}: gerando pela fila (3 a 5 s para começar)…"
 
 
 def last_llm_info(store: Store, meeting_id: int) -> dict[str, Any]:
@@ -66,7 +85,9 @@ def llm_done_text(job: dict[str, Any]) -> str:
 
 
 class TextTab(QWidget):
-    """Pré-resumo, ata ou executivo: texto editável, origem, marca de reprocessamento e "gerar de novo"."""
+    """Pré-resumo, ata ou executivo: texto editável, origem, marca de reprocessamento e "gerar de novo". O editor guarda a
+    versão que mostra (`summary_id` e o texto carregado); uma versão nova chegada com o editor em foco ou modificado não o
+    toca: acende o aviso e o botão "Recarregar", e "Salvar edição" grava na versão aberta (R3-01)."""
 
     def __init__(self, store: Store, meeting_id: int, kind: SummaryKind, on_regenerate: Callable[[JobStep], Any],
                  parent: QWidget | None = None):
@@ -76,6 +97,9 @@ class TextTab(QWidget):
         self.kind = kind
         self.on_regenerate = on_regenerate
         self.summary_id: int | None = None
+        self._loaded: tuple[int | None, str] | None = None       # (versão, texto) que estão no editor
+        self.newer = False                                       # chegou versão nova durante a edição
+        self._last: tuple[set[str], dict[str, str], bool] = (set(), {}, False)
         self.info = QLabel("")
         self.info.setWordWrap(True)
         self.notice = QLabel("")
@@ -84,11 +108,15 @@ class TextTab(QWidget):
         self.editor = QPlainTextEdit()
         self.btn_save = QPushButton("Salvar edição")
         self.btn_regen = QPushButton("Gerar de novo")
+        self.btn_reload = QPushButton("Recarregar")
+        self.btn_reload.setVisible(False)
         self.btn_save.clicked.connect(self.save)
         self.btn_regen.clicked.connect(lambda: self.on_regenerate(KIND_STEP[str(self.kind)]))
+        self.btn_reload.clicked.connect(self.load_newer)
         row = QHBoxLayout()
         row.addWidget(self.btn_save)
         row.addWidget(self.btn_regen)
+        row.addWidget(self.btn_reload)
         row.addStretch(1)
         lay = QVBoxLayout(self)
         lay.addWidget(self.info)
@@ -96,37 +124,64 @@ class TextTab(QWidget):
         lay.addWidget(self.editor, 1)
         lay.addLayout(row)
 
-    def reload(self, stale: set[str], skipped: dict[str, str], busy: bool) -> None:
+    def editing(self) -> bool:
+        return self.editor.hasFocus() or self.editor.document().isModified()
+
+    def reload(self, stale: set[str], skipped: dict[str, str], busy: bool, *, force: bool = False) -> None:
+        self._last = (stale, skipped, busy)
         row = self.store.summaries.current(self.meeting_id, self.kind)
-        self.summary_id = int(row["id"]) if row else None
-        text = self.store.summaries.display_text(row)
-        if self.editor.toPlainText() != text:
-            self.editor.setPlainText(text)
-        if row is None:
+        current = (int(row["id"]) if row else None, self.store.summaries.display_text(row))
+        if current != self._loaded:
+            if force or self._loaded is None or not (self.newer or self.editing()):
+                self._show(current)
+            else:
+                self.newer = True
+        shown = row
+        if self.summary_id != current[0]:                        # a versão aberta ficou para trás: o rótulo fala dela
+            shown = self.store.summaries.get(self.summary_id) if self.summary_id is not None else None
+        if shown is None:
             self.info.setText("ainda não gerado")
         else:
-            edited = " · editado por você" if row.get("text_edited") else ""
-            when = str(row.get("created_at") or "")[:16].replace("T", " ")
-            self.info.setText(f"{row.get('provider')} · {row.get('model')} · {when}{edited}")
+            edited = " · editado por você" if shown.get("text_edited") else ""
+            when = str(shown.get("created_at") or "")[:16].replace("T", " ")
+            self.info.setText(f"{shown.get('provider')} · {shown.get('model')} · {when}{edited}")
         step = KIND_STEP[str(self.kind)]
         notes = []
+        if self.newer:
+            notes.append(NEWER_NOTICE)
         if str(self.kind) in stale:
             notes.append(f"{KIND_TITLE[str(self.kind)]}: {STALE_MARK}; use \"Gerar de novo\" para refazer com a transcrição atual.")
         if str(step) in skipped and row is None:
             notes.append(f"{KIND_TITLE[str(self.kind)]} não gerado: {skipped[str(step)]}; gerar?")
         self.notice.setText("\n".join(notes))
+        self.btn_reload.setVisible(self.newer)
         self.btn_regen.setEnabled(not busy)
         self.btn_regen.setToolTip("há um job de LLM em andamento para esta reunião" if busy else "")
-        self.btn_save.setEnabled(row is not None)
+        self.btn_save.setEnabled(self.summary_id is not None)
+
+    def _show(self, current: tuple[int | None, str]) -> None:
+        self._loaded = current
+        self.summary_id = current[0]
+        self.newer = False
+        if self.editor.toPlainText() != current[1]:
+            self.editor.setPlainText(current[1])
+        self.editor.document().setModified(False)
+
+    def load_newer(self) -> None:
+        """"Recarregar": mostra a versão atual e descarta o que não foi salvo."""
+        self.reload(*self._last, force=True)
 
     def save(self) -> bool:
+        """Grava na versão que está no editor (mesmo que outra mais nova tenha chegado) e limpa a marca de modificado."""
         if self.summary_id is None:
             return False
         text = self.editor.toPlainText()
         row = self.store.summaries.get(self.summary_id)
         original = str((row or {}).get("text_llm") or "")
         changed = self.store.summaries.set_text_edited(self.summary_id, None if text == original else text)
-        self.reload(set(), {}, False)
+        self._loaded = (self.summary_id, self.store.summaries.display_text(self.store.summaries.get(self.summary_id)))
+        self.editor.document().setModified(False)
+        self.reload(*self._last)
         return changed
 
 
@@ -136,6 +191,7 @@ class TitleTab(QWidget):
         self.store = store
         self.meeting_id = meeting_id
         self.on_regenerate = on_regenerate
+        self._busy = False
         self.title = QLineEdit()
         self.suggestion = QLabel("")
         self.suggestion.setWordWrap(True)
@@ -157,8 +213,9 @@ class TitleTab(QWidget):
         lay.addStretch(1)
 
     def reload(self, busy: bool) -> None:
+        self._busy = busy
         m = self.store.get_meeting(self.meeting_id) or {}
-        if not self.title.hasFocus():
+        if not self.title.hasFocus() and not self.title.isModified():         # título digitado e não salvo fica (R3-01)
             self.title.setText(str(m.get("title") or ""))
         llm = m.get("title_llm")
         self.suggestion.setText(f"Sugestão da LLM: {llm}" if llm else "Sugestão da LLM: ainda não gerada")
@@ -175,10 +232,14 @@ class TitleTab(QWidget):
         text = self.title.text().strip()
         if text:
             self.store.update_title(self.meeting_id, text)
-        self.reload(False)
+        self.title.setModified(False)
+        self.reload(self._busy)
 
 
 class ActionsTab(QWidget):
+    """Ações da ata, uma por linha: texto editável na célula e estado no combo. A recarga compara o que a tabela mostra com
+    o banco e só a reconstrói quando algo mudou; com a tabela em edição ou com o foco, acende "recarregar?" (R3-01)."""
+
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
@@ -188,55 +249,91 @@ class ActionsTab(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemChanged.connect(self._item_changed)
         self.note = QLabel("")
+        self.btn_reload = QPushButton("Recarregar ações")
+        self.btn_reload.setVisible(False)
+        self.btn_reload.clicked.connect(lambda: self.reload(force=True))
         self._loading = False
+        self._shown: ActionView | None = None
+        self.newer = False
+        row = QHBoxLayout()
+        row.addWidget(self.note, 1)
+        row.addWidget(self.btn_reload)
         lay = QVBoxLayout(self)
         lay.addWidget(self.table, 1)
-        lay.addWidget(self.note)
+        lay.addLayout(row)
 
-    def reload(self) -> None:
-        rows = self.store.actions.list_for_meeting(self.meeting_id)
+    def _view(self) -> ActionView:
         people = {int(p["id"]): str(p["name"]) for p in self.store.people.list_people()}
+        out: list[tuple[int, str, str, str, str, str]] = []
+        for a in self.store.actions.list_for_meeting(self.meeting_id):
+            owner_pid = a.get("owner_person_id")
+            owner = people.get(int(owner_pid)) if owner_pid is not None else (a.get("owner_text") or "")
+            t = a.get("t_ms")
+            when = f"{int(t) // 60000:02d}:{(int(t) // 1000) % 60:02d}" if t is not None else "sem evidência"
+            out.append((int(a["id"]), str(a.get("text") or ""), str(owner or ""), str(a.get("due") or ""),
+                        str(a.get("status") or ActionStatus.OPEN), when))
+        return tuple(out)
+
+    def editing(self) -> bool:
+        """Célula em edição ou foco na tabela (inclusive num combo de estado)."""
+        if self.table.state() == QAbstractItemView.State.EditingState:
+            return True
+        focus = QApplication.focusWidget()
+        return focus is not None and (focus is self.table or self.table.isAncestorOf(focus))
+
+    def reload(self, force: bool = False) -> None:
+        view = self._view()
+        if view == self._shown and not force:
+            return
+        if not force and self._shown is not None and self.editing():
+            self.newer = True
+            self.note.setText(ACTIONS_NEWER_NOTICE)
+            self.btn_reload.setVisible(True)
+            return
+        self._fill(view)
+
+    def _fill(self, view: ActionView) -> None:
         self._loading = True
         try:
-            self.table.setRowCount(len(rows))
-            for r, a in enumerate(rows):
-                owner_pid = a.get("owner_person_id")
-                owner = people.get(int(owner_pid)) if owner_pid is not None else (a.get("owner_text") or "")
-                t = a.get("t_ms")
-                when = f"{int(t) // 60000:02d}:{(int(t) // 1000) % 60:02d}" if t is not None else "sem evidência"
-                for c, value in enumerate((a.get("text") or "", owner or "", a.get("due") or "", None, when)):
+            self.table.setRowCount(len(view))
+            for r, (aid, text, owner, due, status, when) in enumerate(view):
+                for c, value in enumerate((text, owner, due, None, when)):
                     if c == 3:
                         combo = QComboBox()
-                        for status, label in STATUS_LABELS.items():
-                            combo.addItem(label, str(status))
-                        combo.setCurrentIndex(max(0, combo.findData(str(a.get("status") or ActionStatus.OPEN))))
-                        combo.currentIndexChanged.connect(lambda _i, aid=int(a["id"]), cb=combo: self._status_changed(aid, cb))
+                        for st, label in STATUS_LABELS.items():
+                            combo.addItem(label, str(st))
+                        combo.setCurrentIndex(max(0, combo.findData(status)))
+                        combo.currentIndexChanged.connect(lambda _i, a=aid, cb=combo: self._status_changed(a, cb))
                         self.table.setCellWidget(r, c, combo)
                         continue
                     item = QTableWidgetItem(str(value))
-                    item.setData(Qt.ItemDataRole.UserRole, int(a["id"]))
+                    item.setData(Qt.ItemDataRole.UserRole, aid)
                     if c != 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table.setItem(r, c, item)
         finally:
             self._loading = False
-        self.note.setText(f"{len(rows)} ação(ões); edite o texto na própria célula e o estado na coluna Estado." if rows
+        self._shown = view
+        self.newer = False
+        self.btn_reload.setVisible(False)
+        self.note.setText(f"{len(view)} ação(ões); edite o texto na própria célula e o estado na coluna Estado." if view
                           else "nenhuma ação na ata")
 
     def _item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading or item.column() != 0:
             return
         aid = item.data(Qt.ItemDataRole.UserRole)
-        if aid is not None:
-            self.store.actions.set_text(int(aid), item.text().strip())
+        if aid is not None and self.store.actions.set_text(int(aid), item.text().strip()) and not self.newer:
+            self._shown = self._view()                       # a própria edição não conta como versão nova
 
     def _status_changed(self, action_id: int, combo: QComboBox) -> None:
-        if not self._loading:
-            self.store.actions.set_status(action_id, ActionStatus(str(combo.currentData())))
+        if not self._loading and self.store.actions.set_status(action_id, ActionStatus(str(combo.currentData()))) and not self.newer:
+            self._shown = self._view()
 
 
 def step_label(step: JobStep | str) -> str:
     return JOB_STEP_LABELS.get(str(step), str(step)).removeprefix("LLM: ")
 
 
-__all__ = ["ActionsTab", "JobStatus", "TextTab", "TitleTab", "cost_badge", "last_llm_info", "llm_done_text", "llm_job_active", "step_label"]
+__all__ = ["ActionsTab", "JobStatus", "TextTab", "TitleTab", "cost_badge", "last_llm_info", "llm_done_text", "llm_job_active",
+           "request_llm_step", "step_label"]

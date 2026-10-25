@@ -12,9 +12,10 @@ import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlsplit
 
 from ..log import get_logger
-from . import redact
+from . import models_table, redact
 from .base import BadResponseError, LlmError, LlmStream, LLMProvider, ProviderUnavailableError, classify_exception
 from .schema import SchemaError, parse_json_text, validate
 from .types import Completion, ConnectionTest, Embeddings, EmbedTask, Message, ModelInfo, ProviderKind, Request, Role
@@ -37,24 +38,41 @@ FIX_PROMPT = ("Your previous answer did not match the required JSON schema: {err
               "Answer again with a single JSON object that follows the schema exactly, with no extra text.")
 
 
+CLIENT_TIMEOUT_S = 600.0             # teto do cliente; cada chamada leva o seu (`Request.timeout_s`, F3.1 R3-03)
+
+
 @dataclass(frozen=True, slots=True)
 class NetworkConfig:
-    """`llm.proxy_url` (vazio = ambiente), `llm.ca_bundle` (PEM; vazio = padrão) e `llm.system_certs` (truststore)."""
+    """`llm.proxy_url` (vazio = ambiente), `llm.ca_bundle` (PEM; vazio = padrão) e `llm.system_certs` (truststore).
+    `timeout_s` é o teto do cliente HTTP; o timeout de cada chamada vai no pedido."""
     proxy_url: str = ""
     ca_bundle: str = ""
     system_certs: bool = True
-    timeout_s: float = 120.0
+    timeout_s: float = CLIENT_TIMEOUT_S
 
     @classmethod
     def from_store(cls, store: Store) -> NetworkConfig:
         from ..config.defaults import SPECS
 
-        return cls(str(store.get(SPECS["llm.proxy_url"])).strip(), str(store.get(SPECS["llm.ca_bundle"])).strip(),
-                   bool(store.get(SPECS["llm.system_certs"])))
+        net = cls(str(store.get(SPECS["llm.proxy_url"])).strip(), str(store.get(SPECS["llm.ca_bundle"])).strip(),
+                  bool(store.get(SPECS["llm.system_certs"])))
+        register_proxy_secret(net.proxy_url)
+        return net
 
     def verify(self) -> Any:
         """Valor para `verify=` do httpx: o PEM configurado ou o padrão (com truststore injetado, o padrão lê o sistema)."""
         return self.ca_bundle or True
+
+
+def register_proxy_secret(proxy_url: str) -> None:
+    """A senha de `llm.proxy_url` (`http://usuario:senha@proxy:3128`) entra na redação como a chave (F3.1 R3-04): ela, a forma
+    decodificada e o par `usuario:senha`, que é o que ecoa nas mensagens de erro de rede."""
+    if not proxy_url:
+        return
+    parts = urlsplit(proxy_url if "://" in proxy_url else f"http://{proxy_url}")
+    if parts.password:
+        userinfo = parts.netloc.rpartition("@")[0]
+        redact.GLOBAL.add(parts.password, unquote(parts.password), userinfo, unquote(userinfo))
 
 
 _ssl_state: dict[str, bool] = {"injected": False, "warned": False}
@@ -93,6 +111,7 @@ def load_provider(kind: ProviderKind | str, api_key: str | None, net: NetworkCon
         return FakeProvider(kind=kind, provider_id=provider_id or f"fake-{kind}")
     if not api_key:
         raise ProviderUnavailableError(f"chave do provedor {provider_id or kind} ausente: informe nas Configurações (LLM)")
+    register_proxy_secret(net.proxy_url)
     prepare_ssl(net)
     module, cls_name = ADAPTERS[kind]
     try:
@@ -134,7 +153,9 @@ type Sleep = Callable[[float], Awaitable[None]]
 class RetryingProvider:
     """Decorador sobre qualquer `LLMProvider`: `asyncio.timeout(req.timeout_s)` por tentativa; 429, 5xx, rede e timeout
     repetem até 3 vezes com 1, 3 e 9 s (jitter de 30 %) ou o `Retry-After`; "request too large" e erros permanentes não
-    repetem; com esquema, valida a resposta e reenvia uma vez com a mensagem de erro quando o JSON não vale."""
+    repetem; com esquema, valida a resposta e reenvia uma vez com a mensagem de erro quando o JSON não vale. Resposta cortada
+    no teto de saída (`finish == "length"`) reenvia uma vez com o teto dobrado até o limite do modelo, senão erro claro
+    (F3.1 R3-07)."""
 
     def __init__(self, inner: LLMProvider, *, attempts: int = 3, delays: Sequence[float] = RETRY_DELAYS, jitter: float = RETRY_JITTER,
                  sleep: Sleep | None = None, rand: Callable[[], float] = random.random, resend_on_invalid: bool = True):
@@ -150,9 +171,12 @@ class RetryingProvider:
         self.resend_on_invalid = resend_on_invalid
         self.retries = 0                       # instrumentação: quantas tentativas extras houve neste processo
         self.resends = 0
+        self.grown = 0                         # reenvios com teto de saída maior
 
     async def complete(self, req: Request) -> Completion:
         comp = await self._with_retries(req)
+        if comp.finish == "length":
+            req, comp = await self._grown(req)
         if req.json_schema is None:
             return comp
         try:
@@ -169,6 +193,23 @@ class RetryingProvider:
                 return self._validated(req, comp2)
             except (SchemaError, ValueError) as e2:
                 raise BadResponseError(f"resposta fora do esquema após reenvio: {e2}", text=comp2.text) from e2
+
+    async def _grown(self, req: Request) -> tuple[Request, Completion]:
+        """Reenvio único com o dobro de `max_output_tokens`, sem passar do limite de saída do modelo (modelo fora da tabela:
+        só o dobro); cortada de novo, ou já no limite, vira `BadResponseError` em vez de JSON truncado."""
+        info = models_table.model_info(self.kind, req.model)
+        limit = info.output_limit if models_table.family_for(self.kind, req.model) else req.max_output_tokens * 2
+        bigger = min(req.max_output_tokens * 2, limit)
+        cut = f"resposta cortada no teto de {req.max_output_tokens} tokens de saída de {req.model}"
+        if bigger <= req.max_output_tokens:
+            raise BadResponseError(f"{cut}, que já é o limite do modelo: use um modelo com saída maior")
+        self.grown += 1
+        log.info("%s: %s em %s; reenviando uma vez com %d", self.id, cut, req.task, bigger)
+        req = replace(req, max_output_tokens=bigger)
+        comp = await self._with_retries(req)
+        if comp.finish == "length":
+            raise BadResponseError(f"resposta cortada mesmo com {bigger} tokens de saída de {req.model}", text=comp.text)
+        return req, comp
 
     async def _with_retries(self, req: Request) -> Completion:
         for attempt in range(self.attempts):

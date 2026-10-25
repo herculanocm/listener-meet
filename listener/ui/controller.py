@@ -614,7 +614,7 @@ class Controller(QObject):
     def open_transcript(self, meeting_id: int) -> TranscriptDialog:
         dlg = self._transcripts.get(meeting_id)
         if dlg is None:
-            dlg = TranscriptDialog(self.store, meeting_id, None, on_review=self.open_review)
+            dlg = TranscriptDialog(self.store, meeting_id, None, on_review=self.open_review, on_launch=self.launch_worker)
             dlg.finished.connect(functools.partial(self._transcript_closed, meeting_id))
             self._transcripts[meeting_id] = dlg
         else:

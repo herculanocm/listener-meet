@@ -1,9 +1,11 @@
 """Redação de chaves de API (CP10, R-6): a chave inteira e os seus 8 últimos caracteres somem de toda mensagem gravada
-(`llm_calls.error`, `jobs.error`) e dos logs do pacote `llm` e do runner (filtro de logging). Nada aqui conhece SDK."""
+(`llm_calls.error`, `jobs.error`) e dos logs do pacote `llm` e do runner (filtro de logging, mensagem e traceback). A senha
+do proxy (`llm.proxy_url`) entra no mesmo redator (F3.1 R3-04). Nada aqui conhece SDK."""
 from __future__ import annotations
 
 import logging
 import threading
+import traceback
 from collections.abc import Iterable
 
 MASK = "«chave»"
@@ -54,7 +56,9 @@ def redact(text: str | None, secrets: Iterable[str | None] = ()) -> str:
 
 
 class RedactingFilter(logging.Filter):
-    """Aplica a redação à mensagem formatada antes de qualquer handler (logs do app e do worker)."""
+    """Aplica a redação à mensagem formatada e ao traceback antes de qualquer handler (logs do app e do worker). O traceback
+    (`exc_info`, com a cadeia `raise ... from e` inteira) vira `exc_text` já redigido: o `Formatter` usa `exc_text` quando
+    existe e não formata o `exc_info` de novo [fato, `logging.Formatter.format`] (F3.1 R3-04)."""
 
     def __init__(self, redactor: Redactor = GLOBAL):
         super().__init__("redact")
@@ -65,6 +69,13 @@ class RedactingFilter(logging.Filter):
             try:
                 record.msg = self.redactor.redact(str(record.getMessage()))
                 record.args = ()
+                if record.exc_info and not record.exc_text:
+                    text = "".join(traceback.format_exception(*record.exc_info)).removesuffix("\n")
+                    record.exc_text = self.redactor.redact(text)
+                elif record.exc_text:
+                    record.exc_text = self.redactor.redact(record.exc_text)
+                if record.stack_info:
+                    record.stack_info = self.redactor.redact(record.stack_info)
             except Exception:  # um log malformado não pode derrubar o app
                 return True
         return True

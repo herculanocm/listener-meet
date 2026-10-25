@@ -126,10 +126,13 @@ class SegmentsRepo:
             rows = self.core.q("SELECT * FROM segments WHERE meeting_id = ? AND job_id = ? ORDER BY t_start_ms, id", (meeting_id, job_id))
         return [cast(SegmentRow, dict(r)) for r in rows]
 
-    def count_segments(self, meeting_id: int, job_id: int | None = None) -> int:
+    def count_segments(self, meeting_id: int, job_id: int | None = None, *, with_text: bool = False) -> int:
+        """Falas da reunião (do job, se dado); `with_text` conta só as que têm texto (F3.1 R3-02: sem fala, sem job `llm`)."""
+        text = " AND TRIM(COALESCE(text, '')) != ''" if with_text else ""
         if job_id is None:
-            return int(self.core.q("SELECT COUNT(*) FROM segments WHERE meeting_id = ?", (meeting_id,))[0][0])
-        return int(self.core.q("SELECT COUNT(*) FROM segments WHERE meeting_id = ? AND job_id = ?", (meeting_id, job_id))[0][0])
+            return int(self.core.q(f"SELECT COUNT(*) FROM segments WHERE meeting_id = ?{text}", (meeting_id,))[0][0])  # noqa: S608
+        return int(self.core.q(f"SELECT COUNT(*) FROM segments WHERE meeting_id = ? AND job_id = ?{text}",  # noqa: S608
+                               (meeting_id, job_id))[0][0])
 
     def set_segments_person(self, meeting_id: int, cluster_id: int, person_id: int | None, role_at_time: str | None) -> int:
         """Confirmação na revisão: todas as falas do cluster ganham a pessoa (e o cargo do dia, D-016)."""

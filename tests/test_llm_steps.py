@@ -380,3 +380,89 @@ def test_test_job_via_worker_records_canary_call(platform, store):
     with Store(store.base_dir) as empty:
         empty._x("DELETE FROM meetings")
         assert llm_steps.enqueue_test_job(empty) is None                                                   # a fila é por reunião
+
+
+# ---------------------------------------------------------------- F3.1 (correções da revisão do diff da F3)
+def test_retry_after_reprocess_fails_permanently_without_calls(platform, store):
+    """R3-02: um job `llm` que falhou e é retentado depois de um reprocessamento rodaria sobre segmentos apagados; termina em
+    erro permanente antes de qualquer chamada paga, sem contar tentativa."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    first = _pipeline(store, mid)
+    flaky = FakeProvider()
+    flaky.fail_next(TransientError("sem rede"), LlmTask.IDENTIFY)
+    runner, status, _ = _run_llm(store, flaky)
+    assert status == JobStatus.ERROR and runner.parent_job_id == first
+    old_llm = runner.job_id
+    rep = _pipeline(store, mid, JobKind.REPROCESS)
+    pending = [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente"]
+    assert len(pending) == 1 and json.loads(pending[0]["params_json"])["parent_job_id"] == rep
+    assert store.jobs.retry(old_llm, reset_config=True)
+    calls_before = len(store.llm_calls.list_for_meeting(mid))
+    fake = FakeProvider()
+    runner, status, _ = _run_llm(store, fake)                                            # o mais antigo sai primeiro da fila
+    row = store.jobs.get(old_llm)
+    assert runner.job_id == old_llm and status == JobStatus.ERROR and fake.requests == []
+    assert llm_steps.STALE_TRANSCRIPT in row["error"] and row["attempts"] == 0                          # permanente: não conta
+    assert len(store.llm_calls.list_for_meeting(mid)) == calls_before                                  # nenhuma chamada paga
+    _, status, fake = _run_llm(store)                                                                  # o job do pai novo segue
+    assert status == JobStatus.DONE and {r.task for r in fake.requests} == {"identify"}
+
+
+def test_meeting_without_speech_gets_no_llm_job_and_manual_job_fails_without_calls(platform, store):
+    """R3-02: reunião sem fala não enfileira job `llm`; um "gerar de novo" sobre ela termina em erro permanente sem chamadas."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    store.jobs.enqueue(mid, JobKind.MEETING)
+    job = store.jobs.claim(pid=1, kinds=("meeting", "reprocess"))
+    assert JobRunner(store, FakeDeps({"R": [], "L": []}), job, config=CFG, heartbeat_thread=False).run() == JobStatus.DONE
+    assert store.segments.count_segments(mid) == 0 and not [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"]
+    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"]) is not None                               # manual: a fila aceita
+    runner, status, fake = _run_llm(store)
+    row = store.jobs.get(runner.job_id)
+    assert status == JobStatus.ERROR and fake.requests == [] and llm_steps.STALE_TRANSCRIPT in row["error"]
+    assert row["attempts"] == 0 and store.summaries.current(mid, SummaryKind.MINUTES) is None
+    assert store.llm_calls.list_for_meeting(mid) == []
+
+
+def test_two_pending_llm_jobs_of_one_meeting_run_in_order(platform, store):
+    """R3-14: o job automático e um "gerar de novo" pendentes da mesma reunião rodam um depois do outro, sem se atrapalhar."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    parent = _pipeline(store, mid)
+    regen = llm_steps.enqueue_llm_job(store, mid, ["title"])
+    pending = [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente"]
+    assert len(pending) == 2
+    first, status1, fake1 = _run_llm(store)
+    second, status2, fake2 = _run_llm(store)
+    assert (status1, status2) == (JobStatus.DONE, JobStatus.DONE) and first.job_id < second.job_id == regen
+    assert [r.task for r in fake2.requests] == ["title"] and len(fake1.requests) >= 6
+    assert first.parent_job_id == second.parent_job_id == parent
+    assert store._q("SELECT COUNT(*) FROM revisions WHERE entity = 'meeting' AND field = 'title_llm'")[0][0] == 2
+    assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == parent
+
+
+def test_reprocess_cancels_stale_pending_llm_jobs_and_keeps_what_never_ran(platform, store):
+    """R3-02: o reprocessamento cancela os jobs `llm` pendentes feitos para o pai antigo (o de teste fica) e o job novo leva,
+    além de identidade e revisão (P7), o que a reunião ainda não tem: um job que nunca rodou não a deixa sem ata."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    _pipeline(store, mid)
+    stale = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
+    regen = llm_steps.enqueue_llm_job(store, mid, ["title"])
+    test_job = llm_steps.enqueue_test_job(store, mid)
+    rep = _pipeline(store, mid, JobKind.REPROCESS)
+    assert store.jobs.get(stale["id"])["status"] == "cancelado" and store.jobs.get(regen)["status"] == "cancelado"
+    assert store.jobs.get(test_job)["status"] == "pendente"
+    new = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente" and j["id"] != test_job)
+    params = json.loads(new["params_json"])
+    assert params["parent_job_id"] == rep and params["tasks"] == ["identify", "minutes", "executive", "pre_summary", "title", "revise"]
+    for _ in range(2):
+        _, status, _fake = _run_llm(store)
+        assert status == JobStatus.DONE
+    assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == rep
+    assert llm_steps.auto_tasks_for(store, mid, JobKind.REPROCESS) == ["identify", "revise"]          # agora tudo existe (P7)

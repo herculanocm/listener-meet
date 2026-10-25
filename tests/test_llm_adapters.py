@@ -5,6 +5,7 @@ e timeout e um transporte HTTP simulado prova a forma exata do pedido e da respo
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 from types import SimpleNamespace
@@ -22,6 +23,12 @@ from listener.llm.types import AudioPart, Capability, EmbedTask, LlmTask, Messag
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["ok", "n"],
           "properties": {"ok": {"type": "boolean"}, "n": {"type": "integer", "maximum": 10}}}
 PAYLOAD = {"ok": True, "n": 3}
+
+
+def _payload(schema: Any) -> dict[str, Any]:
+    """O que o dublê devolve: `{"ok": true}` ao canário do "testar conexão" (esquema só com `ok`), senão o `PAYLOAD`."""
+    props = (schema or {}).get("properties") or {}
+    return {"ok": True} if set(props) == {"ok"} else dict(PAYLOAD)
 
 
 def run(coro):
@@ -59,7 +66,7 @@ class GeminiStub:
 
     async def generate_content(self, *, model: str, contents: Any, config: Any):
         self.calls.append(("generate", {"model": model, "contents": contents, "config": config}))
-        return SimpleNamespace(text=json.dumps(PAYLOAD), parsed=None, usage_metadata=self._usage(),
+        return SimpleNamespace(text=json.dumps(_payload(config.get("response_json_schema"))), parsed=None, usage_metadata=self._usage(),
                                candidates=[SimpleNamespace(finish_reason="FinishReason.STOP")], model_version="gemini-2.5-flash-001",
                                response_id="g1")
 
@@ -75,10 +82,11 @@ class GeminiStub:
         return SimpleNamespace(embeddings=[SimpleNamespace(values=[3.0, 4.0]) for _ in contents])
 
     async def count_tokens(self, *, model: str, contents: Any, config: Any = None):
-        self.calls.append(("count", {"model": model, "contents": contents}))
+        self.calls.append(("count", {"model": model, "contents": contents, "config": config}))
         return SimpleNamespace(total_tokens=42)
 
     async def list(self, config: Any = None):
+        self.calls.append(("list", {"config": config}))
         return _agen([SimpleNamespace(name="models/gemini-2.5-flash", display_name="Gemini 2.5 Flash", input_token_limit=1048576,
                                       output_token_limit=65536, supported_actions=["generateContent", "countTokens"]),
                       SimpleNamespace(name="models/gemini-embedding-001", display_name="Embedding", input_token_limit=2048,
@@ -99,13 +107,16 @@ class OpenAIStub:
         self.closed = True
 
     @staticmethod
-    def _response():
-        return SimpleNamespace(id="o1", model="gpt-4.1-mini-2025", status="completed", output_text=json.dumps(PAYLOAD), output=[],
+    def _response(payload: dict[str, Any] | None = None):
+        return SimpleNamespace(id="o1", model="gpt-4.1-mini-2025", status="completed", output_text=json.dumps(payload or PAYLOAD),
+                               output=[],
                                usage=SimpleNamespace(input_tokens=10, output_tokens=5,
                                                      input_tokens_details=SimpleNamespace(cached_tokens=2)), incomplete_details=None)
 
     async def _create(self, **kw: Any):
         self.calls.append(("create", kw))
+        if kw.get("text"):
+            return self._response(_payload(kw["text"]["format"]["schema"]))
         if kw.get("stream"):
             return _agen([SimpleNamespace(type="response.output_text.delta", delta="um "),
                           SimpleNamespace(type="response.output_text.delta", delta="dois "),
@@ -122,7 +133,8 @@ class OpenAIStub:
         return SimpleNamespace(model=kw["model"], data=[SimpleNamespace(embedding=[0.6, 0.8]) for _ in kw["input"]],
                                usage=SimpleNamespace(prompt_tokens=7))
 
-    async def _list(self):
+    async def _list(self, **kw: Any):
+        self.calls.append(("list", kw))
         return _agen([SimpleNamespace(id="gpt-4.1-mini"), SimpleNamespace(id="gpt-4o-realtime-preview"), SimpleNamespace(id="whisper-1"),
                       SimpleNamespace(id="text-embedding-3-small")])
 
@@ -150,7 +162,7 @@ class AnthropicStub:
             return _agen([start, *(SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text=t))
                                    for t in ("um ", "dois ", "três")), end])
         if "tools" in kw:
-            content = [SimpleNamespace(type="tool_use", name="emit_result", input=dict(PAYLOAD))]
+            content = [SimpleNamespace(type="tool_use", name="emit_result", input=_payload(kw["tools"][0]["input_schema"]))]
         else:
             content = [SimpleNamespace(type="text", text="texto livre")]
         return SimpleNamespace(id="a1", model="claude-haiku-4-5-20251001", content=content, usage=self._usage(),
@@ -160,7 +172,8 @@ class AnthropicStub:
         self.calls.append(("count", kw))
         return SimpleNamespace(input_tokens=42)
 
-    async def _list(self, limit: int = 100):
+    async def _list(self, limit: int = 100, **kw: Any):
+        self.calls.append(("list", {"limit": limit, **kw}))
         return _agen([SimpleNamespace(id="claude-haiku-4-5-20251001", display_name="Claude Haiku 4.5", max_input_tokens=200000,
                                       max_tokens=64000)])
 
@@ -213,11 +226,11 @@ def test_provider_contract_with_doubles(name: str):
         emb = run(provider.embed(["a", "b"], model="emb", dim=2, task=EmbedTask.QUERY))
         assert emb.vectors.shape == (2, 2) and np.allclose(np.linalg.norm(emb.vectors, axis=1), 1.0) and emb.dim == 2
     n = run(provider.count_tokens(_req(model=model)))
-    assert n is None or n > 0
+    assert n == (_req(model=model).text_chars // 4 if name == "fake" else 42)
     models = run(provider.list_models())
     assert models and all(m.input_limit > 0 and m.capabilities for m in models)
     t = run(provider.test_connection(model))
-    assert isinstance(t.ok, bool) and t.latency_ms >= 0 and t.model
+    assert t.ok is True and t.error is None and t.latency_ms >= 0 and t.model
     run(provider.aclose())
     if stub is None:
         return
@@ -230,10 +243,14 @@ def test_provider_contract_with_doubles(name: str):
             cfg = first["config"]
             assert cfg["response_mime_type"] == "application/json" and cfg["response_json_schema"]["required"] == ["ok", "n"]
             assert cfg["system_instruction"] == "You are precise." and cfg["thinking_config"] == {"thinking_budget": 0}
+            assert cfg["http_options"] == {"timeout": 120_000}                                           # R3-03: ms, por chamada
+            aux = {k: c["config"] for k, c in stub.calls if k in ("count", "list")}
+            assert aux["count"]["http_options"] == aux["list"]["http_options"] == {"timeout": int(common.AUX_TIMEOUT_S * 1000)}
             assert [c["role"] for c in first["contents"]] == ["user", "model", "user"] and first["contents"][0]["parts"][0]["text"]
             assert comp.usage.audio_tokens == 3 and comp.usage.cached_tokens == 2 and comp.usage.output_tokens == 6     # pensamento conta
             embed_cfg = next(c for k, c in stub.calls if k == "embed")["config"]
-            assert embed_cfg == {"task_type": "RETRIEVAL_QUERY", "output_dimensionality": 2}
+            assert embed_cfg == {"task_type": "RETRIEVAL_QUERY", "output_dimensionality": 2,
+                                 "http_options": {"timeout": int(common.EMBED_TIMEOUT_S * 1000)}}
             assert [m.id for m in models] == ["gemini-2.5-flash", "gemini-embedding-001"]           # `predict` fora
             assert Capability.COUNT_TOKENS in models[0].capabilities and models[1].capabilities == {Capability.EMBEDDINGS}
             assert n == 42
@@ -241,6 +258,9 @@ def test_provider_contract_with_doubles(name: str):
             fmt = first["text"]["format"]
             assert fmt["type"] == "json_schema" and fmt["strict"] is True and "maximum" not in fmt["schema"]["properties"]["n"]
             assert first["instructions"] == "You are precise." and first["store"] is False and first["temperature"] == 0.2
+            assert first["timeout"] == 120.0 and next(c for k, c in stub.calls if k == "count")["timeout"] == common.AUX_TIMEOUT_S
+            assert next(c for k, c in stub.calls if k == "embed")["timeout"] == common.EMBED_TIMEOUT_S
+            assert next(c for k, c in stub.calls if k == "list")["timeout"] == common.AUX_TIMEOUT_S
             assert first["prompt_cache_key"].startswith("listener-") and "reasoning" not in first
             assert [i["role"] for i in first["input"]] == ["user", "assistant", "user"]
             assert first["input"][1]["content"][0]["type"] == "output_text" and first["input"][0]["content"][0]["type"] == "input_text"
@@ -258,6 +278,8 @@ def test_provider_contract_with_doubles(name: str):
         case "anthropic":
             assert first["tools"][0]["name"] == "emit_result" and first["tool_choice"]["type"] == "tool"
             assert first["system"] == "You are precise." and first["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+            assert first["timeout"] == 120.0 and next(c for k, c in stub.calls if k == "count")["timeout"] == common.AUX_TIMEOUT_S
+            assert next(c for k, c in stub.calls if k == "list")["timeout"] == common.AUX_TIMEOUT_S
             assert "cache_control" not in first["messages"][2]["content"][0] and first["max_tokens"] == 8192
             assert "temperature" not in first                                                      # a 2.x não aceita [fato]
             assert comp.usage.input_tokens == 10 and comp.usage.cached_tokens == 2                   # input + cache lidos
@@ -269,6 +291,48 @@ def test_provider_contract_with_doubles(name: str):
             assert thinking.text == "texto livre"
             forced = run(provider.complete(_req(model="claude-sonnet-4-5", reasoning=Reasoning.LOW)))
             assert "thinking" not in stub.calls[-1][1] and forced.data == PAYLOAD                      # ferramenta forçada: sem pensamento
+
+
+def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
+    """R3-07: `status = "incomplete"` por `max_output_tokens` reenvia uma vez com o teto dobrado (até o limite do modelo);
+    cortada de novo, erro claro "resposta cortada"; modelos com raciocínio da OpenAI ganham folga de saída."""
+    from listener.llm.base import BadResponseError
+    from listener.llm.openai import OpenAIProvider
+
+    stub = OpenAIStub()
+    cut_below = {"n": 3000}
+    original = stub._create
+
+    async def create(**kw: Any):
+        if kw["max_output_tokens"] < cut_below["n"]:
+            stub.calls.append(("create", kw))
+            return SimpleNamespace(id="o1", model=kw["model"], status="incomplete", output_text='{"ok": tr', output=[],
+                                   usage=SimpleNamespace(input_tokens=10, output_tokens=5, input_tokens_details=None),
+                                   incomplete_details=SimpleNamespace(reason="max_output_tokens"))
+        return await original(**kw)
+
+    stub.responses.create = create
+    rp = RetryingProvider(OpenAIProvider("k", client=stub), sleep=lambda s: asyncio.sleep(0))
+    req = dataclasses.replace(_req(model="gpt-4.1-mini"), max_output_tokens=2000)
+    comp = run(rp.complete(req))
+    assert comp.data == PAYLOAD and rp.grown == 1 and rp.resends == 0
+    assert [kw["max_output_tokens"] for _, kw in stub.calls] == [2000, 4000]
+    stub.calls.clear()
+    cut_below["n"] = 10**9                                                                   # sempre cortada
+    with pytest.raises(BadResponseError, match="cortada mesmo com 4000"):
+        run(rp.complete(req))
+    assert len(stub.calls) == 2
+    stub.calls.clear()
+    with pytest.raises(BadResponseError, match="limite do modelo"):                           # já no teto do gpt-4.1-mini
+        run(rp.complete(dataclasses.replace(req, max_output_tokens=32_768)))
+    assert len(stub.calls) == 1
+    # folga de raciocínio: low +4096, sem esforço (médio) +8192, sem passar do limite do modelo
+    p = OpenAIProvider("k", client=OpenAIStub())
+    low = dataclasses.replace(_req(model="gpt-5-mini", reasoning=Reasoning.LOW), max_output_tokens=2000)
+    assert p._kwargs(low)["max_output_tokens"] == 6096
+    assert p._kwargs(dataclasses.replace(_req(model="o4-mini"), max_output_tokens=2000))["max_output_tokens"] == 10192
+    assert p._kwargs(dataclasses.replace(_req(model="o3"), max_output_tokens=99_000))["max_output_tokens"] == 100_000
+    assert p._kwargs(dataclasses.replace(_req(model="gpt-4.1-mini"), max_output_tokens=2000))["max_output_tokens"] == 2000
 
 
 def test_error_translation_by_shape():
@@ -343,6 +407,8 @@ def test_real_gemini_client_has_no_sdk_retries_and_mock_transport_round_trip():
     def handler(request):
         seen["url"] = str(request.url)
         seen["body"] = json.loads(request.content)
+        seen["timeout"] = dict(request.extensions.get("timeout") or {})
+        seen["calls"] = seen.get("calls", 0) + 1
         if seen.get("fail"):
             return httpx.Response(429, headers={"retry-after": "2"},
                                   json={"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
@@ -361,7 +427,8 @@ def test_real_gemini_client_has_no_sdk_retries_and_mock_transport_round_trip():
         client = genai.Client(api_key="AIza-teste", http_options=types.HttpOptions(
             httpx_async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), retry_options={"attempts": 1}))
         p2 = GeminiProvider("AIza-teste", client=client)
-        comp = await RetryingProvider(p2).complete(_req(model="gemini-2.5-flash"))
+        comp = await RetryingProvider(p2).complete(dataclasses.replace(_req(model="gemini-2.5-flash"), timeout_s=240.0))
+        assert seen["timeout"] == {"connect": 240.0, "read": 240.0, "write": 240.0, "pool": 240.0}         # R3-03: o do pedido
         seen["fail"] = True
         with pytest.raises(RateLimitError) as e:
             await p2.complete(_req(model="gemini-2.5-flash"))
@@ -376,7 +443,7 @@ def test_real_gemini_client_has_no_sdk_retries_and_mock_transport_round_trip():
     budget = gen["thinkingConfig"].get("thinkingBudget", gen["thinkingConfig"].get("thinking_budget"))   # o SDK manda snake_case [fato]
     assert budget == 0 and seen["body"]["systemInstruction"]["parts"][0]["text"] == "You are precise."
     assert [c["role"] for c in seen["body"]["contents"]] == ["user", "model", "user"]
-    assert err.retry_after_s == 2.0 and err.status == 429
+    assert err.retry_after_s == 2.0 and err.status == 429 and seen["calls"] == 2                      # o 429 não repete no SDK
 
 
 @sdk_tests
@@ -391,6 +458,7 @@ def test_real_openai_client_has_no_sdk_retries_and_mock_transport_round_trip():
         seen["url"] = str(request.url)
         seen["body"] = json.loads(request.content)
         seen["auth"] = request.headers.get("authorization")
+        seen["timeout"] = dict(request.extensions.get("timeout") or {})
         if seen.get("fail"):
             return httpx2.Response(400, json={"error": {"message": "This model's maximum context length is 128000 tokens.",
                                                         "code": "context_length_exceeded", "type": "invalid_request_error"}})
@@ -409,7 +477,8 @@ def test_real_openai_client_has_no_sdk_retries_and_mock_transport_round_trip():
         client = openai.AsyncOpenAI(api_key="sk-teste", max_retries=0, timeout=5.0,
                                     http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
         p2 = OpenAIProvider("sk-teste", client=client)
-        comp = await RetryingProvider(p2).complete(_req(model="gpt-4.1-mini"))
+        comp = await RetryingProvider(p2).complete(dataclasses.replace(_req(model="gpt-4.1-mini"), timeout_s=240.0))
+        assert seen["timeout"]["read"] == 240.0 and seen["timeout"]["connect"] == 240.0                    # R3-03: o do pedido
         seen["fail"] = True
         with pytest.raises(RequestTooLargeError):
             await p2.complete(_req(model="gpt-4.1-mini"))
@@ -436,6 +505,7 @@ def test_real_anthropic_client_has_no_sdk_retries_and_mock_transport_round_trip(
         seen["url"] = str(request.url)
         seen.setdefault("body", json.loads(request.content))                       # o primeiro pedido (com prefixo em cache)
         seen["key"] = request.headers.get("x-api-key") or request.headers.get("authorization")   # a 2.x usa Bearer [fato]
+        seen.setdefault("timeout", dict(request.extensions.get("timeout") or {}))
         if seen.get("fail"):
             return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})
         return httpx2.Response(200, json={
@@ -452,7 +522,8 @@ def test_real_anthropic_client_has_no_sdk_retries_and_mock_transport_round_trip(
         client = anthropic.AsyncAnthropic(api_key="sk-ant-teste", max_retries=0, timeout=5.0,
                                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
         p2 = AnthropicProvider("sk-ant-teste", client=client)
-        comp = await RetryingProvider(p2).complete(_req(model="claude-haiku-4-5", cache=True))
+        comp = await RetryingProvider(p2).complete(dataclasses.replace(_req(model="claude-haiku-4-5", cache=True), timeout_s=240.0))
+        assert seen["timeout"]["read"] == 240.0 and seen["timeout"]["pool"] == 240.0                       # R3-03: o do pedido
         seen["fail"] = True
         with pytest.raises(AuthError):
             await p2.complete(_req(model="claude-haiku-4-5"))

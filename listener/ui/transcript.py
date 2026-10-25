@@ -1,8 +1,10 @@
 """Leitura mínima da transcrição (F2 item 14, Q6): `QListView` com modelo (milhares de falas sem milhares de widgets),
 linhas `[mm:ss] Nome — Cargo: texto`; o clique toca a partir da primeira palavra menos 150 ms (R-14), decodificando só
-esse trecho numa `Task`. F3 item 8 (P4): mostra a transcrição revisada quando existe, com alternância para a original."""
+esse trecho numa `Task`. F3 item 8 (P4): mostra a transcrição revisada quando existe, com alternância para a original, e
+"Revisar transcrição pela LLM" sob demanda com o motivo de quando foi pulada (F3.1 R3-05)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, Qt
@@ -10,8 +12,10 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QListView, QPushButton, QSplitter, QVBoxLayout, QWidget
 
 from ..log import get_logger
+from ..model import JobStep
 from ..pipeline import review
 from .chat import ChatPanel
+from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -47,11 +51,14 @@ class SegmentsModel(QAbstractListModel):
 
 
 class TranscriptDialog(QDialog):
-    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_review: Any = None):
+    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_review: Any = None,
+                 on_launch: Callable[[bool], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_review = on_review
+        self.on_launch = on_launch
+        self.requested: list[int] = []                    # jobs `llm` de revisão pedidos aqui: instrumentação dos testes
         self.played: list[tuple[int, int]] = []           # (t0, t1) pedidos: instrumentação dos testes
         m = store.get_meeting(meeting_id) or {}
         self.setWindowTitle(f"Transcrição — {m.get('title') or f'reunião {meeting_id}'}")
@@ -69,14 +76,21 @@ class TranscriptDialog(QDialog):
         self.toggle.toggled.connect(self.set_prefer_llm)
         self.btn_review = QPushButton("Revisar falantes…")
         self.btn_review.clicked.connect(lambda: self.on_review(self.meeting_id) if self.on_review else None)
+        self.btn_revise = QPushButton("Revisar transcrição pela LLM")
+        self.btn_revise.clicked.connect(self.request_revise)
+        self.llm_note = QLabel("")
+        self.llm_note.setWordWrap(True)
+        self.llm_note.setStyleSheet("color: #888; font-size: 11px;")
         bottom = QHBoxLayout()
         bottom.addWidget(self.toggle)
         bottom.addStretch(1)
+        bottom.addWidget(self.btn_revise)
         bottom.addWidget(self.btn_review)
         left = QWidget()
         llay = QVBoxLayout(left)
         llay.addWidget(self.view, 1)
         llay.addWidget(self.status)
+        llay.addWidget(self.llm_note)
         llay.addLayout(bottom)
         self.chat = ChatPanel(store, meeting_id)                 # F3 item 10: chat ao lado da transcrição
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -108,6 +122,28 @@ class TranscriptDialog(QDialog):
         self.toggle.setEnabled(revised > 0)
         self.status.setText(f"{self.model.rowCount()} fala(s), {revised} revisada(s) pela LLM; mostrando a {mode}. "
                             "Clique numa fala para ouvir.")
+        busy = llm_job_active(self.store, self.meeting_id)
+        self.btn_revise.setEnabled(not busy and self.model.rowCount() > 0)
+        self.btn_revise.setToolTip("há um job de LLM em andamento para esta reunião" if busy
+                                   else "a LLM revisa os trechos ainda não revisados (pelo provedor ativo, com custo)")
+        reason = (last_llm_info(self.store, self.meeting_id).get("skipped") or {}).get(str(JobStep.REVISE))
+        if busy:
+            self.llm_note.setText("LLM em andamento para esta reunião.")
+        elif reason:
+            self.llm_note.setText(f"Revisão pela LLM não feita: {reason}; revisar?")
+        else:
+            self.llm_note.setText("")
+
+    def request_revise(self) -> int | None:
+        """"Revisar transcrição pela LLM": job `llm` só com `revise` (incremental: só trechos sem revisão)."""
+        job_id, message = request_llm_step(self.store, self.meeting_id, JobStep.REVISE)
+        if job_id is not None:
+            self.requested.append(job_id)
+            if self.on_launch is not None:
+                self.on_launch(True)
+        self._update_status()
+        self.llm_note.setText(message)
+        return job_id
 
     def _clicked(self, index: QModelIndex) -> None:
         if not index.isValid():

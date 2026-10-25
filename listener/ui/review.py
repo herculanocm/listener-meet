@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import review
-from .llm_tabs import ActionsTab, TextTab, TitleTab, cost_badge, last_llm_info, llm_job_active, step_label
+from .llm_tabs import ActionsTab, TextTab, TitleTab, cost_badge, last_llm_info, llm_job_active, request_llm_step
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -56,6 +56,8 @@ class ReviewDialog(QDialog):
         self.btn_play = QPushButton("Ouvir 5 s (Espaço)")
         self.btn_transcript = QPushButton("Ver transcrição")
         self.btn_finish = QPushButton("Concluir")
+        self.btn_identify = QPushButton("Identidade por contexto de novo")     # F3.1 R3-05: `identify` sob demanda
+        self.btn_identify.clicked.connect(lambda: self.regenerate(JobStep.IDENTIFY))
         self.btn_confirm.clicked.connect(self._confirm_clicked)
         self.btn_llm.clicked.connect(self.accept_llm_current)
         self.btn_other.clicked.connect(self.ask_other_person)
@@ -69,6 +71,7 @@ class ReviewDialog(QDialog):
         for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore):
             row1.addWidget(b)
         row2.addWidget(self.btn_play)
+        row2.addWidget(self.btn_identify)
         row2.addStretch(1)
         row2.addWidget(self.btn_transcript)
         row2.addWidget(self.btn_finish)
@@ -106,6 +109,9 @@ class ReviewDialog(QDialog):
         for tab in self.text_tabs.values():
             tab.reload(stale, skipped, busy)
         self.actions_tab.reload()
+        self.btn_identify.setEnabled(not busy)
+        self.btn_identify.setToolTip("há um job de LLM em andamento para esta reunião" if busy
+                                     else "a LLM sugere de novo quem é cada voz pendente, pelo contexto da conversa")
         badge = cost_badge(self.store, self.meeting_id)
         parts = [badge] if badge else []
         if busy:
@@ -116,19 +122,13 @@ class ReviewDialog(QDialog):
 
     def regenerate(self, step: JobStep) -> int | None:
         """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
-        from ..pipeline.llm_steps import enqueue_llm_job
-
-        if llm_job_active(self.store, self.meeting_id):
-            self.header.setText("Já há um job de LLM em andamento para esta reunião; espere terminar.")
-            return None
-        job_id = enqueue_llm_job(self.store, self.meeting_id, [step])
+        job_id, message = request_llm_step(self.store, self.meeting_id, step)
+        self.header.setText(message)
         if job_id is None:
-            self.header.setText("Nenhum provedor de LLM ativo com chave: configure um nas Configurações.")
             return None
         self.regenerated.append(job_id)
         if self.on_launch is not None:
             self.on_launch(True)
-        self.header.setText(f"{step_label(step)}: gerando de novo pela fila (3 a 5 s para começar)…")
         self.reload_llm()
         return job_id
 

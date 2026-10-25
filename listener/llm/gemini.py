@@ -13,7 +13,8 @@ import numpy as np
 
 from ..log import get_logger
 from . import models_table
-from .adapters_common import canary, http_client_kwargs, needs_own_http_client, now_ms, split_system, translate_error
+from .adapters_common import (AUX_TIMEOUT_S, EMBED_TIMEOUT_S, canary, http_client_kwargs, needs_own_http_client, now_ms, split_system,
+                             translate_error)
 from .base import LlmStream, ProviderUnavailableError
 from .registry import NetworkConfig
 from .schema import provider_schema
@@ -25,6 +26,11 @@ FINISH = {"STOP": "stop", "MAX_TOKENS": "length", "SAFETY": "blocked", "BLOCKLIS
           "SPII": "blocked", "RECITATION": "blocked"}
 EMBED_TASK = {EmbedTask.DOCUMENT: "RETRIEVAL_DOCUMENT", EmbedTask.QUERY: "RETRIEVAL_QUERY"}
 THINKING_BUDGET = {Reasoning.NONE: 0, Reasoning.LOW: 1024, Reasoning.HIGH: 8192}
+
+
+def http_timeout(seconds: float) -> dict[str, Any]:
+    """`http_options` por chamada: o google-genai mede o timeout em milissegundos [fato] (F3.1 R3-03)."""
+    return {"timeout": int(seconds * 1000)}
 
 
 class GeminiProvider:
@@ -82,7 +88,8 @@ class GeminiProvider:
         return system, contents
 
     def _config(self, req: Request, system: str | None) -> dict[str, Any]:
-        config: dict[str, Any] = {"temperature": req.temperature, "max_output_tokens": req.max_output_tokens}
+        config: dict[str, Any] = {"temperature": req.temperature, "max_output_tokens": req.max_output_tokens,
+                                  "http_options": http_timeout(req.timeout_s)}
         if system:
             config["system_instruction"] = system
         if req.json_schema is not None:
@@ -158,7 +165,7 @@ class GeminiProvider:
         return LlmStream(chunks(), finish)
 
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
-        config: dict[str, Any] = {"task_type": EMBED_TASK[task]}
+        config: dict[str, Any] = {"task_type": EMBED_TASK[task], "http_options": http_timeout(EMBED_TIMEOUT_S)}
         if dim:
             config["output_dimensionality"] = int(dim)
         try:
@@ -175,7 +182,8 @@ class GeminiProvider:
     async def count_tokens(self, req: Request) -> int | None:
         _system, contents = self._contents(req)
         try:
-            resp = await self._client().aio.models.count_tokens(model=req.model, contents=contents)
+            resp = await self._client().aio.models.count_tokens(model=req.model, contents=contents,
+                                                                config={"http_options": http_timeout(AUX_TIMEOUT_S)})
         except Exception as e:
             log.debug("count_tokens: %s", e)
             return None
@@ -185,7 +193,7 @@ class GeminiProvider:
     async def list_models(self) -> tuple[ModelInfo, ...]:
         out: list[ModelInfo] = []
         try:
-            pager = await self._client().aio.models.list()
+            pager = await self._client().aio.models.list(config={"http_options": http_timeout(AUX_TIMEOUT_S)})
             async for m in pager:
                 actions = {str(a) for a in (getattr(m, "supported_actions", None) or ())}
                 name = str(getattr(m, "name", "") or "")

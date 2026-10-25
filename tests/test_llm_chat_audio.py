@@ -125,6 +125,31 @@ def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platf
         chat_task.run_chat(store, mid, "x")
 
 
+def test_chat_panel_renders_the_partial_answer_while_streaming(qtbot, platform, store, monkeypatch):
+    """R3-06: a resposta aparece na view a cada pedaço, antes do `done`; o `reload()` final troca pela versão com citações."""
+    from listener.ui.chat import ChatPanel
+
+    mid = _processed(platform, store)
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    panel = ChatPanel(store, mid)
+    qtbot.addWidget(panel)
+    seen: list[tuple[int, bool]] = []
+    on_chunk = panel._on_chunk
+
+    def spy(piece: str) -> None:
+        on_chunk(piece)
+        seen.append((len(panel.view.toPlainText()), bool(panel.answers)))
+
+    panel._on_chunk = spy                                                  # type: ignore[method-assign]
+    panel.question.setText("o que ficou decidido?")
+    panel.ask()
+    assert "Você: o que ficou decidido?" in panel.view.toPlainText()
+    qtbot.waitUntil(lambda: bool(panel.answers), timeout=5000)
+    sizes = [n for n, _done in seen]
+    assert len(seen) >= 2 and not any(done for _n, done in seen) and sizes == sorted(sizes) and sizes[0] < sizes[-1]
+    assert panel.answers[0].text[:20] in panel.view.toPlainText() and 'seg=' in panel.view.toHtml()
+
+
 def test_llm_audio_transcriber_interpolates_words_and_models_skip_whisper(tmp_path, store, monkeypatch):
     import numpy as np
 

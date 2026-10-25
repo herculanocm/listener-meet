@@ -15,7 +15,8 @@ import numpy as np
 
 from ..log import get_logger
 from . import models_table
-from .adapters_common import audio_b64, canary, has_audio, http_client_kwargs, needs_own_http_client, now_ms, split_system, translate_error
+from .adapters_common import (AUX_TIMEOUT_S, EMBED_TIMEOUT_S, audio_b64, canary, has_audio, http_client_kwargs, needs_own_http_client,
+                             now_ms, split_system, translate_error)
 from .base import LlmStream, ProviderUnavailableError
 from .registry import NetworkConfig
 from .schema import provider_schema
@@ -25,6 +26,10 @@ log = get_logger("llm.openai")
 
 AUDIO_FORMATS = {"audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3"}
 EFFORT = {Reasoning.LOW: "low", Reasoning.HIGH: "high"}
+# folga de saída para o raciocínio, que conta em `max_output_tokens` nos modelos com raciocínio [fato]; sem esforço pedido,
+# o padrão da API é o médio (F3.1 R3-07)
+REASONING_HEADROOM = {Reasoning.LOW: 4096, Reasoning.HIGH: 16384}
+DEFAULT_HEADROOM = 8192
 MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "text-embedding")
 EXCLUDED = ("realtime", "transcribe", "tts", "image", "search", "dall-e", "moderation")
 
@@ -92,13 +97,17 @@ class OpenAIProvider:
 
     def _kwargs(self, req: Request) -> dict[str, Any]:
         system, items = self._input(req)
-        kw: dict[str, Any] = {"model": req.model, "input": items, "max_output_tokens": req.max_output_tokens, "store": False}
+        kw: dict[str, Any] = {"model": req.model, "input": items, "max_output_tokens": req.max_output_tokens, "store": False,
+                              "timeout": req.timeout_s}                     # por chamada; o cliente tem só o teto (R3-03)
         if system:
             kw["instructions"] = system
         reasoning_model = models_table.supports_reasoning(self.kind, req.model)
         if reasoning_model:
             if req.reasoning in EFFORT:
                 kw["reasoning"] = {"effort": EFFORT[req.reasoning]}
+            limit = models_table.model_info(self.kind, req.model).output_limit
+            kw["max_output_tokens"] = min(req.max_output_tokens + REASONING_HEADROOM.get(req.reasoning, DEFAULT_HEADROOM),
+                                          max(limit, req.max_output_tokens))
         else:
             kw["temperature"] = req.temperature
         if req.json_schema is not None:
@@ -176,7 +185,7 @@ class OpenAIProvider:
         if dim:
             kw["dimensions"] = int(dim)
         try:
-            resp = await self._client().embeddings.create(**kw)
+            resp = await self._client().embeddings.create(**kw, timeout=EMBED_TIMEOUT_S)
         except Exception as e:
             raise translate_error(e, self.id) from e
         vectors = np.asarray([list(d.embedding) for d in resp.data], dtype=np.float32)
@@ -192,7 +201,7 @@ class OpenAIProvider:
         if system:
             kw["instructions"] = system
         try:
-            resp = await self._client().responses.input_tokens.count(**kw)
+            resp = await self._client().responses.input_tokens.count(**kw, timeout=AUX_TIMEOUT_S)
         except Exception as e:
             log.debug("count_tokens: %s", e)
             return None
@@ -202,7 +211,7 @@ class OpenAIProvider:
     async def list_models(self) -> tuple[ModelInfo, ...]:
         out: list[ModelInfo] = []
         try:
-            page = await self._client().models.list()
+            page = await self._client().models.list(timeout=AUX_TIMEOUT_S)
             async for m in page:
                 mid = str(getattr(m, "id", "") or "")
                 if mid.startswith(MODEL_PREFIXES) and not any(x in mid for x in EXCLUDED):
