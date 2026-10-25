@@ -1,14 +1,18 @@
 """Widget flutuante de gravação: sempre no topo, arrastável, fundo translúcido com cantos arredondados; posição
 presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10).
-Estilos e tooltips só mudam quando o estado muda (M-12)."""
+Estilos e tooltips só mudam quando o estado muda (M-12).
+F4: selo do ao vivo ("ao vivo", "legenda atrasada", "ao vivo parou") ao lado do estado, sempre que o ao vivo foi lançado;
+com `live.in_widget`, uma linha com a última legenda (`Ana — CFO: texto`, cortada com reticências e inteira no tooltip)
+cujo clique abre a janela "Ao vivo"; com a linha, o widget ganha a altura dela sem encolher o tamanho salvo."""
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QPoint, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QShowEvent
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
@@ -20,6 +24,19 @@ if TYPE_CHECKING:
     from ..platform.base import Platform
 
 log = get_logger("ui.widget")
+LIVE_MIN_HEIGHT = 118             # F4: 96 do widget mais a linha da legenda
+CLICK_SLOP_PX = 6
+# selo por estado do ao vivo (`Controller.live_status`): texto e cor; os estados fora daqui escondem o selo
+LIVE_BADGES: dict[str, tuple[str, str]] = {
+    "starting": ("ao vivo", "#95a5a6"), "restarting": ("ao vivo", "#95a5a6"), "live": ("ao vivo", "#2ecc71"),
+    "degraded": ("legenda atrasada", "#f39c12"), "skipping": ("legenda atrasada", "#f39c12"), "crashed": ("ao vivo parou", "#e74c3c"),
+}
+
+
+def caption_text(label: str | None, text: str) -> str:
+    """"Ana — CFO: texto"; sem rótulo (nomes desligados), só o texto."""
+    text = " ".join(str(text or "").split())
+    return f"{label}: {text}" if label else text
 
 
 def _screen_rects() -> list[tuple[int, int, int, int]]:
@@ -30,6 +47,45 @@ def _screen_rects() -> list[tuple[int, int, int, int]]:
     return out
 
 
+class CaptionLine(QLabel):
+    """A última legenda numa linha: cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no
+    tooltip; um clique sem arrastar emite `clicked` (o arrasto do widget começa fora da linha)."""
+    clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.full_text = ""
+        self._press: QPoint | None = None
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_full_text(self, text: str, tip: str = "") -> None:
+        self.full_text = text
+        self.setToolTip(tip or text)
+        self._elide()
+
+    def _elide(self) -> None:
+        self.setText(self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, max(20, self.width())))
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.position().toPoint()
+        event.accept()
+
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        press, self._press = self._press, None
+        if press is not None and (event.position().toPoint() - press).manhattanLength() < CLICK_SLOP_PX:
+            self.clicked.emit()
+        event.accept()
+
+
 class RecordingWidget(QWidget):
     pause_clicked = Signal()
     mark_clicked = Signal()
@@ -38,9 +94,10 @@ class RecordingWidget(QWidget):
     cancel_clicked = Signal()
     switch_source_clicked = Signal()
     settings_requested = Signal()
+    live_clicked = Signal()               # F4: clique na linha da legenda abre a janela "Ao vivo"
     moved = Signal(QPoint)
 
-    def __init__(self, size: tuple[int, int] = (320, 96), pos: QPoint | None = None):
+    def __init__(self, size: tuple[int, int] = (320, 96), pos: QPoint | None = None, live_line: bool = False):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("recwidget")
@@ -50,11 +107,14 @@ class RecordingWidget(QWidget):
             QToolButton:checked { background: #c0392b; }
             QPushButton { color: #fff; background: #c0392b; border-radius: 6px; padding: 2px 8px; }
         """)
-        self.resize(*size)
+        self.live_line = live_line
+        width, height = size
+        self.resize(width, max(height, LIVE_MIN_HEIGHT) if live_line else height)   # o tamanho salvo nunca encolhe
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
         self._last_health: dict[str, str] = {}
         self._last_alert: tuple[str | None, bool] = (None, False)
+        self._last_live: tuple[str, str] | None = None
         self.style_changes = 0                                      # instrumentação dos testes (M-12)
 
         self.time_label = QLabel("00:00")
@@ -65,6 +125,13 @@ class RecordingWidget(QWidget):
         self.health_r = QLabel("R ●")
         self.markers_label = QLabel("")
         self.markers_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.live_badge = QLabel("")
+        self.live_badge.hide()
+        self.caption_line = CaptionLine()
+        self.caption_line.setStyleSheet("color: #ddd; font-size: 11px;")
+        self.caption_line.set_full_text("aguardando a primeira legenda…", "clique para abrir a janela Ao vivo")
+        self.caption_line.clicked.connect(self.live_clicked)
+        self.caption_line.setVisible(live_line)
 
         self.meter_l = LevelMeter(height=6)
         self.meter_r = LevelMeter(height=6)
@@ -86,6 +153,7 @@ class RecordingWidget(QWidget):
         top = QHBoxLayout()
         top.addWidget(self.time_label)
         top.addWidget(self.status_label)
+        top.addWidget(self.live_badge)
         top.addStretch(1)
         top.addWidget(self.markers_label)
         top.addWidget(self.health_l)
@@ -106,6 +174,7 @@ class RecordingWidget(QWidget):
         lay.setSpacing(4)
         lay.addLayout(top)
         lay.addLayout(meters)
+        lay.addWidget(self.caption_line)
         lay.addLayout(buttons)
         self.move(self._initial_pos(pos))
 
@@ -164,6 +233,31 @@ class RecordingWidget(QWidget):
         text = f"⚑ {markers}" if markers else ""
         if self.markers_label.text() != text:
             self.markers_label.setText(text)
+
+    # ---------------------------------------------------------------- ao vivo (F4)
+    def set_live_state(self, state: str, tip: str = "") -> None:
+        """Selo pelo estado do ao vivo (`LIVE_BADGES`); outro estado esconde. Só mexe no estilo quando muda (M-12)."""
+        badge = LIVE_BADGES.get(state)
+        key = (state, tip)
+        if key == self._last_live:
+            return
+        self._last_live = key
+        if badge is None:
+            self.live_badge.hide()
+            return
+        text, color = badge
+        self.style_changes += 1
+        self.live_badge.setText(f"● {text}")
+        self.live_badge.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 600;")
+        self.live_badge.setToolTip(tip or text)
+        self.live_badge.show()
+
+    def set_caption(self, label: str | None, text: str) -> None:
+        """A última legenda na linha (só existe com `live.in_widget`)."""
+        if not self.live_line:
+            return
+        line = caption_text(label, text)
+        self.caption_line.set_full_text(line, f"{line}\n\n(clique para abrir a janela Ao vivo)")
 
     def show_alert(self, text: str | None, can_switch: bool = False) -> None:
         if (text, can_switch) == self._last_alert:

@@ -3,7 +3,10 @@ O microfone abre uma vez só (no `showEvent`); a fonte salva é escolhida na pri
 F3 (item 4, U-018): ao sair do título ou dos participantes, com 1,5 s de debounce, uma `Task` casa os participantes com
 `people` e pede à LLM os termos prováveis; uma chamada em voo, resposta velha descartada; o campo "Termos prováveis" fica
 editável e vai para `meetings.glossary`; sem chave, aviso discreto com link para as Configurações. Os participantes esperados
-saem do casamento local mesmo sem a LLM, e uma resposta que chega depois do "Gravar" religa a chamada à reunião (F3.1 R3-11)."""
+saem do casamento local mesmo sem a LLM, e uma resposta que chega depois do "Gravar" religa a chamada à reunião (F3.1 R3-11).
+F4 (CP6): caixas "Legenda ao vivo" e "Nomes ao vivo" (a segunda só com a primeira); valor inicial = o do preset quando não
+nulo, senão `live.enabled` e `live.names`; "Salvar como preset" grava as duas; modelos ausentes viram um aviso discreto ao
+lado, com link para as Configurações, sem bloquear a gravação (o controlador grava sem ao vivo)."""
 from __future__ import annotations
 
 import functools
@@ -25,6 +28,7 @@ from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glos
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
+from .live_prepare import missing_models
 from .meters import LevelMeter
 from .sources import SourceTable
 from .tasks import run_task
@@ -113,6 +117,14 @@ class WarmupDialog(QDialog):
         self.participants_edit = QLineEdit()
         self.participants_edit.setPlaceholderText("participantes esperados, separados por vírgula")
         self.room_check = QCheckBox("Sala de reunião presencial (o microfone ouve outras pessoas)")
+        self.live_check = QCheckBox("Legenda ao vivo")
+        self.live_check.setToolTip("Legenda de quem fala durante a gravação, com 5 a 10 s de atraso (Configurações, grupo Ao vivo).")
+        self.names_check = QCheckBox("Nomes ao vivo")
+        self.names_check.setToolTip("Nome e cargo de quem tem perfil de voz na legenda (carrega o modelo de voz: mais memória).")
+        self.live_note = QLabel("")
+        self.live_note.setStyleSheet("color: #e67e22; font-size: 11px;")
+        self.live_note.linkActivated.connect(lambda _link: self._open_settings_for_live())
+        self.live_check.toggled.connect(self._live_toggled)
         self.glossary_edit = QLineEdit()
         self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a LLM sugere; edite à vontade)")
         self.glossary_status = QLabel("")
@@ -129,6 +141,11 @@ class WarmupDialog(QDialog):
         fl.addRow("Termos prováveis", self.glossary_edit)
         fl.addRow("", self.glossary_status)
         fl.addRow("", self.room_check)
+        lrow = QHBoxLayout()
+        lrow.addWidget(self.live_check)
+        lrow.addWidget(self.names_check)
+        lrow.addWidget(self.live_note, 1)
+        fl.addRow("Ao vivo", lrow)
         self._glossary_timer = QTimer(self)
         self._glossary_timer.setSingleShot(True)
         self._glossary_timer.setInterval(GLOSSARY_DEBOUNCE_MS)
@@ -157,6 +174,7 @@ class WarmupDialog(QDialog):
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._tick)
         self._silent_ticks = 0
+        self._set_live(None, None)                          # padrão das Configurações; um preset salvo sobrescreve
         self._restore_last_choice()
         self.mic_combo.currentIndexChanged.connect(lambda _: self._open_mic())   # só depois de restaurar: um open só
         self._update_src_status()
@@ -362,6 +380,28 @@ class WarmupDialog(QDialog):
         spec = self.sources.selected_spec()
         self.src_status.setText(f"selecionado: {spec.label or spec.kind}")
 
+    # ---------------------------------------------------------------- ao vivo (F4)
+    def _set_live(self, enabled: int | bool | None, names: int | bool | None) -> None:
+        """Caixas do ao vivo: o valor do preset quando não nulo, senão o padrão das Configurações."""
+        self.live_check.setChecked(bool(self.store.get(SPECS["live.enabled"]) if enabled is None else enabled))
+        self.names_check.setChecked(bool(self.store.get(SPECS["live.names"]) if names is None else names))
+        self._live_toggled(self.live_check.isChecked())
+
+    def _live_toggled(self, on: bool) -> None:
+        self.names_check.setEnabled(on)
+        self._update_live_note()
+
+    def _update_live_note(self) -> None:
+        """Aviso discreto quando faltam os modelos do ao vivo (a gravação segue sem ele, com um aviso do controlador)."""
+        missing = missing_models(self.store) if self.live_check.isChecked() else []
+        self.live_note.setText(f'modelos ausentes ({", ".join(missing)}): <a href="settings">prepare nas Configurações, Ao vivo</a>'
+                               if missing else "")
+
+    def _open_settings_for_live(self) -> None:
+        if self.on_settings is not None:
+            self.on_settings()
+        self._update_live_note()
+
     # ---------------------------------------------------------------- presets e última escolha
     def _restore_last_choice(self) -> None:
         last_preset = self.store.get_setting("warmup.last_preset_id")
@@ -420,6 +460,7 @@ class WarmupDialog(QDialog):
         self._select_mic(p.get("mic_device_id") or "", p.get("mic_device_name") or "")
         self._select_source(p["source_kind"], p.get("source_exe") or "")
         self.room_check.setChecked(bool(p.get("is_in_room")))
+        self._set_live(p.get("live_enabled"), p.get("live_names"))
 
     def _save_preset(self) -> None:
         name, ok = QInputDialog.getText(self, "Salvar preset", "Nome do preset:")
@@ -428,7 +469,8 @@ class WarmupDialog(QDialog):
         dev = self._selected_device()
         spec = self.sources.selected_spec()
         pid = self.store.upsert_preset(name.strip(), dev.id if dev else None, dev.name if dev else None,
-                                       spec.kind, spec.exe or None, is_in_room=self.room_check.isChecked())
+                                       spec.kind, spec.exe or None, is_in_room=self.room_check.isChecked(),
+                                       live_enabled=self.live_check.isChecked(), live_names=self.names_check.isChecked())
         if self.preset_combo.findData(pid) < 0:
             self.preset_combo.addItem(name.strip(), pid)
         self.preset_combo.setCurrentIndex(self.preset_combo.findData(pid))
@@ -464,5 +506,7 @@ class WarmupDialog(QDialog):
             "glossary": self.glossary_edit.text().strip() or None,
             "expected_people_json": json.dumps(sorted(ids)) if ids else None,
             "glossary_call_ids": list(self.glossary_call_ids),
+            "live_enabled": self.live_check.isChecked(),                  # F4: o controlador lê as duas (CP6)
+            "live_names": self.names_check.isChecked(),
         }
         return cfg, fields

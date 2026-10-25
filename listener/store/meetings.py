@@ -74,14 +74,21 @@ class MeetingsRepo:
         return cast(PresetRow, dict(rows[0])) if rows else None
 
     def upsert_preset(self, name: str, mic_device_id: str | None, mic_device_name: str | None, source_kind: str,
-                      source_exe: str | None, sample_rate: int = 16000, is_in_room: bool = False) -> int:
+                      source_exe: str | None, sample_rate: int = 16000, is_in_room: bool = False, *,
+                      live_enabled: bool | None = None, live_names: bool | None = None) -> int:
+        """F4: `live_enabled` e `live_names` são as caixas do warm-up; None grava nulo (padrão das Configurações) num preset
+        novo e mantém o valor guardado num preset existente."""
+        flags = tuple(None if v is None else int(bool(v)) for v in (live_enabled, live_names))
         with self.core.transaction():
             self.core.execute(
-                "INSERT INTO presets(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET mic_device_id = excluded.mic_device_id, "
-                "mic_device_name = excluded.mic_device_name, source_kind = excluded.source_kind, source_exe = excluded.source_exe, "
-                "sample_rate = excluded.sample_rate, is_in_room = excluded.is_in_room, updated_at = excluded.updated_at",
-                (name, mic_device_id, mic_device_name, str(source_kind), source_exe, int(sample_rate), int(bool(is_in_room)), _now()))
+                "INSERT INTO presets(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room, live_enabled, "
+                "live_names, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET "
+                "mic_device_id = excluded.mic_device_id, mic_device_name = excluded.mic_device_name, source_kind = excluded.source_kind, "
+                "source_exe = excluded.source_exe, sample_rate = excluded.sample_rate, is_in_room = excluded.is_in_room, "
+                "live_enabled = COALESCE(excluded.live_enabled, live_enabled), live_names = COALESCE(excluded.live_names, live_names), "
+                "updated_at = excluded.updated_at",
+                (name, mic_device_id, mic_device_name, str(source_kind), source_exe, int(sample_rate), int(bool(is_in_room)), *flags,
+                 _now()))
             return int(self.core.q("SELECT id FROM presets WHERE name = ?", (name,))[0]["id"])
 
     def delete_preset(self, preset_id: int) -> bool:

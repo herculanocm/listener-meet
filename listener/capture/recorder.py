@@ -410,10 +410,15 @@ class Recorder:
             self._post(_Flags(self.paused, muted))
             self.sink.add_event(self.meeting_id, self._ms(), EventType.MUTE if muted else EventType.UNMUTE, {"source": source})
 
-    def mark(self, note: str = "") -> int:
-        t_ms = self._ms()
+    def mark(self, note: str = "", t_ms: int | None = None, origin: str | None = None) -> int:
+        """Marcador agora ou num instante já gravado (F4 U-022 e U-023: `t_ms` da legenda ou do item do resumo parcial, com a
+        `origin` no evento); o mesmo sink e o mesmo evento `marker` que a ata da F3 lê."""
+        t_ms = self._ms() if t_ms is None else max(0, int(t_ms))
         marker_id = self.sink.add_marker(self.meeting_id, t_ms, note)
-        self.sink.add_event(self.meeting_id, t_ms, EventType.MARKER, {"note": note, "marker_id": marker_id})
+        data: dict[str, Any] = {"note": note, "marker_id": marker_id}
+        if origin:
+            data["origin"] = origin
+        self.sink.add_event(self.meeting_id, t_ms, EventType.MARKER, data)
         self.markers += 1
         return t_ms
 

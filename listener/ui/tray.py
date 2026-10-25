@@ -1,4 +1,5 @@
-"""Ícone na bandeja com estado (ocioso, gravando, pausado, salvando) e menu."""
+"""Ícone na bandeja com estado (ocioso, gravando, pausado, salvando) e menu; F4: "Ao vivo…" abre a janela das legendas
+durante a gravação (U-021)."""
 from __future__ import annotations
 
 from functools import cache
@@ -44,10 +45,11 @@ class TrayIcon(QSystemTrayIcon):
         self.act_mark = QAction("Marcador", self.menu)
         self.act_mute = QAction("Mudo", self.menu)
         self.act_stop = QAction("Parar", self.menu)
+        self.act_live = QAction("Ao vivo…", self.menu)
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
         self.act_quit = QAction("Sair", self.menu)
-        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop):
+        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(self.act_queue)
@@ -61,6 +63,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_mark.triggered.connect(controller.mark)
         self.act_mute.triggered.connect(controller.toggle_mute)
         self.act_stop.triggered.connect(controller.stop_recording)
+        self.act_live.triggered.connect(controller.open_live_window)
         self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
         self.act_quit.triggered.connect(controller.quit)
@@ -73,7 +76,7 @@ class TrayIcon(QSystemTrayIcon):
         self._apply_tip()
         recording = state in (AppState.RECORDING, AppState.PAUSED)
         self.act_record.setEnabled(state == AppState.IDLE)
-        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop):
+        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
             a.setEnabled(recording)
 
     def set_queue_tip(self, text: str) -> None:

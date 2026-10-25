@@ -151,8 +151,10 @@ class Store:
         return self.meetings.get_preset(preset_id)
 
     def upsert_preset(self, name: str, mic_device_id: str | None, mic_device_name: str | None, source_kind: str,
-                      source_exe: str | None, sample_rate: int = 16000, is_in_room: bool = False) -> int:
-        return self.meetings.upsert_preset(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room)
+                      source_exe: str | None, sample_rate: int = 16000, is_in_room: bool = False, *,
+                      live_enabled: bool | None = None, live_names: bool | None = None) -> int:
+        return self.meetings.upsert_preset(name, mic_device_id, mic_device_name, source_kind, source_exe, sample_rate, is_in_room,
+                                           live_enabled=live_enabled, live_names=live_names)
 
     def delete_preset(self, preset_id: int) -> bool:
         return self.meetings.delete_preset(preset_id)

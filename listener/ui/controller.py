@@ -8,7 +8,10 @@ F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da grava�
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
-`live_state` (estado) por sinais; com o ao vivo, a lease pede pausa ao pesado mesmo sem `pipeline.pause_on_record`."""
+`live_state` (estado) por sinais; com o ao vivo, a lease pede pausa ao pesado mesmo sem `pipeline.pause_on_record`.
+F4 L4: o widget mostra o selo do ao vivo e, com `live.in_widget`, a última legenda; o clique nela (ou "Ao vivo…" na
+bandeja) abre a janela "Ao vivo" (U-021), uma por vez, nunca sozinha (Q5); marcar uma legenda (U-022) ou um item do resumo
+parcial (U-023) passa pelo `Recorder.mark` com o instante dele, uma vez por legenda ou item na gravação."""
 from __future__ import annotations
 
 import functools
@@ -28,6 +31,7 @@ from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
 from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
 from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
+from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus
 from ..store.jobs import HELD
@@ -40,6 +44,8 @@ from .sources import SourceTable
 from .summary import SummaryDialog
 from .tasks import Task, live_threads, release, run_task
 from .transcript import TranscriptDialog
+from .live import LiveWindow, caption_key, caption_note, item_key, item_note
+from .live_prepare import shutdown_preparer
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -168,6 +174,12 @@ class Controller(QObject):
         self._live_error: dict[str, Any] | None = None
         self._live_models_warned = False
         self._live_message.connect(self._on_live_message, Qt.ConnectionType.QueuedConnection)
+        # F4 L4: widget, janela "Ao vivo" e marcadores das legendas e do parcial (chaves por gravação)
+        self.live_window: LiveWindow | None = None
+        self._marked_captions: set[tuple[Any, ...]] = set()
+        self._marked_items: set[tuple[str, str]] = set()
+        self.live_caption.connect(self._on_caption_ui)
+        self.live_state.connect(self._on_live_state_ui)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -285,13 +297,18 @@ class Controller(QObject):
             return False
         self.recorder = rec
         self.state = AppState.RECORDING
+        self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
+        self._marked_items = set()
         try:
             self._start_live(rec, fields)
         except Exception:                                # o ao vivo nunca impede a gravação
             log.exception("gravação %s segue sem ao vivo", meeting_id)
             self._set_live_status("unavailable", reason="erro")
-        self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos())
+        live_line = self.live is not None and bool(self.store.get(SPECS["live.in_widget"]))
+        self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos(), live_line=live_line)
         w = self.widget
+        w.live_clicked.connect(self.open_live_window)
+        w.set_live_state(self.live_status, self._live_badge_tip())
         w.pause_clicked.connect(self.toggle_pause)
         w.mark_clicked.connect(self.mark)
         w.mute_clicked.connect(self.toggle_mute)
@@ -383,6 +400,7 @@ class Controller(QObject):
             self.tray.set_state(AppState.SAVING)
         self._stop_mute_poller()
         self._stop_live()
+        self._end_live_window(rec.meeting_id, "gravação parada: só leitura")
         self._run_task(rec.stop, lambda result: self._on_stopped(rec, result))
 
     def _on_stopped(self, rec: Recorder, result: Any) -> None:
@@ -411,6 +429,7 @@ class Controller(QObject):
         self._timer.stop()
         self._stop_mute_poller()
         self._terminate_live()                           # antes de apagar: o filho não pode gravar numa reunião apagada
+        self._end_live_window(rec.meeting_id, "gravação cancelada (apagada): só leitura")
         rec.cancel()
         if rec.muted:
             self.platform.mic_mute().set(False)
@@ -443,6 +462,10 @@ class Controller(QObject):
             self.platform.hotkeys().stop()
         except Exception as e:
             log.debug("parar atalhos: %s", e)
+        shutdown_preparer()                              # F4: o download dos modelos não segue órfão
+        if self.live_window is not None:                 # guarda a posição antes de o banco fechar
+            with suppress(Exception):
+                self.live_window.close()
         self.store.close()
 
     def _finish(self, rec: Recorder) -> None:
@@ -857,9 +880,101 @@ class Controller(QObject):
         if recording:
             self.notify(LIVE_STOPPED_TEXT + (f"\n{reason}" if reason else ""))
 
+    # ---------------------------------------------------------------- interface do ao vivo (F4 L4)
+    def _live_badge_tip(self) -> str:
+        """Tooltip do selo: o estado em texto e o dos nomes ("nomes indisponíveis: <motivo>")."""
+        names = self.live_names_status
+        tip = {"starting": "carregando o modelo da legenda…", "restarting": "a legenda caiu: reiniciando…",
+               "live": "legenda ao vivo", "degraded": "legenda atrasada: trocou para o modelo base",
+               "skipping": "legenda atrasada: pulando trechos antigos", "crashed": "a legenda ao vivo parou; a gravação segue"}
+        text = tip.get(self.live_status, self.live_status)
+        if names and names != "ok":
+            text += f"\nnomes indisponíveis: {names}"
+        return text
+
+    def _on_caption_ui(self, msg: object) -> None:
+        if self.widget is not None and isinstance(msg, dict):
+            self.widget.set_caption(msg.get("label"), str(msg.get("text") or ""))
+
+    def _on_live_state_ui(self, _state: object) -> None:
+        if self.widget is not None:
+            self.widget.set_live_state(self.live_status, self._live_badge_tip())
+        win = self.live_window
+        if win is not None and self.recorder is not None and win.meeting_id == self.recorder.meeting_id:
+            win.set_live_state(self.live_status)
+
+    def open_live_window(self) -> LiveWindow | None:
+        """U-021: abre (ou traz à frente) a janela da gravação em curso; a de uma gravação anterior, só leitura, é trocada.
+        Fora da gravação, só mostra a que estiver aberta."""
+        rec, win = self.recorder, self.live_window
+        if rec is None or self.state == AppState.SAVING:
+            if win is not None:
+                win.show()
+                win.raise_()
+            return win
+        if win is not None and win.meeting_id != rec.meeting_id:
+            win.close()                                   # `closed` solta a referência
+            win = self.live_window = None
+        if win is None:
+            win = LiveWindow(self.store, rec.meeting_id, on_mark_caption=self.mark_caption, on_mark_item=self.mark_partial_item,
+                             marked_captions=self._marked_captions, marked_items=self._marked_items)
+            self.live_caption.connect(win.on_caption)
+            win.closed.connect(functools.partial(self._live_window_closed, win))
+            self.live_window = win
+        win.set_live_state(self.live_status)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        return win
+
+    def _live_window_closed(self, win: LiveWindow) -> None:
+        with suppress(RuntimeError, TypeError):
+            self.live_caption.disconnect(win.on_caption)
+        if self.live_window is win:
+            self.live_window = None
+        win.deleteLater()
+
+    def _end_live_window(self, meeting_id: int, text: str) -> None:
+        """Parar ou Cancelar: a janela da gravação fica aberta só para leitura."""
+        win = self.live_window
+        if win is not None and win.meeting_id == meeting_id:
+            win.set_finished(text)
+
+    def _can_mark(self, meeting_id: object) -> bool:
+        rec = self.recorder
+        return rec is not None and self.state in (AppState.RECORDING, AppState.PAUSED) and meeting_id in (None, rec.meeting_id)
+
+    def mark_caption(self, row: Any) -> tuple[bool, str]:
+        """U-022: marcador no início da legenda com "rótulo: texto" (~300 caracteres), uma vez por legenda na gravação."""
+        caption = dict(row)
+        if not self._can_mark(caption.get("meeting_id")) or self.recorder is None:
+            return False, "fora da gravação: a janela é só para leitura"
+        key = caption_key(caption)
+        if key in self._marked_captions:
+            return False, "esta legenda já virou marcador"
+        t_ms = self.recorder.mark(caption_note(caption), t_ms=int(caption.get("t_start_ms") or 0), origin="legenda")
+        self._marked_captions.add(key)
+        log.info("reunião %s: marcador de legenda em %d ms", self.recorder.meeting_id, t_ms)
+        return True, f"marcador criado em [{stamp(t_ms)}]"
+
+    def mark_partial_item(self, kind: str, item: Any, t_until_ms: int | None = None) -> tuple[bool, str]:
+        """U-023: "Decisão: ..." ou "Ação: ..." no `t_ms` do item (sem ele, no fim do parcial), uma vez por item."""
+        data = dict(item)
+        if not self._can_mark(None) or self.recorder is None:
+            return False, "fora da gravação: a janela é só para leitura"
+        key = item_key(kind, data)
+        if key in self._marked_items:
+            return False, "este item já virou marcador"
+        t = data.get("t_ms")
+        t_ms = int(t) if isinstance(t, int | float) else (int(t_until_ms) if t_until_ms is not None else None)
+        t_ms = self.recorder.mark(item_note(kind, data), t_ms=t_ms, origin="parcial")
+        self._marked_items.add(key)
+        return True, f"marcador criado em [{stamp(t_ms)}]"
+
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:
-        dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker)
+        dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
+                             recording=self.recorder is not None)
         accepted = dlg.exec() == QDialog.DialogCode.Accepted
         dlg.deleteLater()
         if accepted:

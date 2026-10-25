@@ -2,21 +2,27 @@
 log em arquivo e nível (D-033), pasta do banco; F2: grupo "Processamento" gerado da tabela (`pipeline.*`) e o token do
 Hugging Face em `providers` (Q2, CP10); F3: grupo "LLM" gerado da tabela (`llm.*`, idioma das saídas como opção, P1) e as
 sub-abas por provedor (`ProviderTabs`); o transcritor `llm` só habilita quando o modelo rápido do provedor ativo tem áudio.
+F4: grupo "Ao vivo" gerado da tabela (`live.*`) e o botão "Preparar modelos do ao vivo" (`ModelPreparer`, um download por
+vez no app inteiro, com progresso e o estado da pasta), desabilitado durante a gravação; o diálogo se desconecta do
+preparador ao fechar, e o download segue.
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QListWidget, QMessageBox, QProgressBar, QPushButton, QScrollArea, QVBoxLayout,
+                               QWidget)
 
-from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES, PIPELINE_KEYS, SPECS,
-                               validate_setting)
+from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LIVE_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES,
+                               PIPELINE_KEYS, SPECS, validate_setting)
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
+from .live_prepare import ModelPreparer, models_status_text, preparer
 from .providers import ProviderTabs
 
 if TYPE_CHECKING:
@@ -38,11 +44,14 @@ def audio_cost_text(store: Store) -> str:
 
 class SettingsDialog(QDialog):
     def __init__(self, store: Store, platform: Platform, hotkey_errors: dict[str, str] | None = None,
-                 parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None):
+                 parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None, *, recording: bool = False,
+                 model_preparer: ModelPreparer | None = None):
         super().__init__(parent)
         self.store = store
         self.platform = platform
         self.hotkey_errors = hotkey_errors or {}
+        self.recording = recording
+        self.preparer = model_preparer or preparer()
         self.setWindowTitle("Configurações")
         self.setMinimumWidth(680)
         self.setMinimumHeight(560)
@@ -86,6 +95,28 @@ class SettingsDialog(QDialog):
         llmf.addRow(self.provider_tabs)
         lay.addWidget(llm)
 
+        live = QGroupBox("Ao vivo (F4: vale na próxima gravação; o intervalo do resumo parcial vale já)")
+        livef = QFormLayout(live)
+        for key in LIVE_KEYS:
+            livef.addRow(SPECS[key].label, self._row(key))
+        self.prepare_btn = QPushButton("Preparar modelos do ao vivo")
+        self.prepare_btn.setToolTip("Baixa os modelos small e base da legenda ao vivo para a pasta de modelos (fora da gravação).")
+        self.prepare_btn.clicked.connect(self.prepare_models)
+        self.prepare_bar = QProgressBar()
+        self.prepare_bar.setRange(0, 100)
+        self.prepare_bar.setTextVisible(True)
+        self.prepare_status = QLabel("")
+        self.prepare_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.prepare_status.setWordWrap(True)
+        prow = QHBoxLayout()
+        prow.addWidget(self.prepare_btn)
+        prow.addWidget(self.prepare_bar, 1)
+        livef.addRow(prow)
+        livef.addRow("Modelos", self.prepare_status)
+        lay.addWidget(live)
+        self.preparer.changed.connect(self._on_prepare_changed)
+        self._on_prepare_changed(self.preparer.state)        # download em curso de uma abertura anterior: segue mostrando
+
         lg = QGroupBox("Log (aplica agora)")
         lgf = QFormLayout(lg)
         self.log_path = QLineEdit(store.get_setting("log.path") or str(store.default_log_path()))
@@ -128,6 +159,37 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+
+    # ---------------------------------------------------------------- ao vivo (F4)
+    def prepare_models(self) -> None:
+        if self.recording or self.preparer.running:
+            return
+        self.preparer.start(self.store, self.platform.spawn_child)
+
+    def _on_prepare_changed(self, state: Any) -> None:
+        st = dict(state or {})
+        running = st.get("state") == "running"
+        self.prepare_btn.setEnabled(not running and not self.recording)
+        self.prepare_bar.setVisible(running or st.get("state") == "done")
+        self.prepare_bar.setValue(round(float(st.get("fraction") or 0.0) * 100))
+        if running:
+            model, status = str(st.get("model") or ""), str(st.get("status") or "iniciando…")
+            text = f"{model}: {status}…" if model and status == "baixando" else (f"{model}: {status}" if model else status)
+        elif st.get("state") == "error":
+            text = f"falhou: {st.get('message') or 'erro'} · {models_status_text(self.store)}"
+        else:
+            text = models_status_text(self.store)
+        if self.recording and not running:
+            text += " · prepare depois de parar a gravação"
+            self.prepare_btn.setToolTip("Desabilitado durante a gravação: o download disputaria a CPU e a rede com a reunião.")
+        self.prepare_status.setText(text)
+
+    @override
+    def done(self, result: int) -> None:
+        """Aceitar, cancelar ou fechar: solta o preparador (o download segue; uma próxima abertura mostra o progresso)."""
+        with suppress(RuntimeError, TypeError):
+            self.preparer.changed.disconnect(self._on_prepare_changed)
+        super().done(result)
 
     def _hotkey_status(self, key: str) -> str:
         combo = self.store.get_setting(key)
