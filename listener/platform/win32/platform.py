@@ -86,6 +86,24 @@ def disable_power_throttling(pid: int) -> bool:
     return ok
 
 
+def _own_process_kernel32() -> Any:
+    """kernel32 com as assinaturas das chamadas sobre o próprio processo. Sem `restype`, o pseudo-handle de
+    `GetCurrentProcess` (-1) volta como `c_long` e chega truncado (0xFFFFFFFF) no Windows de 64 bits: `SetPriorityClass` e
+    `GetProcessMemoryInfo` falhavam com ERROR_INVALID_HANDLE (visto no Windows em 25/10). Instância própria, como acima."""
+    if sys.platform != "win32":
+        raise OSError("kernel32 só existe no Windows")
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.GetCurrentProcess.argtypes = ()
+    k32.SetPriorityClass.restype = wintypes.BOOL
+    k32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+    k32.K32GetProcessMemoryInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessMemoryCounters), wintypes.DWORD)
+    return k32
+
+
 def _com_init() -> None:
     try:
         import comtypes
@@ -663,24 +681,28 @@ class Win32Platform(Platform):
         if sys.platform != "win32":
             return process.lower_own_priority()
         try:
-            k32 = ctypes.windll.kernel32
-            return bool(k32.SetPriorityClass(k32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
+            k32 = _own_process_kernel32()
+            if k32.SetPriorityClass(k32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS):
+                return True
+            log.info("SetPriorityClass falhou (erro %s)", ctypes.get_last_error())
         except Exception as e:
-            log.debug("SetPriorityClass: %s", e)
-            return False
+            log.info("SetPriorityClass: %s", e)
+        return False
 
     @override
     def memory_rss(self) -> int | None:
         if sys.platform != "win32":
             return process.memory_rss()
         try:
+            k32 = _own_process_kernel32()
             pmc = ProcessMemoryCounters()
             pmc.cb = ctypes.sizeof(pmc)
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
-            return int(pmc.WorkingSetSize) if ok else None
+            if k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+                return int(pmc.WorkingSetSize)
+            log.debug("GetProcessMemoryInfo falhou (erro %s)", ctypes.get_last_error())
         except Exception as e:
             log.debug("GetProcessMemoryInfo: %s", e)
-            return None
+        return None
 
     @override
     def config_dir(self) -> Path:

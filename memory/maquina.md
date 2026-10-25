@@ -5,10 +5,15 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 `platform.release()` (e `/mnt/c`) = WSL; `linux` sem isso = Linux nativo (em 25/10, o Xeon abaixo).
 
 ## Ambiente
-- Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`); venv em
-  `C:\Users\<usuário>\dev\listener-meet\.venv`; modelos em `C:\Users\<usuário>\listener-meet\models\`; áudio sintético de
-  calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em `C:\Users\<usuário>\listener-meet\f0\`.
-- CPU Intel 14 núcleos (família 6, modelo 181); torch 2.8.0+cpu com 12 threads; sem CUDA.
+- Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`; o `python` do
+  PATH é o alias do instalador em WindowsApps e abre esse mesmo); checkout em `C:\dev\listener-meet` com o venv do projeto
+  em `.venv` dentro dele (`[dev,win32,llm]`, sem ML, 25/10); o venv do F0 em `C:\Users\<usuário>\dev\listener-meet\.venv`
+  tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos em `C:\Users\<usuário>\listener-meet\models\`;
+  áudio sintético de calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em
+  `C:\Users\<usuário>\listener-meet\f0\`. SQLite do Python do python.org: 3.49.1 com FTS5 (25/10).
+- CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch
+  2.8.0+cpu com 12 threads; sem CUDA. Suíte: ~35 s com 349 testes (50 s a frio, 25/10). Importar os SDKs a quente
+  (`-X importtime`): google.genai 0,8 s, openai 0,9 s, anthropic 4,0 s.
 - Versões: whisperx 3.8.6, faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, PySide6 6.12.0, sqlite-vec 0.1.9
   (SQLite 3.49.1), proc-tap 1.1.1, sounddevice 0.5.6, soundfile 0.14.0, PyAudioWPatch 0.2.12.9, pynput 1.8.2,
   pycaw 20260927, google-genai 2.33.0, openai 3.37.0, anthropic 2.3.0.
@@ -42,6 +47,8 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - Dispositivos vistos: mic "Grupo de microfones (Tecnologia Intel Smart Sound...)" (WASAPI); loopback "Altofalantes
   (Realtek(R) Audio) [Loopback]" (48 kHz, 2 canais).
 - Console do Windows não é UTF-8 por padrão: `sys.stdout.reconfigure(encoding="utf-8")` (feito em `__main__.py`).
+- ctypes no Windows de 64 bits: sem `restype`, `GetCurrentProcess()` volta `c_long` (-1) e o pseudo-handle chega
+  truncado (0xFFFFFFFF), com erro 6 (handle inválido). Sempre `WinDLL` próprio com `restype` e `argtypes` em `HANDLE` (25/10).
 - Selftest da F1 (mic + loopback do sistema): L e R contínuos, desvio de 19 ms na duração, sem buracos; cinco atalhos
   registram; sessões de áudio e mudo do mic respondem.
 

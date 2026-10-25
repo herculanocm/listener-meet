@@ -65,7 +65,9 @@ def test_worker_command_env_and_memory():
     env = process.worker_env(6, {"PATH": "/x"})
     assert env["OMP_NUM_THREADS"] == env["MKL_NUM_THREADS"] == "6" and env["CT2_VERBOSE"] == "0" and env["PATH"] == "/x"
     assert process.worker_env(0)["OMP_NUM_THREADS"] == "1"
-    rss = process.memory_rss()
+    from listener.pipeline.worker import _platform_hooks
+
+    rss = _platform_hooks()[1]()                           # o caminho do worker: no win32 é o da camada de plataforma
     if sys.platform in ("linux", "win32"):
         assert rss is not None and rss > 10_000_000                                          # R2-27: aqui tem de medir
     else:

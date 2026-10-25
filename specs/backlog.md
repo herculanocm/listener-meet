@@ -2,7 +2,9 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (25/10/2026, sessão interrompida; tudo commitado, `main` à frente do `origin/main`: push do dono)
+## Onde paramos (25/10/2026, à noite no Windows nativo; tudo commitado; push do dono)
+- **Windows:** itens 1 e 2 de "Verificar no Windows" feitos em 25/10 (venv no checkout, suíte verde); o resto segue a
+  ordem de lá, com o R7 antes do item 8.
 - **Próximo passo, comece aqui:** a F5 (busca, histórico e chat global; D-047, código liberado) tem L0 a L5 commitados
   (`d9a94e5` a `5c0d458`) e as revisões do L0 ao L3 corrigidas (`beb9fb4`, `c9ec043`). Faltam as 7 correções da revisão
   do L4 e do L5 (R7-01 a R7-07; três médias: Q9 furado, engasgo do player, saída que aborta o processo) e o fechamento.
@@ -16,15 +18,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
 ## Estado em 25/10/2026
 - Código: F1, F1.1, F1.2, F2, F3, F3.1 e F4 implementadas, **F5 até o L5** (faltam as correções R7): 348 testes mais 5
-  pulados no Linux de desenvolvimento (~22 s; `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do
-  truststore com clientes reais), ruff e mypy limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e
-  3.13 mais uma célula com o extra `llm`. Esquema v8. Nada do app importa torch, ML nem os SDKs de LLM (teste estático).
+  pulados no Linux de desenvolvimento (~22 s) e 349 mais 4 no Windows (~35 s); `LISTENER_SDK_TESTS=1` liga os de
+  transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy limpos (Linux e `--platform win32`),
+  CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`. Esquema v8. Nada do app importa torch, ML nem os SDKs de LLM (teste estático).
   Whisper, pyannote (F2 L5), os três adaptadores de LLM e o processo ao vivo real foram escritos às cegas, contra
   transporte simulado ou num venv à parte sem torch: só rodam de verdade no Windows com o token do Hugging Face (B4) e a
   chave do Gemini (B13).
 - Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 e F5 em
-  lotes, ajustes e revisões); branch `main`; remoto `origin` público no GitHub (o dono faz o push; em 25/10 estava atrás
-  do `main` local); sem stash. Commit a cada grande alteração (CP16).
+  lotes, ajustes e revisões); branch `main`; remoto `origin` público no GitHub (o dono faz o push; em 25/10 à noite o
+  checkout do Windows estava igual ao `origin/main`, em `45a4f3d`); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 em implementação** (D-047; L0 a L5
@@ -54,9 +56,14 @@ D-044) · B16 (F5 aprovada, D-047).
 ## Verificar no Windows (rodar na ordem quando a sessão estiver no Windows nativo)
 Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item concluído ganha a data; números em `decisoes.md`
 (Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
-1. Checkout no último `main` (o dono faz push de onde desenvolveu e pull aqui); venv 3.12 em
-   `C:\Users\<usuário>\dev\listener-meet\.venv`; `pip install -e .[dev,win32,llm]` (mais `[pipeline]` nos itens 5 e 7).
-2. `python -m pytest -q`: aqui rodam também os testes só do Windows (`spawn_child` abaixo do normal, EcoQoS).
+1. Checkout no último `main` (o dono faz push de onde desenvolveu e pull aqui); venv 3.12; `pip install -e .[dev,win32,llm]`
+   (mais `[pipeline]` nos itens 5 e 7). **Feito em 25/10:** checkout em `C:\dev\listener-meet`, venv novo em `.venv` dentro
+   dele, sem ML, como o CI (239 s com o cache do pip). Com `[pipeline]` no mesmo venv, o teste do worker sem o extra
+   (R2-27) deixa de valer: ajustar no item 5.
+2. `python -m pytest -q`: aqui rodam também os testes só do Windows (`spawn_child` abaixo do normal, EcoQoS). **Feito em
+   25/10:** 349 passaram e 4 pulados (os de `LISTENER_SDK_TESTS`, que ligados também passam, truststore incluso) em
+   ~35 s (50 s a frio); ruff e mypy limpos. Duas falhas reais corrigidas: o pseudo-handle de `GetCurrentProcess` chegava
+   truncado no Windows de 64 bits e o worker ficava sem prioridade baixa e sem RSS por etapa.
 3. `python -m listener --selftest`, depois `python -m listener`: assistente, gravação curta, fila, revisão e
    Configurações (B1); olhar DPI, bandeja do Windows 11 e tempo de abertura; a LLM corrige o que aparecer.
 4. G1 (B2): três reuniões reais com headset em duas plataformas; `python -m listener --check <pasta do banco>` (deriva,
@@ -89,8 +96,8 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
   com apagar reunião); o filtro de pessoa varre `rag_chunks` (~35 ms a cada 20 mil trechos) e `vector_version` conta o
   índice a cada busca: medir com o banco real.
 - Suíte acima da meta de 8 s: ~22 s no Linux de desenvolvimento no L5 da F5 (348 testes; ~17,5 s com 270 na F4; o Xeon
-  de 2,1 GHz pesa). Medir no Windows; se seguir acima, separar os testes de subprocesso e os de interface em
-  jobs próprios e ver o custo do `gc.collect()` por teste de interface.
+  de 2,1 GHz pesa) e ~35 s no Windows (349 testes, 25/10; 50 s a frio). Separar os testes de subprocesso e os de
+  interface em jobs próprios e ver o custo do `gc.collect()` por teste de interface.
 - F2 no Windows (B1/B4): o worker pesado carrega o CTranslate2 (Whisper) antes do torch (pyannote), a ordem inversa à do
   F0; se aparecer "OMP: Error #15" (dois `libiomp5md.dll`), importar o torch antes, como o processo ao vivo já faz.
 - F4: o eco do ao vivo usa o limiar do aviso (`capture.echo_corr_min`, 0,25); calibrar no G4 sem headset.
