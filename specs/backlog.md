@@ -9,8 +9,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   parada de emergência no logoff. O que só o Windows verifica está na seção Implementação da F1.2: `--selftest` e B1.
 - Git: commits em 24/10 (F1 com docs compactos; F1.1; CP16; CP17; F1.2 em cinco commits); branch `main`; sem remoto.
   Commit a cada grande alteração (CP16).
-- Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1 e F1.2 implementadas · F2
-  **aprovada** (D-036; item 1 revisado pela F1.2), código depois do G1 · F3 a F6 rascunho inicial · F7 futuro. Licença MIT.
+- Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1 e F1.2 implementadas · F2 **em
+  revisão** (revisão de arquitetura de 24/10 incorporada: 24 lacunas, 17 decisões, 14 riscos; B11) · F3 a F6 rascunho
+  inicial · F7 futuro. Licença MIT.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -25,6 +26,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B2 | gate G1: 3 reuniões reais com headset em 2 plataformas; `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
 | B4 | `HF_TOKEN` no Windows com os termos dos modelos pyannote aceitos | medir pyannote (F0) e toda a F2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
+| B11 | reaprovar `features/F2-pipeline-perfis.md` (P1 a P6; padrões propostos) depois da revisão de arquitetura de 24/10 | código da F2 (lotes L1 a L7) |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039).
@@ -32,7 +34,8 @@ B10 (F1.2 aprovada em bloco, D-039).
 ## Ordem sugerida das próximas sessões
 1. Dono roda o `--selftest` e o app no Windows (B1); LLM corrige o que aparecer.
 2. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
-3. Dono define o token (B4); LLM mede o pyannote, registra, e implementa a F2 como aprovada; G2 nas gravações do G1.
+3. Dono reaprova a F2 (B11) e define o token (B4); agente implementa L1 a L6 com commit por lote e revisor no diff; LLM
+   mede o pyannote e registra; G2 nas gravações do G1.
 4. Detalhar e aprovar a F3; e assim por diante.
 
 ## Dívidas técnicas

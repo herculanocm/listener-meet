@@ -51,6 +51,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
+| P24 | F2 reaprovação (P1 a P6 da spec): diarizar antes de transcrever; worker segue com o app fechado; reforço automático do perfil do usuário pelo L; participantes como desempate; plano B se pyannote passar de 0,8×; perfil de trecho = turno do job | sim para tudo; plano B = aceitar até 2× |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |
