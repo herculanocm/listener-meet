@@ -305,7 +305,7 @@ def test_recording_interrupts_a_model_download_in_progress(qtbot, qapp, store, p
     prep = ModelPreparer()
     gate = threading.Event()
     child = ThreadChild(_prepare_target(store.base_dir, gate, tmp_path / "modelos"), pid=7100)
-    assert prep.start(store, lambda argv, env=None: child)
+    assert prep.start(store, lambda argv, env: child)
     qtbot.waitUntil(lambda: prep.state.get("model") == "small", timeout=5000)
     monkeypatch.setattr(ctl, "preparer", lambda: prep)
     c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
