@@ -199,7 +199,7 @@ class Controller(QObject):
             return
         self._warmup_open = True
         try:
-            dlg = WarmupDialog(self.platform, self.store)
+            dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 cfg, fields = dlg.result_config()
                 self.start_recording(cfg, fields)
@@ -212,7 +212,10 @@ class Controller(QObject):
             QMessageBox.warning(None, "listener-meet", "Configuração de captura inválida:\n" + "\n".join(errors))
             return False
         meeting_id = self.store.create_meeting(fields.get("title"), fields.get("platform"), fields.get("preset_id"),
-                                               fields.get("participants"), fields.get("is_in_room", False))
+                                               fields.get("participants"), fields.get("is_in_room", False),
+                                               glossary=fields.get("glossary"), expected_people_json=fields.get("expected_people_json"))
+        if fields.get("glossary_call_id"):                                   # a chamada do glossário nasceu sem reunião (F3A-11)
+            self.store.llm_calls.set_meeting(int(fields["glossary_call_id"]), meeting_id)
         log.info("gravação %s iniciada: mic=%s fonte=%s", meeting_id,
                  cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.label or cfg.source.kind)
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
@@ -629,7 +632,7 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:
-        dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget)
+        dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
             from .app import attach_log

@@ -82,3 +82,24 @@ class LlmJobConfig:
     @property
     def ready(self) -> bool:
         return bool(self.provider_id and self.fast_model)
+
+
+def audio_capable(store: Store) -> bool:
+    """`pipeline.transcriber = llm` só com provedor ativo com chave cujo modelo rápido tem `AUDIO_IN` (F3 item 9, F3A-10):
+    capacidade pelo cache de `list_models()` em `providers.models_json`, senão pela tabela do projeto."""
+    from .models_table import PROVIDER_CAPABILITIES, model_info
+    from .types import Capability
+
+    row = store.providers.active_with_key("llm")
+    if row is None:
+        return False
+    cfg = LlmJobConfig.from_store(store, str(row["id"]))
+    if not cfg.ready:
+        return False
+    caps = None
+    for m in store.providers.models(cfg.provider_id):
+        if str(m.get("id")) == cfg.fast_model and isinstance(m.get("capabilities"), list):
+            caps = frozenset(Capability(c) for c in m["capabilities"] if c in Capability.__members__.values())
+    if caps is None:
+        caps = model_info(cfg.provider_kind, cfg.fast_model).capabilities
+    return Capability.AUDIO_IN in caps and Capability.AUDIO_IN in PROVIDER_CAPABILITIES[ProviderKind(cfg.provider_kind)]

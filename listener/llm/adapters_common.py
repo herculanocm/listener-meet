@@ -124,6 +124,31 @@ async def canary(provider: LLMProvider, model: str) -> ConnectionTest:
     return ConnectionTest(True, now_ms() - t0, comp.model or model)
 
 
+FRIENDLY_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("getaddrinfo", "name or service not known", "nodename nor servname", "temporary failure in name resolution", "11001"),
+     "DNS: o nome do provedor não resolveu. Sem rede, ou o proxy da empresa precisa ser informado em Configurações > LLM > Proxy."),
+    (("407", "proxy authentication"), "Proxy pediu autenticação (407): informe usuário e senha na URL do proxy em Configurações > LLM."),
+    (("certificate_verify_failed", "certificate verify failed", "ssl", "tls", "self signed"),
+     ("TLS: o certificado não foi aceito (inspeção TLS da empresa?). Ligue \"certificados do sistema\" ou aponte o PEM em "
+      "Configurações > LLM.")),
+    (("401", "invalid api key", "api key not valid", "authentication", "unauthorized", "permission_denied", "403"),
+     "Chave recusada pelo provedor: confira a chave nesta aba."),
+    (("429", "quota", "rate limit", "resource_exhausted"), "Limite de uso do provedor (429): espere um pouco ou confira o plano da conta."),
+    (("timed out", "timeout", "tempo esgotado"), "Tempo esgotado: rede lenta ou bloqueada (EDR?); tente de novo ou pelo worker."),
+    (("not found", "404", "no such model", "does not exist"), "Modelo não encontrado: escolha outro em \"listar modelos\"."),
+)
+
+
+def friendly_error(text: str | None) -> str:
+    """Erro técnico -> frase em PT-BR com a dica da configuração (F3A-14); o texto original segue em seguida, redigido."""
+    raw = redact.GLOBAL.redact(text or "")
+    low = raw.lower()
+    for needles, hint in FRIENDLY_HINTS:
+        if any(n in low for n in needles):
+            return f"{hint} ({raw[:200]})" if raw else hint
+    return raw or "falha desconhecida"
+
+
 def has_audio(req: Request) -> bool:
     return any(m.audio for m in req.messages)
 

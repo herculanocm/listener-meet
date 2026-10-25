@@ -27,7 +27,7 @@ from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_p
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
-from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names
+from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids
 from .stitch import stitch
 from .types import (AudioWindow, DiarizationWindow, JobConfig, TranscriptWindow, Turn, Word, decode_diarization, decode_transcript,
                     encode_diarization, encode_transcript, pack_artifact, unpack_artifact)
@@ -49,9 +49,18 @@ MIN_LANGUAGE_PROB = 0.5
 __all__ = ["JobCancelledError", "JobRunner", "StepTiming", "build_prompt", "update_rtf"]    # nomes da F2 continuam aqui
 
 
-def build_prompt(glossary: str, participants: str | None, title: str | None, previous: Sequence[Word]) -> str:
-    """Prompt fixo (glossário, participantes, título) cortado a ~150 tokens, mais as últimas ~60 palavras da janela anterior."""
-    fixed_parts = [p.strip() for p in (glossary, participants or "", title or "") if p and p.strip()]
+def build_prompt(glossary: str, participants: str | None, title: str | None, previous: Sequence[Word],
+                 llm_glossary: str | None = None) -> str:
+    """Prompt fixo (glossário da LLM primeiro, depois o fixo, participantes e título, sem termos repetidos) cortado a ~150
+    tokens, mais as últimas ~60 palavras da janela anterior (F3A-12: o mais específico sobrevive ao corte)."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    for source in (llm_glossary or "", glossary or ""):
+        for term in (t.strip() for t in source.replace(";", ",").split(",")):
+            if term and term.casefold() not in seen:
+                seen.add(term.casefold())
+                terms.append(term)
+    fixed_parts = [p.strip() for p in (", ".join(terms), participants or "", title or "") if p and p.strip()]
     fixed = " ".join(" ".join(fixed_parts).split()[:PROMPT_WORDS_FIXED])
     context = " ".join(w.text.strip() for w in previous[-PROMPT_WORDS_CONTEXT:] if w.text.strip())
     return f"{fixed} {context}".strip() if fixed or context else ""
@@ -363,7 +372,8 @@ class JobRunner(BaseJobRunner):
         model = model or self.deps.embedder().model
         profiles = self._profile_refs(model)
         expected = expected_names(self.meeting.get("expected_participants"))
-        matcher = ProfileMatcher(self.config.threshold, self.config.margin, expected=expected)
+        matcher = ProfileMatcher(self.config.threshold, self.config.margin, expected=expected,
+                                 expected_ids=expected_person_ids(self.meeting.get("expected_people_json")))
         results = {r.label: r for r in matcher.match(data, profiles)}
         rows = [ClusterInsert(self.meeting_id, self.job_id, channel, c.label, c.speech_ms, c.centroid, model, results[c.label].status,
                               results[c.label].person_id, results[c.label].similarity, results[c.label].margin) for c in data]
@@ -400,7 +410,8 @@ class JobRunner(BaseJobRunner):
                 tw = TranscriptWindow(w.idx, w.t0_ms, w.t1_ms, (), overlap_ms=w.overlap_ms)
             else:
                 transcriber = self.deps.transcriber()
-                prompt = build_prompt(self.config.glossary, self.meeting.get("expected_participants"), self.meeting.get("title"), previous)
+                prompt = build_prompt(self.config.glossary, self.meeting.get("expected_participants"), self.meeting.get("title"), previous,
+                                      self.meeting.get("glossary"))
                 t0 = time.perf_counter()
                 tw = transcriber.transcribe(w, language=self.language, initial_prompt=prompt)
                 timing = self._timing(step, transcriber.name)

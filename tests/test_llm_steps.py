@@ -360,3 +360,23 @@ def test_pure_helpers_blocks_revision_guard_and_config():
     cfg = LlmJobConfig.from_json(raw)
     assert cfg.ready and cfg.params == {"top_p": 1} and "api_key" not in cfg.to_json() and LlmJobConfig.from_json("lixo") == LlmJobConfig()
     assert cfg.model_for(strong=True) == "f" and LlmJobConfig.from_json(cfg.to_json()) == cfg
+
+
+def test_test_job_via_worker_records_canary_call(platform, store):
+    """"Testar pelo worker" (F3 item 12): job `llm` de tarefa `test` sem job pai; `llm_calls` ganha a linha do canário."""
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    assert llm_steps.enqueue_test_job(store) is not None
+    runner, status, fake = _run_llm(store)
+    assert status == JobStatus.DONE and [r.task for r in fake.requests] == [] and runner.parent_job_id == 0
+    calls = store.llm_calls.list_for_meeting(mid)
+    assert len(calls) == 1 and calls[0]["task"] == "test" and calls[0]["strategy"] == "canary" and calls[0]["status"] == "ok"
+    assert llm_steps.enqueue_test_job(store, mid)
+    bad = FakeProvider()
+    bad.fail_next(TransientError("sem rede"), LlmTask.TEST)
+    runner, status, _ = _run_llm(store, bad)
+    assert status == JobStatus.ERROR and "teste de conexão falhou: sem rede" in store.jobs.get(runner.job_id)["error"]
+    with Store(store.base_dir) as empty:
+        empty._x("DELETE FROM meetings")
+        assert llm_steps.enqueue_test_job(empty) is None                                                   # a fila é por reunião

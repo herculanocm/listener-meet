@@ -1,0 +1,282 @@
+"""Sub-abas de provedor nas Configurações (CP8, CP10, F3 item 12): Gemini, GPT e Claude, cada uma com a chave em texto aberto,
+modelo rápido e forte escolhidos de `list_models()` (cache em `providers.models_json`), parâmetros (JSON), "testar conexão"
+numa `Task` (latência, modelo, erro traduzido), "testar pelo worker" (job `llm` de tarefa `test`), preços editáveis
+(`llm_prices`) e o gasto do mês; acima das abas, o provedor ativo para texto e para embeddings (a Anthropic não oferece
+embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor escolhido (CP1). Nada aqui importa SDK."""
+from __future__ import annotations
+
+import asyncio
+import functools
+import json
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
+                               QTabWidget, QVBoxLayout, QWidget)
+
+from ..llm.adapters_common import friendly_error
+from ..llm.costs import fmt_usd
+from ..llm.models_table import DEFAULT_EMBED_MODELS, DEFAULT_MODELS, PROVIDER_CAPABILITIES
+from ..llm.registry import NetworkConfig, load_provider
+from ..llm.types import Capability, ConnectionTest, ModelInfo, ProviderKind
+from ..log import get_logger
+from ..store.core import _now
+from ..store.providers import LLM_KINDS
+from .tasks import run_task
+
+if TYPE_CHECKING:
+    from ..store import Store
+    from ..store.providers import ProviderRow
+
+log = get_logger("ui.providers")
+
+TITLES = {"gemini": "Gemini (Google)", "openai": "GPT (OpenAI)", "anthropic": "Claude (Anthropic)"}
+PRICE_COLUMNS = ("Modelo (id ou prefixo)", "Entrada US$/M", "Saída US$/M", "Cache US$/M", "Áudio US$/M")
+SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é enviado ao provedor escolhido. Áudio só sai com a opção ligada."
+
+
+def test_connection(kind: str, api_key: str, model: str, net: NetworkConfig) -> ConnectionTest:
+    """Roda numa `Task`: cliente criado e fechado dentro do `asyncio.run()` (contrato "Decoradores e registro")."""
+    async def go() -> ConnectionTest:
+        provider = load_provider(kind, api_key, net)
+        try:
+            return await provider.test_connection(model)
+        finally:
+            await provider.aclose()
+    return asyncio.run(go())
+
+
+def list_models(kind: str, api_key: str, net: NetworkConfig) -> tuple[ModelInfo, ...]:
+    async def go() -> tuple[ModelInfo, ...]:
+        provider = load_provider(kind, api_key, net)
+        try:
+            return await provider.list_models()
+        finally:
+            await provider.aclose()
+    return asyncio.run(go())
+
+
+def models_cache(infos: tuple[ModelInfo, ...]) -> list[dict[str, Any]]:
+    return [{"id": m.id, "display_name": m.display_name, "input_limit": m.input_limit, "output_limit": m.output_limit,
+             "capabilities": sorted(str(c) for c in m.capabilities)} for m in infos]
+
+
+class ProviderTab(QWidget):
+    def __init__(self, store: Store, row: ProviderRow, on_launch: Callable[[bool], Any] | None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.store = store
+        self.pid = str(row["id"])
+        self.kind = ProviderKind(str(row["kind"]))
+        self.on_launch = on_launch
+        self.last_test: ConnectionTest | None = None
+        self.last_models: tuple[ModelInfo, ...] = ()
+        self.key = QLineEdit(str(row.get("api_key") or ""))
+        self.key.setPlaceholderText("chave de API (fica no banco do app, em texto aberto; CP10)")
+        self.fast = QComboBox()
+        self.strong = QComboBox()
+        for combo in (self.fast, self.strong):
+            combo.setEditable(True)
+        defaults = DEFAULT_MODELS[self.kind]
+        self._fill_models([m["id"] for m in store.providers.models(self.pid)] or list(defaults))
+        self.fast.setCurrentText(str(row.get("fast_model") or defaults[0]))
+        self.strong.setCurrentText(str(row.get("strong_model") or defaults[1]))
+        self.embed_model = QLineEdit(str(row.get("model") or DEFAULT_EMBED_MODELS.get(self.kind, "")))
+        self.embed_model.setEnabled(Capability.EMBEDDINGS in PROVIDER_CAPABILITIES[self.kind])
+        self.params = QLineEdit(str(row.get("params") or ""))
+        self.params.setPlaceholderText('JSON opcional, ex.: {"top_p": 0.9}')
+        self.btn_models = QPushButton("Listar modelos")
+        self.btn_test = QPushButton("Testar conexão")
+        self.btn_worker = QPushButton("Testar pelo worker")
+        self.btn_models.clicked.connect(self.refresh_models)
+        self.btn_test.clicked.connect(self.run_test)
+        self.btn_worker.clicked.connect(self.test_via_worker)
+        self.status = QLabel(self._tested_text(row))
+        self.status.setWordWrap(True)
+        self.prices = QTableWidget(0, len(PRICE_COLUMNS))
+        self.prices.setHorizontalHeaderLabels(list(PRICE_COLUMNS))
+        self.prices.horizontalHeader().setStretchLastSection(True)
+        self.prices.setMaximumHeight(160)
+        self._fill_prices()
+        self.month = QLabel("")
+        self.refresh_month()
+        warn = QLabel(SEND_WARNING)
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #e67e22;")
+        form = QFormLayout()
+        form.addRow("Chave", self.key)
+        form.addRow("Modelo rápido", self.fast)
+        form.addRow("Modelo forte", self.strong)
+        form.addRow("Modelo de embeddings", self.embed_model)
+        form.addRow("Parâmetros", self.params)
+        buttons = QHBoxLayout()
+        for b in (self.btn_models, self.btn_test, self.btn_worker):
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addLayout(buttons)
+        lay.addWidget(self.status)
+        lay.addWidget(QLabel("Preços por milhão de tokens (sementes do projeto; confira contra a fatura):"))
+        lay.addWidget(self.prices)
+        lay.addWidget(self.month)
+        lay.addWidget(warn)
+
+    # ---------------------------------------------------------------- leitura
+    @staticmethod
+    def _tested_text(row: ProviderRow) -> str:
+        if row.get("tested_at"):
+            return f"último teste em {str(row['tested_at'])[:16].replace('T', ' ')}: {row.get('latency_ms') or '?'} ms"
+        return "ainda não testado"
+
+    def _fill_models(self, ids: list[str]) -> None:
+        for combo in (self.fast, self.strong):
+            current = combo.currentText()
+            combo.clear()
+            combo.addItems(ids)
+            if current:
+                combo.setCurrentText(current)
+
+    def _fill_prices(self) -> None:
+        rows = self.store.providers.list_prices(self.pid)
+        self.prices.setRowCount(len(rows) + 1)                      # última linha vazia para um modelo novo
+        for r, p in enumerate(rows):
+            for c, value in enumerate((p["model"], p["input_usd_m"], p["output_usd_m"], p["cached_usd_m"], p["audio_usd_m"])):
+                self.prices.setItem(r, c, QTableWidgetItem(str(value)))
+        for c in range(len(PRICE_COLUMNS)):
+            self.prices.setItem(len(rows), c, QTableWidgetItem(""))
+
+    def refresh_month(self) -> None:
+        self.month.setText(f"Gasto do mês neste provedor: {fmt_usd(self.store.llm_calls.month_total(provider=self.pid))} · "
+                           f"total do mês: {fmt_usd(self.store.llm_calls.month_total())}")
+
+    def _net(self) -> NetworkConfig:
+        return NetworkConfig.from_store(self.store)
+
+    # ---------------------------------------------------------------- ações
+    def run_test(self) -> None:
+        key = self.key.text().strip()
+        if not key:
+            self.status.setText("informe a chave antes de testar")
+            return
+        self.btn_test.setEnabled(False)
+        self.status.setText("testando…")
+        kind, model, net = str(self.kind), self.fast.currentText().strip(), self._net()
+        run_task(functools.partial(test_connection, kind, key, model, net), self.store, self._on_test)
+
+    def _on_test(self, result: Any) -> None:
+        self.btn_test.setEnabled(True)
+        if isinstance(result, BaseException):
+            self.status.setText(f"falhou: {friendly_error(str(result))}")
+            return
+        self.last_test = result
+        if result.ok:
+            self.status.setText(f"ok: {result.model} respondeu em {result.latency_ms} ms")
+            self.store.providers.update_provider(self.pid, tested_at=_now(), latency_ms=int(result.latency_ms))
+        else:
+            self.status.setText(f"falhou: {friendly_error(result.error)}")
+
+    def refresh_models(self) -> None:
+        key = self.key.text().strip()
+        if not key:
+            self.status.setText("informe a chave antes de listar os modelos")
+            return
+        self.btn_models.setEnabled(False)
+        run_task(functools.partial(list_models, str(self.kind), key, self._net()), self.store, self._on_models)
+
+    def _on_models(self, result: Any) -> None:
+        self.btn_models.setEnabled(True)
+        if isinstance(result, BaseException):
+            self.status.setText(f"modelos: {friendly_error(str(result))}")
+            return
+        self.last_models = tuple(result)
+        self.store.providers.update_provider(self.pid, models_json=models_cache(self.last_models))
+        self._fill_models([m.id for m in self.last_models])
+        self.status.setText(f"{len(self.last_models)} modelo(s) listados")
+
+    def test_via_worker(self) -> None:
+        from ..pipeline.llm_steps import enqueue_test_job
+
+        self.save()
+        job_id = enqueue_test_job(self.store)
+        if job_id is None:
+            self.status.setText("testar pelo worker precisa de uma reunião gravada (a fila é por reunião)")
+            return
+        if self.on_launch is not None:
+            self.on_launch(True)
+        self.status.setText(f"job {job_id} de teste na fila do worker leve; o resultado aparece na Fila de processamento")
+
+    # ---------------------------------------------------------------- gravação
+    def save(self) -> None:
+        params = self.params.text().strip()
+        if params:
+            try:
+                json.loads(params)
+            except ValueError as e:
+                raise ValueError(f"{TITLES.get(self.pid, self.pid)}: parâmetros não são JSON ({e})") from e
+        self.store.providers.update_provider(self.pid, api_key=self.key.text().strip() or None,
+                                             fast_model=self.fast.currentText().strip() or None,
+                                             strong_model=self.strong.currentText().strip() or None, params=params or None,
+                                             model=self.embed_model.text().strip() or None)
+        for r in range(self.prices.rowCount()):
+            cells = [self.prices.item(r, c) for c in range(len(PRICE_COLUMNS))]
+            model = (cells[0].text() if cells[0] else "").strip()
+            if not model:
+                continue
+            values = []
+            for cell in cells[1:]:
+                try:
+                    values.append(float((cell.text() if cell else "0").replace(",", ".") or 0))
+                except ValueError as e:
+                    raise ValueError(f"preço inválido para {model}: {cell.text() if cell else ''}") from e
+            self.store.providers.set_price(self.pid, model, *values)
+
+
+class ProviderTabs(QWidget):
+    def __init__(self, store: Store, on_launch: Callable[[bool], Any] | None = None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.store = store
+        rows = store.providers.list_llm()
+        self.active_llm = QComboBox()
+        self.active_embed = QComboBox()
+        self.active_llm.addItem("nenhum", "")
+        self.active_embed.addItem("nenhum", "")
+        for row in rows:
+            self.active_llm.addItem(TITLES.get(str(row["id"]), str(row["id"])), str(row["id"]))
+            if Capability.EMBEDDINGS in PROVIDER_CAPABILITIES[ProviderKind(str(row["kind"]))]:
+                self.active_embed.addItem(TITLES.get(str(row["id"]), str(row["id"])), str(row["id"]))
+        current_llm = store.providers.active_provider("llm")
+        current_embed = store.providers.active_provider("embed")
+        self.active_llm.setCurrentIndex(max(0, self.active_llm.findData(str(current_llm["id"])) if current_llm else 0))
+        self.active_embed.setCurrentIndex(max(0, self.active_embed.findData(str(current_embed["id"])) if current_embed else 0))
+        self.tabs = QTabWidget()
+        self.tab_by_id: dict[str, ProviderTab] = {}
+        for row in rows:
+            if str(row["id"]) not in LLM_KINDS:
+                continue
+            tab = ProviderTab(store, row, on_launch)
+            self.tab_by_id[str(row["id"])] = tab
+            self.tabs.addTab(tab, TITLES.get(str(row["id"]), str(row["id"])))
+        form = QFormLayout()
+        form.addRow("Ativo para texto", self.active_llm)
+        form.addRow("Ativo para embeddings", self.active_embed)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(self.tabs)
+
+    def validation_error(self) -> str | None:
+        for tab in self.tab_by_id.values():
+            params = tab.params.text().strip()
+            if params:
+                try:
+                    json.loads(params)
+                except ValueError as e:
+                    return f"{TITLES.get(tab.pid, tab.pid)}: parâmetros não são JSON ({e})"
+        return None
+
+    def save(self) -> None:
+        for tab in self.tab_by_id.values():
+            tab.save()
+        llm_id = str(self.active_llm.currentData() or "")
+        embed_id = str(self.active_embed.currentData() or "")
+        for pid in self.tab_by_id:
+            self.store.providers.set_active(pid, llm=(pid == llm_id), embed=(pid == embed_id))

@@ -5,6 +5,7 @@ menos de 10 s de fala nunca é `auto` (Q5); abaixo do limiar -> `sem_nome` com a
 Centroide do cluster: média dos embeddings normalizados dos turnos limpos (>= 1,5 s, sem sobreposição), no máximo 20."""
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -57,13 +58,27 @@ def expected_names(text: str | None) -> tuple[str, ...]:
     return tuple(n.strip().lower() for n in text.replace(";", ",").split(",") if n.strip())
 
 
+def expected_person_ids(raw: str | None) -> frozenset[int]:
+    """`meetings.expected_people_json` (F3 item 4: participantes casados com `people` no warm-up) -> ids."""
+    if not raw:
+        return frozenset()
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return frozenset()
+    if not isinstance(data, list):
+        return frozenset()
+    return frozenset(int(x) for x in data if isinstance(x, int | float | str) and str(x).lstrip("-").isdigit())
+
+
 class ProfileMatcher:
     def __init__(self, threshold: float = 0.60, margin: float = 0.05, min_speech_ms: int = MIN_AUTO_SPEECH_MS,
-                 expected: Sequence[str] = ()):
+                 expected: Sequence[str] = (), expected_ids: frozenset[int] = frozenset()):
         self.threshold = float(threshold)
         self.margin = float(margin)
         self.min_speech_ms = int(min_speech_ms)
         self.expected = tuple(n.lower() for n in expected)
+        self.expected_ids = frozenset(expected_ids)       # F3 item 4: ids casados no warm-up valem como nome na lista (D-041 P4)
 
     def match(self, clusters: Sequence[ClusterData], profiles: Sequence[ProfileRef]) -> list[MatchResult]:
         usable = [(i, c) for i, c in enumerate(clusters) if c.centroid is not None and c.centroid.size]
@@ -108,11 +123,11 @@ class ProfileMatcher:
         return MatchResult(c.label, ClusterStatus.AUTO, p.person_id, p.profile_id, sim, margin, threshold)
 
     def _tie_break(self, a: ProfileRef, b: ProfileRef | None) -> ProfileRef | None:
-        """Participantes esperados decidem quando só um dos dois nomes está na lista (P4)."""
-        if not self.expected or b is None:
+        """Participantes esperados decidem quando só um dos dois está na lista (P4): pelo id casado no warm-up ou pelo nome."""
+        if (not self.expected and not self.expected_ids) or b is None:
             return None
-        in_a = bool(a.name) and a.name.lower() in self.expected
-        in_b = bool(b.name) and b.name.lower() in self.expected
+        in_a = a.person_id in self.expected_ids or (bool(a.name) and a.name.lower() in self.expected)
+        in_b = b.person_id in self.expected_ids or (bool(b.name) and b.name.lower() in self.expected)
         if in_a != in_b:
             return a if in_a else b
         return None

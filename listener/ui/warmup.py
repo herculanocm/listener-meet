@@ -1,7 +1,11 @@
 """Warm-up (CP6): microfone e fonte de saída, medidores, teste de 3 s com detecção de eco (U-016), preset, título.
-O microfone abre uma vez só (no `showEvent`); a fonte salva é escolhida na primeira lista de apps (M-12)."""
+O microfone abre uma vez só (no `showEvent`); a fonte salva é escolhida na primeira lista de apps (M-12).
+F3 (item 4, U-018): ao sair do título ou dos participantes, com 1,5 s de debounce, uma `Task` casa os participantes com
+`people` e pede à LLM os termos prováveis; uma chamada em voo, resposta velha descartada; o campo "Termos prováveis" fica
+editável e vai para `meetings.glossary`; sem chave, aviso discreto com link para as Configurações."""
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
@@ -14,24 +18,33 @@ from ..capture.align import estimate_offset
 from ..capture.audio import resample, rms, to_mono
 from ..capture.recorder import RecordConfig
 from ..config.defaults import SPECS
+from ..llm.glossary_task import GlossaryResult, merge_glossary, request_glossary
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
 from .meters import LevelMeter
 from .sources import SourceTable
+from .tasks import run_task
 
 if TYPE_CHECKING:
     from ..platform.base import AudioDevice, CaptureHandle, Platform
     from ..store import Store
 
 log = get_logger("ui.warmup")
+GLOSSARY_DEBOUNCE_MS = 1500
 
 
 class WarmupDialog(QDialog):
-    def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None):
+    def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None, on_settings: Any = None):
         super().__init__(parent)
         self.platform = platform
         self.store = store
+        self.on_settings = on_settings
+        self.glossary_result: GlossaryResult | None = None
+        self._glossary_seq = 0
+        self._glossary_inflight = False
+        self._glossary_pending = False
+        self.glossary_requests = 0                       # instrumentação dos testes
         self.setWindowTitle("Antes de gravar")
         self.setMinimumWidth(760)
         self._mic_handle: CaptureHandle | None = None
@@ -93,6 +106,12 @@ class WarmupDialog(QDialog):
         self.participants_edit = QLineEdit()
         self.participants_edit.setPlaceholderText("participantes esperados, separados por vírgula")
         self.room_check = QCheckBox("Sala de reunião presencial (o microfone ouve outras pessoas)")
+        self.glossary_edit = QLineEdit()
+        self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a LLM sugere; edite à vontade)")
+        self.glossary_status = QLabel("")
+        self.glossary_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.glossary_status.setOpenExternalLinks(False)
+        self.glossary_status.linkActivated.connect(lambda _link: self.on_settings() if self.on_settings else None)
         fl = QFormLayout(meet_box)
         prow = QHBoxLayout()
         prow.addWidget(self.preset_combo, 1)
@@ -100,7 +119,15 @@ class WarmupDialog(QDialog):
         fl.addRow("Preset", prow)
         fl.addRow("Título", self.title_edit)
         fl.addRow("Participantes", self.participants_edit)
+        fl.addRow("Termos prováveis", self.glossary_edit)
+        fl.addRow("", self.glossary_status)
         fl.addRow("", self.room_check)
+        self._glossary_timer = QTimer(self)
+        self._glossary_timer.setSingleShot(True)
+        self._glossary_timer.setInterval(GLOSSARY_DEBOUNCE_MS)
+        self._glossary_timer.timeout.connect(self.request_glossary)
+        self.title_edit.editingFinished.connect(self._glossary_timer.start)
+        self.participants_edit.editingFinished.connect(self._glossary_timer.start)
 
         # --- botões ---
         self.buttons = QDialogButtonBox()
@@ -154,9 +181,49 @@ class WarmupDialog(QDialog):
 
     def _shutdown(self) -> None:
         self._timer.stop()
+        self._glossary_timer.stop()
+        self._glossary_seq += 1                            # resposta que chegar depois é descartada
         self.sources.stop()
         self._close_mic()
         self._close_r()
+
+    # ---------------------------------------------------------------- glossário (F3 item 4)
+    def request_glossary(self) -> None:
+        """Uma chamada em voo; mudança durante a chamada agenda outra; nada sem título nem participantes."""
+        title, participants = self.title_edit.text().strip(), self.participants_edit.text().strip()
+        if not title and not participants:
+            return
+        if self._glossary_inflight:
+            self._glossary_pending = True
+            return
+        self._glossary_seq += 1
+        self._glossary_inflight = True
+        self.glossary_requests += 1
+        self.glossary_status.setText("pedindo termos prováveis à LLM…")
+        run_task(functools.partial(request_glossary, self.store, title or None, participants or None), self.store,
+                 functools.partial(self._on_glossary, self._glossary_seq))
+
+    def _on_glossary(self, seq: int, result: Any) -> None:
+        self._glossary_inflight = False
+        if seq != self._glossary_seq:                      # velha: o usuário mudou o texto ou fechou
+            return
+        if self._glossary_pending:
+            self._glossary_pending = False
+            self._glossary_timer.start()
+        if isinstance(result, BaseException):
+            log.warning("glossário indisponível: %s", result)
+            self.glossary_status.setText(f"glossário indisponível: {result}")
+            return
+        self.glossary_result = result
+        if result.error:
+            text = result.error
+            if text.startswith("sem chave"):
+                text = 'sem chave de LLM: <a href="settings">configurar provedor</a>'
+            self.glossary_status.setText(text)
+            return
+        self.glossary_edit.setText(merge_glossary(result.terms, self.glossary_edit.text()))
+        people = f"; {len(result.people)} participante(s) com ficha" if result.people else ""
+        self.glossary_status.setText(f"{len(result.terms)} termo(s) sugeridos pela LLM{people}")
 
     # ---------------------------------------------------------------- mic
     def _selected_device(self) -> AudioDevice | None:
@@ -368,11 +435,15 @@ class WarmupDialog(QDialog):
         cfg = RecordConfig.from_settings(self.store, self._selected_device(), self.sources.selected_spec())
         spec = cfg.source
         platform_name = (spec.exe or "sistema").removesuffix(".exe") if spec.kind == SourceKind.APP else "sistema"
+        result = self.glossary_result
         fields = {
             "title": self.title_edit.text().strip() or None,
             "participants": self.participants_edit.text().strip() or None,
             "platform": platform_name,
             "preset_id": self.preset_combo.currentData(),
             "is_in_room": self.room_check.isChecked(),
+            "glossary": self.glossary_edit.text().strip() or None,
+            "expected_people_json": result.expected_people_json if result else None,
+            "glossary_call_id": result.call_id if result else None,
         }
         return cfg, fields

@@ -122,6 +122,16 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
     return enqueue_llm_job(store, meeting_id, tasks, parent_job_id, auto=True)
 
 
+def enqueue_test_job(store: Store, meeting_id: int | None = None) -> int | None:
+    """"Testar pelo worker" (F3 item 12, R-2): job `llm` de tarefa `test` na reunião mais recente (a fila exige uma reunião)."""
+    if meeting_id is None:
+        meetings = store.list_meetings()
+        if not meetings:
+            return None
+        meeting_id = int(meetings[0]["id"])
+    return store.jobs.enqueue(meeting_id, JobKind.LLM, {"tasks": [str(JobStep.TEST)], "parent_job_id": None, "auto": False})
+
+
 def llm_config_snapshot(store: Store) -> str:
     return LlmJobConfig.from_store(store).to_json()
 

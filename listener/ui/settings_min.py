@@ -1,16 +1,22 @@
 """Configurações mínimas da F1 (CP8 parcial): captura, atalhos (com estado do registro, F1.1 A13), presets,
 log em arquivo e nível (D-033), pasta do banco; F2: grupo "Processamento" gerado da tabela (`pipeline.*`) e o token do
-Hugging Face em `providers` (Q2, CP10). Cada item mostra se aplica agora ou só na próxima gravação.
-Validação pela tabela `SPECS` (M-24) e pela gramática de atalhos da plataforma (M-25)."""
+Hugging Face em `providers` (Q2, CP10); F3: grupo "LLM" gerado da tabela (`llm.*`, idioma das saídas como opção, P1) e as
+sub-abas por provedor (`ProviderTabs`); o transcritor `llm` só habilita quando o modelo rápido do provedor ativo tem áudio.
+Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
+atalhos da plataforma (M-25)."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from ..config.defaults import CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LOG_LEVELS, PIPELINE_KEYS, SPECS, validate_setting
+from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES, PIPELINE_KEYS, SPECS,
+                               validate_setting)
+from ..llm.jobconfig import audio_capable
 from ..model import SettingScope
+from .providers import ProviderTabs
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -21,16 +27,24 @@ SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na
 
 class SettingsDialog(QDialog):
     def __init__(self, store: Store, platform: Platform, hotkey_errors: dict[str, str] | None = None,
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.platform = platform
         self.hotkey_errors = hotkey_errors or {}
         self.setWindowTitle("Configurações")
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(680)
+        self.setMinimumHeight(560)
         self._edits: dict[str, QLineEdit] = {}
         self._combos: dict[str, QComboBox] = {}
-        lay = QVBoxLayout(self)
+        self.audio_capable = audio_capable(store)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
         cap = QGroupBox("Captura")
         capf = QFormLayout(cap)
@@ -52,6 +66,14 @@ class SettingsDialog(QDialog):
         self.hf_token.setPlaceholderText("hf_… (necessário para baixar os modelos do pyannote)")
         procf.addRow("Token do Hugging Face", self.hf_token)
         lay.addWidget(proc)
+
+        llm = QGroupBox("LLM (F3: vale para o próximo job de LLM e para o chat)")
+        llmf = QFormLayout(llm)
+        for key in LLM_KEYS:
+            llmf.addRow(SPECS[key].label, self._row(key))
+        self.provider_tabs = ProviderTabs(store, on_launch)
+        llmf.addRow(self.provider_tabs)
+        lay.addWidget(llm)
 
         lg = QGroupBox("Log (aplica agora)")
         lgf = QFormLayout(lg)
@@ -94,7 +116,7 @@ class SettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
+        outer.addWidget(buttons)
 
     def _hotkey_status(self, key: str) -> str:
         combo = self.store.get_setting(key)
@@ -107,12 +129,21 @@ class SettingsDialog(QDialog):
         box.setContentsMargins(0, 0, 0, 0)
         spec = SPECS[key]
         field: QWidget
-        if spec.choices is not None and all(isinstance(c, str) for c in spec.choices):
+        if key == "llm.output_language":                                         # F3 P1: opções mais um código livre
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(list(OUTPUT_LANGUAGES))
+            combo.setCurrentText(self.store.get_setting(key))
+            combo.setToolTip("pt-BR, auto (segue o idioma detectado da reunião), en, es ou outro código, como fr")
+            self._combos[key] = combo
+            field = combo
+        elif spec.choices is not None and all(isinstance(c, str) for c in spec.choices):
             combo = QComboBox()
             for choice in sorted(spec.choices):
                 combo.addItem(choice)
-                if key == "pipeline.transcriber" and choice == "llm":            # F3: ainda não existe
+                if key == "pipeline.transcriber" and choice == "llm" and not self.audio_capable:   # F3 item 9: só com áudio nativo
                     combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
+                    combo.setToolTip("transcrição pela LLM: precisa de um provedor ativo com chave cujo modelo rápido aceite áudio")
             combo.setCurrentText(self.store.get_setting(key))
             self._combos[key] = combo
             field = combo
@@ -163,7 +194,11 @@ class SettingsDialog(QDialog):
             return "Dois atalhos iguais."
         if not self.log_path.text().strip():
             return "Informe o arquivo de log."
-        return None
+        for key, combo in self._combos.items():
+            err = validate_setting(key, combo.currentText().strip())
+            if err:
+                return err
+        return self.provider_tabs.validation_error()
 
     def _save(self) -> None:
         err = self.validation_error()
@@ -173,7 +208,8 @@ class SettingsDialog(QDialog):
         for key, edit in self._edits.items():
             self.store.set_setting(key, edit.text().strip())
         for key, combo in self._combos.items():
-            self.store.set_setting(key, combo.currentText())
+            self.store.set_setting(key, combo.currentText().strip())
+        self.provider_tabs.save()
         self.store.set_setting("log.path", self.log_path.text().strip())
         self.store.set_setting("log.level", self.log_level.currentText())
         token = self.hf_token.text().strip()
