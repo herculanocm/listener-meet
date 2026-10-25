@@ -1,7 +1,8 @@
 # F5 — Base consultável: busca, histórico e chat sobre todas as reuniões
 
-Status: em revisão (revisão de arquitetura de 25/10 incorporada; esperando as respostas do dono) · Aprovada por
-Herculano em: — · Fase e gate: F5 · G5 (mais a F5.1 depois do G5, Q10) · CPs: 2, 3, 7, 8, 9, 10, 12, 13, 14, 15, 17
+Status: aprovada (código liberado para os lotes L0 a L5; F5.1 separada, Q10) · Aprovada por Herculano em: 2026-10-25
+(Q1 a Q11 nos padrões; U-024 a U-029 sim; D-047) · Fase e gate: F5 · G5 (mais a F5.1, Q10) · CPs: 2, 3, 7, 8, 9, 10,
+12, 13, 14, 15, 17
 Quando ler: ao detalhar ou implementar esta fase (T2). Origem: handoff §3 (Base) e §5 (Histórico), D-009, D-012, D-021,
 D-024. Tabelas: `dados.md`. Tamanho-alvo: 20 KB (24 KB com a Implementação).
 
@@ -111,7 +112,7 @@ Apagar reunião pelo Histórico (Q8; F6) · reescrita da pergunta pela LLM (filt
 - Configurações: `rag.auto_index` (sim), `rag.top_k` (12; 4 a 30), `rag.max_per_meeting` (3; 1 a 10), `rag.local_model`
   (F5.1), `hotkeys.history`, `ui.history_geometry`, `ui.meeting_geometry`, `ui.history_filters` (interna).
 - Na implementação: `dados.md`, `ARCHITECTURE.md` e o `pyproject.toml` (sai o extra `store`, do sqlite-vec) acompanham;
-  D-047 registra a troca do `vec0` depois do L0.
+  D-048 registra a troca do `vec0` depois do L0.
 
 ## Desenho técnico (padrões da revisão de arquitetura)
 - **Pacote**: `rag/{chunker,fts,vectors,search,citations,export}.py` puros, `rag/index.py`, `llm/prompts/rag_chat.py`,
@@ -213,6 +214,10 @@ Apagar reunião pelo Histórico (Q8; F6) · reescrita da pergunta pela LLM (filt
 - Q10 Dividir: F5 com o G5 (busca, histórico, chat global, player, .md e área de transferência) e F5.1 depois
   (embeddings locais, linha do tempo U-008, destaque contínuo U-025 e .docx)? (sim)
 - Q11 Chat global com o modelo forte (citação melhor, ~5 vezes o custo por pergunta)? (não: o rápido)
+
+## Respostas do dono (25/10, D-047): tudo nos padrões
+Q1 sim · Q2 sim · Q3 sim · Q4 não · Q5 sim · Q6 sim · Q7 sim · Q8 não (F6) · Q9 sim · Q10 sim (F5.1 separada) · Q11
+não (o rápido) · U-024 a U-029 sim (U-025 na F5.1).
 
 ## Lotes ([chute] F5 8,5 dias e F5.1 3 dias de foco; o roadmap previa 4 a 5 para tudo)
 - L0 medição no Linux: FTS5 com 60 mil trechos; assinatura binária com sintético anisotrópico; o que só o Windows mede
