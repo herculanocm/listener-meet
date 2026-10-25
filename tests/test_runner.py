@@ -25,6 +25,15 @@ SCRIPT = {"R": [(0.2, 1.4, "bom dia pessoal"), (1.6, 2.9, "tudo certo então")],
 T0 = datetime.fromisoformat("2026-10-24T10:00:00.000-03:00")
 
 
+@pytest.fixture
+def platform(tmp_path, clock):
+    """Tons a 16 kHz mono nos dois canais: sem reamostragem bloco a bloco, a gravação falsa custa 10x menos (a reamostragem
+    é coberta em test_pipeline_core e test_recorder)."""
+    from tests.fake_platform import FakePlatform
+
+    return FakePlatform(tmp_path, clock=clock, r_format=(16000, 1), system_format=(16000, 1))
+
+
 def _record(platform: FakePlatform, store: Store, seconds_each: float = 1.5) -> int:
     """Reunião de 3 s: R com 220 Hz (app) e depois 330 Hz (sistema); L com 440 Hz o tempo todo."""
     mid = store.create_meeting("Planejamento", "meeting", None, "Ana, Bia")

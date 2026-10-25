@@ -21,12 +21,16 @@ from ..capture.clock import Clock
 from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
 from ..log import get_logger
-from ..model import AppState, Health, JobStatus, MeetingStatus
+from ..model import AppState, Health, JobStatus, JobStep, MeetingStatus
+from ..pipeline import review
 from ..platform.common import process
 from .queue import QueueDialog
+from .review import ReviewDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
+from .tasks import Task, live_threads, release, run_task
+from .transcript import TranscriptDialog
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -46,35 +50,8 @@ LEASE_RENEW_S = 60.0
 QUEUE_POLL_ACTIVE_MS = 2000
 QUEUE_POLL_IDLE_MS = 30000
 WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
-_live_threads: set[QThread] = set()     # QThreads sem parent ficam referenciadas até `finished` (senão o Qt aborta)
-
-
-def _release(thread: QThread) -> None:
-    _live_threads.discard(thread)
-    thread.deleteLater()
-
-
-class _Task(QThread):
-    """Roda uma função fora da thread da interface e devolve o resultado (ou a exceção) por sinal."""
-    done = Signal(object)
-
-    def __init__(self, fn: Callable[[], Any], store: Store | None):
-        super().__init__(None)
-        self.fn = fn
-        self.store = store
-
-    @override
-    def run(self) -> None:
-        result: Any
-        try:
-            result = self.fn()
-        except BaseException as e:  # a exceção é entregue a quem pediu a tarefa
-            log.exception("tarefa em segundo plano falhou")
-            result = e
-        finally:
-            if self.store is not None:
-                self.store.close_thread()
-        self.done.emit(result)
+REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
+_Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
 class _MutePoller(QThread):
@@ -131,6 +108,9 @@ class Controller(QObject):
         self._lease_at: float | None = None
         self._worker_spawned_at: float | None = None
         self._seen_done: set[int] = set()
+        self._review_offered: set[int] = set()
+        self._reviews: dict[int, ReviewDialog] = {}
+        self._transcripts: dict[int, TranscriptDialog] = {}
         self._queue_dialog: QueueDialog | None = None
         self._queue_timer = QTimer(self)
         self._queue_timer.setInterval(QUEUE_POLL_IDLE_MS)
@@ -169,11 +149,7 @@ class Controller(QObject):
             self.tray.showMessage("listener-meet", message)
 
     def _run_task(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> None:
-        task = _Task(fn, self.store)
-        _live_threads.add(task)
-        task.done.connect(on_done)
-        task.finished.connect(functools.partial(_release, task))
-        task.start()
+        run_task(fn, self.store, on_done)
 
     def register_hotkeys(self) -> dict[str, str]:
         """Registra os cinco atalhos (pode rodar fora da thread do Qt); devolve combo -> motivo dos que falharam (A13)."""
@@ -419,8 +395,8 @@ class Controller(QObject):
         if self._mute_poller is None:
             poller = _MutePoller(self.platform)
             poller.changed.connect(self._on_os_mute)
-            poller.finished.connect(functools.partial(_release, poller))
-            _live_threads.add(poller)                     # referência viva até `finished` (sem parent, M-12)
+            poller.finished.connect(functools.partial(release, poller))
+            live_threads.add(poller)                      # referência viva até `finished` (sem parent, M-12)
             self._mute_poller = poller
             poller.start()
 
@@ -535,23 +511,68 @@ class Controller(QObject):
             if jid not in self._seen_done:
                 self._seen_done.add(jid)
                 self._on_job_done(job)
+        if running is not None and str(running.get("step") or "") in REVIEW_STEPS:
+            mid = int(running["meeting_id"])
+            if mid not in self._review_offered:
+                self._review_offered.add(mid)                         # P1: a revisão abre enquanto o Whisper roda
+                self.open_review(mid)
+        for dlg in list(self._reviews.values()):
+            dlg.reload()
         if active and self.recorder is None:
             self.launch_worker()
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active else QUEUE_POLL_IDLE_MS)
 
     def _on_job_done(self, job: Any) -> None:
-        m = self.store.get_meeting(int(job["meeting_id"])) or {}
-        title = m.get("title") or f"reunião {job['meeting_id']}"
+        mid = int(job["meeting_id"])
+        m = self.store.get_meeting(mid) or {}
+        title = m.get("title") or f"reunião {mid}"
         self.notify(f"{title}: pronta para revisão de falantes.")
-        self.open_review(int(job["meeting_id"]))
+        self._review_offered.add(mid)
+        self.open_review(mid)
+        if mid in self._transcripts:
+            self._transcripts[mid].reload()
 
-    def open_review(self, meeting_id: int) -> None:
-        """Revisão mínima de falantes (F2 item 13, L6)."""
-        log.info("revisão da reunião %s disponível", meeting_id)
+    def open_review(self, meeting_id: int) -> ReviewDialog:
+        """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""
+        dlg = self._reviews.get(meeting_id)
+        if dlg is None:
+            dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript)
+            dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
+            self._reviews[meeting_id] = dlg
+            if not review.pending(dlg.items):
+                log.info("reunião %s: nenhuma voz pendente (tudo confirmado)", meeting_id)
+        else:
+            dlg.reload()
+        dlg.show()
+        dlg.raise_()
+        return dlg
+
+    def _review_closed(self, meeting_id: int, _result: int) -> None:
+        dlg = self._reviews.pop(meeting_id, None)
+        if dlg is not None:
+            dlg.deleteLater()
+
+    def open_transcript(self, meeting_id: int) -> TranscriptDialog:
+        dlg = self._transcripts.get(meeting_id)
+        if dlg is None:
+            dlg = TranscriptDialog(self.store, meeting_id, None, on_review=self.open_review)
+            dlg.finished.connect(functools.partial(self._transcript_closed, meeting_id))
+            self._transcripts[meeting_id] = dlg
+        else:
+            dlg.reload()
+        dlg.show()
+        dlg.raise_()
+        return dlg
+
+    def _transcript_closed(self, meeting_id: int, _result: int) -> None:
+        dlg = self._transcripts.pop(meeting_id, None)
+        if dlg is not None:
+            dlg.deleteLater()
 
     def open_queue(self) -> None:
         if self._queue_dialog is None:
-            self._queue_dialog = QueueDialog(self.store, None, on_launch=self.launch_worker)
+            self._queue_dialog = QueueDialog(self.store, None, on_launch=self.launch_worker, on_open=self.open_transcript,
+                                             on_review=self.open_review)
             self._queue_dialog.finished.connect(self._queue_closed)
         self._queue_dialog.show()
         self._queue_dialog.raise_()

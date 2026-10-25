@@ -35,9 +35,24 @@ def restore_logging() -> Iterator[None]:
     logger.setLevel(level)
 
 
+_TEMPLATE: dict[str, Path] = {}
+
+
+def template_db() -> Path:
+    """Banco já migrado, criado uma vez por sessão: copiar custa 1 ms contra 29 ms de migrar v1..v4 a cada teste."""
+    if "dir" not in _TEMPLATE:
+        root = Path(tempfile.mkdtemp(prefix="listener-template-"))
+        with Store(root / "db"):
+            pass
+        _TEMPLATE["dir"] = root / "db"
+    return _TEMPLATE["dir"]
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> Iterator[Store]:
-    with Store(tmp_path / "db") as s:
+    dst = tmp_path / "db"
+    shutil.copytree(template_db(), dst)
+    with Store(dst) as s:
         yield s
 
 
@@ -109,3 +124,5 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             proc.kill()
             proc.communicate()
         shutil.rmtree(run["root"], ignore_errors=True)
+    if "dir" in _TEMPLATE:
+        shutil.rmtree(_TEMPLATE["dir"].parent, ignore_errors=True)

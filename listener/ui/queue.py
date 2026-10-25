@@ -39,10 +39,12 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str) ->
 
 
 class QueueDialog(QDialog):
-    def __init__(self, store: Store, parent: QWidget | None = None, on_launch: Any = None):
+    def __init__(self, store: Store, parent: QWidget | None = None, on_launch: Any = None, on_open: Any = None, on_review: Any = None):
         super().__init__(parent)
         self.store = store
         self.on_launch = on_launch                      # o controlador lança o worker quando há pendente
+        self.on_open = on_open                          # abre a transcrição da reunião selecionada
+        self.on_review = on_review                      # abre a revisão de falantes
         self.setWindowTitle("Fila de processamento")
         self.setMinimumSize(760, 360)
         self.jobs: list[JobRow] = []
@@ -56,12 +58,16 @@ class QueueDialog(QDialog):
         self.btn_cancel = QPushButton("Cancelar")
         self.btn_retry = QPushButton("Tentar de novo")
         self.btn_reprocess = QPushButton("Reprocessar")
+        self.btn_review = QPushButton("Revisar falantes")
+        self.btn_open = QPushButton("Transcrição")
         self.btn_pause.clicked.connect(self.toggle_pause)
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_retry.clicked.connect(self.retry_selected)
         self.btn_reprocess.clicked.connect(self.reprocess_selected)
+        self.btn_review.clicked.connect(lambda: self._open_selected(self.on_review))
+        self.btn_open.clicked.connect(lambda: self._open_selected(self.on_open))
         row = QHBoxLayout()
-        for b in (self.btn_pause, self.btn_cancel, self.btn_retry, self.btn_reprocess):
+        for b in (self.btn_pause, self.btn_cancel, self.btn_retry, self.btn_reprocess, self.btn_review, self.btn_open):
             row.addWidget(b)
         row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -125,6 +131,11 @@ class QueueDialog(QDialog):
             if self.on_launch is not None:
                 self.on_launch()
             self.refresh()
+
+    def _open_selected(self, fn: Any) -> None:
+        job = self.selected_job()
+        if job is not None and fn is not None:
+            fn(int(job["meeting_id"]))
 
     def reprocess_selected(self) -> None:
         job = self.selected_job()
