@@ -20,6 +20,7 @@ Desenvolvedor (WinError 1314), medido em 24/10/2026.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import platform
@@ -45,9 +46,9 @@ def hf_sem_symlinks() -> None:
     """
     try:
         import huggingface_hub.file_download as fd
-        fd.are_symlinks_supported = lambda *a, **k: False
-    except Exception:
-        pass
+        fd.are_symlinks_supported = lambda *_a, **_k: False
+    except Exception as e:
+        print(f"aviso: não desliguei os symlinks do Hugging Face: {e}")
 
 
 def whisper_path(model: str) -> Path:
@@ -55,7 +56,7 @@ def whisper_path(model: str) -> Path:
 
 
 def align_path() -> Path:
-    return models_dir() / ALIGN_PT.split("/")[-1]
+    return models_dir() / ALIGN_PT.rsplit("/", 1)[-1]
 
 
 def out(stage: str, **kw) -> None:
@@ -71,7 +72,7 @@ def version(mod: str) -> str:
 
 
 # ----------------------------------------------------------------------------
-def cmd_env(args) -> None:
+def cmd_env(_args) -> None:
     out("python", version=sys.version.split()[0], exe=sys.executable, cpu=platform.processor(), cores=os.cpu_count())
     out("versoes", **{m: version(m) for m in ("numpy", "soundfile", "sounddevice", "proctap", "PySide6", "torch",
                                              "torchaudio", "whisperx", "faster_whisper", "ctranslate2",
@@ -181,7 +182,7 @@ def cmd_fw(args) -> None:
     model = WhisperModel(model_arg, device="cpu", compute_type="int8")
     t_load = time.perf_counter() - t0
     t0 = time.perf_counter()
-    segments, info = model.transcribe(audio, language="pt", word_timestamps=True, vad_filter=True, beam_size=5)
+    segments, _info = model.transcribe(audio, language="pt", word_timestamps=True, vad_filter=True, beam_size=5)
     segs = list(segments)  # o gerador só roda aqui
     t_tr = time.perf_counter() - t0
     words = sum(len(s.words or []) for s in segs)
@@ -244,10 +245,8 @@ def cmd_pyannote(args) -> None:
 
 def main() -> None:
     for s in (sys.stdout, sys.stderr):
-        try:
+        with contextlib.suppress(Exception):
             s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("env").set_defaults(fn=cmd_env)

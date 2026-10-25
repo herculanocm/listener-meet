@@ -4,32 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "listener-meet"
-version = "0.3.1"
+dynamic = ["version"]
 description = "Gravador de reuniões (qualquer app) com identificação por perfil de voz, transcrição local, ata por LLM agnóstica e base consultável. Código aberto. Documento mestre: specs/00-handoff-v4.md."
+readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = {text = "MIT"}
 dependencies = [
-  "numpy",
-  "scipy",
-  "soundfile",
-  "sounddevice",
-  "proc-tap",
-  "pynput",
-  "PySide6",
+  "numpy>=2.0",
+  "scipy>=1.12",
+  "soundfile>=0.12",
+  "sounddevice>=0.5",
+  "proc-tap>=1.1",
+  "pynput>=1.7; sys_platform != 'win32'",
+  "PySide6>=6.8",
 ]
 
 [project.optional-dependencies]
-win32    = ["pycaw; sys_platform == 'win32'", "comtypes; sys_platform == 'win32'", "PyAudioWPatch; sys_platform == 'win32'"]
-pipeline = ["whisperx", "pyannote.audio>=4"]
-llm      = ["google-genai", "openai", "anthropic"]
-store    = ["sqlite-vec"]
-dev      = ["pytest", "ruff"]
+win32       = ["pycaw; sys_platform == 'win32'", "comtypes; sys_platform == 'win32'", "PyAudioWPatch>=0.2.12; sys_platform == 'win32'"]
+pipeline    = ["faster-whisper>=1.1", "pyannote.audio>=4"]
+pipeline-hq = ["whisperx>=3.3"]
+llm         = ["google-genai>=1.0", "openai>=1.50", "anthropic>=0.40"]
+store       = ["sqlite-vec>=0.1.6"]
+dev         = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+listener-meet = "listener.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["listener*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "listener.__version__"}
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+qt_api = "pyside6"
 
 [tool.ruff]
 line-length = 140
@@ -37,8 +46,24 @@ target-version = "py312"
 extend-exclude = [".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "B", "UP"]
-ignore = ["E741"]
+select = ["E", "F", "W", "B", "UP", "SIM", "C4", "PERF", "PTH", "RUF", "DTZ", "NPY", "LOG", "G", "PIE", "ISC", "RET", "TRY",
+          "ARG", "N", "S", "T20", "PLE", "PLW", "PLC"]
+ignore = ["E741", "TRY003", "PLC0415"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*" = ["E501", "E702", "UP031"]
+"tests/*" = ["S101", "SLF001", "ARG"]
+"scripts/*" = ["T20", "E501", "E702", "UP031", "RUF100"]
+"listener/__main__.py" = ["T20"]
+"listener/ui/*" = ["N802", "ARG002"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+files = ["listener", "tests"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disable_error_code = ["index", "union-attr", "operator", "arg-type"]   # testes indexam Optional de propósito: a asserção falha antes
