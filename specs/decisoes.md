@@ -47,6 +47,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | D-039 | Herculano ("Implemente todas as melhorias com o agente especialista sênior") | spec F1.2 aprovada em bloco (M-01 a M-31; Q1 a Q7 nos padrões): dois lotes; **um arquivo de áudio por mês** (`listener-audio-AAAA-MM.db`, anexado sob demanda; complementa D-003); Python 3.13 no CI; reamostragem com estado; F2 reaberta só no item da fila (M-20); relatórios dos revisores ficam fora do repo; implementação por agente especialista com commit por item | 65 achados de dois revisores; bugs que perdem áudio e memória antes do G1; SQLite pronto para o worker da F2 |
 | D-040 | Herculano | fluxo por entrega com agentes (`AGENTS.md`): arquiteto revisa a spec rascunhada contra o código; especialista implementa com briefing e commit por item; revisor novo lê só o diff; orquestradora verifica e fecha; o dono aprova a spec, verifica no Windows e mede o gate | custo medido em 24/10: revisões em paralelo em ~25 min, 31 itens implementados em 70 min; briefing com decisões prontas evita travas e invenções |
 | D-041 | Herculano ("Ok") | F2 reaprovada após a revisão de arquitetura, P1 a P6 nos padrões: diarizar e identificar antes de transcrever; worker termina a fila com o app fechado; reforço automático do perfil do usuário pelo canal L sem entrar no centroide até uma confirmação; participantes esperados como desempate abaixo de 0,05 de margem; plano B = aceitar até 2× a duração se o pyannote passar de 0,8×; perfil de trecho = turno do job, trecho livre na F6 | contrato da F2 alinhado ao código pós-F1.2 (24 lacunas, 17 decisões, 14 riscos) |
+| D-042 | LLM (revisão do diff, aceita) | janela padrão da diarização do pyannote de 1200 s (a spec dizia 3600), configurável de 300 a 7200; costura entre janelas por centroide e tempo | a lease de gravação só é lida entre janelas: com 60 min a fila só cedia a CPU após ~48 min; com 20 min, após ~16 min a 0,8× |
 
 ## Em aberto (padrão assumido enquanto não há resposta)
 | # | Pergunta | Padrão |
@@ -63,5 +64,6 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | 24/10 | documentação antes da compactação | 128 KB no total; 78 KB na trilha obrigatória |
 | 24/10 | F1.2, WSL: buraco de 30 min no R | pico de alocação de 714 MB para 4,4 MB; captura em regime de ~25 MB para 5,2 MB |
 | 24/10 | F1.2, WSL: `to_mono` 60 s · `rms` por bloco · `estimate_offset` 10 s | 36 para 2,1 ms · 4,3 para 0,8 µs · 41,8 para 2,3 ms; suíte de 7,8 s (41 testes) para 3,1 s (85) |
+| 25/10 | F2, WSL, sem modelos: suíte · runner falso · `iter_windows` | 148 testes em 4,3 a 5,1 s · reunião de 3 s processada em 13 ms · janela de 600 s com pico de 1,35× o tamanho da janela (52 MB) |
 | pendente | pyannote community-1 por hora de áudio em CPU | precisa de `HF_TOKEN` (B4) |
 | pendente | banco por hora de reunião; deriva e deslocamento L/R; `list_playing_apps` | G1 e B1 |
