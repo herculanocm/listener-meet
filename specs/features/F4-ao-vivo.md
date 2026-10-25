@@ -13,7 +13,11 @@ LLM atualiza a cada N minutos, sem degradar o app de reunião nem a gravação.
    isenta da regra "o pesado não sobe durante a gravação"; lançado ao começar a gravar, morre com ela.
 2. **Desvio de áudio**: cópia do PCM em `ChannelChunker.write`, depois do preenchimento de buracos (mesmo relógio do
    `t_start_ms` gravado), na thread `capture-worker`, O(1); trechos de pausa e mudo vão marcados, não como zeros.
-3. **VAD e janelas**: Silero VAD do faster-whisper (ONNX); janela fecha com 500 ms de pausa ou 8 s.
+3. **VAD e janelas**: Silero VAD do faster-whisper (ONNX) incremental (estado `h`, `c` e 64 amostras de contexto
+   carregados entre chamadas da sessão; idêntico à chamada única [fato, 25/10]); como o Whisper custa por janela e não
+   por segundo [fato, 25/10], a janela fecha com 500 ms de pausa depois de 4 s de fala, com 1,2 s de silêncio, ou em
+   10 s; trechos com menos de 0,5 s de fala são descartados; uma fila só para os dois canais, a janela mais antiga
+   primeiro.
 4. **Transcrição leve**: faster-whisper `small` int8 (degrada para `base`), 2 threads, `beam_size=1`; filtros de
    `no_speech` e logprob da F2 mais lista de alucinações; idioma travado após 2 janelas; `initial_prompt` = glossário
    da reunião mais a legenda anterior do canal.
@@ -109,7 +113,7 @@ partir do parcial · GPU (CP14) · usar as legendas como entrada da passagem fin
 ## Riscos
 | Risco | Mitigação |
 | --- | --- |
-| Encoder do Whisper processa 30 s: custo por janela, não por segundo [exp] | L0 mede `small` e `base` em 2 threads |
+| Custo por janela [fato: `base` 1,25 s, `small` 3,55 s, Xeon 2,1 GHz] | janelas de 4 a 10 s; L0 mede no Windows |
 | Ao vivo e pesado juntos estouram a CPU | pausa pela lease ao gravar; degradação; `live_degraded` |
 | torch: 0,5 a 1 GB de RAM e 3 a 8 s para importar [chute] | "nomes ao vivo" desligável; ONNX só se o L0 aprovar |
 | Pipe trava o gravador | desvio O(1) com deque; só `live-feed` bloqueia; a leitora sempre drena o stdout |
