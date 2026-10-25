@@ -129,7 +129,7 @@ def test_retrying_provider_backs_off_and_resends_once_on_invalid_json():
         run(rp2.complete(_req(timeout_s=0.001)))
     assert run(rp2.complete(_req(timeout_s=5.0))).data["title"] == "t"
     # sem esquema: texto passa direto; `count_tokens` que falha vira None
-    assert run(rp.complete(_req(LlmTask.CHAT, None))).text.startswith("resposta simulada")
+    assert run(rp.complete(_req(LlmTask.CHAT, None))).text.startswith("Resposta simulada")
     assert run(rp.count_tokens(_req())) == 0
     assert rp.id == "fake" and rp.kind == ProviderKind.GEMINI and Capability.JSON in rp.capabilities
     run(rp.aclose())

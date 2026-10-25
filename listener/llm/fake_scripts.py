@@ -1,0 +1,152 @@
+"""Respostas padrão do `FakeProvider` por tarefa, derivadas do próprio pedido (contrato "Testes sem rede"): `identify` devolve
+a pessoa cujo nome aparece na transcrição com a citação literal; `minutes` cita segmentos reais e os marcadores; `revise`
+devolve os segmentos do bloco com pontuação; `glossary`, `title`, `executive`, `pre_summary`, `transcribe` e `chat` têm saídas
+estáveis. Tudo válido nos esquemas do projeto, para os testes do runner e o worker leve com `LISTENER_LLM=fake`."""
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable
+from typing import Any
+
+from .prompts.common import Line, parse_lines
+from .types import LlmTask, Request, Role
+
+CANDIDATE_RE = re.compile(r"\((\d+)\) ([^;—\n]+?)(?: —[^;\n]*)?(?:;|$)", re.MULTILINE)
+MARKER_RE = re.compile(r"marker (\d+) at \[(\d+):(\d{2})\]")
+
+
+def _user_text(req: Request) -> str:
+    return "\n\n".join(m.text for m in req.messages if m.role == Role.USER)
+
+
+def _after(text: str, key: str) -> str:
+    i = text.find(key)
+    return text[i + len(key):] if i >= 0 else ""
+
+
+def _lines(req: Request) -> list[Line]:
+    return parse_lines(_user_text(req))
+
+
+def identify(req: Request) -> dict[str, Any]:
+    text = _user_text(req)
+    pending = [p.strip() for p in _after(text, "Unresolved speakers:").split("\n", 1)[0].split(",") if p.strip()]
+    cands_block = _after(text, "Candidates (person_id) name").split("\n", 1)[0]
+    candidates = [(int(i), n.strip()) for i, n in CANDIDATE_RE.findall(cands_block + ";")]
+    lines = _lines(req)
+    used: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for label in pending:
+        hit = None
+        for pid, name in candidates:
+            if pid in used:
+                continue
+            ln = next((ln for ln in lines if name.casefold() in ln.text.casefold()), None)
+            if ln is not None:
+                hit = (pid, name, ln)
+                break
+        if hit is None:
+            out.append({"cluster": label, "person_id": None, "new_name": None, "confidence": 0.0, "evidence": []})
+            continue
+        pid, name, ln = hit
+        used.add(pid)
+        out.append({"cluster": label, "person_id": pid, "new_name": None, "confidence": 0.8,
+                    "evidence": [{"segment_id": ln.segment_id, "quote": name}]})
+    return {"speakers": out}
+
+
+def minutes(req: Request) -> dict[str, Any]:
+    text = _user_text(req)
+    lines = _lines(req)
+    if "Block " in text and "notes:" in text:                      # redução: junta as notas dos blocos
+        merged: dict[str, Any] = {"context": "", "decisions": [], "actions": [], "highlights": [], "open_points": [], "next_steps": []}
+        for raw in re.findall(r"notes:\n(\{.*?\})(?=\n\nBlock |\Z)", text, re.DOTALL):
+            try:
+                note = json.loads(raw)
+            except ValueError:
+                continue
+            merged["context"] = (merged["context"] + " " + str(note.get("context") or "")).strip()[:1000]
+            for key in ("decisions", "actions", "highlights", "open_points", "next_steps"):
+                merged[key] += list(note.get(key) or [])
+        return merged
+    title = _after(text, "Title: ").split("\n", 1)[0].strip() or "a reunião"
+    first = lines[0] if lines else None
+    last = lines[-1] if lines else None
+    speaker = next((ln.speaker for ln in lines if not ln.speaker.startswith("SPK_")), None)
+    highlights = []
+    for mid, mm, ss in MARKER_RE.findall(text):
+        t_ms = (int(mm) * 60 + int(ss)) * 1000
+        near = min(lines, key=lambda ln: abs(ln.t_start_ms - t_ms)) if lines else None
+        highlights.append({"marker_id": int(mid), "text": "trecho marcado pelo usuário", "segment_ids": [near.segment_id] if near else []})
+    return {
+        "context": f"Reunião simulada sobre {title}.",
+        "decisions": [{"text": f"Decidido: {first.text}", "segment_ids": [first.segment_id]}] if first else [],
+        "actions": [{"text": "Enviar a ata aos participantes", "owner_text": speaker.split(" (")[0] if speaker else None,
+                     "owner_person_id": None, "due_text": "sexta", "due_date": "2026-10-30",
+                     "segment_ids": [last.segment_id] if last else []},
+                    {"text": "Ação sem evidência", "owner_text": None, "owner_person_id": None, "due_text": None, "due_date": None,
+                     "segment_ids": [999999]}],
+        "highlights": highlights,
+        "open_points": [],
+        "next_steps": [{"text": "Marcar a próxima reunião", "segment_ids": []}],
+    }
+
+
+def summary_text(prefix: str, limit: int) -> Callable[[Request], dict[str, Any]]:
+    def build(req: Request) -> dict[str, Any]:
+        text = _user_text(req)
+        ctx = ""
+        try:
+            data = json.loads(_after(text, "Minutes (JSON):\n").strip() or "{}")
+            ctx = str(data.get("context") or "")
+        except ValueError:
+            ctx = ""
+        return {"text": f"{prefix} {ctx}".strip()[:limit]}
+    return build
+
+
+def title(req: Request) -> dict[str, Any]:
+    text = _after(_user_text(req), "Summary:\n").strip()
+    words = re.findall(r"\w+", text)[:5]
+    return {"title": (" ".join(words) or "Reunião").capitalize()[:80]}
+
+
+def revise(req: Request) -> dict[str, Any]:
+    text = _user_text(req)
+    block = _after(text, "Segments to edit (#segment_id [mm:ss] speaker: text):\n").split("\n\nContext after", 1)[0]
+    out = []
+    for ln in parse_lines(block):
+        new = ln.text[:1].upper() + ln.text[1:]
+        if new and new[-1] not in ".?!":
+            new += "."
+        out.append({"segment_id": ln.segment_id, "text": new})
+    return {"revisions": out}
+
+
+def glossary(req: Request) -> dict[str, Any]:
+    text = _user_text(req)
+    title_text = _after(text, "Title: ").split("\n", 1)[0]
+    raw_names = _after(text, "Unresolved participant names:").split("\n", 1)[0].split(",")
+    unresolved = [n.strip() for n in raw_names if n.strip() and n.strip() != "(none)"]
+    terms = [w for w in re.findall(r"[A-ZÀ-Ú][\wÀ-ú-]+", title_text) if len(w) > 2][:40]
+    return {"terms": terms, "people": [{"name": n, "person_id": None} for n in unresolved]}
+
+
+def transcribe(req: Request) -> dict[str, Any]:
+    seconds = max(1.0, req.audio_seconds)
+    return {"language": "pt", "utterances": [{"start_s": 0.0, "end_s": round(seconds / 2, 2), "text": "fala simulada um dois três"},
+                                             {"start_s": round(seconds / 2, 2), "end_s": round(seconds, 2), "text": "quatro cinco seis"}]}
+
+
+def chat(req: Request) -> str:
+    lines = _lines(req)
+    stamp = lines[0].stamp if lines else "00:00"
+    return f"Resposta simulada com citação [{stamp}] e outra fora da transcrição [59:59]."
+
+
+DEFAULTS: dict[LlmTask, Callable[[Request], Any]] = {
+    LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: summary_text("Resumo executivo simulado:", 1500),
+    LlmTask.PRE_SUMMARY: summary_text("Pré-resumo simulado:", 600), LlmTask.TITLE: title, LlmTask.REVISE: revise,
+    LlmTask.GLOSSARY: glossary, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat,
+}

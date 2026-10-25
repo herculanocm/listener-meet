@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from ..log import get_logger
-from ..model import ClusterStatus, EventType, MeetingStatus
+from ..model import ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
 from ..store.profiles import normalize
 from ..store.segments import ClusterRow, resolve_person
@@ -41,10 +41,31 @@ class ReviewItem:
     margin: float | None
     merged_into: int | None
     has_centroid: bool
+    llm_person_id: int | None = None        # F3 item 5: sugestão por contexto (só em vozes pendentes)
+    llm_name: str | None = None
+    llm_confidence: float | None = None
+    llm_evidence: tuple[tuple[int, str, int], ...] = ()   # (segment_id, citação, t_start_ms)
+    decision_source: str | None = None
 
     @property
     def pending(self) -> bool:
         return self.status in (ClusterStatus.AMBIGUOUS, ClusterStatus.UNNAMED)
+
+    @property
+    def has_llm(self) -> bool:
+        return bool(self.llm_name) and self.pending
+
+    def llm_text(self) -> str:
+        """"LLM: Rodrigo (0,8) 'valeu, Rodrigo' aos 12:03" para o card da revisão (U-006)."""
+        if not self.has_llm:
+            return ""
+        conf = f" ({self.llm_confidence:.2f})".replace(".", ",") if self.llm_confidence is not None else ""
+        quote = ""
+        if self.llm_evidence:
+            _sid, text, t_ms = self.llm_evidence[0]
+            s = max(0, t_ms // 1000)
+            quote = f" \u201c{text}\u201d aos {s // 60:02d}:{s % 60:02d}"
+        return f"LLM: {self.llm_name}{conf}{quote}"
 
     @property
     def minutes_text(self) -> str:
@@ -61,15 +82,17 @@ class ReviewItem:
             return "ignorada"
         sim = f" (similaridade {self.similarity:.2f}" + (f", margem {self.margin:.2f})" if self.margin is not None else ")") \
             if self.similarity is not None else ""
+        llm = f" · {self.llm_text()}" if self.has_llm else ""
         match self.status:
             case ClusterStatus.CONFIRMED:
                 return f"confirmada: {self.person_name}{sim}"
             case ClusterStatus.AUTO:
                 return f"{self.person_name}{sim}"
             case ClusterStatus.AMBIGUOUS:
-                return f"sugestão: {self.person_name}{sim}; confirme ou escolha outra"
+                return f"pyannote: {self.person_name}{sim}{llm}; Enter aceita o pyannote" + ("; L aceita a LLM" if llm else "")
             case _:
-                return (f"sem nome; parecida com {self.person_name}{sim}" if self.person_name else "sem nome")
+                base = f"sem nome; parecida com {self.person_name}{sim}" if self.person_name else "sem nome"
+                return base + llm + ("; Enter ou L aceita a LLM" if llm and not self.person_name else ("; L aceita a LLM" if llm else ""))
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,10 +134,33 @@ def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
             continue
         pid = c.get("person_id")
         name = str(people.get(int(pid), {}).get("name") or "") if pid is not None else ""
+        llm_pid = c.get("llm_person_id")
+        llm_name = str(people.get(int(llm_pid), {}).get("name") or "") if llm_pid is not None else (c.get("llm_name") or None)
         out.append(ReviewItem(int(c["id"]), str(c["cluster"]), str(c["channel"]), ClusterStatus(str(c["status"])), int(c["speech_ms"]),
                               int(pid) if pid is not None else None, name, c.get("similarity"), c.get("margin"), c.get("merged_into"),
-                              bool(c["centroid"].size)))
+                              bool(c["centroid"].size), int(llm_pid) if llm_pid is not None else None, llm_name or None,
+                              c.get("llm_confidence"), _evidence(store, c.get("llm_evidence_json")), c.get("decision_source")))
     return out
+
+
+def _evidence(store: Store, raw: str | None) -> tuple[tuple[int, str, int], ...]:
+    """Evidências da LLM com o minuto vindo de `segments.t_start_ms` (nunca do texto da LLM)."""
+    if not raw:
+        return ()
+    try:
+        items = json.loads(raw)
+    except ValueError:
+        return ()
+    out: list[tuple[int, str, int]] = []
+    for e in items if isinstance(items, list) else []:
+        try:
+            sid = int(e["segment_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        row = store._q("SELECT t_start_ms FROM segments WHERE id = ?", (sid,))
+        t_ms = int(row[0][0]) if row else int(e.get("t_start_ms") or 0)
+        out.append((sid, str(e.get("quote") or ""), t_ms))
+    return tuple(out)
 
 
 def pending(items: list[ReviewItem]) -> list[ReviewItem]:
@@ -184,15 +230,35 @@ def _similarity_to(store: Store, c: ClusterRow, person_id: int) -> float | None:
     return float(np.dot(normalize(c["centroid"]), normalize(p["centroid"])))
 
 
-def confirm(store: Store, cluster_id: int, person_id: int | None = None, author: str = "usuario") -> int:
-    """Enter no card (sugestão) ou "outra pessoa" (`person_id`); devolve a pessoa confirmada."""
+def decision_source_for(c: ClusterRow, pid: int) -> DecisionSource:
+    """O que o usuário aceitou (F3 item 5, mede o G3): a sugestão do pyannote, a da LLM, outra pessoa ou nenhuma sugestão."""
+    pyannote = c.get("person_id")
+    llm = c.get("llm_person_id")
+    if pyannote is not None and int(pyannote) == pid and str(c["status"]) != ClusterStatus.UNNAMED:
+        return DecisionSource.USER_PYANNOTE
+    if llm is not None and int(llm) == pid:
+        return DecisionSource.USER_LLM
+    if pyannote is None and llm is None and not c.get("llm_name"):
+        return DecisionSource.USER
+    return DecisionSource.USER_OTHER
+
+
+def confirm(store: Store, cluster_id: int, person_id: int | None = None, author: str = "usuario",
+            source: DecisionSource | None = None) -> int:
+    """Enter no card (sugestão do pyannote) ou "outra pessoa" (`person_id`); devolve a pessoa confirmada. Num card `sem_nome`
+    só com sugestão da LLM, Enter aceita a LLM (F3A-43). `source` registra o que foi aceito (`decision_source`)."""
     c = store.segments.get_cluster(cluster_id)
     if c is None:
         raise ValueError(f"cluster {cluster_id} não existe")
     pid = person_id if person_id is not None else c.get("person_id")
+    if pid is None and str(c["status"]) == ClusterStatus.UNNAMED and c.get("llm_person_id") is not None:
+        pid = c.get("llm_person_id")
     if pid is None:
+        if str(c["status"]) == ClusterStatus.UNNAMED and c.get("llm_name"):
+            return new_person(store, cluster_id, str(c["llm_name"]), author=author, source=DecisionSource.USER_LLM)
         raise ValueError("escolha a pessoa desta voz")
     pid = int(pid)
+    source = source or decision_source_for(c, pid)
     person = store.people.get_person(pid)
     if person is None:
         raise ValueError(f"pessoa {pid} não existe")
@@ -205,7 +271,7 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
             old = store.profiles.profile_for(previous, str(c["model"]))             # correção: o vetor sai do perfil anterior (R2-09)
             if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), cluster_id):
                 store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {cluster_id}", str(pid), author)
-        store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid)
+        store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid, decision_source=str(source))
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, pid, str(person.get("role") or "") or None)
         if c["centroid"].size and c.get("model") and previous != pid:
             store.profiles.confirm(pid, str(c["model"]), c["centroid"], sim, int(c["meeting_id"]),
@@ -217,13 +283,27 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     return pid
 
 
-def new_person(store: Store, cluster_id: int, name: str, role: str = "", author: str = "usuario") -> int:
+def new_person(store: Store, cluster_id: int, name: str, role: str = "", author: str = "usuario",
+               source: DecisionSource | None = None) -> int:
+    """Nome novo vira pessoa só na confirmação (F3 item 5)."""
     name = name.strip()
     if not name:
         raise ValueError("informe o nome")
     existing = store.people.find_by_name(name)
     pid = int(existing["id"]) if existing else store.people.create_person(name, role=role)
-    return confirm(store, cluster_id, pid, author)
+    return confirm(store, cluster_id, pid, author, source=source)
+
+
+def accept_llm(store: Store, cluster_id: int, author: str = "usuario") -> int:
+    """Tecla `L` no card: aceita a sugestão da LLM (pessoa cadastrada ou nome novo); `decision_source = usuario_llm`."""
+    c = store.segments.get_cluster(cluster_id)
+    if c is None:
+        raise ValueError(f"cluster {cluster_id} não existe")
+    if c.get("llm_person_id") is not None:
+        return confirm(store, cluster_id, int(c["llm_person_id"]), author, source=DecisionSource.USER_LLM)  # type: ignore[arg-type]
+    if c.get("llm_name"):
+        return new_person(store, cluster_id, str(c["llm_name"]), author=author, source=DecisionSource.USER_LLM)
+    raise ValueError("esta voz não tem sugestão da LLM")
 
 
 def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:

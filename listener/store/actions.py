@@ -1,6 +1,6 @@
 """Ações da ata (`action_items`, F3 item 6): uma linha por ação com `summary_id`, `segment_id` da evidência, dono casado com
 `people` quando houver, prazo absoluto devolvido pela LLM e `status` (`ActionStatus`). Mudanças humanas vão para
-`revisions`; reprocessar religa `segment_id` pelo tempo (F3 item 8)."""
+`revisions`; reprocessar religa `segment_id` pelo tempo em `SegmentsRepo.swap_job` (F3 item 8)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -87,20 +87,3 @@ class ActionsRepo:
             self.core.execute("UPDATE action_items SET text = ? WHERE id = ?", (text, action_id))
             _rev(self.core, "action_item", action_id, "text", row.get("text"), text, author)
         return True
-
-    def relink_segments(self, meeting_id: int, new_job_id: int) -> int:
-        """Reprocessamento: `segment_id` passa ao segmento do job novo mais próximo em `t_ms` (mesmo canal quando houver)."""
-        rows = self.core.q("SELECT a.id, a.t_ms, s.channel FROM action_items a LEFT JOIN segments s ON s.id = a.segment_id "
-                           "WHERE a.meeting_id = ? AND a.t_ms IS NOT NULL", (meeting_id,))
-        n = 0
-        with self.core.transaction():
-            for r in rows:
-                if r["channel"] is None:
-                    cand = self.core.q("SELECT id FROM segments WHERE meeting_id = ? AND job_id = ? ORDER BY ABS(t_start_ms - ?) LIMIT 1",
-                                       (meeting_id, new_job_id, int(r["t_ms"])))
-                else:
-                    cand = self.core.q("SELECT id FROM segments WHERE meeting_id = ? AND job_id = ? AND channel = ? "
-                                       "ORDER BY ABS(t_start_ms - ?) LIMIT 1", (meeting_id, new_job_id, r["channel"], int(r["t_ms"])))
-                if cand:
-                    n += self.core.execute("UPDATE action_items SET segment_id = ? WHERE id = ?", (int(cand[0]["id"]), int(r["id"])))
-        return n

@@ -249,13 +249,28 @@ class SegmentsRepo:
             freed = self.core.execute("UPDATE voice_embeddings SET segment_id = NULL WHERE segment_id IN "
                                       "(SELECT id FROM segments WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?)",
                                       (meeting_id, new_job_id))
+            # F3 item 8: a transcrição revisada (a tarefa mais cara) passa ao segmento novo com o mesmo canal, tempos e texto
+            # (o Whisper é determinístico para o mesmo modelo e janela [exp]); as ações religam pelo tempo mais próximo
+            moved = self.core.execute(
+                "UPDATE segments SET text_llm = (SELECT old.text_llm FROM segments old WHERE old.meeting_id = segments.meeting_id "
+                "AND old.job_id IS NOT NULL AND old.job_id != ? AND old.channel IS segments.channel "
+                "AND old.t_start_ms = segments.t_start_ms AND old.t_end_ms = segments.t_end_ms AND old.text IS segments.text "
+                "AND old.text_llm IS NOT NULL LIMIT 1) WHERE meeting_id = ? AND job_id = ? AND text_llm IS NULL",
+                (new_job_id, meeting_id, new_job_id))
+            relinked = 0
+            for a in self.core.q("SELECT id, t_ms FROM action_items WHERE meeting_id = ? AND t_ms IS NOT NULL", (meeting_id,)):
+                near = self.core.q("SELECT id FROM segments WHERE meeting_id = ? AND job_id = ? ORDER BY ABS(t_start_ms - ?) LIMIT 1",
+                                   (meeting_id, new_job_id, int(a["t_ms"])))
+                if near:
+                    relinked += self.core.execute("UPDATE action_items SET segment_id = ? WHERE id = ?", (int(near[0]["id"]), int(a["id"])))
             segs = self.core.execute("DELETE FROM segments WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
                                      (meeting_id, new_job_id))
             clus = self.core.execute("DELETE FROM clusters WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
                                      (meeting_id, new_job_id))
             self.core.execute("UPDATE meetings SET status = ? WHERE id = ? AND (status != ? OR ?)",
                               (status, meeting_id, MeetingStatus.REVIEWED, int(downgrade_reviewed)))
-        return {"embeddings_freed": freed, "segments_deleted": segs, "clusters_deleted": clus}
+        return {"embeddings_freed": freed, "segments_deleted": segs, "clusters_deleted": clus, "text_llm_moved": moved,
+                "actions_relinked": relinked}
 
 
 DECIDED_WITH_PERSON = (str(ClusterStatus.AUTO), str(ClusterStatus.CONFIRMED))

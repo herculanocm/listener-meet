@@ -26,13 +26,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 @pytest.fixture(autouse=True)
 def restore_logging() -> Iterator[None]:
-    """Cada teste começa e termina com o logger do app como estava (nível, handlers, listener)."""
+    """Cada teste começa e termina com o logger do app como estava (nível, handlers, propagação, listener). Os handlers de
+    captura do pytest ficam fora da foto: o pytest 9 os pendura em todo logger sem propagação durante cada fase e os tira
+    ele mesmo; devolvê-los no teardown os deixaria presos no logger (F3)."""
     logger = logging.getLogger(applog.LOGGER_NAME)
-    level, handlers = logger.level, list(logger.handlers)
+    level, propagate = logger.level, logger.propagate
+    handlers = [h for h in logger.handlers if type(h).__name__ != "LogCaptureHandler"]
     yield
     applog.shutdown()
     logger.handlers[:] = handlers
     logger.setLevel(level)
+    logger.propagate = propagate
 
 
 _TEMPLATE: dict[str, Path] = {}

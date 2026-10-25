@@ -122,7 +122,7 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     dlg.show()
     assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 voz(es)" in dlg.header.text()
     assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
-    assert "sugestão: Ana (similaridade 0.70, margem 0.03)" in dlg.list.item(0).text()
+    assert "pyannote: Ana (similaridade 0.70, margem 0.03)" in dlg.list.item(0).text()
     qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: decodifica numa Task
     qtbot.waitUntil(lambda: bool(played), timeout=3000)
     assert dlg.played and played[0][1] == 16000 and played[0][0] <= 5 * 16000

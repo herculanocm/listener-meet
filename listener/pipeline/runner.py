@@ -157,7 +157,18 @@ class JobRunner(BaseJobRunner):
         self.store.add_event(self.meeting_id, None, EventType.JOB_DONE, {"job_id": self.job_id, "timings": self._timings_dict()})
         log.info("job %s concluído: %s", self.job_id, self._timings_dict())
         self.status = JobStatus.DONE
+        self._enqueue_llm()
         return JobStatus.DONE
+
+    def _enqueue_llm(self) -> None:
+        """F3 item 2: o job da F2 termina como sempre e enfileira o job `llm` da reunião (worker leve); falhar aqui não
+        desfaz o job concluído."""
+        try:
+            from .llm_steps import enqueue_after_pipeline
+
+            enqueue_after_pipeline(self.store, self.meeting_id, self.job_id, self.kind)
+        except Exception as e:  # a camada de LLM nunca derruba o processamento
+            log.warning("job %s: não enfileirei o job de LLM: %s", self.job_id, e)
 
     @override
     def _cancelled(self) -> JobStatus:

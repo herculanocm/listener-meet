@@ -97,7 +97,9 @@ def test_segments_in_batches_clusters_swap_and_merge_resolution(store):
              (mid,))
     assert store.segments.count_segments(mid) == 2503 and store.segments.latest_job_id(mid) == new_job
     result = store.segments.swap_job(mid, new_job)
-    assert result == {"embeddings_freed": 1, "segments_deleted": 2500, "clusters_deleted": 1}        # job_id nulo fica (R2-22)
+    assert {k: result[k] for k in ("embeddings_freed", "segments_deleted", "clusters_deleted")} == {
+        "embeddings_freed": 1, "segments_deleted": 2500, "clusters_deleted": 1}                      # job_id nulo fica (R2-22)
+    assert result["actions_relinked"] == 0                                                             # F3: sem ações, nada religado
     assert store.get_meeting(mid)["status"] == MeetingStatus.PROCESSED
     assert [s["text"] for s in store.segments.list_segments(mid)] == ["oi", "ao vivo", "olá"]
     store._x("DELETE FROM segments WHERE job_id IS NULL")

@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from .base import LlmStream
+from .fake_scripts import DEFAULTS
 from .models_table import PROVIDER_CAPABILITIES
 from .schema import minimal_instance
 from .types import (Capability, Completion, ConnectionTest, Embeddings, EmbedTask, LlmTask, ModelInfo, ProviderKind, Request,
@@ -71,6 +72,9 @@ class FakeProvider:
             return script
         if req.task == LlmTask.TEST and req.json_schema is not None:
             return {"ok": True}                                  # o canário passa por padrão, como num provedor real
+        default = DEFAULTS.get(req.task)
+        if default is not None:
+            return default(req)
         if req.json_schema is not None:
             return minimal_instance(req.json_schema)
         return f"resposta simulada para {req.task}"

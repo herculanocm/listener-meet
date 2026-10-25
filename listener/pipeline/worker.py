@@ -98,6 +98,13 @@ def config_snapshot(store: Store) -> str:
     return json.dumps(snap, ensure_ascii=False)
 
 
+def llm_snapshot(store: Store) -> str:
+    """`LlmJobConfig` do provedor ativo (nunca a chave) para o `config_json` do job `llm` (F3 item 15)."""
+    from ..llm.jobconfig import LlmJobConfig
+
+    return LlmJobConfig.from_store(store).to_json()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="listener --worker", description="worker da fila de processamento (F2)")
     ap.add_argument("--db", help="pasta do banco (padrão: o ponteiro da configuração do sistema)")
@@ -138,7 +145,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
     released = False
     processed = 0
     while True:
-        job = store.jobs.claim(os.getpid(), None if light else config_snapshot(store), kinds=kinds)
+        job = store.jobs.claim(os.getpid(), llm_snapshot(store) if light else config_snapshot(store), kinds=kinds)
         if job is not None:
             idle_since, released = None, False
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
