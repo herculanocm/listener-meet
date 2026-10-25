@@ -16,6 +16,17 @@ injetado; o atraso é o da legenda, do fim da janela até o fim da transcrição
 fecha as janelas em curso, transcreve a fila até o prazo do `hello`, grava `live_stopped`, emite `bye` e sai com 0.
 `LISTENER_LIVE=fake` usa `tests/fake_live.py` (sem ML).
 
+Nomes (F4 item 5, só com "nomes ao vivo"): o `PyannoteEmbedder` da F2 (torch com uma thread, importado só aqui) carrega
+numa thread própria enquanto as legendas já saem; cada janela de R (e de L na sala presencial) vira um embedding contra os
+perfis do mesmo modelo (`names.match_one`, limiar e margem da F2, desempate pelos esperados) com suavização por canal;
+`label` = "Nome — Cargo" ou "Participante"; L sem sala é o usuário. Sem token do Hugging Face ou sem os modelos do
+pyannote: linha `state` `names_unavailable` com o motivo, e as legendas seguem sem nome. Nada grava clusters, segmentos
+nem perfis (CP11).
+
+Eco (sem headset): uma janela de L muito correlacionada com o R do mesmo trecho (`capture.echo_corr_min`, a correlação
+cruzada de `capture.align`) e sem fala própria (L com sinal onde R está em silêncio, ao menos 0,5 s) é o som da reunião
+vazando no microfone: sai antes da transcrição (a legenda de R já cobre); misturada com fala própria, fica.
+
 `--prepare` baixa `small` e `base` para `<pasta de modelos>/faster-whisper-<modelo>` (a mesma pasta da F2) com progresso
 em linhas JSON e sai com 0 ou 1.
 """
@@ -24,6 +35,7 @@ from __future__ import annotations
 import argparse
 import heapq
 import itertools
+import math
 import os
 import re
 import sys
@@ -41,16 +53,20 @@ from typing import Any, BinaryIO, Protocol
 
 import numpy as np
 
+from ..capture.align import estimate_offset
 from ..capture.audio import StreamResampler
 from ..config import bootstrap
-from ..config.defaults import LIVE_MODELS
+from ..config.defaults import HF_PROVIDER_ID, LIVE_MODELS, SPECS
 from ..log import attach_file, get_logger, log_versions, setup
 from ..model import EventType
+from ..pipeline.profiles import ProfileRef, expected_person_ids
 from ..platform.common import paths
 from ..store import Store
 from ..store.captions import CaptionInsert
 from ..store.core import MAIN_FILE
+from ..store.meetings import MeetingRow
 from .client import DEGRADE_MODEL, CpuMeter, is_fake, live_models_dir, whisper_model_dir
+from .names import PARTICIPANT, ChannelNamer, match_one, person_label
 from .protocol import (BYE, CAPTION, CPU, ERROR, READY, STATE, STATS, AudioFrame, ControlFrame, FrameReader, Hello, ProtocolError,
                        encode_line)
 from .vad import FRAME, SAMPLE_RATE, Segmenter, SegmenterConfig, SileroStream, Vad, WindowSpan, silero_session
@@ -77,6 +93,9 @@ DEGRADE_DELAY_S = 20.0
 DEGRADE_HOLD_S = 30.0
 STALL_S = 2.0                    # canal com janela aberta e sem quadros enquanto o outro anda: o trecho vira silêncio
 SILENCE_FILL_MS = 1500           # zeros guardados de um silêncio marcado (o bastante para fechar a janela aberta)
+HISTORY_S = 12.0                 # áudio recente de cada canal para conferir o eco de uma janela do outro
+ECHO_FRAME_MS = 100              # quadros da conferência de fala própria (L com sinal, R em silêncio)
+ECHO_OWN_SPEECH_MS = 500         # tanta fala própria numa janela de L e ela nunca é tratada como eco
 CPU_INTERVAL_S = 10.0
 QUEUE_POLL_S = 0.2
 
@@ -104,15 +123,27 @@ class Transcriber(Protocol):
     def transcribe(self, samples: np.ndarray, *, language: str | None, prompt: str) -> Transcript: ...
 
 
+class Embedder(Protocol):
+    model: str                   # id real do modelo (`voice_profiles.model`)
+
+    def load(self) -> None: ...  # a carga pesada (torch); levanta na falha
+    def embed(self, samples: np.ndarray, sample_rate: int) -> np.ndarray: ...
+
+
 class Engines(Protocol):
     name: str                    # "real" ou "fake"
 
     def vad(self) -> Vad: ...
     def transcriber(self, model: str, threads: int) -> Transcriber: ...
+    def embedder(self, store: Store, threads: int) -> Embedder: ...      # `NamesUnavailableError` sem token ou sem modelos
 
 
 class LiveError(RuntimeError):
     """Falha que uma nova tentativa não resolve (modelo ausente, extra não instalado): o app não relança."""
+
+
+class NamesUnavailableError(RuntimeError):
+    """Nomes ao vivo impossíveis nesta gravação (motivo em texto); as legendas seguem sem nome."""
 
 
 class WhisperLive:
@@ -137,11 +168,42 @@ class WhisperLive:
         return Transcript(segs, getattr(info, "language", None), float(getattr(info, "language_probability", 0.0) or 0.0))
 
 
+class PyannoteLive:
+    """O `PyannoteEmbedder` da F2 (wespeaker, `window="whole"`) com torch em uma thread (`torch.set_num_threads(1)`)."""
+
+    def __init__(self, token: str):
+        from ..pipeline.pyannote import PyannoteEmbedder
+
+        self._embedder = PyannoteEmbedder(token, torch_threads=1)
+        self.model = self._embedder.model
+
+    def load(self) -> None:
+        self._embedder._load()                                              # carga já: torch fora do caminho da legenda
+
+    def embed(self, samples: np.ndarray, sample_rate: int) -> np.ndarray:
+        return self._embedder.embed(samples, sample_rate)
+
+
 class RealEngines:
     name = "real"
 
     def __init__(self, models_dir: Path):
         self.models_dir = models_dir
+
+    def embedder(self, store: Store, threads: int) -> Embedder:
+        """Token do Hugging Face e os modelos do pyannote já baixados pela F2 (`.ready`); o ambiente (HF_HOME na pasta de
+        modelos, offline) antes de qualquer importação. Não importa torch: isso fica para `load()`."""
+        token = store.settings.provider_key(HF_PROVIDER_ID)
+        if not token:
+            raise NamesUnavailableError("token do Hugging Face ausente: informe nas Configurações (Processamento)")
+        from ..pipeline.models import apply_environment, ready_mark
+        from ..pipeline.types import JobConfig
+
+        config = JobConfig(models_dir=store.get_setting("pipeline.models_dir"), torch_threads=max(1, int(threads)))
+        if not ready_mark(config, "pyannote").exists():
+            raise NamesUnavailableError("modelos do pyannote ainda não baixados: processe uma reunião com o token para baixá-los")
+        apply_environment(config)
+        return PyannoteLive(token)
 
     def vad(self) -> Vad:
         try:
@@ -306,6 +368,9 @@ class ChannelStream:
         self._chunks: deque[tuple[int, np.ndarray]] = deque()
         self.lost_frames = 0                     # quadros que não chegaram (descarte do app): viram silêncio
         self._fill = self.cfg.samples(SILENCE_FILL_MS)
+        self._history: deque[tuple[int, np.ndarray]] = deque()   # os últimos ~12 s, para o eco (lido na mesma thread)
+        self._history_n = 0
+        self._history_max = round(HISTORY_S * SAMPLE_RATE)
 
     @property
     def started(self) -> bool:
@@ -378,7 +443,20 @@ class ChannelStream:
     def _append(self, x: np.ndarray) -> None:
         if len(x):
             self._chunks.append((self.pos or 0, x))
+            self._history.append((self.pos or 0, x))
+            self._history_n += len(x)
+            while self._history and self._history_n - len(self._history[0][1]) >= self._history_max:
+                self._history_n -= len(self._history.popleft()[1])
             self.pos = (self.pos or 0) + len(x)
+
+    def history(self, a: int, b: int) -> np.ndarray:
+        """O áudio recente de `[a, b)` (zeros onde não há: silêncio marcado ou fora da memória)."""
+        out = np.zeros(max(0, b - a), np.float32)
+        for cs, arr in self._history:
+            lo, hi = max(a, cs), min(b, cs + len(arr))
+            if lo < hi:
+                out[lo - a:hi - a] = arr[lo - cs:hi - cs]
+        return out
 
     def _audio(self, x: np.ndarray) -> list[LiveWindow]:
         self._append(x)
@@ -482,7 +560,11 @@ class Emitter:
         self.closed = False
 
     def emit(self, msg: dict[str, Any]) -> None:
-        data = encode_line(msg)
+        try:
+            data = encode_line(msg)
+        except (TypeError, ValueError) as e:                     # NaN ou tipo estranho: perde a linha, nunca o laço
+            log.warning("linha %s não serializável: %s", msg.get("type"), e)
+            return
         with self._lock:
             if self.closed:
                 return
@@ -500,6 +582,7 @@ class LiveStats:
     short: int = 0               # descartadas por menos de 0,5 s de fala
     filtered: int = 0            # sem texto depois dos filtros (silêncio, ruído, alucinação)
     skipped: int = 0             # puladas (modo pular e prazo do EOF)
+    echo: int = 0                # janelas de L que eram o eco de R (sem headset)
     captions: int = 0
     degradations: int = 0
     errors: int = 0
@@ -508,7 +591,8 @@ class LiveStats:
 
     def as_dict(self, lost_frames: int) -> dict[str, Any]:
         return {"captions": self.captions, "windows": self.windows, "short": self.short, "filtered": self.filtered,
-                "skipped": self.skipped, "degradations": self.degradations, "errors": self.errors, "db_errors": self.db_errors,
+                "skipped": self.skipped, "echo": self.echo, "degradations": self.degradations, "errors": self.errors,
+                "db_errors": self.db_errors,
                 "lost_frames": lost_frames, "app_dropped": int(self.app.get("dropped", 0) or 0)}
 
 
@@ -519,7 +603,7 @@ class LiveSession:
     def __init__(self, stdin: BinaryIO, stdout: BinaryIO, store: Store, meeting_id: int, engines: Engines, *,
                  clock: Callable[[], float] = time.perf_counter, monotonic: Callable[[], float] = time.monotonic,
                  cpu: CpuMeter | None = None, cpu_interval_s: float = CPU_INTERVAL_S, stall_s: float = STALL_S,
-                 segmenter: SegmenterConfig | None = None):
+                 segmenter: SegmenterConfig | None = None, names_sync: bool = False):
         self.reader = FrameReader(stdin)
         self.out = Emitter(stdout)
         self.store = store
@@ -543,6 +627,21 @@ class LiveSession:
         self.eof_at: float | None = None
         self._cpu_at: float | None = None
         self._thread: threading.Thread | None = None
+        # nomes (L3): o embedder só vale depois de carregado pela thread `live-names`
+        self.embedder: Embedder | None = None
+        self.profiles: list[ProfileRef] = []
+        self.people: dict[int, dict[str, Any]] = {}
+        self.me: dict[str, Any] | None = None
+        self.in_room = False
+        self.expected_ids: frozenset[int] = frozenset()
+        self.threshold = 0.60
+        self.margin = 0.05
+        self.echo_corr_min = float(SPECS["capture.echo_corr_min"].default)
+        self.silence_rms = float(SPECS["capture.silence_rms"].default)
+        self.namers = {ch: ChannelNamer() for ch in ("L", "R")}
+        self.names_error = ""
+        self.names_sync = names_sync              # testes: carrega o embedder antes da primeira legenda
+        self._names_thread: threading.Thread | None = None
 
     # ---- ciclo
     def run(self) -> int:
@@ -559,6 +658,8 @@ class LiveSession:
         model = self.hello.model if self.hello.model in LIVE_MODELS else LIVE_MODELS[0]
         self.language = LanguageLock(meeting.get("language"))
         self.terms = glossary_terms(meeting.get("glossary"), self.store.get_setting("pipeline.glossary"))
+        self.echo_corr_min = float(self.store.get(SPECS["capture.echo_corr_min"]))
+        self.silence_rms = float(self.store.get(SPECS["capture.silence_rms"]))
         try:
             self.streams = {ch: ChannelStream(ch, self.engines.vad(), self.seg_cfg) for ch in ("L", "R")}
         except Exception as e:
@@ -574,19 +675,70 @@ class LiveSession:
             return self._fail(str(e), 1)
         log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s)", self.meeting_id, self.transcriber.name,
                  time.perf_counter() - t0, self.hello.threads, self.engines.name)
-        self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": False,
+        self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": self.hello.names,
                                              "engine": self.engines.name, "pid": os.getpid()})
-        self.out.emit({"type": READY, "model": model, "names": False, "pid": os.getpid()})
+        self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
+        if self.hello.names:
+            self._start_names(meeting)
         self._loop()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         lost = sum(s.lost_frames for s in self.streams.values())
         summary = self.stats.as_dict(lost) | {"model": self.transcriber.name if self.transcriber else None,
-                                              "language": self.language.language}
+                                              "language": self.language.language, "names": self._names_summary()}
         self._event(EventType.LIVE_STOPPED, summary)
         log.info("reunião %s: ao vivo encerrado: %s", self.meeting_id, summary)
         self.out.emit({"type": BYE, **summary})
         return 0
+
+    # ---- nomes (L3)
+    def _start_names(self, meeting: MeetingRow) -> None:
+        """Perfis, pessoas e limiares lidos aqui (thread principal); a carga do embedder (torch) numa thread própria, para as
+        primeiras legendas não esperarem; até lá, R sai sem nome."""
+        self.people = {int(p["id"]): dict(p) for p in self.store.people.list_people()}
+        me = self.store.get_me()
+        self.me = dict(me) if me else None
+        self.in_room = bool(meeting.get("is_in_room"))
+        self.expected_ids = expected_person_ids(meeting.get("expected_people_json"))
+        self.threshold = float(self.store.get(SPECS["pipeline.threshold"]))
+        self.margin = float(self.store.get(SPECS["pipeline.margin"]))
+        try:
+            embedder = self.engines.embedder(self.store, self.hello.threads)
+        except Exception as e:
+            self._names_unavailable(str(e))
+            return
+        names = {pid: str(p.get("name") or "") for pid, p in self.people.items()}
+        self.profiles = [ProfileRef(int(p["id"]), int(p["person_id"]), p["centroid"], p.get("threshold"),
+                                    names.get(int(p["person_id"]), ""))
+                         for p in self.store.profiles.list_profiles(embedder.model)
+                         if p.get("person_id") is not None and int(p.get("n_samples") or 0) > 0]
+        if self.names_sync:
+            self._load_names(embedder)
+            return
+        self._names_thread = threading.Thread(target=self._load_names, args=(embedder,), name="live-names", daemon=True)
+        self._names_thread.start()
+
+    def _load_names(self, embedder: Embedder) -> None:
+        t0 = time.perf_counter()
+        try:
+            embedder.load()
+        except Exception as e:
+            log.exception("reunião %s: embedder dos nomes não carregou", self.meeting_id)
+            self._names_unavailable(str(e))
+            return
+        self.embedder = embedder
+        log.info("reunião %s: nomes ao vivo prontos em %.1f s (%s, %d perfil(is))", self.meeting_id, time.perf_counter() - t0,
+                 embedder.model, len(self.profiles))
+        self.out.emit({"type": STATE, "state": "names_ready", "model": embedder.model, "profiles": len(self.profiles)})
+
+    def _names_unavailable(self, reason: str) -> None:
+        self.names_error = reason
+        log.warning("reunião %s: nomes ao vivo indisponíveis: %s", self.meeting_id, reason)
+        self.out.emit({"type": STATE, "state": "names_unavailable", "reason": reason})
+
+    def _names_summary(self) -> dict[str, Any]:
+        return {"requested": self.hello.names, "ready": self.embedder is not None, "error": self.names_error,
+                "profiles": len(self.profiles), "kept": sum(n.kept for n in self.namers.values())}
 
     def _fail(self, message: str, code: int) -> int:
         log.error("reunião %s: ao vivo não começou: %s", self.meeting_id, message)
@@ -627,7 +779,38 @@ class LiveSession:
 
     def _enqueue(self, w: LiveWindow) -> None:
         self.stats.windows += 1
+        if w.channel == "L" and self._is_echo(w):
+            self.stats.echo += 1
+            return
         self.queue.put(w)
+
+    def _is_echo(self, w: LiveWindow) -> bool:
+        """A janela de L é o som de R vazando no microfone (sem headset): correlação cruzada >= `capture.echo_corr_min` e
+        nenhuma fala própria (L com sinal onde R está em silêncio por 0,5 s ou mais)."""
+        other = self.streams.get("R")
+        if other is None or not other.started or self.echo_corr_min <= 0:
+            return False
+        r = other.history(w.start, w.end)
+        if not np.any(r):
+            return False
+        frame = ECHO_FRAME_MS * SAMPLE_RATE // 1000
+        n = min(len(w.samples), len(r)) // frame
+        if n:
+            l_rms = np.sqrt(np.mean(np.square(w.samples[:n * frame].reshape(n, frame)), axis=1))
+            r_rms = np.sqrt(np.mean(np.square(r[:n * frame].reshape(n, frame)), axis=1))
+            own = int(np.count_nonzero((l_rms > self.silence_rms) & (r_rms <= self.silence_rms)))
+            if own * ECHO_FRAME_MS >= ECHO_OWN_SPEECH_MS:
+                return False
+        try:
+            res = estimate_offset(w.samples, r, SAMPLE_RATE)
+        except Exception as e:
+            log.debug("eco não conferido: %s", e)
+            return False
+        if res is None or res["correlation"] < self.echo_corr_min:
+            return False
+        log.info("reunião %s: janela L %d-%d ms descartada como eco de R (correlação %.2f)", self.meeting_id, w.start_ms, w.end_ms,
+                 res["correlation"])
+        return True
 
     def _stall_guard(self, fed: ChannelStream) -> list[LiveWindow]:
         out: list[LiveWindow] = []
@@ -725,9 +908,29 @@ class LiveSession:
                        "t_end_ms": job.end_ms, "text": text, "person_id": person_id, "label": label, "confidence": confidence,
                        "latency_ms": latency_ms, "model": transcriber.name})
 
-    def _name(self, _job: LiveWindow) -> tuple[int | None, str | None, float | None]:
-        """Nome ao vivo (L3); por ora as legendas saem sem nome."""
-        return None, None, None
+    def _name(self, job: LiveWindow) -> tuple[int | None, str | None, float | None]:
+        """(pessoa, rótulo, cosseno). L sem sala presencial é o usuário (sem embedding); R, e L na sala, passam pelo
+        embedding quando o embedder está pronto; abaixo do limiar (e sem suavização), "Participante"."""
+        if not self.hello.names:
+            return None, None, None
+        if job.channel == "L" and not self.in_room:
+            me = self.me
+            return (int(me["id"]), person_label(me), None) if me else (None, None, None)
+        embedder = self.embedder
+        if embedder is None:
+            return None, None, None
+        try:
+            vec = embedder.embed(job.samples, SAMPLE_RATE)
+        except Exception:
+            self.stats.errors += 1
+            log.exception("reunião %s: embedding da janela %s %d ms falhou", self.meeting_id, job.channel, job.start_ms)
+            return None, None, None
+        match = match_one(vec, self.profiles, self.threshold, self.margin, self.expected_ids)
+        person, similarity = self.namers[job.channel].decide(vec, match)
+        sim = round(float(similarity), 4) if similarity is not None and math.isfinite(similarity) else None
+        if person is None:
+            return None, PARTICIPANT, sim
+        return person, person_label(self.people.get(person)) or PARTICIPANT, sim
 
     # ---- util
     def _age(self, job: LiveWindow) -> float:

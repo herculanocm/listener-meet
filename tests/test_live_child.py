@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import io
 import itertools
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +14,8 @@ from listener.live import proc
 from listener.live import protocol as pr
 from listener.live.vad import FRAME, SAMPLE_RATE, Segmenter, SegmenterConfig, WindowSpan
 from listener.store import Store
-from tests.fake_live import EnergyVad, FakeEngines, tone
+from tests import conftest
+from tests.fake_live import EnergyVad, FakeEngines, session_input, tone
 
 MS = SAMPLE_RATE // 1000
 
@@ -180,23 +179,6 @@ def test_segment_filters_are_the_same_as_the_final_pass():
         sys.modules.pop("listener.pipeline.whisper", None)                          # o app não carrega whisper.py
 
 
-def _session_input(hello: pr.Hello, plan: list[tuple[str, np.ndarray | int, int]], block: int = 1600) -> bytes:
-    """`plan` = [(canal, áudio ou quadros de silêncio, flags)] em sequência no tempo dos dois canais (cada passo nos dois)."""
-    parts = [pr.encode_control(hello.to_msg())]
-    pos = {"L": 0, "R": 0}
-    for ch, data, flags in plan:
-        if isinstance(data, int):
-            parts.append(pr.encode_audio(ch, pos[ch], SAMPLE_RATE, data, flags))
-            pos[ch] += data
-            continue
-        for i in range(0, len(data), block):
-            b = data[i:i + block]
-            parts.append(pr.encode_audio(ch, pos[ch], SAMPLE_RATE, len(b), 0, np.rint(b * 32767).astype("<i2").tobytes()))
-            pos[ch] += len(b)
-    parts.append(pr.encode_control({"type": pr.STATS, "dropped": 4}))
-    return b"".join(parts)
-
-
 def _lines(out: io.BytesIO) -> list[dict]:
     return [pr.decode_line(line) for line in out.getvalue().splitlines()]
 
@@ -206,7 +188,7 @@ def test_session_in_process_writes_captions_events_and_says_bye(tmp_path):
     with Store(db) as s:
         mid = s.create_meeting("ao vivo", None, None, None, glossary="SRM, FIDC")
         s.set_setting("pipeline.glossary", "Cotas")
-    data = _session_input(pr.Hello(1000.0, names=False, model="small", threads=3),
+    data = session_input(pr.Hello(1000.0, names=False, model="small", threads=3),
                           [("L", tone(1.5, 440), 0), ("R", 24000, pr.SILENCED),                            # mic fala; R pausado
                            ("L", 32000, pr.SILENCED), ("R", tone(2.0), 0), ("R", 24000, pr.GAP), ("L", 16000 * 3, pr.GAP)])
     engines = FakeEngines()
@@ -273,6 +255,41 @@ def test_stall_guard_closes_the_window_of_a_channel_that_stopped_delivering(stor
     assert r.feed(pr.AudioFrame("R", 16000, SAMPLE_RATE, 32000, pr.GAP)) == [] and r.pos == 48000   # o buraco tardio: só a parte nova
 
 
+def test_mic_window_that_is_the_echo_of_the_meeting_is_dropped(tmp_path):
+    """Sem headset o microfone pega a reunião: a janela de L muito correlacionada com o R do mesmo trecho não vira legenda
+    (a de R já cobre); fala própria (outro sinal) passa."""
+    db = tmp_path / "db"
+    with Store(db) as s:
+        mid = s.create_meeting("eco", None, None, None)
+    rng = np.random.default_rng(7)
+    speech = (rng.standard_normal(16000 * 2) * 0.2).astype(np.float32)               # "voz" larga: o eco é inequívoco
+    echo = np.concatenate([np.zeros(800, np.float32), 0.4 * speech[:-800]])          # 50 ms depois, mais baixo
+    own = (rng.standard_normal(16000 * 2) * 0.2).astype(np.float32)                  # outra voz, no mesmo instante
+    gap = np.zeros(8000, np.float32)                                                  # 0,5 s: não fecha a janela
+    plan = [("R", speech, 0), ("L", echo, 0), ("R", 32000, pr.SILENCED), ("L", 32000, pr.SILENCED),
+            ("R", 64000, pr.SILENCED), ("L", own, 0), ("L", 32000, pr.SILENCED),          # 4..6 s: fala própria, R mudo
+            ("R", speech, 0), ("L", np.concatenate([echo, gap, own[:12000]]), 0),        # 8..10,5 s: eco e logo fala própria
+            ("R", 48000, pr.SILENCED), ("L", 32000, pr.SILENCED)]
+    out = io.BytesIO()
+    with Store.open_worker(db) as w:
+        assert proc.serve(io.BytesIO(session_input(pr.Hello(1000.0, names=False), plan)), out, w, mid, FakeEngines()) == 0
+        caps = w.captions.list_for_meeting(mid)
+    got = [(c["channel"], round(c["t_start_ms"] / 1000, 1)) for c in caps]
+    assert got == [("R", 0.0), ("L", 3.8), ("R", 7.8), ("L", 7.8)]                  # pré-rolagem de 200 ms
+    assert _lines(out)[-1]["echo"] == 1                                               # só o eco puro sai
+
+
+def test_emitter_survives_unserializable_lines_and_a_closed_pipe():
+    out = io.BytesIO()
+    em = proc.Emitter(out)
+    em.emit({"type": "caption", "confidence": float("nan")})                         # perde a linha, não o laço
+    em.emit({"type": "cpu", "live_pct": 1.0})
+    assert out.getvalue().count(b"\n") == 1
+    out.close()
+    em.emit({"type": "cpu", "live_pct": 2.0})                                         # o app fechou o pipe: só para de emitir
+    assert em.closed
+
+
 def test_session_refuses_without_hello_or_meeting(store):
     mid = store.create_meeting("x", None, None, None)
     out = io.BytesIO()
@@ -289,23 +306,20 @@ def test_session_refuses_without_hello_or_meeting(store):
     assert "ausente" in _lines(out)[-1]["message"]
 
 
-def test_live_process_end_to_end_in_fake_mode(tmp_path):
-    """O único subprocesso real do ao vivo: `python -m listener --live` com LISTENER_LIVE=fake, stdin e stdout de verdade."""
-    db = tmp_path / "db"
-    with Store(db) as s:
-        s.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
-        mid = s.create_meeting("subprocesso", None, None, None)
-    data = _session_input(pr.Hello(1000.0), [("R", tone(1.2), 0), ("R", 32000, pr.SILENCED), ("L", tone(0.9, 440), 0)])
-    env = {k: v for k, v in os.environ.items() if k != "LISTENER_LIVE"} | {"LISTENER_LIVE": "fake", "PYTHONUTF8": "1"}
-    root = Path(__file__).resolve().parent.parent
-    p = subprocess.run([sys.executable, "-m", "listener", "--live", "--db", str(db), "--meeting", str(mid)], input=data,  # noqa: S603
-                       capture_output=True, env=env, cwd=str(root), timeout=90, check=False)
-    lines = [pr.decode_line(line) for line in p.stdout.splitlines()]
-    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")[-2000:]
-    assert [m["type"] for m in lines] == ["ready", "caption", "caption", "bye"] and lines[-1]["captions"] == 2
-    with Store.open_readonly(db) as s:
+def test_live_process_end_to_end_in_fake_mode():
+    """O único subprocesso real do ao vivo: `python -m listener --live` com LISTENER_LIVE=fake, stdin e stdout de verdade
+    (lançado na coleta por `conftest.py`, para correr em paralelo ao resto da suíte)."""
+    run = conftest.LIVE_RUN
+    assert run, "o processo ao vivo devia ter sido lançado na coleta (conftest.pytest_collection_modifyitems)"
+    out, err = run["proc"].communicate(timeout=90)
+    lines = [pr.decode_line(line) for line in out.splitlines()]
+    assert run["proc"].returncode == 0, err.decode("utf-8", "replace")[-2000:]
+    assert [m["type"] for m in lines if m["type"] != "state"] == ["ready", "caption", "caption", "bye"] and lines[-1]["captions"] == 2
+    assert [m["state"] for m in lines if m["type"] == "state"] == ["names_ready"]           # nomes fake carregam em paralelo
+    mid = run["meeting_id"]
+    with Store.open_readonly(run["db"]) as s:
         assert sorted(str(c["channel"]) for c in s.captions.list_for_meeting(mid)) == ["L", "R"]
         assert [e["type"] for e in s.list_events(mid)] == ["live_started", "live_stopped"]
-    text = (tmp_path / "logs" / "listener-live.log").read_text(encoding="utf-8")
+    text = (Path(run["root"]) / "logs" / "listener-live.log").read_text(encoding="utf-8")
     assert "papel live" in text and "modo fake" in text and "ao vivo encerrado" in text
-    assert b"papel live" in p.stderr                                                  # o log também vai ao stderr (descartado no app)
+    assert b"papel live" in err                                                       # o log também vai ao stderr (descartado no app)

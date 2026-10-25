@@ -1,6 +1,7 @@
 """Fixtures comuns (F1.2 M-27): banco temporário, plataforma simulada com relógio manual e logging restaurado.
 F2: o worker em subprocesso real (`--worker --once`, `LISTENER_PIPELINE=fake`) é lançado já na coleta, quando
-`tests/test_worker.py` está na sessão, para o seu tempo de execução correr em paralelo ao resto da suíte."""
+`tests/test_worker.py` está na sessão, para o seu tempo de execução correr em paralelo ao resto da suíte. F4: o mesmo
+para o processo ao vivo (`--live`, `LISTENER_LIVE=fake`) quando `tests/test_live_child.py` está na sessão."""
 from __future__ import annotations
 
 import gc
@@ -128,14 +129,39 @@ def start_worker_process(root: Path, fake: bool = True) -> dict[str, Any]:
     return {"proc": proc, "db": db, "root": root, "meeting_id": mid, "job_id": job_id, "argv": argv}
 
 
+LIVE_RUN: dict[str, Any] = {}        # preenchido por `start_live_process`; lido por tests/test_live_child.py
+
+
+def start_live_process(root: Path) -> dict[str, Any]:
+    """Uma reunião no banco e `python -m listener --live --db DIR --meeting ID` em modo fake, com o stdin vindo de um
+    arquivo (R fala 1,2 s e pausa 2 s; L fala 0,9 s): nada bloqueia a coleta."""
+    from listener.live.protocol import SILENCED, Hello
+    from tests.fake_live import session_input, tone
+
+    db = root / "db"
+    with Store(db) as store:
+        store.set_setting("log.path", str(root / "logs" / "listener.log"))
+        mid = store.create_meeting("subprocesso ao vivo", None, None, None)
+    data = session_input(Hello(1000.0), [("R", tone(1.2), 0), ("R", 32000, SILENCED), ("L", tone(0.9, 440), 0)])
+    (root / "stdin.bin").write_bytes(data)
+    env = {k: v for k, v in os.environ.items() if k != "LISTENER_LIVE"} | {"LISTENER_LIVE": "fake", "PYTHONUTF8": "1"}
+    argv = [sys.executable, "-m", "listener", "--live", "--db", str(db), "--meeting", str(mid)]
+    with (root / "stdin.bin").open("rb") as stdin:
+        proc = subprocess.Popen(argv, env=env, cwd=str(Path(__file__).resolve().parent.parent), stdin=stdin,  # noqa: S603
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return {"proc": proc, "db": db, "root": root, "meeting_id": mid, "argv": argv}
+
+
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     if any(item.path.name == "test_worker.py" for item in items) and not WORKER_RUN:
         WORKER_RUN.update(start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-test-"))))
         WORKER_RUN["real"] = start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-real-")), fake=False)
+    if any(item.path.name == "test_live_child.py" and item.name.startswith("test_live_process") for item in items) and not LIVE_RUN:
+        LIVE_RUN.update(start_live_process(Path(tempfile.mkdtemp(prefix="listener-live-test-"))))
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    for run in (WORKER_RUN, WORKER_RUN.get("real") or {}):
+    for run in (WORKER_RUN, WORKER_RUN.get("real") or {}, LIVE_RUN):
         if run and "proc" in run:
             proc = run["proc"]
             if proc.poll() is None:

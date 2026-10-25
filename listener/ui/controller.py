@@ -118,7 +118,8 @@ class Controller(QObject):
     hotkey_pressed = Signal(str)
     live_caption = Signal(object)        # F4: dict da linha `caption` (channel, t_start_ms, t_end_ms, text, label, person_id...)
     live_state = Signal(object)          # F4: {"state": off | unavailable | starting | live | degraded | skipping | restarting |
-                                         #      stopping | stopped | crashed | names_unavailable, ...detalhes}
+                                         #      stopping | stopped | crashed, ...detalhes}; os nomes à parte, sem mudar
+                                         #      `live_status`: names_ready | names_unavailable (com `reason`)
     _live_message = Signal(object, object)   # (cliente, mensagem): da thread `live-read` para a da interface
 
     def __init__(self, app: QApplication, platform: Platform, store: Store, first_run: bool = False,
@@ -808,8 +809,8 @@ class Controller(QObject):
         elif kind == STATE:
             state = str(msg.get("state") or "")
             details = {k: v for k, v in msg.items() if k not in ("type", "state")}
-            if state == "names_unavailable":                     # a legenda segue, só sem nome
-                self.live_names_status = str(msg.get("reason") or "indisponível")
+            if state in ("names_ready", "names_unavailable"):    # só os nomes: a legenda segue (sem nome, no segundo caso)
+                self.live_names_status = "ok" if state == "names_ready" else str(msg.get("reason") or "indisponível")
                 self.live_state.emit({"state": state, **details})
             else:
                 self._set_live_status(state, **details)

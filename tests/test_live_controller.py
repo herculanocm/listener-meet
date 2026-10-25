@@ -48,8 +48,8 @@ def test_recording_with_live_spawns_taps_and_closes_with_captions(qtbot, qapp, s
         rec = c.recorder
         assert c.live is not None and len(children) == 1 and store.get_setting("pipeline.paused_until")
         assert children[0].argv[-4:] == ["--db", str(store.base_dir), "--meeting", str(rec.meeting_id)]
-        qtbot.waitUntil(lambda: c.live_status == "live", timeout=5000)
-        assert engines.loads == [("small", 3)]
+        qtbot.waitUntil(lambda: c.live_status == "live" and c.live_names_status == "ok", timeout=5000)   # nomes: fake carrega já
+        assert engines.loads == [("small", 3)] and children[0].returncode is None
         platform.pump(1.5)                                                     # tom contínuo nos dois canais
         qtbot.waitUntil(lambda: rec.snapshot.blocks[0] >= 15, timeout=5000)    # a thread de trabalho já passou pelo desvio
         c.stop_recording()

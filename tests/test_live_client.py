@@ -146,7 +146,7 @@ def test_client_with_the_real_child_in_a_thread_delivers_captions_and_cpu(tmp_pa
     client.close()
     assert got_exit.wait(10.0)
     client.join(3.0)
-    types = [m["type"] for m in msgs if m["type"] != "cpu"]                # a CPU sai a qualquer hora (aqui, a cada quadro)
+    types = [m["type"] for m in msgs if m["type"] not in ("cpu", "state")]  # CPU e nomes saem a qualquer hora
     assert types == ["ready", "caption", "bye", EXIT]
     caption = next(m for m in msgs if m["type"] == "caption")
     assert caption["channel"] == "R" and caption["text"] == "fala ao vivo 1"
