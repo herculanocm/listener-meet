@@ -2,14 +2,16 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (25/10/2026, fim da sessão)
+## Onde paramos (25/10/2026, fim da sessão; tudo commitado, `main` à frente do `origin/main`: o push é do dono)
 - **F3 fechada do lado da LLM:** L0 a L6 implementados (`0cea46c` a `998604f`) e as 14 correções da revisão adversarial
   aplicadas (F3.1: `18fa643`, `d3135e6`, mais `ec4890a` com a passada do revisor sobre o diff das correções). Desvios e
   decisões técnicas na seção Implementação de `features/F3.1-correcoes-revisao.md`.
 - **F4 (ao vivo) implementada em 25/10** (D-044): L0 a L6 em sete commits (`b5cdab7` a `64ad255`), ajustes e as
   correções das duas revisões; desvios e o que só o Windows verifica na seção Implementação de `features/F4-ao-vivo.md`.
-- **Próximo passo:** o dono verifica no Windows (B1, agora com o ao vivo), roda o L0 (B15) e cola a chave do Gemini
-  (B13); depois G1 a G4. Sem fase nova para implementar até lá (F5 e F6 são rascunho).
+- **Próximo passo: a F5 (RAG e histórico)** pelo fluxo D-040: a spec está em rascunho inicial
+  (`features/F5-rag-historico.md`); escrever, passar pela revisão de arquitetura e levar ao dono para aprovar (CP13).
+- **Windows pendente por decisão do dono (D-046):** B1, B2, B4, B13, B15 e os gates G1 a G4 esperam a sessão no
+  Windows, na ordem de "Verificar no Windows" (abaixo). Toda sessão começa verificando o ambiente (D-045, `AGENTS.md`).
 
 ## Estado em 25/10/2026
 - Código: F1, F1.1, F1.2, F2, F3, F3.1 e **F4 implementadas**: 270 testes mais 5 pulados no Linux de desenvolvimento

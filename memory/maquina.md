@@ -15,8 +15,10 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - Linux de desenvolvimento: em 25/10 a sessão rodou num Ubuntu 24.04 **nativo** (Xeon Silver 4208 de 2,1 GHz, 32 threads,
   18 GB de RAM, ~6,7 GB livres em disco, sem `/mnt/c`), não no WSL; a suíte fica mais lenta pelo clock baixo (270 testes
   em ~17,5 s depois da F4).
-  Um venv à parte com faster-whisper 1.2.1 (sem torch) serve para medir; no `.venv` do projeto ele quebraria o teste do
-  worker "real" (que baixaria o `large-v3-turbo`).
+  Para medir o Whisper ou o filho `--live` real, use um venv à parte com faster-whisper 1.2.1 (sem torch). O de 25/10
+  ficou na pasta temporária da sessão e sumiu: recriar com `python3 -m venv <pasta>` e `pip install
+  faster-whisper==1.2.1 soundfile scipy`. No `.venv` do projeto ele quebraria o teste do worker "real" (que baixaria o
+  `large-v3-turbo`).
 - WSL (Ubuntu 24.04): `.venv/` com Python 3.12.3, numpy, scipy, soundfile, pytest, ruff, mypy, pytest-qt, PySide6 e, desde
   a F3, google-genai 2.33, openai 3.37, anthropic 2.3, truststore e httpx nas versões do Windows: roda os 193 testes em ~7 s
   (interface em `QT_QPA_PLATFORM=offscreen`; `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs, sem rede) e
