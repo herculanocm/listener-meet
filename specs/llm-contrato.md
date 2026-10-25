@@ -65,7 +65,8 @@ minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de 
   A LLM recebe a data da reunião e devolve datas absolutas; o projeto só valida o formato.
 - `executive` (texto até 1500 caracteres) e `pre_summary` (até 600) recebem a ata validada, não a transcrição; `title`
   (até 80) recebe o pré-resumo. Ordem: minutes → executive, pre_summary, title em paralelo.
-- `revise`: `{"<segment_id>": texto}` restrito aos ids do bloco (60 segmentos, 5 de contexto antes e depois).
+- `revise`: `{"revisions": [{"segment_id", "text"}]}` restrito aos ids do bloco (60 segmentos, 5 de contexto antes e depois);
+  o mapa `{"<segment_id>": texto}` não cabe no subconjunto estrito (chaves dinâmicas) [fato, implementação].
 - `glossary`: `{terms: [str] (≤ 40), people: [{name, person_id | null}]}`.
 - `transcribe` (LLMAudioTranscriber): `{language, utterances: [{start_s, end_s, text}]}` relativo ao início da janela.
 - `chat`: texto livre com `[mm:ss]` da transcrição enviada; o projeto reescreve cada `[mm:ss]` para o segmento mais
@@ -93,6 +94,20 @@ sem linha de preço, custo nulo e "sem preço cadastrado" na tela. Estimativa pr
 `count_tokens` ou caracteres ÷ 3,5. Projeção [chute]: reunião de 2 h ≈ US$ 0,30 a 0,50 (rápido nas leves, forte na
 ata); 3 h ≈ US$ 0,50 a 0,80. Pedido e resposta completos comprimidos (`zlib`) em `llm_calls` quando `llm.store_payloads`
 estiver ligado (padrão sim, P-N4).
+
+## O que a implementação fixou além do texto acima (2026-10-25, medido com os SDKs instalados)
+`stream()` devolve `LlmStream` (iterador assíncrono com `.result`); `Embeddings.vectors` é `np.ndarray` float32 normalizado;
+`AudioPart.seconds` estima a duração pelo tamanho e tipo. Os adaptadores recebem o esquema inteiro, menos as chaves que o
+modo estrito da OpenAI pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`: `schema.provider_schema`); a
+validação do projeto usa o esquema inteiro. anthropic 2.x: `messages.create` não aceita `temperature`, `top_p` nem `top_k`
+(não são enviados); pensamento estendido só sem ferramenta forçada; `Authorization: Bearer`; openai 3.x e anthropic 2.x
+usam `httpx2` (o `http_client` próprio só entra com proxy ou PEM configurados). google-genai 2.33: timeout em ms,
+`retry_options.attempts = 1`, `response_json_schema`, `thinking_budget = 0` no rápido (não no Pro, que não desliga),
+`client.aio.aclose()`. OpenAI: `input_audio` só wav e mp3 (o `LLMAudioTranscriber` manda WAV em fatias de 5 min fora do
+Gemini); `reasoning.effort` e sem `temperature` nas famílias que raciocinam. `title` lê o pré-resumo quando já existe, senão
+o `context` da ata, senão as primeiras falas. Erros traduzidos pela forma (`status_code`/`code`, nome da classe,
+`Retry-After`, texto de "too large"), sem importar SDK. `RetryingProvider` reenvia a resposta inválida como turno
+`assistant` mais a mensagem de erro em `user`.
 
 ## Pinos de versão (extra `llm`)
 `google-genai>=2.33,<3`, `openai>=3.37,<4`, `anthropic>=2.3,<3`, `truststore>=0.9`; uma célula do CI (Ubuntu, 3.12)

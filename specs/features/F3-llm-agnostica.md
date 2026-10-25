@@ -1,6 +1,6 @@
 # F3 — LLM agnóstica: identidade por contexto, título, ata, resumos, transcrição revisada, chat e revisão completa
 
-Status: aprovada; implementação delegada ao agente especialista, lotes L0 a L6 com commit por lote (CP16) · Aprovada por
+Status: implementada (L0 a L6; G3 e os adaptadores reais dependem da chave no Windows) · Aprovada por
 Herculano em: 2026-10-25 (P1 = opções nas Configurações; P2 a P9 nos padrões; D-043) · Fase e gate: F3 · G3 · CPs: 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
 Quando ler: ao trabalhar na camada de LLM, na revisão completa ou no chat. Desenho técnico (tipos, protocolo, esquemas,
 validação, rede, custo, pinos): `specs/llm-contrato.md`. Tabelas: `dados.md`. O que já existe e esta spec usa: fila e
@@ -200,3 +200,32 @@ Configurações e warm-up 1,5 d · L5 revisão e leitura 1,5 d · L6 chat e `LLM
 `processing_jobs.kind`, `params_json` e `config_json` desde a v4; o Gemini aceita áudio em todos os modelos 2.x; `claim`
 hoje recusa quando há qualquer job `rodando` fresco. [exp] janelas atuais comportam 3 h; SDKs em majors novas; proxy e
 TLS corporativos quebram o `certifi` padrão. [chute] custos e esforço.
+
+## Implementação (2026-10-25)
+Commits L0 a L6 (`0cea46c`, `3450fe9`, `498cb57`, `a87386b`, `f07bb38`, `f4740e4`, `b50b02f`). Novos: `llm/{types,base,schema,
+registry,redact,fake,fake_scripts,costs,models_table,adapters_common,gemini,openai,anthropic,jobconfig,evidence,render,
+glossary_task,chat_task}.py`, `llm/prompts/*` (10 tarefas, `PROMPT_VERSION = 1.0`), `pipeline/{jobbase,llm_steps,llm_audio}.py`,
+`store/{providers,summaries,actions,llm_calls,chat}.py`, `ui/{providers,llm_tabs,chat}.py`, `tests/test_llm_*.py`. Alterados:
+`model.py`, `store/{schema,core,db,jobs,segments,meetings,settings}.py`, `pipeline/{runner,worker,models,profiles,review,
+estimate}.py`, `ui/{controller,review,transcript,queue,settings_min,warmup,tasks}.py`, `log.py`, `config/defaults.py`,
+`platform/common/process.py`, `pyproject.toml` (pinos por major), `ci.yml` (célula `llm`). Itens 1 a 16 feitos, com estes
+desvios: (a) segunda opinião por áudio (item 5): a configuração existe (desligada, P3) e o adaptador aceita áudio, mas a
+chamada de `identify` com trechos FLAC não foi escrita; medir no G3 só por texto; (b) `revise` devolve
+`{"revisions": [{segment_id, text}]}` em vez de um mapa (o subconjunto estrito não aceita chaves dinâmicas); (c) U-019 só no
+chat: "gerar de novo" vai pela fila, sem streaming (P6); (d) "testar pelo worker" usa a reunião mais recente (a fila é por
+reunião); (e) `title` lê o pré-resumo quando já existe, senão o contexto da ata, senão as primeiras falas (o grupo roda em
+paralelo); (f) `anthropic` 2.x não aceita `temperature` em `messages.create` [fato, SDK 2.3.0]: o adaptador não envia;
+(g) `providers.model` guarda o modelo de embeddings; (h) o worker pesado lança o leve ao enfileirar (o app pode estar
+fechado, P2); (i) o pesado nunca sobe durante a gravação, também em `launch_worker()`; (j) as tarefas puladas pelo alerta
+ficam em `timings_json.llm.skipped` e a revisão oferece "gerar?"; (k) os testes com os SDKs reais (transporte HTTP simulado)
+rodam só com `LISTENER_SDK_TESTS=1` (célula `llm` do CI), para a suíte ficar abaixo de 8 s; (l) `scripts/llm_smoke.py` não
+foi escrito (autorização CP13 à parte). Medido no WSL: 193 testes mais 3 pulados em 6,9 a 7,7 s (148 em 5,8 s antes); ruff
+e mypy limpos (Linux e `--platform win32`). Fatos novos: filtros de `logging` num logger não valem para registros
+propagados pelos filhos (a redação da chave fica no `QueueHandler`); o pytest 9 pendura `LogCaptureHandler` em todo logger
+sem propagação (a fixture `restore_logging` os deixa fora da foto); openai 3.x e anthropic 2.x usam `httpx2`; o anthropic
+2.x autentica por `Authorization: Bearer`; o google-genai 2.33 manda `thinking_budget` em snake_case dentro de
+`thinkingConfig` (a API aceita as duas grafias). Só a chave do dono no Windows verifica: latências e preços reais contra a
+fatura, qualidade das atas (2 de 3), acerto da identidade por contexto, troca de provedor numa ata, proxy e TLS da máquina
+com EDR (e o worker leve `CREATE_NO_WINDOW` saindo para a rede), forma exata das chamadas nas majors (canário do "testar
+conexão": esquemas estritos na OpenAI, `input_schema` na Anthropic, `response_json_schema` no Gemini), `list_models()`
+reais, tempo de importação dos SDKs, `LLMAudioTranscriber` numa janela real (FLAC até 20 MB), limites de taxa do tier, G3.
