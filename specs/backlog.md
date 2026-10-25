@@ -2,17 +2,30 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Estado em 24/10/2026
-- Código: F1, F1.1, F1.2 e **F2 (L1 a L6) implementadas**: 148 testes determinísticos em ~4,8 s no WSL (sem modelos, com
-  fakes de transcritor, diarizador e embedder), ruff e mypy limpos (Linux e `--platform win32`), CI em três sistemas ×
-  Python 3.12 e 3.13. Esquema v5. F2 passou por revisão de arquitetura antes e por revisão adversarial do diff depois
-  (27 achados corrigidos, segunda passada fechou 24, os 3 restantes corrigidos). Os adaptadores reais do Whisper e do
-  pyannote (L5) foram escritos às cegas: só rodam com o token (B4) no Windows.
-- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, fluxo D-040, F2 em onze commits); branch `main`; sem remoto.
-  Commit a cada grande alteração (CP16).
+## Onde paramos (25/10/2026, troca de conta do dono)
+- **F3 implementada em 8 commits** (`0cea46c` a `998604f`) e revisada pelo revisor adversarial: veredito "fechar com correções
+  pequenas", 14 itens (2 altas, 5 médias, 7 baixas), transcritos em `features/F3.1-correcoes-revisao.md` porque o relatório
+  original ficou em pasta temporária. **O agente que ia corrigir foi interrompido antes de concluir**: as edições parciais
+  (R3-01, R3-05, R3-06 em `ui/chat.py`, `controller.py`, `llm_tabs.py`, `review.py`, `transcript.py`) estão em
+  `git stash list` ("F3.1 parcial do agente"); a árvore em `main` está limpa e verde (193 testes, 3 pulados sem chave).
+- **Próximo passo exato:** aplicar a F3.1 (agente especialista com o briefing da própria spec, ou direto: são correções
+  pequenas), `git stash drop` ou reaproveitar o stash depois de revisar, passada curta do revisor no diff, verificação
+  independente (`pytest`, `ruff`, `mypy` e `mypy --platform win32`, regra de importações), atualizar a seção Implementação da
+  F3, este backlog, `memory/` e commitar (CP16). Depois seguem B1, B2, B4 e o G2 e G3 no Windows, e a F4 pelo fluxo D-040.
+- Os relatórios dos agentes (arquiteto, dev, revisões) vivem fora do repositório e não sobrevivem à troca de sessão; tudo
+  o que importa deles já está nas specs (F1.2, F2, F3, F3.1, `llm-contrato.md`) e em `decisoes.md`.
+
+## Estado em 25/10/2026
+- Código: F1, F1.1, F1.2, F2 e **F3 (L0 a L6) implementadas** (F3.1 pendente): 193 testes em ~7 s no WSL (3 pulados sem
+  chave; com `LISTENER_SDK_TESTS=1` rodam os de transporte simulado dos SDKs), ruff e mypy limpos (Linux e `--platform
+  win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`. Esquema v6. Nada do app importa
+  torch nem os SDKs de LLM (teste estático). Whisper, pyannote (F2 L5) e os três adaptadores de LLM foram escritos às
+  cegas ou contra transporte simulado: só rodam no Windows com o token do Hugging Face (B4) e a chave do Gemini (G3).
+- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze commits, F3 em oito); branch `main`; sem
+  remoto; um stash documentado (F3.1 parcial). Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
-  pendente) · **F3 aprovada** (D-043; contrato em `specs/llm-contrato.md`), lotes L0 a L6 em implementação por agente
-  especialista; G3 depende da chave do Gemini no Windows · F4 a F6 rascunho inicial · F7 futuro.
+  pendente) · **F3 implementada** (D-043; contrato em `specs/llm-contrato.md`), **F3.1 aprovada e pendente** · G3 depende
+  da chave do Gemini no Windows · F4 a F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -23,10 +36,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Bloqueios que só o dono destrava
 | # | O quê | Destrava |
 | --- | --- | --- |
-| B1 | no Windows: `pip install -e .[dev,win32]`, `python -m listener --selftest`, depois `python -m listener`: assistente (com a página de log), gravação, fila e revisão; dizer o que está estranho | verifica F1.1, F1.2 e a parte da F2 sem modelos; a interface nunca foi vista num monitor |
+| B1 | no Windows: `pip install -e .[dev,win32,llm]`, `python -m listener --selftest`, depois `python -m listener`: assistente (com a página de log), gravação, fila, revisão e Configurações › LLM; dizer o que está estranho | verifica F1.1, F1.2, a parte da F2 sem modelos e a F3 sem chave; a interface nunca foi vista num monitor |
 | B2 | gate G1: 3 reuniões reais com headset em 2 plataformas; `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
+| B13 | chave do Gemini (plano pago) colada em Configurações › LLM › Gemini e "testar conexão" ok | adaptadores reais, canário dos esquemas, latências e preços, G3 |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 aprovada, D-043).
@@ -36,8 +50,8 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 2. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
 3. Dono instala o extra `pipeline` e cola o token (B4); o primeiro job real verifica o L5, mede RTF e RSS por etapa e a
    sonda Q8; G2 nas gravações do G1; números em `decisoes.md`.
-4. Especialista implementa a F3 (L0 a L6) com commit por lote; revisor lê o diff; LLM verifica e fecha; G3 com a chave do
-   Gemini no Windows (dono cola a chave na sub-aba e testa a conexão).
+4. LLM aplica a F3.1 (14 correções), revisor confere o diff, LLM verifica e fecha a F3; dono cola a chave (B13) e o
+   primeiro job de LLM real valida os adaptadores; G3 nas três reuniões; depois a F4 (ao vivo) pelo fluxo D-040.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
