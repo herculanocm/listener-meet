@@ -220,7 +220,7 @@ def test_dead_worker_job_is_relaunched_by_the_app(qtbot, qapp, store, platform):
         assert c.launch_worker() is True and platform.spawned[0][0] == worker_command()
         assert c.launch_worker() is False                                                   # cooldown
         store.jobs.heartbeat(jid)                                                           # worker novo vivo: não relança
-        c._worker_spawned_at = None
+        c._worker_spawned_at[False] = None
         assert c.launch_worker() is False
     finally:
         c.emergency_stop()
@@ -236,7 +236,7 @@ def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     store.jobs.claim(pid=1)
     store.jobs.set_progress(j1, JobStep.DIARIZE, 0.2)
     launched: list[int] = []
-    dlg = QueueDialog(store, on_launch=lambda: launched.append(1))
+    dlg = QueueDialog(store, on_launch=lambda light=False: launched.append(1 + int(light)))
     qtbot.addWidget(dlg)
     assert dlg.table.rowCount() == 2
     row0 = [dlg.table.item(0, c).text() for c in range(7)]
@@ -249,10 +249,10 @@ def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     dlg.toggle_pause()
     assert store.get(ctl_specs()["pipeline.paused_manual"]) is True and dlg.btn_pause.text() == "Retomar fila" and launched == []
     dlg.toggle_pause()
-    assert store.get(ctl_specs()["pipeline.paused_manual"]) is False and launched == [1]
+    assert store.get(ctl_specs()["pipeline.paused_manual"]) is False and launched == [1, 2]       # as duas classes (F3)
     dlg.table.selectRow(1)
     dlg.retry_selected()
-    assert store.jobs.get(j2)["status"] == "pendente" and launched == [1, 1]
+    assert store.jobs.get(j2)["status"] == "pendente" and launched == [1, 2, 1]
     dlg.table.selectRow(0)
     dlg.reprocess_selected()
     assert store.jobs.for_meeting(mid)[0]["kind"] == JobKind.REPROCESS and dlg.table.rowCount() == 3
@@ -289,5 +289,49 @@ def test_start_enqueues_recorded_meetings_without_a_job(qtbot, qapp, store, plat
         assert store.get_setting("pipeline.paused_until") == "" and len(platform.spawned) == 1
         c.start()
         assert len(store.jobs.active()) == 3                                                    # idempotente
+    finally:
+        c.emergency_stop()
+
+
+def test_light_worker_is_launched_during_recording_and_heavy_is_not(qtbot, qapp, store, platform, monkeypatch):
+    """F3 item 2: o worker leve (jobs `llm`) sobe mesmo com gravação em curso; o pesado espera o fim da gravação."""
+    from listener.capture.recorder import RecordConfig
+    from listener.model import JobKind
+    from listener.platform.common.process import worker_command
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+
+    store.upsert_me("Eu")
+    old = store.create_meeting("antiga", None, None, None)
+    store.finish_meeting(old, 3000)
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+    try:
+        assert c.start_recording(cfg, {"title": "nova"}) and c.recorder is not None
+        store.jobs.enqueue(old)                                    # pesado: espera
+        store.jobs.enqueue(old, JobKind.LLM, {"tasks": ["minutes"], "parent_job_id": 1})
+        c._poll_queue()
+        assert [argv for argv, _env in platform.spawned] == [worker_command(light=True)]
+        assert platform.spawned[0][1]["OMP_NUM_THREADS"] == "1"
+        assert c.launch_worker(light=True) is False and c.launch_worker() is False       # cooldown do leve; pesado: gravando
+        c._poll_queue()
+        assert len(platform.spawned) == 1
+        monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert [argv for argv, _env in platform.spawned][1] == worker_command()           # parou: o pesado sobe
+        # "ata pronta" por kind: um job llm concluído não abre a revisão de falantes nem a oferece
+        notes: list[str] = []
+        opened: list[int] = []
+        monkeypatch.setattr(c, "notify", notes.append)
+        monkeypatch.setattr(c, "open_review", opened.append)
+        llm_job = store.jobs.for_meeting(old)[0]
+        assert llm_job["kind"] == "llm"
+        store.jobs.claim(pid=5, kinds=("llm",))
+        store.jobs.finish(int(llm_job["id"]), __import__("listener.model", fromlist=["JobStatus"]).JobStatus.DONE)
+        c._poll_queue()
+        assert notes == ["antiga: ata pronta."] and opened == []
     finally:
         c.emergency_stop()

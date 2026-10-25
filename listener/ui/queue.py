@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
 REFRESH_MS = 2000
 COLUMNS = ("Reunião", "Tipo", "Estado", "Etapa", "%", "Estimativa", "Detalhe")
-KIND_TEXT: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "reprocessar", JobKind.EMBED_RANGE: "perfil de trecho"}
+KIND_TEXT: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "reprocessar", JobKind.EMBED_RANGE: "perfil de trecho",
+                             JobKind.LLM: "LLM"}
 
 
 def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str) -> tuple[str, ...]:
@@ -32,7 +33,7 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str) ->
     eta = ""
     if status in (JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.PENDING):
         eta = fmt_remaining(remaining_seconds(step or None, float(job.get("progress") or 0.0), duration_ms / 1000 if duration_ms else None,
-                                              rtf_json, job.get("timings_json")))
+                                              rtf_json, job.get("timings_json"), kind=str(job.get("kind") or "")))
     detail = str(job.get("error") or "")
     return (f"{title} ({started})" if started else title, KIND_TEXT.get(str(job.get("kind")), str(job.get("kind"))), status,
             JOB_STEP_LABELS.get(step, step), f"{float(job.get('progress') or 0.0) * 100:.0f}", eta, detail)
@@ -42,7 +43,7 @@ class QueueDialog(QDialog):
     def __init__(self, store: Store, parent: QWidget | None = None, on_launch: Any = None, on_open: Any = None, on_review: Any = None):
         super().__init__(parent)
         self.store = store
-        self.on_launch = on_launch                      # o controlador lança o worker quando há pendente
+        self.on_launch = on_launch                      # `on_launch(light)`: o controlador lança o worker da classe (F3)
         self.on_open = on_open                          # abre a transcrição da reunião selecionada
         self.on_review = on_review                      # abre a revisão de falantes
         self.setWindowTitle("Fila de processamento")
@@ -116,7 +117,8 @@ class QueueDialog(QDialog):
         paused = self.store.get(SPECS["pipeline.paused_manual"])
         self.store.set_setting("pipeline.paused_manual", not paused)
         if paused and self.on_launch is not None:
-            self.on_launch()
+            self.on_launch(False)
+            self.on_launch(True)
         self.refresh()
 
     def cancel_selected(self) -> None:
@@ -126,10 +128,11 @@ class QueueDialog(QDialog):
             self.refresh()
 
     def retry_selected(self) -> None:
+        """"Tentar de novo"; num job `llm` o snapshot do provedor é descartado e o ativo passa a valer (F3 item 15)."""
         job = self.selected_job()
-        if job is not None and self.store.jobs.retry(int(job["id"])):
+        if job is not None and self.store.jobs.retry(int(job["id"]), reset_config=str(job.get("kind")) == JobKind.LLM):
             if self.on_launch is not None:
-                self.on_launch()
+                self.on_launch(str(job.get("kind")) == JobKind.LLM)
             self.refresh()
 
     def _open_selected(self, fn: Any) -> None:
@@ -143,5 +146,5 @@ class QueueDialog(QDialog):
             return
         self.store.jobs.enqueue(int(job["meeting_id"]), JobKind.REPROCESS)
         if self.on_launch is not None:
-            self.on_launch()
+            self.on_launch(False)
         self.refresh()

@@ -10,18 +10,13 @@ L é o usuário (`attribution = canal`) e reforça o perfil dele com `source = a
 from __future__ import annotations
 
 import json
-import threading
 import time
-import traceback
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
+from typing import Any, override
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from ..config.defaults import SPECS
 from ..log import get_logger
 from ..model import Attribution, ClusterStatus, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SegmentSource
 from ..store import Store
@@ -31,6 +26,7 @@ from ..store.profiles import normalize
 from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_person
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
+from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
 from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names
 from .stitch import stitch
 from .types import (AudioWindow, DiarizationWindow, JobConfig, TranscriptWindow, Turn, Word, decode_diarization, decode_transcript,
@@ -50,24 +46,7 @@ EMBED_L_ARTIFACT = "embed_l"
 TRANSPORT_MIN_COS = 0.8
 USER_CLUSTER = "L"
 MIN_LANGUAGE_PROB = 0.5
-type Clock = Callable[[], datetime]
-type Sleep = Callable[[float], None]
-
-
-class JobCancelledError(Exception):
-    """Cancelamento pedido pela interface e atendido entre janelas."""
-
-
-@dataclass(slots=True)
-class StepTiming:
-    audio_s: float = 0.0
-    speech_s: float = 0.0
-    wall_s: float = 0.0
-    model: str = ""
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"audio_s": round(self.audio_s, 3), "speech_s": round(self.speech_s, 3), "wall_s": round(self.wall_s, 3),
-                "model": self.model}
+__all__ = ["JobCancelledError", "JobRunner", "StepTiming", "build_prompt", "update_rtf"]    # nomes da F2 continuam aqui
 
 
 def build_prompt(glossary: str, participants: str | None, title: str | None, previous: Sequence[Word]) -> str:
@@ -94,34 +73,23 @@ def update_rtf(rtf_json: str, timings: dict[str, StepTiming]) -> str:
     return json.dumps(rtf, ensure_ascii=False)
 
 
-class JobRunner:
+class JobRunner(BaseJobRunner):
+    step_weights = STEP_WEIGHTS
+
     def __init__(self, store: Store, deps: PipelineDeps, job: JobRow, *, config: JobConfig | None = None, now: Clock | None = None,
                  sleep: Sleep | None = None, heartbeat_s: float = 15.0, heartbeat_thread: bool = True, wait_poll_s: float = 5.0,
                  memory_rss: Callable[[], int | None] | None = None):
-        self.store = store
+        super().__init__(store, job, now=now, sleep=sleep, heartbeat_s=heartbeat_s, heartbeat_thread=heartbeat_thread,
+                         wait_poll_s=wait_poll_s, memory_rss=memory_rss)
         self.deps = deps
-        self.job = job
-        self.job_id = int(job["id"])
-        self.meeting_id = int(job["meeting_id"])
-        self.kind = JobKind(str(job.get("kind") or JobKind.MEETING))
         self.config = config or JobConfig.from_json(job.get("config_json"))
-        self.now: Clock = now or (lambda: datetime.now().astimezone())
-        self.sleep: Sleep = sleep or time.sleep
-        self.heartbeat_s = heartbeat_s
-        self.heartbeat_thread = heartbeat_thread
-        self.wait_poll_s = wait_poll_s
-        self.memory_rss = memory_rss
-        self.timings: dict[str, StepTiming] = {}
-        self._done_weight = 0.0
-        self._share = 1.0
-        self._step: JobStep | None = None
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self.meeting: dict[str, Any] = {}
         self.me: dict[str, Any] | None = None
         self.language: str | None = None
-        self.status: JobStatus | None = None
-        self._load_timings(job.get("timings_json"))
+
+    @property
+    @override
+    def respects_lease(self) -> bool:
+        return self.config.pause_on_record
 
     # ---------------------------------------------------------------- ciclo
     def run(self) -> JobStatus:
@@ -135,22 +103,7 @@ class JobRunner:
             return self._fail(PermanentError("perfil de trecho livre entra na F6"), permanent=True)
         self._start_heartbeat()
         try:
-            self.store.add_event(self.meeting_id, None, EventType.JOB_START,
-                                 {"job_id": self.job_id, "kind": str(self.kind), "attempts": self.job.get("attempts", 0),
-                                  "config": self.config.to_dict()})
-            self._prepare()
-            channels = ["R", "L"] if self.meeting.get("is_in_room") else ["R"]
-            clusters_by_channel: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]] = {}
-            for ch in channels:
-                windows = self._diarize(ch, share=1.0 / len(channels))          # preset sala: o peso da etapa se divide (R2-20)
-                clusters_by_channel[ch] = self._match(ch, windows)
-            if "L" not in channels:
-                self._embed_user_channel()
-            self._end_step(JobStep.EMBED)
-            self._end_step(JobStep.MATCH)
-            transcripts = {"R": self._transcribe("R", JobStep.TRANSCRIBE_R), "L": self._transcribe("L", JobStep.TRANSCRIBE_L)}
-            self._segments(transcripts, clusters_by_channel)
-            return self._finish_ok()
+            return self._execute()
         except JobCancelledError:
             return self._cancelled()
         except PermanentError as e:
@@ -160,12 +113,32 @@ class JobRunner:
         finally:
             self._stop_heartbeat()
 
+    @override
+    def _execute(self) -> JobStatus:
+        self.store.add_event(self.meeting_id, None, EventType.JOB_START,
+                             {"job_id": self.job_id, "kind": str(self.kind), "attempts": self.job.get("attempts", 0),
+                              "config": self.config.to_dict()})
+        self._prepare()
+        channels = ["R", "L"] if self.meeting.get("is_in_room") else ["R"]
+        clusters_by_channel: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]] = {}
+        for ch in channels:
+            windows = self._diarize(ch, share=1.0 / len(channels))          # preset sala: o peso da etapa se divide (R2-20)
+            clusters_by_channel[ch] = self._match(ch, windows)
+        if "L" not in channels:
+            self._embed_user_channel()
+        self._end_step(JobStep.EMBED)
+        self._end_step(JobStep.MATCH)
+        transcripts = {"R": self._transcribe("R", JobStep.TRANSCRIBE_R), "L": self._transcribe("L", JobStep.TRANSCRIBE_L)}
+        self._segments(transcripts, clusters_by_channel)
+        return self._finish_ok()
+
     def _pending_voices(self) -> bool:
         """Há voz do job por decidir (fora o `L` do usuário)? Decide se uma reunião `revisada` volta a `processada` (R2-11)."""
         return any(str(c["status"]) in (ClusterStatus.AMBIGUOUS, ClusterStatus.UNNAMED) and c.get("merged_into") is None
                    and not (c["channel"] == "L" and c["cluster"] == USER_CLUSTER)
                    for c in self.store.segments.list_clusters(self.meeting_id, self.job_id))
 
+    @override
     def _finish_ok(self) -> JobStatus:
         self._done_weight = 1.0
         others = [c for c in self.store.segments.list_clusters(self.meeting_id) if int(c["job_id"]) != self.job_id]
@@ -186,6 +159,7 @@ class JobRunner:
         self.status = JobStatus.DONE
         return JobStatus.DONE
 
+    @override
     def _cancelled(self) -> JobStatus:
         """Sem decisão humana nos clusters do job, eles saem com os artefatos (dado derivado); com decisão, ficam com os
         artefatos da diarização, do embed do L e da costura: o trecho de 5 s continua disponível e a nova tentativa
@@ -205,111 +179,9 @@ class JobRunner:
         self.status = JobStatus.CANCELLED
         return JobStatus.CANCELLED
 
-    def _fail(self, e: BaseException, permanent: bool) -> JobStatus:
-        last = traceback.format_exception_only(type(e), e)[-1].strip()
-        log.error("job %s falhou na etapa %s%s", self.job_id, self._step, " (erro permanente)" if permanent else "", exc_info=e)
-        self.store.jobs.finish(self.job_id, JobStatus.ERROR, error=last, timings=self._timings_dict(), count_attempt=not permanent)
-        self.store.add_event(self.meeting_id, None, EventType.JOB_ERROR,
-                             {"job_id": self.job_id, "step": str(self._step or ""), "error": last, "permanent": permanent})
-        self.status = JobStatus.ERROR
-        return JobStatus.ERROR
-
-    # ---------------------------------------------------------------- heartbeat, pausa, cancelamento, progresso
-    def _start_heartbeat(self) -> None:
-        self.store.jobs.heartbeat(self.job_id)                      # antes de carregar qualquer modelo
-        if self.heartbeat_thread:
-            self._thread = threading.Thread(target=self._heartbeat_loop, name=f"heartbeat-{self.job_id}", daemon=True)
-            self._thread.start()
-
-    def _heartbeat_loop(self) -> None:
-        try:
-            while not self._stop.wait(self.heartbeat_s):
-                try:
-                    self.store.jobs.heartbeat(self.job_id)
-                except Exception as e:  # o heartbeat nunca derruba o job; o banco pode estar ocupado
-                    log.warning("heartbeat do job %s falhou: %s", self.job_id, e)
-        finally:
-            self.store.close_thread()
-
-    def _stop_heartbeat(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5.0)
-            self._thread = None
-
     def _between_windows(self) -> None:
-        """Chamado antes de cada janela: heartbeat, cancelamento e lease da gravação (nunca no meio de uma janela)."""
-        self.store.jobs.heartbeat(self.job_id)
-        if self.store.jobs.cancel_requested(self.job_id):
-            raise JobCancelledError
-        waited = False
-        while self._paused():
-            if not waited:
-                self.store.jobs.set_status(self.job_id, JobStatus.PAUSED, JobStep.WAITING)
-                log.info("job %s aguardando (gravação em curso ou pausa manual)", self.job_id)
-                waited = True
-            self.sleep(self.wait_poll_s)
-            self.store.jobs.heartbeat(self.job_id)
-            if self.store.jobs.cancel_requested(self.job_id):
-                raise JobCancelledError
-        if waited:
-            self.store.jobs.set_status(self.job_id, JobStatus.RUNNING, self._step)
-
-    def _paused(self) -> bool:
-        if self.store.get(SPECS["pipeline.paused_manual"]):
-            return True
-        if not self.config.pause_on_record:
-            return False
-        until = self.store.get_setting("pipeline.paused_until")
-        if not until:
-            return False
-        try:
-            return datetime.fromisoformat(until) > self.now()
-        except ValueError:
-            return False
-
-    def _begin_step(self, step: JobStep, share: float = 1.0) -> None:
-        self._share = share
-        if self._step != step:
-            self._step = step
-            self.store.jobs.set_progress(self.job_id, step, self._fraction(0.0), self._timings_dict())
-            self.store.add_event(self.meeting_id, None, EventType.JOB_STEP, {"job_id": self.job_id, "step": str(step)})
-
-    def _progress(self, step: JobStep, fraction: float) -> None:
-        self.store.jobs.set_progress(self.job_id, step, self._fraction(fraction), self._timings_dict())
-
-    def _end_step(self, step: JobStep, share: float = 1.0) -> None:
-        self._done_weight += STEP_WEIGHTS.get(step, 0.0) * share
-        self._done_weight = min(1.0, self._done_weight)
-        rss = self.memory_rss() if self.memory_rss is not None else None
-        t = self.timings.get(step)
-        log.info("job %s etapa %s: %s%s", self.job_id, step, t.as_dict() if t else "nada a fazer",
-                 f"; RSS {rss / 1e6:.0f} MB" if rss else "")
-
-    def _fraction(self, step_fraction: float) -> float:
-        weight = STEP_WEIGHTS.get(self._step or "", 0.0) * self._share
-        return round(min(1.0, self._done_weight + weight * max(0.0, min(1.0, step_fraction))), 4)
-
-    def _timing(self, step: JobStep | str, model: str = "") -> StepTiming:
-        t = self.timings.get(str(step))
-        if t is None:
-            t = self.timings[str(step)] = StepTiming(model=model)
-        if model and not t.model:
-            t.model = model
-        return t
-
-    def _timings_dict(self) -> dict[str, Any]:
-        return {k: v.as_dict() for k, v in self.timings.items()}
-
-    def _load_timings(self, text: str | None) -> None:
-        try:
-            data = json.loads(text) if text else {}
-        except ValueError:
-            data = {}
-        for k, v in data.items():
-            if isinstance(v, dict):
-                self.timings[k] = StepTiming(float(v.get("audio_s", 0)), float(v.get("speech_s", 0)), float(v.get("wall_s", 0)),
-                                             str(v.get("model", "")))
+        """Nome da F2 para `checkpoint()`: heartbeat, cancelamento e lease da gravação antes de cada janela."""
+        self.checkpoint()
 
     # ---------------------------------------------------------------- etapas
     def _prepare(self) -> None:

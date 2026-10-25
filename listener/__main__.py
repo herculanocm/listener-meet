@@ -4,8 +4,9 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
   --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016),
                                                     pedaços órfãos e arquivos de áudio ausentes; abre o banco só leitura
-  --worker [--db DIR] [--once]                      worker da fila de processamento (F2): o app o lança sozinho; à mão
-                                                    serve para testes (LISTENER_PIPELINE=fake) e diagnóstico
+  --worker [--db DIR] [--once] [--light]            worker da fila de processamento (F2): o app o lança sozinho; à mão
+                                                    serve para testes (LISTENER_PIPELINE=fake) e diagnóstico; `--light` é
+                                                    o worker leve da F3 (só jobs de LLM, sem torch; LISTENER_LLM=fake)
 """
 from __future__ import annotations
 

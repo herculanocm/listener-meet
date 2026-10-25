@@ -172,3 +172,59 @@ def test_concurrent_claims_from_two_stores_give_the_job_to_exactly_one(tmp_path)
     assert a.jobs.get(j)["status"] == "rodando" and a.jobs.get(j)["worker_pid"] in (1, 2)
     a.close()
     b.close()
+
+
+def test_claim_by_queue_class_lets_a_light_worker_run_beside_a_heavy_one(tmp_path):
+    """F3 item 2: classes pesada (meeting, reprocess, embed_range) e leve (llm): o `NOT EXISTS ... rodando fresco` vale por
+    classe; um job `llm` não espera a diarização; dois leves continuam exclusivos; o pesado nunca pega um `llm`."""
+    from listener.model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS
+
+    heavy, light = Store(tmp_path), Store(tmp_path)
+    mid = _meeting(heavy)
+    j_meeting = heavy.jobs.enqueue(mid)
+    j_llm = heavy.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"], "parent_job_id": j_meeting})
+    j_llm2 = heavy.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["title"], "parent_job_id": j_meeting})
+    got = heavy.jobs.claim(pid=1, now=_at(0), kinds=HEAVY_JOB_KINDS)
+    assert got is not None and got["id"] == j_meeting
+    assert heavy.jobs.claim(pid=1, now=_at(1), kinds=HEAVY_JOB_KINDS) is None              # pesado ocupado
+    assert heavy.jobs.has_pending(kinds=LIGHT_JOB_KINDS) and not heavy.jobs.has_pending(kinds=("reprocess",))
+    got_l = light.jobs.claim(pid=2, now=_at(2), kinds=LIGHT_JOB_KINDS)
+    assert got_l is not None and got_l["id"] == j_llm and got_l["config_json"] is None       # o leve não espera o pesado
+    assert light.jobs.claim(pid=3, now=_at(3), kinds=LIGHT_JOB_KINDS) is None                # dois leves: só um
+    assert [j["id"] for j in heavy.jobs.held_fresh(now=_at(4), kinds=LIGHT_JOB_KINDS)] == [j_llm]
+    assert [j["id"] for j in heavy.jobs.held_fresh(now=_at(4), kinds=HEAVY_JOB_KINDS)] == [j_meeting]
+    assert [j["id"] for j in heavy.jobs.held_fresh(now=_at(4))] == [j_meeting, j_llm]
+    assert [j["id"] for j in heavy.jobs.active(kinds=LIGHT_JOB_KINDS)] == [j_llm, j_llm2]
+    light.jobs.finish(j_llm, JobStatus.DONE)
+    heavy.jobs.finish(j_meeting, JobStatus.DONE)
+    assert heavy.jobs.claim(pid=1, now=_at(5), kinds=HEAVY_JOB_KINDS) is None                # o pesado não pega o llm
+    got_l2 = light.jobs.claim(pid=2, now=_at(6), kinds=LIGHT_JOB_KINDS)
+    assert got_l2 is not None and got_l2["id"] == j_llm2
+    assert heavy.jobs.claim(pid=9, now=_at(7)) is None                                       # sem classe: qualquer worker vivo segura
+    # tentar de novo com `reset_config` descarta o snapshot (job llm troca para o provedor ativo, F3 item 15)
+    light.jobs.finish(j_llm2, JobStatus.ERROR, error="sem rede")
+    heavy._x("UPDATE processing_jobs SET config_json = '{\"provider_id\": \"gemini\"}' WHERE id = ?", (j_llm2,))
+    assert heavy.jobs.retry(j_llm2) and heavy.jobs.get(j_llm2)["config_json"] is not None
+    heavy.jobs.finish(j_llm2, JobStatus.ERROR, error="sem rede")
+    assert heavy.jobs.retry(j_llm2, reset_config=True) and heavy.jobs.get(j_llm2)["config_json"] is None
+    heavy.close()
+    light.close()
+
+
+def test_current_job_id_ignores_llm_jobs(store):
+    """F3A-04: um job `llm` concluído depois do job da reunião não muda o job vigente (clusters e segmentos são do pai)."""
+    mid = _meeting(store)
+    j_meeting = store.jobs.enqueue(mid)
+    assert store.jobs.claim(pid=1, now=_at(0))["id"] == j_meeting
+    store.jobs.finish(j_meeting, JobStatus.DONE)
+    assert store.segments.current_job_id(mid) == j_meeting
+    j_llm = store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"], "parent_job_id": j_meeting})
+    assert store.segments.current_job_id(mid) == j_meeting                                   # pendente: não conta
+    store.jobs.claim(pid=2, now=_at(1), kinds=("llm",))
+    store.jobs.finish(j_llm, JobStatus.DONE)
+    assert store.segments.current_job_id(mid) == j_meeting                                   # concluído: também não
+    only_llm = _meeting(store)
+    j = store.jobs.enqueue(only_llm, JobKind.LLM)
+    store.jobs.claim(pid=2, now=_at(2), kinds=("llm",))
+    store.jobs.finish(j, JobStatus.DONE)
+    assert store.segments.current_job_id(only_llm) is None

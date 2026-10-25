@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..model import JobStep
+from ..model import JobKind, JobStep
 
 STEP_ORDER: tuple[JobStep, ...] = (JobStep.DIARIZE, JobStep.EMBED, JobStep.MATCH, JobStep.TRANSCRIBE_R, JobStep.TRANSCRIBE_L,
                                    JobStep.SEGMENTS)
@@ -35,9 +35,10 @@ def rtf_for(step: str, rtf: dict[str, Any], model: str | None) -> float:
 
 
 def remaining_seconds(step: str | None, progress: float, duration_s: float | None, rtf_json: str | None,
-                      timings_json: str | None = None, models: dict[str, str] | None = None) -> float | None:
-    """Segundos de relógio que faltam; None sem duração ou com job terminado. `progress` é a fração global ponderada."""
-    if not duration_s or duration_s <= 0 or progress >= 1.0:
+                      timings_json: str | None = None, models: dict[str, str] | None = None, kind: str | None = None) -> float | None:
+    """Segundos de relógio que faltam; None sem duração ou com job terminado. `progress` é a fração global ponderada.
+    Jobs `llm` não têm RTF sobre o áudio: devolve None (a fila estima pela latência média das chamadas, F3 item 16)."""
+    if kind == JobKind.LLM or not duration_s or duration_s <= 0 or progress >= 1.0:
         return None
     rtf, timings, models = _loads(rtf_json), _loads(timings_json), models or {}
     done_before = 0.0

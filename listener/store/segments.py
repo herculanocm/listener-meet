@@ -11,7 +11,7 @@ from typing import Any, TypedDict, cast
 import numpy as np
 
 from ..log import get_logger
-from ..model import ClusterStatus, JobStatus, MeetingStatus
+from ..model import PIPELINE_JOB_KINDS, ClusterStatus, JobStatus, MeetingStatus
 from .core import Core, _now
 from .jobs import ACTIVE
 from .profiles import from_blob, to_blob
@@ -180,13 +180,14 @@ class SegmentsRepo:
 
     def current_job_id(self, meeting_id: int) -> int | None:
         """Job vigente da reunião (R2-17): o `concluído` mais recente; sem concluído, o ativo (pendente, rodando, pausado);
-        sem nenhum, o maior já gravado. Revisão, leitura e trecho de 5 s usam o mesmo id."""
-        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
-                          (meeting_id, JobStatus.DONE))
+        sem nenhum, o maior já gravado. Revisão, leitura e trecho de 5 s usam o mesmo id. Só jobs que escrevem clusters e
+        segmentos contam (`meeting`, `reprocess`): um job `llm` concluído depois não muda o vigente (F3A-04)."""
+        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status = ? AND kind IN (?, ?) ORDER BY id DESC LIMIT 1",
+                          (meeting_id, JobStatus.DONE, *PIPELINE_JOB_KINDS))
         if row:
             return int(row[0][0])
-        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status IN (?, ?, ?) ORDER BY id LIMIT 1",
-                          (meeting_id, *ACTIVE))
+        row = self.core.q("SELECT id FROM processing_jobs WHERE meeting_id = ? AND status IN (?, ?, ?) AND kind IN (?, ?) "
+                          "ORDER BY id LIMIT 1", (meeting_id, *ACTIVE, *PIPELINE_JOB_KINDS))
         if row:
             return int(row[0][0])
         return self.latest_job_id(meeting_id)

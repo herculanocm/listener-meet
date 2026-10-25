@@ -11,13 +11,15 @@ from pathlib import Path
 
 NICE_STEP = 10
 WORKER_FLAG = "--worker"
+LIGHT_FLAG = "--light"           # F3: worker leve (só jobs `llm`, sem torch)
 
 
-def worker_command() -> list[str]:
-    """`python -m listener --worker` no venv; `<exe> --worker` quando congelado (PyInstaller, R-10)."""
+def worker_command(light: bool = False) -> list[str]:
+    """`python -m listener --worker [--light]` no venv; `<exe> --worker [--light]` quando congelado (PyInstaller, R-10)."""
+    flags = [WORKER_FLAG, LIGHT_FLAG] if light else [WORKER_FLAG]
     if getattr(sys, "frozen", False):
-        return [sys.executable, WORKER_FLAG]
-    return [sys.executable, "-m", "listener", WORKER_FLAG]
+        return [sys.executable, *flags]
+    return [sys.executable, "-m", "listener", *flags]
 
 
 def worker_env(torch_threads: int, base: Mapping[str, str] | None = None) -> dict[str, str]:

@@ -5,10 +5,13 @@ cujo heartbeat venceu há mais de `STALE_S`; esgota (`erro`) quem já tentou `MA
 `pendente` com `UPDATE ... RETURNING` se não houver job fresco em outro worker. Dois workers por acidente não corrompem
 nada: só dividem CPU (R-12). Datas ISO com offset (v2) comparadas por `julianday()`, que entende o fuso.
 `config_json` recebe o snapshot das `pipeline.*` no primeiro claim e fica ("o modelo vale para o próximo job", CP8).
+F3: duas classes de fila (`kinds`): o worker pesado pega `meeting`, `reprocess` e `embed_range`; o leve pega `llm`. O
+`NOT EXISTS ... rodando fresco` vale por classe, logo um job `llm` não espera uma diarização de 2 h (F3A-03).
 """
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any, TypedDict, cast
 
@@ -49,6 +52,14 @@ def _before(now: str, seconds: float) -> str:
     return (datetime.fromisoformat(now) - timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
 
 
+def _kinds(kinds: Iterable[JobKind | str] | None) -> tuple[str, tuple[str, ...]]:
+    """Cláusula `AND kind IN (...)` e seus parâmetros; vazia quando a classe não é filtrada (comportamento da F2)."""
+    values = tuple(str(k) for k in kinds) if kinds is not None else ()
+    if not values:
+        return "", ()
+    return f" AND kind IN ({','.join('?' * len(values))})", values
+
+
 class JobsRepo:
     def __init__(self, core: Core):
         self.core = core
@@ -69,22 +80,25 @@ class JobsRepo:
                            "CASE WHEN status IN (?, ?, ?) THEN id ELSE -id END LIMIT ?", (*ACTIVE, *ACTIVE, int(limit)))
         return [cast(JobRow, dict(r)) for r in rows]
 
-    def active(self) -> list[JobRow]:
-        rows = self.core.q("SELECT * FROM processing_jobs WHERE status IN (?, ?, ?) ORDER BY id", ACTIVE)
+    def active(self, kinds: Iterable[JobKind | str] | None = None) -> list[JobRow]:
+        clause, params = _kinds(kinds)
+        rows = self.core.q(f"SELECT * FROM processing_jobs WHERE status IN (?, ?, ?){clause} ORDER BY id", (*ACTIVE, *params))  # noqa: S608
         return [cast(JobRow, dict(r)) for r in rows]
 
     def for_meeting(self, meeting_id: int) -> list[JobRow]:
         rows = self.core.q("SELECT * FROM processing_jobs WHERE meeting_id = ? ORDER BY id DESC", (meeting_id,))
         return [cast(JobRow, dict(r)) for r in rows]
 
-    def has_pending(self) -> bool:
-        return bool(self.core.q("SELECT 1 FROM processing_jobs WHERE status = ? LIMIT 1", (JobStatus.PENDING,)))
+    def has_pending(self, kinds: Iterable[JobKind | str] | None = None) -> bool:
+        clause, params = _kinds(kinds)
+        return bool(self.core.q(f"SELECT 1 FROM processing_jobs WHERE status = ?{clause} LIMIT 1", (JobStatus.PENDING, *params)))  # noqa: S608
 
-    def held_fresh(self, now: str | None = None, stale_s: float = STALE_S) -> list[JobRow]:
-        """Jobs `rodando` ou `pausado` com heartbeat recente: há um worker vivo."""
+    def held_fresh(self, now: str | None = None, stale_s: float = STALE_S, kinds: Iterable[JobKind | str] | None = None) -> list[JobRow]:
+        """Jobs `rodando` ou `pausado` com heartbeat recente: há um worker vivo (da classe pedida, ou de qualquer uma)."""
         limit = _before(now or _now(), stale_s)
-        rows = self.core.q("SELECT * FROM processing_jobs WHERE status IN (?, ?) AND heartbeat_at IS NOT NULL "
-                           "AND julianday(heartbeat_at) >= julianday(?) ORDER BY id", (*HELD, limit))
+        clause, params = _kinds(kinds)
+        rows = self.core.q(f"SELECT * FROM processing_jobs WHERE status IN (?, ?) AND heartbeat_at IS NOT NULL "  # noqa: S608
+                           f"AND julianday(heartbeat_at) >= julianday(?){clause} ORDER BY id", (*HELD, limit, *params))
         return [cast(JobRow, dict(r)) for r in rows]
 
     def summary(self) -> dict[str, Any]:
@@ -96,9 +110,12 @@ class JobsRepo:
 
     # ---------------------------------------------------------------- claim e ciclo do worker
     def claim(self, pid: int, config_json: str | None = None, now: str | None = None, stale_s: float = STALE_S,
-              max_attempts: int = MAX_ATTEMPTS) -> JobRow | None:
+              max_attempts: int = MAX_ATTEMPTS, kinds: Iterable[JobKind | str] | None = None) -> JobRow | None:
+        """Pega o primeiro `pendente` da classe (`kinds`; None = qualquer) se nenhum worker vivo segura um job dessa classe.
+        A devolução dos jobs com heartbeat vencido e o esgotamento das tentativas valem para todas as classes."""
         now = now or _now()
         limit = _before(now, stale_s)
+        clause, params = _kinds(kinds)
         with self.core.transaction() as c:
             c.execute("UPDATE processing_jobs SET status = ?, attempts = attempts + 1, worker_pid = NULL, "
                       "error = COALESCE(error, 'worker parou sem concluir') "
@@ -107,12 +124,13 @@ class JobsRepo:
             c.execute("UPDATE processing_jobs SET status = ?, finished_at = ?, error = COALESCE(error, '') || ' (tentativas esgotadas)' "
                       "WHERE status = ? AND attempts >= ?", (JobStatus.ERROR, now, JobStatus.PENDING, int(max_attempts)))
             row = c.execute(
-                "UPDATE processing_jobs SET status = ?, worker_pid = ?, claimed_at = ?, heartbeat_at = ?, "
+                "UPDATE processing_jobs SET status = ?, worker_pid = ?, claimed_at = ?, heartbeat_at = ?, "  # noqa: S608
                 "started_at = COALESCE(started_at, ?), config_json = COALESCE(config_json, ?) "
-                "WHERE id = (SELECT id FROM processing_jobs WHERE status = ? AND attempts < ? ORDER BY id LIMIT 1) "
+                f"WHERE id = (SELECT id FROM processing_jobs WHERE status = ? AND attempts < ?{clause} ORDER BY id LIMIT 1) "
                 "AND NOT EXISTS (SELECT 1 FROM processing_jobs WHERE status IN (?, ?) AND heartbeat_at IS NOT NULL "
-                "AND julianday(heartbeat_at) >= julianday(?)) RETURNING *",
-                (JobStatus.RUNNING, int(pid), now, now, now, config_json, JobStatus.PENDING, int(max_attempts), *HELD, limit),
+                f"AND julianday(heartbeat_at) >= julianday(?){clause}) RETURNING *",
+                (JobStatus.RUNNING, int(pid), now, now, now, config_json, JobStatus.PENDING, int(max_attempts), *params, *HELD, limit,
+                 *params),
             ).fetchone()
         return cast(JobRow, dict(row)) if row is not None else None
 
@@ -159,11 +177,13 @@ class JobsRepo:
         rows = self.core.q("SELECT cancel_requested FROM processing_jobs WHERE id = ?", (job_id,))
         return bool(rows and rows[0][0])
 
-    def retry(self, job_id: int) -> bool:
-        """"Tentar de novo": erro ou cancelado volta a `pendente` com as tentativas zeradas; artefatos ficam (retomada)."""
+    def retry(self, job_id: int, reset_config: bool = False) -> bool:
+        """"Tentar de novo": erro ou cancelado volta a `pendente` com as tentativas zeradas; artefatos ficam (retomada).
+        `reset_config` descarta o snapshot (`config_json`): o job `llm` passa a usar o provedor ativo (F3 item 15)."""
         return self.core.execute("UPDATE processing_jobs SET status = ?, attempts = 0, error = NULL, cancel_requested = 0, "
-                                 "finished_at = NULL, worker_pid = NULL WHERE id = ? AND status IN (?, ?)",
-                                 (JobStatus.PENDING, job_id, JobStatus.ERROR, JobStatus.CANCELLED)) > 0
+                                 "finished_at = NULL, worker_pid = NULL, config_json = CASE WHEN ? THEN NULL ELSE config_json END "
+                                 "WHERE id = ? AND status IN (?, ?)",
+                                 (JobStatus.PENDING, int(bool(reset_config)), job_id, JobStatus.ERROR, JobStatus.CANCELLED)) > 0
 
     # ---------------------------------------------------------------- artefatos (dado derivado; CP9: no SQLite)
     def put_artifact(self, job_id: int, step: JobStep | str, idx: int, data: bytes) -> None:

@@ -2,7 +2,9 @@
 Nada bloqueante na thread da interface (M-26): a parada roda numa QThread com estado "salvando…", o mudo do sistema é
 lido por um poller próprio e os atalhos registram fora da thread do Qt. `emergency_stop` cobre logoff e desligamento (M-05).
 F2: ao parar cria o job e lança o worker (subprocesso solto) quando couber; lease da pausa enquanto grava (Q7); polling da
-fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reuniões processadas sem revisão."""
+fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reuniões processadas sem revisão.
+F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da gravação; o leve (jobs `llm`) a qualquer hora;
+`_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão)."""
 from __future__ import annotations
 
 import functools
@@ -21,7 +23,8 @@ from ..capture.clock import Clock
 from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
 from ..log import get_logger
-from ..model import AppState, Health, JobStatus, JobStep, MeetingStatus
+from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, Health, JobKind, JobStatus, JobStep, MeetingStatus
+from ..store.jobs import HELD
 from ..pipeline import review
 from ..platform.common import process
 from .queue import QueueDialog
@@ -106,7 +109,7 @@ class Controller(QObject):
         self.now: Callable[[], datetime] = lambda: datetime.now().astimezone()
         self.lease_renew_s = LEASE_RENEW_S
         self._lease_at: float | None = None
-        self._worker_spawned_at: float | None = None
+        self._worker_spawned_at: dict[bool, float | None] = {False: None, True: None}     # por classe: pesado, leve (F3)
         self._seen_done: set[int] = set()
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
@@ -484,37 +487,43 @@ class Controller(QObject):
             log.info("%d reunião(ões) sem processamento entraram na fila", n)
         return n
 
-    def launch_worker(self) -> bool:
-        """Só se há job ativo (pendente, ou rodando/pausado de um worker que morreu: heartbeat vencido), nenhum heartbeat
-        fresco e o último lançamento já teve tempo de se anunciar; o claim do worker novo devolve o job morto à fila (R2-01)."""
-        if not self.store.jobs.active() or self.store.jobs.held_fresh():
+    def launch_worker(self, light: bool = False) -> bool:
+        """Só se há job ativo da classe (pendente, ou rodando/pausado de um worker que morreu: heartbeat vencido), nenhum
+        heartbeat fresco dessa classe e o último lançamento já teve tempo de se anunciar; o claim do worker novo devolve o job
+        morto à fila (R2-01). O leve (`light`, jobs `llm`) é lançado mesmo durante a gravação (F3A-13)."""
+        kinds = LIGHT_JOB_KINDS if light else HEAVY_JOB_KINDS
+        if not light and self.recorder is not None:
+            return False                                           # o pesado espera o fim da gravação (Q7)
+        if not self.store.jobs.active(kinds=kinds) or self.store.jobs.held_fresh(kinds=kinds):
             return False
         if self.store.get(SPECS["pipeline.paused_manual"]):
             return False
-        if self._worker_spawned_at is not None and time.monotonic() - self._worker_spawned_at < WORKER_SPAWN_COOLDOWN_S:
+        spawned_at = self._worker_spawned_at[light]
+        if spawned_at is not None and time.monotonic() - spawned_at < WORKER_SPAWN_COOLDOWN_S:
             return False
-        argv = process.worker_command()
-        env = process.worker_env(self.store.get(SPECS["pipeline.torch_threads"]))
+        argv = process.worker_command(light=light)
+        env = process.worker_env(1 if light else self.store.get(SPECS["pipeline.torch_threads"]))
         try:
             pid = self.platform.spawn_detached(argv, env)
         except Exception as e:
-            log.exception("não consegui lançar o worker")
+            log.exception("não consegui lançar o worker%s", " leve" if light else "")
             self.notify(f"Não consegui iniciar o processamento: {e}")
             return False
-        self._worker_spawned_at = time.monotonic()
-        log.info("worker lançado (pid %s): %s", pid, " ".join(argv))
+        self._worker_spawned_at[light] = time.monotonic()
+        log.info("worker%s lançado (pid %s): %s", " leve" if light else "", pid, " ".join(argv))
         return True
 
     def _poll_queue(self) -> None:
-        """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão" e relançamento do worker se preciso."""
+        """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão", "ata pronta" e relançamento dos workers."""
         try:
-            summary = self.store.jobs.summary()
-            done_now = {int(j["id"]): j for j in self.store.jobs.list_jobs(limit=50) if j["status"] == JobStatus.DONE}
+            jobs = self.store.jobs.list_jobs(limit=50)
+            active_jobs = self.store.jobs.active()
         except Exception as e:
             log.debug("fila: %s", e)
             return
-        active = int(summary["active"])
-        running = summary.get("running")
+        done_now = {int(j["id"]): j for j in jobs if j["status"] == JobStatus.DONE}
+        active = len(active_jobs)
+        running = next((j for j in active_jobs if j["status"] in HELD and str(j.get("kind")) in HEAVY_JOB_KINDS), None)
         if self.tray is not None:
             if running is not None:
                 pct = float(running["progress"] or 0) * 100
@@ -537,19 +546,30 @@ class Controller(QObject):
             if sig != self._review_sigs.get(mid):
                 self._review_sigs[mid] = sig
                 dlg.reload()
-        if active and self.recorder is None:
+        if any(str(j.get("kind")) in HEAVY_JOB_KINDS for j in active_jobs):
             self.launch_worker()
+        if any(str(j.get("kind")) in LIGHT_JOB_KINDS for j in active_jobs):
+            self.launch_worker(light=True)                        # rede e JSON não disputam CPU com a gravação (F3A-13)
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active else QUEUE_POLL_IDLE_MS)
 
     def _on_job_done(self, job: Any) -> None:
         mid = int(job["meeting_id"])
         m = self.store.get_meeting(mid) or {}
         title = m.get("title") or f"reunião {mid}"
-        self.notify(f"{title}: pronta para revisão de falantes.")
-        self._review_offered.add(mid)
-        self.open_review(mid)
+        if str(job.get("kind")) == JobKind.LLM:
+            self.notify(f"{title}: {self._llm_done_text(job)}")
+            if mid in self._reviews:
+                self._reviews[mid].reload()
+        else:
+            self.notify(f"{title}: pronta para revisão de falantes.")
+            self._review_offered.add(mid)
+            self.open_review(mid)
         if mid in self._transcripts:
             self._transcripts[mid].reload()
+
+    def _llm_done_text(self, job: Any) -> str:
+        """"ata pronta · US$ 0,32" (U-020); o custo entra quando a camada de LLM grava `llm_calls`."""
+        return "ata pronta."
 
     def open_review(self, meeting_id: int) -> ReviewDialog:
         """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""

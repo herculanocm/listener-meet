@@ -83,6 +83,14 @@ class JobKind(StrEnum):
     MEETING = "meeting"            # processar a reunião inteira (F2)
     REPROCESS = "reprocess"        # mesmo pipeline, troca atômica no fim (F2 item 12)
     EMBED_RANGE = "embed_range"    # perfil de um trecho livre (F6)
+    LLM = "llm"                    # tarefas de LLM da reunião (F3): worker leve, sem torch
+
+
+# Classes de fila (F3 item 2): um worker por classe; o pesado carrega torch, o leve só faz rede e JSON
+HEAVY_JOB_KINDS: frozenset[str] = frozenset({JobKind.MEETING, JobKind.REPROCESS, JobKind.EMBED_RANGE})
+LIGHT_JOB_KINDS: frozenset[str] = frozenset({JobKind.LLM})
+# jobs que escrevem `clusters` e `segments`: só eles definem o job vigente da reunião (`current_job_id`, F3A-04)
+PIPELINE_JOB_KINDS: tuple[str, ...] = (str(JobKind.MEETING), str(JobKind.REPROCESS))
 
 
 class JobStep(StrEnum):
@@ -95,13 +103,25 @@ class JobStep(StrEnum):
     TRANSCRIBE_R = "transcribe_r"
     TRANSCRIBE_L = "transcribe_l"
     SEGMENTS = "segments"
+    IDENTIFY = "identify"          # F3: tarefas do job `llm`, na ordem do item 3 da spec
+    MINUTES = "minutes"
+    EXECUTIVE = "executive"
+    PRE_SUMMARY = "pre_summary"
+    TITLE = "title"
+    REVISE = "revise"
+    TEST = "test"                  # "testar pelo worker" (F3 item 12)
 
 
 JOB_STEP_LABELS: dict[str, str] = {
     JobStep.DOWNLOAD: "baixando modelo…", JobStep.WAITING: "aguardando fim da gravação", JobStep.DIARIZE: "separando vozes",
     JobStep.EMBED: "extraindo vozes", JobStep.MATCH: "casando perfis", JobStep.TRANSCRIBE_R: "transcrevendo a reunião",
     JobStep.TRANSCRIBE_L: "transcrevendo o microfone", JobStep.SEGMENTS: "montando as falas",
+    JobStep.IDENTIFY: "LLM: identidade por contexto", JobStep.MINUTES: "LLM: ata", JobStep.EXECUTIVE: "LLM: resumo executivo",
+    JobStep.PRE_SUMMARY: "LLM: pré-resumo", JobStep.TITLE: "LLM: título", JobStep.REVISE: "LLM: transcrição revisada",
+    JobStep.TEST: "LLM: teste de conexão",
 }
+LLM_STEPS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
+                                  JobStep.REVISE, JobStep.TEST)
 
 
 class ClusterStatus(StrEnum):

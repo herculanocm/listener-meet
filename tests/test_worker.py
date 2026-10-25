@@ -61,6 +61,7 @@ def test_worker_without_the_pipeline_extra_fails_permanently_with_a_clear_messag
 
 def test_worker_command_env_and_memory():
     assert process.worker_command() == [sys.executable, "-m", "listener", "--worker"]
+    assert process.worker_command(light=True) == [sys.executable, "-m", "listener", "--worker", "--light"]
     env = process.worker_env(6, {"PATH": "/x"})
     assert env["OMP_NUM_THREADS"] == env["MKL_NUM_THREADS"] == "6" and env["CT2_VERBOSE"] == "0" and env["PATH"] == "/x"
     assert process.worker_env(0)["OMP_NUM_THREADS"] == "1"
@@ -134,6 +135,29 @@ def test_estimate_uses_seeds_then_measurements():
     rem = estimate.remaining_seconds("transcribe_r", 0.45 + 0.05 + 0.33 / 2, 3600, measured, timings)
     assert rem == pytest.approx(0.4 * 0.5 * 3600 * 0.5 + 0.67 * 0.3 * 3600)                             # fala medida: 50 %
     assert estimate.remaining_seconds("segments", 1.0, 3600, "{}") is None and estimate.remaining_seconds("x", 0.1, None, "{}") is None
+    assert estimate.remaining_seconds("minutes", 0.1, 3600, "{}", kind="llm") is None                    # F3: sem RTF sobre áudio
     assert estimate.fmt_remaining(None) == "sem estimativa" and estimate.fmt_remaining(30) == "menos de 1 min"
     assert estimate.fmt_remaining(23 * 60) == "≈ 23 min" and estimate.fmt_remaining(3700) == "≈ 1 h 01 min"
     assert estimate.rtf_for("diarize", {"diarize:a": 0.9}, "b") == 0.9 and estimate.rtf_for("embed", {}, None) == 0.05
+
+
+def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store):
+    """F3 item 2: `_serve(light=True)` em processo pega só jobs `llm`, escreve `listener-llm.log` e deixa o pesado na fila."""
+    from listener.model import JobKind
+    from listener.pipeline import worker
+    from listener.ui.queue import job_row_texts
+
+    store.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
+    mid = store.create_meeting("Reunião", None, None, None)
+    store.finish_meeting(mid, 5000)
+    heavy = store.jobs.enqueue(mid)
+    llm = store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"], "parent_job_id": heavy})
+    texts = job_row_texts(store.jobs.get(llm), store.get_meeting(mid), "{}")
+    assert texts[1] == "LLM" and texts[5] == "sem estimativa"
+    assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    row = store.jobs.get(llm)
+    assert row["status"] in ("erro", "concluído") and row["worker_pid"] is None
+    assert store.jobs.get(heavy)["status"] == "pendente"                                          # o leve não toca no pesado
+    text = (tmp_path / "logs" / "listener-llm.log").read_text(encoding="utf-8")
+    assert "papel worker-llm" in text and f"job {llm}" in text
+    assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0           # nada a fazer: sai
