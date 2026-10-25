@@ -3,7 +3,8 @@
 Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
   --check DIR [--meeting ID]                        relatório de continuidade, deriva (F1.1 A7) e alinhamento L/R (U-016),
-                                                    pedaços órfãos e arquivos de áudio ausentes; abre o banco só leitura
+                                                    pedaços órfãos e arquivos de áudio ausentes; bloco `live` com a medição
+                                                    do G4 (F4: atraso, CPU, nome, parciais); abre o banco só leitura
   --worker [--db DIR] [--once] [--light]            worker da fila de processamento (F2): o app o lança sozinho; à mão
                                                     serve para testes (LISTENER_PIPELINE=fake) e diagnóstico; `--light` é
                                                     o worker leve da F3 (só jobs de LLM, sem torch; LISTENER_LLM=fake)
@@ -126,6 +127,12 @@ def meeting_report(store: Store, meeting_id: int) -> dict[str, Any]:
     out["drift"] = (stop or {}).get("data", {}).get("drift") if stop else None
     out["unsaved"] = (stop or {}).get("data", {}).get("unsaved") if stop else None
     out["alignment"] = alignment(store, meeting_id)
+    try:                                                     # F4 item 11: medição do G4, só leitura
+        from .live.report import live_report
+
+        out["live"] = live_report(store, meeting_id, events, channels)
+    except Exception as e:                                   # o bloco do ao vivo nunca derruba o relatório da F1
+        out["live"] = {"error": f"{type(e).__name__}: {e}"}
     return out
 
 
