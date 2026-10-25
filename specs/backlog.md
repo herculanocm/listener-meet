@@ -7,8 +7,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   passam no WSL, ruff limpo, CI no GitHub Actions. O que só o Windows verifica (`RegisterHotKey`, endpoint do mudo,
   id de endpoint, `AppUserModelID`, suspensão, foco do popup, lista de apps sem psutil) ainda não rodou: `--selftest` e B1.
 - Git: commits em 24/10 (F1 com docs compactos; F1.1; CP16); branch `main`; sem remoto. Commit a cada grande alteração (CP16).
-- Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1 implementada · **F1.2 em
-  rascunho** (B10; revisão por dois agentes em 24/10: 65 achados consolidados em 31 itens) · F2 **aprovada** (D-036),
+- Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1 implementada · **F1.2 aprovada**
+  (D-039; 31 itens em dois lotes) em implementação por agente especialista, commit por item · F2 **aprovada** (D-036),
   código depois do G1 · F3 a F6 rascunho inicial · F7 futuro. Licença MIT (D-034).
 
 ## Como retomar (5 minutos)
@@ -24,17 +24,16 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B2 | gate G1: 3 reuniões reais com headset em 2 plataformas; `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
 | B4 | `HF_TOKEN` no Windows com os termos dos modelos pyannote aceitos | medir pyannote (F0) e toda a F2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
-| B10 | aprovar `features/F1.2-revisao-python312.md` (M-01 a M-31, Q1 a Q7) | lote A antes do G1 (bugs que perdem áudio e memória); lote B antes da F2 (estrutura, tipagem, testes) |
 
-Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031).
+Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
+B10 (F1.2 aprovada em bloco, D-039).
 
 ## Ordem sugerida das próximas sessões
-1. Dono responde a F1.2 (B10); LLM implementa o lote A ([chute] 1,5 a 2 dias) e commita por item.
+1. Agente implementa a F1.2 (lotes A e B) com commit por item; LLM revisa e fecha a spec como `implementada`.
 2. Dono roda o `--selftest` e o app no Windows (B1); LLM corrige o que aparecer.
 3. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
-4. LLM implementa o lote B da F1.2 com as gravações reais como regressão.
-5. Dono define o token (B4); LLM mede o pyannote, registra, e implementa a F2 como aprovada; G2 nas gravações do G1.
-6. Detalhar e aprovar a F3; e assim por diante.
+4. Dono define o token (B4); LLM mede o pyannote, registra, e implementa a F2 como aprovada; G2 nas gravações do G1.
+5. Detalhar e aprovar a F3; e assim por diante.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.

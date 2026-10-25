@@ -44,12 +44,12 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | D-036 | Herculano | spec F2 aprovada com Q1 a Q9 nos padrões (worker em subprocesso, token HF no banco, limiar 0,60 e margem 0,05, turbo int8, clusters curtos só na revisão, leitura mínima, fila pausa em gravação, embeddings do pipeline se expostos, coluna `platform`) | libera o código da F2 depois do G1 |
 | D-037 | Herculano | **CP16 (cláusula pétrea):** commit obrigatório a cada grande alteração ou item importante (entrega, spec aprovada, decisão, reestruturação de docs, gate medido); a LLM commita ao fechar o item, sem pedir; nenhuma sessão termina com mudança grande sem commit | substitui "commits só quando ele pedir"; histórico é a memória do projeto |
 | D-038 | Herculano | **CP17 (cláusula pétrea):** Python 3.12 como piso, sem retrocompatibilidade com versões anteriores; usar recursos e otimizações da versão em uso, performance primeiro; o piso só sobe quando a stack permitir (`requires-python` acompanha), nunca desce | 3.12 é a versão mais nova que WhisperX 3.8.6 e torch 2.8 suportam (menos que 3.14, D-019); app novo, sem base instalada a preservar |
+| D-039 | Herculano ("Implemente todas as melhorias com o agente especialista sênior") | spec F1.2 aprovada em bloco (M-01 a M-31; Q1 a Q7 nos padrões): dois lotes; **um arquivo de áudio por mês** (`listener-audio-AAAA-MM.db`, anexado sob demanda; complementa D-003); Python 3.13 no CI; reamostragem com estado; F2 reaberta só no item da fila (M-20); relatórios dos revisores ficam fora do repo; implementação por agente especialista com commit por item | 65 achados de dois revisores; bugs que perdem áudio e memória antes do G1; SQLite pronto para o worker da F2 |
 
 ## Em aberto (padrão assumido enquanto não há resposta)
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
-| P23 | F1.2 (revisão Python 3.12+), Q1 a Q7: aprovar em bloco; lote A antes do G1 e lote B antes da F2; um arquivo de áudio por mês (altera D-003); 3.13 no CI; reamostragem com estado; F2 reaberta só no item da fila; relatórios completos fora do repo | sim para tudo, com os padrões da spec |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |

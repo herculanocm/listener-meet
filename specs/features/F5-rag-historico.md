@@ -4,6 +4,8 @@ Status: rascunho inicial (aprovação do Herculano antes de codar)
 Fase e gate: F5 · G5
 Cláusulas pétreas envolvidas: CP2, CP3, CP9, CP12, CP15
 Quando ler: ao detalhar ou implementar esta fase (T2). Tabelas: `dados.md`.
+Nota (F1.2 M-31): FTS5 e JSON1 presentes [fato] no SQLite 3.45.1 do Python 3.12 do WSL; confirmar no Windows e no macOS
+(o Python do macOS às vezes vem sem `enable_load_extension`, necessário ao `vec0`); o fallback BLOB + numpy continua previsto.
 
 ## Escopo
 1. `rag_chunks` de 1 a 2 minutos por turnos de fala, com nome e cargo no texto; `rag_fts` (FTS5; checar

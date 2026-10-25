@@ -4,6 +4,10 @@ Status: rascunho inicial (detalhar depois do G2; aprovação do Herculano antes 
 Fase e gate: F3 · G3
 Cláusulas pétreas envolvidas: CP2, CP8, CP9, CP10, CP11, CP12, CP13, CP14, CP15
 Quando ler: ao detalhar ou implementar esta fase (T2). Tabelas: `dados.md`.
+Nota de desenho (F1.2 M-31): `LLMProvider` assíncrono (`async def complete`, `embed`, `transcribe_audio`, `test_connection`)
+com `Capabilities` como `frozenset[StrEnum]`; fan-out de título, pré-resumo, ata e resumo executivo com `asyncio.TaskGroup`
+e `asyncio.timeout`, rodando em `asyncio.run()` dentro de uma `QThread` (`LLMRunner`) ou no subprocesso da F2; nunca
+asyncio na thread principal do Qt (sem `qasync`). Saídas estruturadas validadas em `TypedDict` ou dataclass do projeto.
 
 ## Objetivo
 A LLM vira o cérebro de contexto: glossário no warm-up, nomes por contexto abaixo do limiar, título,

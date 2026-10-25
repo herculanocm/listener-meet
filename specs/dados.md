@@ -1,8 +1,9 @@
 # Modelo de dados canônico (CP9)
 
 Quando ler: ao tocar em qualquer tabela (T2). Dono único das tabelas; as specs citam a tabela e só descrevem o que muda.
-O que existe está em `listener/store/schema.py` (v1). Dois arquivos SQLite anexados (D-003): `listener.db` (main) e
-`listener-audio.db` (schema `audio`); WAL nos dois; FK ligadas; `schema_migrations(version, applied_at)` em cada um.
+O que existe está em `listener/store/schema.py`. `listener.db` (main) mais os arquivos de áudio anexados (D-003, D-039):
+um por mês, `listener-audio-AAAA-MM.db` (schema `audio` para o mês corrente; os outros anexados sob demanda), cada um com
+`audio_chunks` e `schema_migrations`; WAL em todos; FK ligadas no main. Layout do áudio: `page_size` 32 KB (F1.2 M-19).
 Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho-alvo: 4 KB.
 
 | Tabela | Arquivo | Colunas principais | Fase | Estado |
@@ -24,7 +25,7 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 | voice_embeddings | main | id, profile_id, meeting_id, segment_id, vector BLOB, source (cadastro, confirmacao, automatico); F2 Q9 acrescenta platform | F2 | v1 vazia |
 | rag_chunks | main | id, meeting_id, t_start_ms, t_end_ms, text, speakers; mais `rag_fts` (FTS5) | F5 | v1 vazia |
 | rag_vectors | main | chunk_id PK, model, dim, vector (sqlite-vec `vec0`, D-024; fallback BLOB + numpy) | F5 | v1 vazia |
-| processing_jobs | main | id, meeting_id, status (pendente, rodando, pausado, concluído, erro, cancelado), step, progress, error, attempts, started_at, finished_at, timings_json | F2 | planejada |
+| processing_jobs | main | id, meeting_id, status (pendente, rodando, pausado, concluído, erro, cancelado), step, progress, error, attempts, started_at, finished_at, timings_json, heartbeat_at, worker_pid, claimed_at (F1.2 M-20) | F2 | planejada |
 | clusters | main | id, meeting_id, channel, cluster, speech_ms, centroid BLOB, person_id, similarity, margin, status (auto, confirmado, ambíguo, sem nome, ignorado) | F2 | planejada |
 
 Índices v1: markers(meeting_id, t_ms); events(meeting_id, t_ms); audio.idx_chunks_meeting(meeting_id, channel, t_start_ms).
@@ -32,6 +33,7 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 Regras: nada apaga dados (CP3), salvo Cancelar da gravação em curso e Reprocessar (só clusters e segments da reunião);
 `revisions` registra toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
 `listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`, `ui.widget_pos`,
-`ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`. Esquema atual: v2 (datas com offset, F1.1 A5).
+`ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`. Esquema: v2 (datas com offset, F1.1 A5); v3 na F1.2 (`meetings.audio_file`,
+`user_version` por arquivo, áudio mensal). Detalhe final após a implementação da F1.2.
 Fora do SQLite, por decisão: o ponteiro `db-location.json` na pasta de configuração do sistema (D-029) e o arquivo de log
 rotativo escolhido pelo usuário (D-033).

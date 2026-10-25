@@ -1,6 +1,7 @@
 # F2 — Pós-reunião: transcrição, diarização e perfis de voz
 
-Status: aprovada (código depois do G1, ordem do backlog) · Aprovada por Herculano em: 2026-10-24 (Q1 a Q9 nos padrões, D-036) · Fase e gate: F2 · G2 ·
+Status: aprovada (código depois do G1, ordem do backlog); item 1 revisado em 24/10 pela F1.2 M-20 (D-039) · Aprovada por
+Herculano em: 2026-10-24 (Q1 a Q9 nos padrões, D-036) · Fase e gate: F2 · G2 ·
 CPs: 3, 5, 8, 9, 10, 11 (parte "depois da reunião", sem a LLM), 12, 13, 14, 15
 Quando ler: ao trabalhar no pipeline pós-reunião. Tabelas: `dados.md`. Tamanho-alvo: 8 KB.
 
@@ -13,7 +14,13 @@ A LLM entra na F3 sem mudar este desenho.
 1. **Fila.** Um job por reunião (`processing_jobs`), criado ao Parar e iniciado sozinho (D-014), com etapas retomáveis:
    transcrever L, transcrever R, diarizar R, embeddings, casar perfis, montar segmentos. Progresso, pausar, retomar,
    cancelar e reprocessar (U-005). Roda num subprocesso de prioridade baixa (`python -m listener.pipeline.worker`) que lê
-   e escreve só no banco (Q1). Pausa sozinha durante gravação e retoma ao Parar (Q7).
+   e escreve só no banco (Q1). Pausa sozinha durante gravação e retoma ao Parar (Q7), lendo `settings.pipeline.paused_until`
+   a cada etapa. Robustez (F1.2 M-20): `processing_jobs` tem `heartbeat_at`, `worker_pid` e `claimed_at`; o claim é
+   atômico (`UPDATE ... RETURNING` dentro de `BEGIN IMMEDIATE`); job com heartbeat vencido há mais de 60 s volta a
+   `pendente` com `attempts + 1`; o áudio é lido em janelas (`Store.iter_audio(meeting_id, channel, window_s=600,
+   overlap_s=5)` com `blobopen`), nunca a reunião inteira em memória; o worker loga em `listener-worker.log` próprio e
+   grava marcos em `events`; é lançado como `[sys.executable, "-m", "listener", "--worker"]` com prioridade baixa pela
+   camada de plataforma (`Platform.spawn_low_priority`).
 2. **Transcrição (D-028).** faster-whisper large-v3-turbo int8 com `word_timestamps`, `vad_filter`, idioma por reunião
    (D-013) e glossário fixo no `initial_prompt`; opção "alta precisão" com o wav2vec2 do WhisperX; modelo escolhível
    (turbo padrão; small e medium). Modelos baixados para a pasta de modelos configurável com `local_dir`, sem symlink.
