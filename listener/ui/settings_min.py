@@ -1,5 +1,6 @@
 """Configurações mínimas da F1 (CP8 parcial): captura, atalhos (com estado do registro, F1.1 A13), presets,
-log em arquivo e nível (D-033), pasta do banco. Cada item mostra se aplica agora ou só na próxima gravação.
+log em arquivo e nível (D-033), pasta do banco; F2: grupo "Processamento" gerado da tabela (`pipeline.*`) e o token do
+Hugging Face em `providers` (Q2, CP10). Cada item mostra se aplica agora ou só na próxima gravação.
 Validação pela tabela `SPECS` (M-24) e pela gramática de atalhos da plataforma (M-25)."""
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
-from ..config.defaults import CAPTURE_KEYS, HOTKEY_KEYS, LOG_LEVELS, SPECS, validate_setting
+from ..config.defaults import CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LOG_LEVELS, PIPELINE_KEYS, SPECS, validate_setting
 from ..model import SettingScope
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Configurações")
         self.setMinimumWidth(620)
         self._edits: dict[str, QLineEdit] = {}
+        self._combos: dict[str, QComboBox] = {}
         lay = QVBoxLayout(self)
 
         cap = QGroupBox("Captura")
@@ -41,6 +43,15 @@ class SettingsDialog(QDialog):
         for key in HOTKEY_KEYS:
             hkf.addRow(SPECS[key].label, self._row(key, status=self._hotkey_status(key)))
         lay.addWidget(hk)
+
+        proc = QGroupBox("Processamento (F2: vale para o próximo job da fila)")
+        procf = QFormLayout(proc)
+        for key in PIPELINE_KEYS:
+            procf.addRow(SPECS[key].label, self._row(key))
+        self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
+        self.hf_token.setPlaceholderText("hf_… (necessário para baixar os modelos do pyannote)")
+        procf.addRow("Token do Hugging Face", self.hf_token)
+        lay.addWidget(proc)
 
         lg = QGroupBox("Log (aplica agora)")
         lgf = QFormLayout(lg)
@@ -94,11 +105,24 @@ class SettingsDialog(QDialog):
     def _row(self, key: str, status: str = "") -> QWidget:
         box = QHBoxLayout()
         box.setContentsMargins(0, 0, 0, 0)
-        edit = QLineEdit(self.store.get_setting(key))
-        self._edits[key] = edit
-        scope = QLabel(SCOPE_TEXT.get(SPECS[key].scope, ""))
+        spec = SPECS[key]
+        field: QWidget
+        if spec.choices is not None and all(isinstance(c, str) for c in spec.choices):
+            combo = QComboBox()
+            for choice in sorted(spec.choices):
+                combo.addItem(choice)
+                if key == "pipeline.transcriber" and choice == "llm":            # F3: ainda não existe
+                    combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
+            combo.setCurrentText(self.store.get_setting(key))
+            self._combos[key] = combo
+            field = combo
+        else:
+            edit = QLineEdit(self.store.get_setting(key))
+            self._edits[key] = edit
+            field = edit
+        scope = QLabel(SCOPE_TEXT.get(spec.scope, ""))
         scope.setStyleSheet("color: #888; font-size: 11px;")
-        box.addWidget(edit, 1)
+        box.addWidget(field, 1)
         box.addWidget(scope)
         if status:
             st = QLabel(status)
@@ -148,6 +172,11 @@ class SettingsDialog(QDialog):
             return
         for key, edit in self._edits.items():
             self.store.set_setting(key, edit.text().strip())
+        for key, combo in self._combos.items():
+            self.store.set_setting(key, combo.currentText())
         self.store.set_setting("log.path", self.log_path.text().strip())
         self.store.set_setting("log.level", self.log_level.currentText())
+        token = self.hf_token.text().strip()
+        if token != self.store.settings.provider_key(HF_PROVIDER_ID):
+            self.store.upsert_provider(HF_PROVIDER_ID, "huggingface", api_key=token or None)
         self.accept()

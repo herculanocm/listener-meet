@@ -1,4 +1,4 @@
-"""Repositório do main: presets, pessoas, reuniões, marcadores, eventos e revisões (linhas como `TypedDict`)."""
+"""Repositório do main: presets, reuniões, marcadores, eventos e revisões (linhas como `TypedDict`). Pessoas: `people.py`."""
 from __future__ import annotations
 
 import json
@@ -25,6 +25,7 @@ class MeetingRow(TypedDict, total=False):
     is_in_room: int
     notes: str | None
     audio_file: str | None
+    language: str | None
 
 
 class PresetRow(TypedDict, total=False):
@@ -89,20 +90,6 @@ class MeetingsRepo:
                                 ("Meet (navegador)", "app", "msedge.exe"), ("Sistema inteiro", "system", None)):
             self.upsert_preset(name, None, None, kind, exe)
 
-    # ---------------------------------------------------------------- people
-    def get_me(self) -> dict[str, Any] | None:
-        rows = self.core.q("SELECT * FROM people WHERE is_me = 1 ORDER BY id LIMIT 1")
-        return dict(rows[0]) if rows else None
-
-    def upsert_me(self, name: str, email: str = "", role: str = "", company: str = "") -> int:
-        me = self.get_me()
-        if me:
-            self.core.execute("UPDATE people SET name = ?, email = ?, role = ?, company = ?, updated_at = ? WHERE id = ?",
-                              (name, email, role, company, _now(), me["id"]))
-            return int(me["id"])
-        return self.core.insert("INSERT INTO people(name, email, role, company, is_me, created_at, updated_at) "
-                                "VALUES (?, ?, ?, ?, 1, ?, ?)", (name, email, role, company, _now(), _now()))
-
     # ---------------------------------------------------------------- meetings
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False) -> int:
@@ -125,6 +112,18 @@ class MeetingsRepo:
     def finish_meeting(self, meeting_id: int, duration_ms: int, status: MeetingStatus = MeetingStatus.RECORDED) -> None:
         self.core.execute("UPDATE meetings SET status = ?, ended_at = ?, duration_ms = ? WHERE id = ?",
                           (status, _now(), int(duration_ms), meeting_id))
+
+    def set_status(self, meeting_id: int, status: MeetingStatus) -> None:
+        self.core.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
+
+    def set_language(self, meeting_id: int, language: str | None) -> None:
+        """Idioma detectado na primeira janela com fala (D-013); só preenche se ainda não houver."""
+        self.core.execute("UPDATE meetings SET language = COALESCE(language, ?) WHERE id = ?", (language, meeting_id))
+
+    def list_by_status(self, *statuses: MeetingStatus) -> list[MeetingRow]:
+        marks = ",".join("?" * len(statuses))
+        rows = self.core.q(f"SELECT * FROM meetings WHERE status IN ({marks}) ORDER BY id DESC", tuple(str(s) for s in statuses))  # noqa: S608
+        return [cast(MeetingRow, dict(r)) for r in rows]
 
     def update_title(self, meeting_id: int, title: str, author: str = "usuario") -> None:
         m = self.get_meeting(meeting_id)

@@ -1,5 +1,6 @@
-"""Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`) atrás dos nomes de método da F1.
-Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`."""
+"""Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
+`segments`) atrás dos nomes de método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair;
+`Store.open_readonly(dir)` para o `--check`; `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -9,10 +10,14 @@ from sqlite3 import Connection
 from typing import TYPE_CHECKING, Any, Self
 
 from ..log import get_logger
-from ..model import EventType, MeetingStatus
+from ..model import EventType, MeetingStatus, StoreRole
 from .audio import AudioRepo, ChannelStats, ChunkData, ChunkMeta, ContinuityIssue
 from .core import LEGACY_AUDIO_FILE, MAIN_FILE, Core, with_offset
+from .jobs import JobsRepo
 from .meetings import EventRow, MarkerRow, MeetingRow, MeetingsRepo, PresetRow
+from .people import PeopleRepo, PersonRow
+from .profiles import ProfilesRepo
+from .segments import SegmentsRepo
 from .settings import SettingsRepo
 
 if TYPE_CHECKING:
@@ -25,16 +30,25 @@ log = get_logger("store")
 
 
 class Store:
-    def __init__(self, base_dir: str | Path, readonly: bool = False):
-        self.core = Core(base_dir, readonly=readonly)
+    def __init__(self, base_dir: str | Path, role: StoreRole = StoreRole.APP):
+        self.core = Core(base_dir, role=role)
         self.settings = SettingsRepo(self.core)
         self.meetings = MeetingsRepo(self.core)
         self.audio = AudioRepo(self.core)
+        self.people = PeopleRepo(self.core)
+        self.jobs = JobsRepo(self.core)
+        self.profiles = ProfilesRepo(self.core)
+        self.segments = SegmentsRepo(self.core)
 
     @classmethod
     def open_readonly(cls, base_dir: str | Path) -> Self:
         """Abre com `mode=ro` (nada é migrado nem escrito): diagnóstico (`--check`) e leitores de outro processo."""
-        return cls(base_dir, readonly=True)
+        return cls(base_dir, role=StoreRole.READONLY)
+
+    @classmethod
+    def open_worker(cls, base_dir: str | Path) -> Self:
+        """Worker da F2: main em escrita sem migrar nem VACUUM; áudio só leitura com mmap (recusa banco não migrado)."""
+        return cls(base_dir, role=StoreRole.WORKER)
 
     # ---------------------------------------------------------------- infra
     @property
@@ -48,6 +62,10 @@ class Store:
     @property
     def readonly(self) -> bool:
         return self.core.readonly
+
+    @property
+    def role(self) -> StoreRole:
+        return self.core.role
 
     def schema_version(self) -> int:
         return self.core.main_version
@@ -105,6 +123,13 @@ class Store:
     def all_settings(self) -> dict[str, str]:
         return self.settings.all_settings()
 
+    def get_provider(self, provider_id: str) -> dict[str, Any] | None:
+        return self.settings.get_provider(provider_id)
+
+    def upsert_provider(self, provider_id: str, kind: str, api_key: str | None = None, model: str | None = None,
+                        params: str | None = None) -> None:
+        self.settings.upsert_provider(provider_id, kind, api_key, model, params)
+
     # ---------------------------------------------------------------- presets e pessoas
     def list_presets(self) -> list[PresetRow]:
         return self.meetings.list_presets()
@@ -122,11 +147,11 @@ class Store:
     def seed_default_presets(self) -> None:
         self.meetings.seed_default_presets()
 
-    def get_me(self) -> dict[str, Any] | None:
-        return self.meetings.get_me()
+    def get_me(self) -> PersonRow | None:
+        return self.people.get_me()
 
     def upsert_me(self, name: str, email: str = "", role: str = "", company: str = "") -> int:
-        return self.meetings.upsert_me(name, email, role, company)
+        return self.people.upsert_me(name, email, role, company)
 
     # ---------------------------------------------------------------- reuniões
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,

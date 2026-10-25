@@ -1,6 +1,7 @@
 """Esquema do banco: migrações numeradas por arquivo (F1.1 A6, F1.2 M-01/M-02). Tabelas em specs/dados.md.
 
-main (`listener.db`): v1 = F1; v2 = datas com fuso (A5); v3 = `meetings.audio_file` (áudio mensal, M-19/D-039).
+main (`listener.db`): v1 = F1; v2 = datas com fuso (A5); v3 = `meetings.audio_file` (áudio mensal, M-19/D-039);
+v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2).
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -61,6 +62,35 @@ MAIN_V1: tuple[str, ...] = (
     "CREATE TABLE IF NOT EXISTS rag_vectors (chunk_id INTEGER PRIMARY KEY, model TEXT, dim INTEGER, vector BLOB)",
 )
 
+# F2: tabelas novas (idempotentes); as colunas novas em tabelas existentes entram por `ALTER TABLE` em `core.py`
+MAIN_V4: tuple[str, ...] = (
+    ("CREATE TABLE IF NOT EXISTS processing_jobs ("
+    "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,"
+    "  kind TEXT NOT NULL DEFAULT 'meeting', status TEXT NOT NULL DEFAULT 'pendente', step TEXT,"
+    "  progress REAL NOT NULL DEFAULT 0, error TEXT, attempts INTEGER NOT NULL DEFAULT 0, params_json TEXT, config_json TEXT,"
+    "  cancel_requested INTEGER NOT NULL DEFAULT 0, heartbeat_at TEXT, worker_pid INTEGER, claimed_at TEXT,"
+    "  started_at TEXT, finished_at TEXT, timings_json TEXT, created_at TEXT NOT NULL)"),
+    "CREATE INDEX IF NOT EXISTS idx_jobs_status ON processing_jobs(status, id)",
+    ("CREATE TABLE IF NOT EXISTS clusters ("
+    "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,"
+    "  job_id INTEGER NOT NULL, channel TEXT NOT NULL, cluster TEXT NOT NULL, speech_ms INTEGER NOT NULL DEFAULT 0,"
+    "  centroid BLOB, model TEXT, person_id INTEGER, similarity REAL, margin REAL, status TEXT NOT NULL,"
+    "  merged_into INTEGER, created_at TEXT NOT NULL)"),
+    "CREATE INDEX IF NOT EXISTS idx_clusters_meeting ON clusters(meeting_id)",
+    ("CREATE TABLE IF NOT EXISTS job_artifacts ("
+    "  job_id INTEGER NOT NULL REFERENCES processing_jobs(id) ON DELETE CASCADE, step TEXT NOT NULL, idx INTEGER NOT NULL,"
+    "  data BLOB NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (job_id, step, idx))"),
+    "CREATE INDEX IF NOT EXISTS idx_segments_meeting_time ON segments(meeting_id, t_start_ms)",
+    "CREATE INDEX IF NOT EXISTS idx_embeddings_profile ON voice_embeddings(profile_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_person_model ON voice_profiles(person_id, model)",
+)
+# (tabela, coluna, tipo) acrescentadas pela v4 se faltarem (`ALTER TABLE ADD COLUMN` não é idempotente)
+MAIN_V4_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("segments", "words_json", "TEXT"), ("segments", "cluster_id", "INTEGER"), ("segments", "job_id", "INTEGER"),
+    ("voice_profiles", "threshold", "REAL"), ("voice_profiles", "sim_mean", "REAL"), ("voice_profiles", "sim_std", "REAL"),
+    ("voice_embeddings", "platform", "TEXT"), ("meetings", "language", "TEXT"),
+)
+
 AUDIO_V1: tuple[str, ...] = (
     ("CREATE TABLE IF NOT EXISTS {s}.audio_chunks ("
     "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, channel TEXT NOT NULL, idx INTEGER NOT NULL,"
@@ -86,6 +116,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (1, MAIN_V1),
     (2, None),        # datas com offset (A5)
     (3, None),        # meetings.audio_file (ALTER TABLE idempotente em Python) preenchido com o arquivo legado (M-19)
+    (4, MAIN_V4),     # F2: tabelas da fila e dos clusters; colunas novas em Python (MAIN_V4_COLUMNS)
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

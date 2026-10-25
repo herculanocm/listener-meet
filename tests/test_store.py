@@ -21,9 +21,9 @@ def test_monthly_audio_file_and_schema(tmp_path):
     current = s.core.current_audio_file()
     assert (tmp_path / "db" / "listener.db").exists() and (tmp_path / "db" / current).exists()
     assert re.fullmatch(r"listener-audio-\d{4}-\d{2}\.db", current) and s.audio_files() == [current]
-    assert s.schema_version() == 3
+    assert s.schema_version() == 4
     with s.connection() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
         assert c.execute(f"PRAGMA {schema_for(current)}.page_size").fetchone()[0] == AUDIO_PAGE_SIZE
         assert c.execute(f"PRAGMA {schema_for(current)}.journal_mode").fetchone()[0] == "wal"
         assert c.execute(f"PRAGMA {schema_for(current)}.synchronous").fetchone()[0] == 1
@@ -134,7 +134,7 @@ def test_dates_have_offset_and_migration_v2_rewrites_old_rows(tmp_path):
     s._x("DELETE FROM schema_migrations WHERE version > 1")
     s.close()
     s2 = Store(tmp_path)
-    assert s2.schema_version() == 3
+    assert s2.schema_version() == 4
     created = s2.get_me()["created_at"]
     assert created.startswith("2026-10-24T18:03:12.345") and re.search(r"[+-]\d\d:\d\d$", created)
     assert with_offset("") == "" and with_offset(None) is None and with_offset("lixo") == "lixo"
@@ -223,7 +223,7 @@ def test_migration_failure_rolls_back_whole_step(tmp_path, monkeypatch):
     s.close()
     raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
     raw.execute("ALTER TABLE meetings DROP COLUMN audio_file")
-    raw.execute("DELETE FROM schema_migrations WHERE version = 3")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 3")
     raw.execute("PRAGMA user_version = 2")
     raw.close()
 
@@ -241,7 +241,7 @@ def test_migration_failure_rolls_back_whole_step(tmp_path, monkeypatch):
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 3 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
+        assert ok.schema_version() == 4 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
 
 
 def test_two_connections_wait_for_each_other(tmp_path):
@@ -298,3 +298,73 @@ def test_per_thread_connections_are_closed(tmp_path):
     t.join()
     assert seen == [False] and len(s.core._conns) == 1
     s.close()
+
+
+def test_v4_creates_queue_tables_and_rolls_back_in_the_middle(tmp_path, monkeypatch):
+    """v4 (F2): tabelas, colunas e índices; uma falha no meio desfaz tudo (CREATE TABLE incluído); reaplicar é idempotente."""
+    s = Store(tmp_path)
+    s.close()
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("DROP TABLE processing_jobs")
+    raw.execute("DROP TABLE clusters")
+    raw.execute("DROP TABLE job_artifacts")
+    raw.execute("DELETE FROM schema_migrations WHERE version = 4")
+    raw.execute("PRAGMA user_version = 3")
+    raw.close()                                   # as colunas novas de segments/meetings ficam: a v4 precisa tolerar isso
+
+    def boom(core, conn, schema):
+        raise RuntimeError("falha no meio da v4")
+
+    monkeypatch.setitem(store_core.MAIN_PY_MIGRATIONS, 4, boom)
+    with pytest.raises(RuntimeError, match="falha no meio da v4"):
+        Store(tmp_path)
+    raw = sqlite3.connect(tmp_path / "listener.db")
+    tables = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "processing_jobs" not in tables and "clusters" not in tables          # o CREATE TABLE foi desfeito junto
+    assert raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
+    raw.close()
+    monkeypatch.undo()
+    with Store(tmp_path) as ok:
+        assert ok.schema_version() == 4
+        with ok.connection() as c:
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+            segs = {r[1] for r in c.execute("PRAGMA table_info(segments)")}
+            profs = {r[1] for r in c.execute("PRAGMA table_info(voice_profiles)")}
+        assert {"processing_jobs", "clusters", "job_artifacts"} <= tables
+        assert {"idx_jobs_status", "idx_clusters_meeting", "idx_segments_meeting_time", "idx_embeddings_profile",
+                "idx_profiles_person_model"} <= indexes
+        assert {"words_json", "cluster_id", "job_id"} <= segs and {"threshold", "sim_mean", "sim_std"} <= profs
+        assert "language" in ok.get_meeting(ok.create_meeting(None, None, None, None))
+        pid = ok.people.create_person("Ana")
+        ok.profiles.ensure_profile(pid, "m", 4)
+        with pytest.raises(sqlite3.IntegrityError):                              # único por (pessoa, modelo)
+            ok._x("INSERT INTO voice_profiles(person_id, model, dim, centroid, n_samples) VALUES (?, 'm', 4, x'00', 0)", (pid,))
+
+
+def test_worker_role_writes_main_reads_audio_and_refuses_old_schema(tmp_path):
+    from listener.model import StoreRole
+    from listener.store.core import AUDIO_MMAP_BYTES
+
+    with Store(tmp_path) as app:
+        mid = app.create_meeting("w", None, None, None)
+        app.insert_chunk(mid, "L", 0, 0, 16000, 16000, 0, _flac(value=0.25))
+        app.finish_meeting(mid, 1000)
+    w = Store.open_worker(tmp_path)
+    assert w.role == StoreRole.WORKER and not w.readonly
+    job = w.jobs.enqueue(mid)                                                     # main em escrita
+    assert w.jobs.get(job)["status"] == "pendente"
+    assert abs(decode_range(w, mid, "L", 0, 500)[0][100] - 0.25) < 1e-3          # áudio legível
+    with pytest.raises(sqlite3.OperationalError):
+        w.insert_chunk(mid, "L", 1, 1000, 16000, 16000, 0, _flac())              # mas só leitura
+    schema = w.core.audio_schema_for_meeting(mid)
+    with w.connection() as c:
+        assert c.execute(f"PRAGMA {schema}.mmap_size").fetchone()[0] == AUDIO_MMAP_BYTES
+    w.close()
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("DELETE FROM schema_migrations WHERE version = 4")
+    raw.close()
+    with pytest.raises(RuntimeError, match="abra o app"):                        # o worker nunca migra
+        Store.open_worker(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        Store.open_worker(tmp_path / "nada")

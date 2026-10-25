@@ -1,5 +1,9 @@
-"""Núcleo do Store (F1.2 M-01, M-02, M-18, M-19): caminhos, uma conexão SQLite por thread, arquivos de áudio mensais
-anexados sob demanda, migrações atômicas por arquivo, `transaction()`, modo somente leitura e utilidades de linha.
+"""Núcleo do Store (F1.2 M-01, M-02, M-18, M-19; F2): caminhos, uma conexão SQLite por thread, arquivos de áudio mensais
+anexados sob demanda, migrações atômicas por arquivo, `transaction()`, papéis (app, worker, só leitura) e utilidades.
+
+Papéis (`StoreRole`): APP abre o main em escrita, migra e faz VACUUM de legado; WORKER (F2) abre o main em escrita sem
+migrar (recusa se a versão for diferente da do código) e anexa o áudio com `mode=ro` e `mmap_size` de 256 MB; READONLY
+abre tudo com `mode=ro` (`--check`).
 
 Arquivos: `listener.db` (main) e um `listener-audio-AAAA-MM.db` por mês de `meetings.started_at` (D-039); o
 `listener-audio.db` da F1 continua sendo lido pelas reuniões antigas e nunca é apagado nem renomeado (CP3).
@@ -19,8 +23,9 @@ from typing import Any
 import numpy as np
 
 from ..log import get_logger
+from ..model import StoreRole
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS,
-                     MAIN_SCHEMA_VERSION)
+                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS)
 
 log = get_logger("store")
 
@@ -32,6 +37,7 @@ WAL_AUTOCHECKPOINT = 4000        # páginas; vale para a conexão inteira (o mai
 MAX_ATTACHED = 8                 # anexos simultâneos por conexão; os menos usados são desanexados
 VACUUM_MAX_BYTES = 100_000_000   # só arquivos legados pequenos recebem VACUUM para mudar o page_size
 BUSY_TIMEOUT_S = 5.0
+AUDIO_MMAP_BYTES = 256 * 1024 * 1024   # worker da F2: horas de FLAC lidas por mmap, sem cópia para o cache de páginas
 
 type PyMigration = Callable[["Core", sqlite3.Connection, str], None]
 
@@ -115,7 +121,16 @@ def _main_v3_audio_file(core: Core, conn: sqlite3.Connection, schema: str) -> No
             log.warning("%d reunião(ões) anteriores sem o arquivo de áudio legado %s na pasta", n, LEGACY_AUDIO_FILE)
 
 
-MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file}
+def _main_v4_pipeline(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """Colunas da F2 em tabelas que já existem, só se faltarem (`ALTER TABLE ADD COLUMN` não é idempotente); as tabelas
+    novas e os índices vêm de `MAIN_V4` na mesma transação."""
+    for table, column, type_ in MAIN_V4_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA {schema}.table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {schema}.{table} ADD COLUMN {column} {type_}")
+
+
+MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 
@@ -129,9 +144,9 @@ class _Local(threading.local):
 class Core:
     """Conexões, anexos e migrações. Os repositórios (`settings`, `meetings`, `audio`) só conhecem isto."""
 
-    def __init__(self, base_dir: str | Path, readonly: bool = False):
+    def __init__(self, base_dir: str | Path, role: StoreRole = StoreRole.APP):
         self.base_dir = Path(base_dir)
-        self.readonly = readonly
+        self.role = role
         self.main_path = self.base_dir / MAIN_FILE
         self._local = _Local()
         self._conns: list[sqlite3.Connection] = []
@@ -140,25 +155,31 @@ class Core:
         self._meeting_files: dict[int, str] = {}
         self._closed = False
         self.main_version = 0
-        if readonly:
-            if not self.main_path.exists():
-                raise FileNotFoundError(f"não existe banco em {self.base_dir}")
-        else:
+        if role == StoreRole.APP:
             self.base_dir.mkdir(parents=True, exist_ok=True)
+        elif not self.main_path.exists():
+            raise FileNotFoundError(f"não existe banco em {self.base_dir}")
         conn = self.conn()
-        if readonly:
+        if role == StoreRole.APP:
+            self._migrate_main(conn)
+            self.main_version = MAIN_SCHEMA_VERSION
+        else:
             self.main_version = self._version(conn, "main") if self._has_table(conn, "main", "schema_migrations") else 0
             if self.main_version > MAIN_SCHEMA_VERSION:
                 raise RuntimeError(f"o banco está na versão {self.main_version} e este app conhece até a "
                                    f"{MAIN_SCHEMA_VERSION}: atualize o app")
-        else:
-            self._migrate_main(conn)
-            self.main_version = MAIN_SCHEMA_VERSION
+            if role == StoreRole.WORKER and self.main_version < MAIN_SCHEMA_VERSION:
+                raise RuntimeError(f"o banco está na versão {self.main_version} e o worker precisa da {MAIN_SCHEMA_VERSION}: "
+                                   "abra o app uma vez para migrar")
         current = self.current_audio_file()
-        if not readonly or (self.base_dir / current).exists():
+        if role == StoreRole.APP or (self.base_dir / current).exists():
             self.attach(current)
         if (self.base_dir / LEGACY_AUDIO_FILE).exists():
             self.attach(LEGACY_AUDIO_FILE)
+
+    @property
+    def readonly(self) -> bool:
+        return self.role == StoreRole.READONLY
 
     # ---------------------------------------------------------------- conexões
     def conn(self) -> sqlite3.Connection:
@@ -282,8 +303,8 @@ class Core:
                 self._apply(c, "main", version, statements, MAIN_PY_MIGRATIONS.get(version))
 
     def _prepare_audio(self, c: sqlite3.Connection, schema: str, path: Path, new_file: bool) -> None:
-        """Migra (ou só verifica, em modo leitura) um arquivo de áudio recém-anexado; erro claro se estiver errado."""
-        if self.readonly:
+        """Migra (ou só verifica, fora do papel APP) um arquivo de áudio recém-anexado; erro claro se estiver errado."""
+        if self.role != StoreRole.APP:
             self._check_audio(c, schema, path)
             return
         if new_file:
@@ -343,12 +364,13 @@ class Core:
             return schema
         path = self.base_dir / file_name
         new_file = not path.exists() or path.stat().st_size == 0
-        if self.readonly and new_file:
+        audio_ro = self.role != StoreRole.APP          # worker e --check nunca escrevem no áudio
+        if audio_ro and new_file:
             raise FileNotFoundError(f"arquivo de áudio ausente: {path}")
         while len(attached) >= MAX_ATTACHED and not self._local.in_tx:
             old, _ = attached.popitem(last=False)
             c.execute(f"DETACH DATABASE {old}")
-        if self.readonly:
+        if audio_ro:
             c.execute(f"ATTACH DATABASE ? AS {schema}", (f"{path.as_uri()}?mode=ro",))
         else:
             c.execute(f"ATTACH DATABASE ? AS {schema}", (str(path),))
@@ -359,8 +381,10 @@ class Core:
             self._prepare_audio(c, schema, path, new_file)
             with self._lock:
                 self._ready_files.add(file_name)
-        if not self.readonly:
+        if self.role == StoreRole.APP:
             c.execute(f"PRAGMA {schema}.synchronous = NORMAL")
+        elif self.role == StoreRole.WORKER:
+            c.execute(f"PRAGMA {schema}.mmap_size = {AUDIO_MMAP_BYTES}")
         return schema
 
     def audio_schema_for_meeting(self, meeting_id: int) -> str | None:

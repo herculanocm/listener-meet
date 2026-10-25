@@ -1,4 +1,5 @@
-"""Repositório de configurações (tabela `settings`): texto bruto por chave e leitura tipada por `SettingSpec` (M-24)."""
+"""Repositório de configurações (tabela `settings`): texto bruto por chave e leitura tipada por `SettingSpec` (M-24).
+Também a tabela `providers` (chaves de API em texto aberto no SQLite, CP10): a F2 usa a linha `huggingface` (Q2)."""
 from __future__ import annotations
 
 from typing import Any
@@ -50,3 +51,23 @@ class SettingsRepo:
         for r in self.core.q("SELECT key, value FROM settings"):
             out[r["key"]] = r["value"]
         return out
+
+    def settings_with_prefix(self, prefix: str) -> dict[str, str]:
+        """Snapshot das chaves de um grupo (`pipeline.`) com os padrões preenchidos: vai para `config_json` do job."""
+        return {k: v for k, v in self.all_settings().items() if k.startswith(prefix)}
+
+    # ---------------------------------------------------------------- providers
+    def get_provider(self, provider_id: str) -> dict[str, Any] | None:
+        rows = self.core.q("SELECT * FROM providers WHERE id = ?", (provider_id,))
+        return dict(rows[0]) if rows else None
+
+    def upsert_provider(self, provider_id: str, kind: str, api_key: str | None = None, model: str | None = None,
+                        params: str | None = None) -> None:
+        self.core.execute("INSERT INTO providers(id, kind, api_key, model, params, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                          "ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, api_key = excluded.api_key, model = excluded.model, "
+                          "params = excluded.params, updated_at = excluded.updated_at",
+                          (provider_id, kind, api_key, model, params, _now()))
+
+    def provider_key(self, provider_id: str) -> str:
+        p = self.get_provider(provider_id)
+        return str(p.get("api_key") or "") if p else ""

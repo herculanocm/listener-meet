@@ -3,12 +3,16 @@
 Atalhos: ctrl+alt+shift+letra (F1.1 A1): não colidem com Teams, Zoom, Meet, Chrome nem Edge; ctrl+alt sozinho é AltGr."""
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..model import SettingScope
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+WHISPER_MODELS = ("large-v3-turbo", "small", "medium")       # F2 Q4: turbo padrão
+TRANSCRIBERS = ("whisper", "llm")                            # F2 item 18: "llm" desabilitado até a F3
+HF_PROVIDER_ID = "huggingface"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +26,7 @@ class SettingSpec[T]:
     high: float | None = None
     choices: frozenset[T] | None = None  # valores aceitos (taxas de amostragem, níveis de log)
     phase: str = "F1"
+    internal: bool = False               # escrita pelo app, não pelo usuário: fora do diálogo de configurações
 
     @property
     def default_text(self) -> str:
@@ -56,6 +61,19 @@ def _upper(s: str) -> str:
     return s.upper()
 
 
+def _bool(s: str) -> bool:
+    low = s.strip().lower()
+    if low in ("1", "true", "sim", "yes", "on"):
+        return True
+    if low in ("0", "false", "não", "nao", "no", "off", ""):
+        return False
+    raise ValueError(f"esperava sim ou não: {s!r}")
+
+
+def _default_threads() -> int:
+    return max(1, (os.cpu_count() or 2) - 2)
+
+
 _NOW, _NEXT = SettingScope.NOW, SettingScope.NEXT_RECORDING
 _RATES = frozenset({8000, 16000, 22050, 24000, 32000, 44100, 48000})
 _MIC_RATES = frozenset({8000, 16000, 32000, 44100, 48000})
@@ -83,10 +101,29 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("warmup.last_source_kind", "system", _NOW, "Última fonte (tipo)", _text),
     SettingSpec("warmup.last_source_exe", "", _NOW, "Última fonte (executável)", _text),
     SettingSpec("warmup.last_in_room", "0", _NOW, "Última sala presencial", _text),
+    # F2 (item 16): o worker lê o snapshot no claim ("vale para o próximo job"); o app lê a pausa e a estimativa
+    SettingSpec("pipeline.transcriber", "whisper", _NOW, "Transcritor", _text, choices=frozenset(TRANSCRIBERS), phase="F2"),
+    SettingSpec("pipeline.whisper_model", "large-v3-turbo", _NOW, "Modelo do Whisper", _text, choices=frozenset(WHISPER_MODELS),
+                phase="F2"),
+    SettingSpec("pipeline.whisper_hq", False, _NOW, "Alta precisão (wav2vec2, mais lento)", _bool, phase="F2"),
+    SettingSpec("pipeline.glossary", "", _NOW, "Glossário (termos e nomes, separados por vírgula)", _text, phase="F2"),
+    SettingSpec("pipeline.threshold", 0.60, _NOW, "Limiar de identificação (0,45 a 0,75)", float, low=0.45, high=0.75, phase="F2"),
+    SettingSpec("pipeline.margin", 0.05, _NOW, "Margem entre os dois melhores perfis (0,01 a 0,20)", float, low=0.01, high=0.20,
+                phase="F2"),
+    SettingSpec("pipeline.models_dir", "", _NOW, "Pasta dos modelos (vazio = pasta padrão do sistema)", _text, phase="F2"),
+    SettingSpec("pipeline.torch_threads", _default_threads(), _NOW, "Threads de CPU do processamento", int, low=1, high=64, phase="F2"),
+    SettingSpec("pipeline.auto_start", True, _NOW, "Processar sozinho ao parar a gravação", _bool, phase="F2"),
+    SettingSpec("pipeline.pause_on_record", True, _NOW, "Pausar a fila enquanto grava", _bool, phase="F2"),
+    SettingSpec("pipeline.diar_window_s", 3600, _NOW, "Janela da separação de vozes (s)", int, low=300, high=7200, phase="F2"),
+    SettingSpec("pipeline.whisper_window_s", 600, _NOW, "Janela da transcrição (s)", int, low=60, high=1800, phase="F2"),
+    SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
+    SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
+    SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),
 )}
 
 CAPTURE_KEYS = tuple(k for k in SPECS if k.startswith("capture."))
 HOTKEY_KEYS = tuple(k for k in SPECS if k.startswith("hotkeys."))
+PIPELINE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("pipeline.") and not s.internal)
 
 # Vistas derivadas para quem só precisa do texto padrão, do escopo ou do rótulo
 DEFAULTS: dict[str, tuple[str, str]] = {k: (s.default_text, str(s.scope)) for k, s in SPECS.items()}

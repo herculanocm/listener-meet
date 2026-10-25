@@ -59,8 +59,15 @@ def test_settings_dialog_validates_with_platform_grammar(qtbot, store, platform)
     dlg._edits["hotkeys.mark"].setText("ctrl+alt+shift+r")      # igual ao de iniciar
     assert dlg.validation_error() == "Dois atalhos iguais."
     dlg._edits["hotkeys.mark"].setText("ctrl+alt+shift+m")
+    dlg._edits["pipeline.threshold"].setText("0.9")                 # F2: grupo Processamento gerado da tabela
+    assert "Limiar" in (dlg.validation_error() or "")
+    dlg._edits["pipeline.threshold"].setText("0.7")
+    dlg._combos["pipeline.whisper_model"].setCurrentText("small")
+    dlg.hf_token.setText("hf_abc")
     dlg._save()
     assert store.get_setting("capture.target_rate") == "16000" and dlg.result() == dlg.DialogCode.Accepted
+    assert store.get_setting("pipeline.threshold") == "0.7" and store.get_setting("pipeline.whisper_model") == "small"
+    assert store.settings.provider_key("huggingface") == "hf_abc"
 
 
 def test_warmup_opens_mic_once_and_builds_config(qtbot, store, platform):
