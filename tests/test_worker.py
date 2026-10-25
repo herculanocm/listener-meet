@@ -158,6 +158,9 @@ def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store):
     row = store.jobs.get(llm)
     assert row["status"] in ("erro", "concluído") and row["worker_pid"] is None
     assert store.jobs.get(heavy)["status"] == "pendente"                                          # o leve não toca no pesado
+    from listener import log as applog
+
+    applog.flush()                                                                                  # o QueueListener grava em thread
     text = (tmp_path / "logs" / "listener-llm.log").read_text(encoding="utf-8")
     assert "papel worker-llm" in text and f"job {llm}" in text
     assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0           # nada a fazer: sai

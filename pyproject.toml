@@ -23,7 +23,7 @@ dependencies = [
 win32       = ["pycaw; sys_platform == 'win32'", "comtypes; sys_platform == 'win32'", "PyAudioWPatch>=0.2.12; sys_platform == 'win32'"]
 pipeline    = ["faster-whisper>=1.1", "pyannote.audio>=4"]
 pipeline-hq = ["whisperx>=3.3"]
-llm         = ["google-genai>=1.0", "openai>=1.50", "anthropic>=0.40"]
+llm         = ["google-genai>=2.33,<3", "openai>=3.37,<4", "anthropic>=2.3,<3", "truststore>=0.9"]   # F3: pinos por major (R-1)
 store       = ["sqlite-vec>=0.1.6"]
 dev         = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.6", "mypy>=1.11"]
 

@@ -69,6 +69,8 @@ class FakeProvider:
             return script(req)
         if script is not None:
             return script
+        if req.task == LlmTask.TEST and req.json_schema is not None:
+            return {"ok": True}                                  # o canário passa por padrão, como num provedor real
         if req.json_schema is not None:
             return minimal_instance(req.json_schema)
         return f"resposta simulada para {req.task}"
