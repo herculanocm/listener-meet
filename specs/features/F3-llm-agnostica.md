@@ -1,7 +1,7 @@
 # F3 — LLM agnóstica: identidade por contexto, título, ata, resumos, transcrição revisada, chat e revisão completa
 
-Status: em revisão (rascunho de 25/10 com a revisão de arquitetura incorporada: 59 itens, 19 altos; aguarda o dono) ·
-Aprovada por Herculano em: — (P1 a P9) · Fase e gate: F3 · G3 · CPs: 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
+Status: aprovada; implementação delegada ao agente especialista, lotes L0 a L6 com commit por lote (CP16) · Aprovada por
+Herculano em: 2026-10-25 (P1 = opções nas Configurações; P2 a P9 nos padrões; D-043) · Fase e gate: F3 · G3 · CPs: 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
 Quando ler: ao trabalhar na camada de LLM, na revisão completa ou no chat. Desenho técnico (tipos, protocolo, esquemas,
 validação, rede, custo, pinos): `specs/llm-contrato.md`. Tabelas: `dados.md`. O que já existe e esta spec usa: fila e
 worker da F2 (`processing_jobs.kind`, `params_json`, `config_json`, artefatos, heartbeat, `retry`), `segments.text_llm`,
@@ -82,7 +82,8 @@ pyannote (CP11); sem rede a reunião continua usável.
     → `revisions`), com "gerar de novo" por aba; selo de custo da reunião no cabeçalho da revisão, na coluna Detalhe da
     fila e na notificação ("ata pronta · US$ 0,32"); `_on_job_done` ramifica por `kind`. A leitura nunca mostra sugestão
     da LLM como nome (só `auto` e `confirmado`).
-12. **Configurações (CP8).** Grupo `llm.*` gerado da tabela: `output_language` (`pt-BR`; `auto` segue `meetings.language`),
+12. **Configurações (CP8).** Grupo `llm.*` gerado da tabela: `output_language` como opção (P1): `pt-BR` padrão, `auto`
+    (segue `meetings.language`), `en`, `es`, mais um campo livre para outro código de idioma;
     `audio_second_opinion`, `cost_alert_usd`, `max_parallel`, `glossary_enabled`, `store_payloads`, `proxy_url`,
     `ca_bundle`, `system_certs`, `auto_tasks`. `ProviderTabs`: uma sub-aba por provedor (Gemini, GPT, Claude; a linha
     `huggingface` fica fora): chave em texto aberto (CP10), modelo rápido e modelo forte escolhidos de `list_models()`
@@ -183,8 +184,8 @@ adaptadores às cegas, rede e certificados, contrato com dublê, célula do CI c
 (prompts, esquemas, render, evidência, runner com `TaskGroup`, hierárquico, encadeamento, custo, transporte) 2,5 d · L4
 Configurações e warm-up 1,5 d · L5 revisão e leitura 1,5 d · L6 chat e `LLMAudioTranscriber` 1,5 d · L7 G3 com o dono 0,5 d.
 
-## Perguntas ao dono (produto)
-- P1 Idioma das saídas: pt-BR sempre, ou `auto` seguindo o idioma da reunião? Padrão: pt-BR, com `auto` disponível.
+## Respostas do dono (25/10, D-043)
+- P1 Idioma das saídas: **opções nas Configurações** (pt-BR padrão, `auto`, `en`, `es`, outro código livre).
 - P2 Alerta de custo por reunião: valor padrão? Padrão revisado: US$ 2,00 (3 h com o modelo forte na ata chega a US$ 1).
 - P3 Segunda opinião por áudio (voz de terceiros sai da máquina; ganho incerto): padrão desligado, ligável? Padrão: desligado.
 - P4 Transcrição revisada exibida por padrão, com alternância para a original? Padrão: sim.
