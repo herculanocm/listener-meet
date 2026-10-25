@@ -24,8 +24,8 @@ KIND_STEP: dict[str, JobStep] = {SummaryKind.MINUTES: JobStep.MINUTES, SummaryKi
                                  SummaryKind.PRE_SUMMARY: JobStep.PRE_SUMMARY}
 KIND_TITLE: dict[str, str] = {SummaryKind.PRE_SUMMARY: "Pré-resumo", SummaryKind.MINUTES: "Ata", SummaryKind.EXECUTIVE: "Executivo"}
 STALE_MARK = "gerados antes do reprocessamento"
-NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" guarda o seu texto na versão aberta; "
-                "\"Recarregar\" mostra a nova e descarta o que não foi salvo.")
+NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" grava o seu texto sobre a versão nova (o texto "
+                "da LLM fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
 ACTIONS_NEWER_NOTICE = "Há ações novas ou alteradas; recarregar?"
 ACTION_COLUMNS = ("Ação", "Dono", "Prazo", "Estado", "Quando")
 STATUS_LABELS = {ActionStatus.OPEN: "aberta", ActionStatus.DONE: "feita", ActionStatus.DISCARDED: "descartada"}
@@ -91,7 +91,8 @@ def llm_done_text(job: dict[str, Any]) -> str:
 class TextTab(QWidget):
     """Pré-resumo, ata ou executivo: texto editável, origem, marca de reprocessamento e "gerar de novo". O editor guarda a
     versão que mostra (`summary_id` e o texto carregado); uma versão nova chegada com o editor em foco ou modificado não o
-    toca: acende o aviso e o botão "Recarregar", e "Salvar edição" grava na versão aberta (R3-01)."""
+    toca: acende o aviso e o botão "Recarregar"; "Salvar edição" grava o texto do editor sobre a versão atual, como edição
+    (o texto da LLM continua em `text_llm`), para a edição nunca ficar numa versão superada que nenhuma tela mostra (R3-01)."""
 
     def __init__(self, store: Store, meeting_id: int, kind: SummaryKind, on_regenerate: Callable[[JobStep], Any],
                  parent: QWidget | None = None):
@@ -176,14 +177,18 @@ class TextTab(QWidget):
         self.reload(*self._last, force=True)
 
     def save(self) -> bool:
-        """Grava na versão que está no editor (mesmo que outra mais nova tenha chegado) e limpa a marca de modificado."""
-        if self.summary_id is None:
+        """Grava o editor na versão atual (a que chegou durante a edição, se chegou) e limpa a marca de modificado."""
+        current = self.store.summaries.current(self.meeting_id, self.kind)
+        target = int(current["id"]) if current is not None else self.summary_id
+        if target is None:
             return False
         text = self.editor.toPlainText()
-        row = self.store.summaries.get(self.summary_id)
+        row = self.store.summaries.get(target)
         original = str((row or {}).get("text_llm") or "")
-        changed = self.store.summaries.set_text_edited(self.summary_id, None if text == original else text)
-        self._loaded = (self.summary_id, self.store.summaries.display_text(self.store.summaries.get(self.summary_id)))
+        changed = self.store.summaries.set_text_edited(target, None if text == original else text)
+        self.summary_id = target
+        self.newer = False
+        self._loaded = (target, self.store.summaries.display_text(self.store.summaries.get(target)))
         self.editor.document().setModified(False)
         self.reload(*self._last)
         return changed
@@ -327,12 +332,21 @@ class ActionsTab(QWidget):
         if self._loading or item.column() != 0:
             return
         aid = item.data(Qt.ItemDataRole.UserRole)
-        if aid is not None and self.store.actions.set_text(int(aid), item.text().strip()) and not self.newer:
-            self._shown = self._view()                       # a própria edição não conta como versão nova
+        if aid is not None:
+            self._after_write(int(aid), self.store.actions.set_text(int(aid), item.text().strip()))
 
     def _status_changed(self, action_id: int, combo: QComboBox) -> None:
-        if not self._loading and self.store.actions.set_status(action_id, ActionStatus(str(combo.currentData()))) and not self.newer:
+        if not self._loading:
+            self._after_write(action_id, self.store.actions.set_status(action_id, ActionStatus(str(combo.currentData()))))
+
+    def _after_write(self, action_id: int, written: bool) -> None:
+        """A própria edição não conta como versão nova; ação já superada (a ata mudou) recusa a escrita e pede recarga."""
+        if written and not self.newer:
             self._shown = self._view()
+        elif not written and str((self.store.actions.get(action_id) or {}).get("status")) == ActionStatus.SUPERSEDED:
+            self.newer = True
+            self.note.setText("Esta ação é de uma ata anterior e não foi alterada; recarregue as ações.")
+            self.btn_reload.setVisible(True)
 
 
 def step_label(step: JobStep | str) -> str:

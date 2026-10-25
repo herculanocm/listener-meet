@@ -184,6 +184,14 @@ def test_reload_never_overwrites_unsaved_edits(qtbot, platform, store):
     assert actions_tab.newer and "recarregar" in actions_tab.note.text() and actions_tab.table.item(0, 0).text() != "mudou por fora"
     actions_tab.btn_reload.click()
     assert not actions_tab.newer and actions_tab.table.item(0, 0).text() == "mudou por fora"
+    # ação superada (a ata mudou) numa tabela desatualizada: a escrita é recusada e a aba pede recarga
+    aid = int(actions_tab.table.item(0, 0).data(Qt.ItemDataRole.UserRole))
+    store._x("UPDATE action_items SET status = 'superada' WHERE id = ?", (aid,))
+    actions_tab.table.item(0, 0).setText("não pode gravar")
+    assert store.actions.get(aid)["text"] == "mudou por fora" and actions_tab.newer and "ata anterior" in actions_tab.note.text()
+    assert not store.actions.set_status(aid, ActionStatus.DONE) and store.actions.get(aid)["status"] == "superada"
+    store._x("UPDATE action_items SET status = 'aberta' WHERE id = ?", (aid,))
+    actions_tab.reload(force=True)
     dlg.tabs.setCurrentIndex(0)
     tab = dlg.text_tabs["minutes"]
     old_id = tab.summary_id
@@ -194,11 +202,19 @@ def test_reload_never_overwrites_unsaved_edits(qtbot, platform, store):
     dlg.reload()
     assert tab.editor.toPlainText().endswith("minha correção") and tab.newer and not tab.btn_reload.isHidden()
     assert "versão nova" in tab.notice.text() and tab.summary_id == old_id
-    assert tab.save() and store.summaries.get(old_id)["text_edited"].endswith("minha correção")
+    new = store.summaries.current(mid, SummaryKind.MINUTES)
+    assert tab.save() and store.summaries.get(new["id"])["text_edited"].endswith("minha correção")  # grava sobre a versão nova
+    assert store.summaries.get(new["id"])["text_llm"] == "# Ata nova" and not store.summaries.get(old_id)["text_edited"]
     dlg.reload()
-    assert tab.editor.toPlainText().endswith("minha correção") and tab.newer                         # salvo, ainda na versão aberta
+    assert tab.editor.toPlainText().endswith("minha correção") and not tab.newer and tab.summary_id == new["id"]
+    assert tab.btn_reload.isHidden() and "editado por você" in tab.info.text()
+    # "Recarregar" descarta o que não foi salvo
+    tab.editor.insertPlainText(" rascunho")
+    store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata nova 2", "gemini", "m", "minutes/1.0", 1, None, "pt-BR"))
+    dlg.reload()
+    assert tab.newer and tab.editor.toPlainText().endswith("rascunho")
     tab.btn_reload.click()
-    assert tab.editor.toPlainText() == "# Ata nova" and not tab.newer and tab.btn_reload.isHidden()
+    assert tab.editor.toPlainText() == "# Ata nova 2" and not tab.newer and tab.btn_reload.isHidden()
     assert tab.summary_id == store.summaries.current(mid, SummaryKind.MINUTES)["id"] and not tab.editing()
     # sem edição em curso a versão nova entra direto
     store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata 3", "gemini", "m", "minutes/1.0", 1, None, "pt-BR"))

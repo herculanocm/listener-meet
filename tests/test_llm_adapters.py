@@ -307,7 +307,7 @@ def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
         if kw["max_output_tokens"] < cut_below["n"]:
             stub.calls.append(("create", kw))
             return SimpleNamespace(id="o1", model=kw["model"], status="incomplete", output_text='{"ok": tr', output=[],
-                                   usage=SimpleNamespace(input_tokens=10, output_tokens=5, input_tokens_details=None),
+                                   usage=SimpleNamespace(input_tokens=10, output_tokens=kw["max_output_tokens"], input_tokens_details=None),
                                    incomplete_details=SimpleNamespace(reason="max_output_tokens"))
         return await original(**kw)
 
@@ -315,7 +315,7 @@ def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
     rp = RetryingProvider(OpenAIProvider("k", client=stub), sleep=lambda s: asyncio.sleep(0))
     req = dataclasses.replace(_req(model="gpt-4.1-mini"), max_output_tokens=2000)
     comp = run(rp.complete(req))
-    assert comp.data == PAYLOAD and rp.grown == 1 and rp.resends == 0
+    assert comp.data == PAYLOAD and rp.grown == 1 and rp.resends == 0 and comp.usage.input_tokens == 20     # as duas pagas
     assert [kw["max_output_tokens"] for _, kw in stub.calls] == [2000, 4000]
     stub.calls.clear()
     cut_below["n"] = 10**9                                                                   # sempre cortada
@@ -326,6 +326,11 @@ def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
     with pytest.raises(BadResponseError, match="limite do modelo"):                           # já no teto do gpt-4.1-mini
         run(rp.complete(dataclasses.replace(req, max_output_tokens=32_768)))
     assert len(stub.calls) == 1
+    stub.calls.clear()                                     # teto efetivo já no limite (folga de raciocínio): não reenvia igual
+    cut_below["n"] = 10**9
+    with pytest.raises(BadResponseError, match="limite do modelo"):
+        run(rp.complete(dataclasses.replace(_req(model="o3"), max_output_tokens=99_000)))
+    assert len(stub.calls) == 1 and stub.calls[0][1]["max_output_tokens"] == 100_000
     # folga de raciocínio: low +4096, sem esforço (médio) +8192, sem passar do limite do modelo
     p = OpenAIProvider("k", client=OpenAIStub())
     low = dataclasses.replace(_req(model="gpt-5-mini", reasoning=Reasoning.LOW), max_output_tokens=2000)

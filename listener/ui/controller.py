@@ -224,10 +224,13 @@ class Controller(QObject):
         try:
             link = LateGlossaryLink(self.store)
             dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add)
-            if dlg.exec() == QDialog.DialogCode.Accepted:
-                cfg, fields = dlg.result_config()
-                if self.start_recording(cfg, fields) and self.recorder is not None:
-                    link.bind(self.recorder.meeting_id)
+            accepted = dlg.exec() == QDialog.DialogCode.Accepted
+            cfg, fields = dlg.result_config() if accepted else (None, {})
+            # destruído aqui, na thread da interface: se ficasse para o coletor de lixo, uma thread do gravador poderia
+            # destruí-lo (segfault do Qt); a resposta tardia do glossário não toca em widgets (F3.1, revisão)
+            dlg.deleteLater()
+            if cfg is not None and self.start_recording(cfg, fields) and self.recorder is not None:
+                link.bind(self.recorder.meeting_id)
         finally:
             self._warmup_open = False
 
@@ -337,6 +340,7 @@ class Controller(QObject):
         if dlg.exec() == QDialog.DialogCode.Accepted and self.recorder is not None:
             self.recorder.switch_source(table.selected_spec())
         table.stop()
+        dlg.deleteLater()
 
     def stop_recording(self) -> None:
         """Parada assíncrona: o widget mostra "salvando…" enquanto a thread de trabalho esvazia a fila."""
@@ -679,7 +683,9 @@ class Controller(QObject):
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        dlg.deleteLater()
+        if accepted:
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
             from .app import attach_log
 

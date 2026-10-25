@@ -119,18 +119,21 @@ def enqueue_llm_job(store: Store, meeting_id: int, tasks: Sequence[JobStep | str
 
 def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, kind: JobKind | str) -> int | None:
     """Encadeado por `JobRunner._finish_ok` (F3A-01): tarefas automáticas conforme `llm.auto_tasks` e o tipo do job pai. Antes,
-    os jobs `llm` pendentes da reunião com outro job pai são cancelados (rodariam sobre segmentos apagados); sem falas no job
-    pai, nenhum job (F3.1 R3-02)."""
+    os jobs `llm` pendentes da reunião com outro job pai são cancelados (rodariam sobre segmentos apagados) e as tarefas dos
+    pedidos manuais entre eles ("gerar de novo") passam para o job novo, mesmo com `llm.auto_tasks` desligado; sem falas no
+    job pai, nenhum job (F3.1 R3-02)."""
     from ..config.defaults import SPECS
 
-    cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
-    if not store.get(SPECS["llm.auto_tasks"]):
+    manual = cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
+    auto = bool(store.get(SPECS["llm.auto_tasks"]))
+    if not auto and not manual:
         return None
-    reason = auto_skip_reason(store, meeting_id, parent_job_id)
-    if reason is not None:
-        log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, reason)
+    if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
+        log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, NO_SPEECH)
         return None
-    return enqueue_llm_job(store, meeting_id, auto_tasks_for(store, meeting_id, kind), parent_job_id, auto=True)
+    tasks = set(auto_tasks_for(store, meeting_id, kind)) if auto else set()
+    tasks |= manual
+    return enqueue_llm_job(store, meeting_id, [t for t in TASK_ORDER if t in tasks], parent_job_id, auto=auto)
 
 
 def auto_skip_reason(store: Store, meeting_id: int, parent_job_id: int) -> str | None:
@@ -158,19 +161,24 @@ def auto_tasks_for(store: Store, meeting_id: int, kind: JobKind | str) -> list[J
     return [t for t in TASK_ORDER if t in TASKS_AFTER_REPROCESS or t in missing]
 
 
-def cancel_stale_llm_jobs(store: Store, meeting_id: int, parent_job_id: int) -> list[int]:
+def cancel_stale_llm_jobs(store: Store, meeting_id: int, parent_job_id: int) -> set[JobStep]:
     """Jobs `llm` pendentes da reunião feitos para outro job pai (o reprocessamento trocou os segmentos): cancelados antes de
-    gastar chamadas sobre uma transcrição que não existe mais (R3-02). O de teste (sem job pai) fica."""
+    gastar chamadas sobre uma transcrição que não existe mais (R3-02). O de teste (sem job pai) fica. Devolve as tarefas dos
+    pedidos manuais cancelados, para o job novo refazê-las (o pedido do usuário não some calado)."""
     cancelled: list[int] = []
+    manual: set[JobStep] = set()
     for job in store.jobs.for_meeting(meeting_id):
         if str(job.get("kind")) != JobKind.LLM or str(job["status"]) != JobStatus.PENDING:
             continue
-        parent = _job_params(job).get("parent_job_id")
+        params = _job_params(job)
+        parent = params.get("parent_job_id")
         if parent is not None and int(parent) != parent_job_id and store.jobs.request_cancel(int(job["id"])) == JobStatus.CANCELLED:
             cancelled.append(int(job["id"]))
+            if not params.get("auto"):
+                manual |= set(tasks_of(job)) - {JobStep.TEST}
     if cancelled:
         log.info("reunião %s: job(s) llm %s cancelado(s): feitos para uma transcrição anterior", meeting_id, cancelled)
-    return cancelled
+    return manual
 
 
 def enqueue_test_job(store: Store, meeting_id: int | None = None) -> int | None:

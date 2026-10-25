@@ -176,7 +176,7 @@ class RetryingProvider:
     async def complete(self, req: Request) -> Completion:
         comp = await self._with_retries(req)
         if comp.finish == "length":
-            req, comp = await self._grown(req)
+            req, comp = await self._grown(req, comp)
         if req.json_schema is None:
             return comp
         try:
@@ -189,19 +189,22 @@ class RetryingProvider:
             fix = req.with_messages((*req.messages, Message(Role.ASSISTANT, comp.text[:20_000]),
                                      Message(Role.USER, FIX_PROMPT.format(error=str(e)[:500]))))
             comp2 = await self._with_retries(fix)
+            comp2 = replace(comp2, usage=comp.usage + comp2.usage)          # a tentativa recusada também foi paga
             try:
                 return self._validated(req, comp2)
             except (SchemaError, ValueError) as e2:
                 raise BadResponseError(f"resposta fora do esquema após reenvio: {e2}", text=comp2.text) from e2
 
-    async def _grown(self, req: Request) -> tuple[Request, Completion]:
+    async def _grown(self, req: Request, first: Completion) -> tuple[Request, Completion]:
         """Reenvio único com o dobro de `max_output_tokens`, sem passar do limite de saída do modelo (modelo fora da tabela:
-        só o dobro); cortada de novo, ou já no limite, vira `BadResponseError` em vez de JSON truncado."""
-        info = models_table.model_info(self.kind, req.model)
-        limit = info.output_limit if models_table.family_for(self.kind, req.model) else req.max_output_tokens * 2
+        só o dobro); cortada de novo, ou já no limite, vira `BadResponseError` em vez de JSON truncado. O limite vale também
+        para o teto efetivamente enviado (a folga de raciocínio da OpenAI já pode tê-lo levado lá): saída cortada no
+        limite do modelo não se reenvia. O `usage` devolvido soma as duas tentativas (as duas foram pagas)."""
+        known = models_table.family_for(self.kind, req.model) is not None
+        limit = models_table.model_info(self.kind, req.model).output_limit if known else req.max_output_tokens * 2
         bigger = min(req.max_output_tokens * 2, limit)
         cut = f"resposta cortada no teto de {req.max_output_tokens} tokens de saída de {req.model}"
-        if bigger <= req.max_output_tokens:
+        if bigger <= req.max_output_tokens or (known and first.usage.output_tokens >= limit):
             raise BadResponseError(f"{cut}, que já é o limite do modelo: use um modelo com saída maior")
         self.grown += 1
         log.info("%s: %s em %s; reenviando uma vez com %d", self.id, cut, req.task, bigger)
@@ -209,7 +212,7 @@ class RetryingProvider:
         comp = await self._with_retries(req)
         if comp.finish == "length":
             raise BadResponseError(f"resposta cortada mesmo com {bigger} tokens de saída de {req.model}", text=comp.text)
-        return req, comp
+        return req, replace(comp, usage=first.usage + comp.usage)
 
     async def _with_retries(self, req: Request) -> Completion:
         for attempt in range(self.attempts):

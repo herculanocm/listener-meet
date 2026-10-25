@@ -470,6 +470,13 @@ def test_reprocess_cancels_stale_pending_llm_jobs_and_keeps_what_never_ran(platf
         assert status == JobStatus.DONE
     assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == rep
     assert llm_steps.auto_tasks_for(store, mid, JobKind.REPROCESS) == ["identify", "revise"]          # agora tudo existe (P7)
+    # "gerar de novo" pendente durante outro reprocessamento: a tarefa passa para o job novo, mesmo sem tarefas automáticas
+    store.set_setting("llm.auto_tasks", False)
+    manual = llm_steps.enqueue_llm_job(store, mid, ["executive"])
+    rep2 = _pipeline(store, mid, JobKind.REPROCESS)
+    assert store.jobs.get(manual)["status"] == "cancelado"
+    moved = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente" and j["id"] != test_job)
+    assert json.loads(moved["params_json"]) == {"tasks": ["executive"], "parent_job_id": rep2, "auto": False}
 
 
 def test_hierarchical_minutes_resumes_from_saved_block_notes(platform, store):

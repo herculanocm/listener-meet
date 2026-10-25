@@ -71,8 +71,9 @@ class ActionsRepo:
         return cast(ActionRow, dict(rows[0])) if rows else None
 
     def set_status(self, action_id: int, status: ActionStatus, author: str = "usuario") -> bool:
+        """Recusa (False) ação superada: uma tabela desatualizada não a ressuscita (F3.1, revisão de R3-01)."""
         row = self.get(action_id)
-        if row is None or str(row.get("status")) == str(status):
+        if row is None or str(row.get("status")) in (str(status), str(ActionStatus.SUPERSEDED)):
             return False
         with self.core.transaction():
             self.core.execute("UPDATE action_items SET status = ? WHERE id = ?", (str(status), action_id))
@@ -81,7 +82,7 @@ class ActionsRepo:
 
     def set_text(self, action_id: int, text: str, author: str = "usuario") -> bool:
         row = self.get(action_id)
-        if row is None or (row.get("text") or "") == text:
+        if row is None or (row.get("text") or "") == text or str(row.get("status")) == ActionStatus.SUPERSEDED:
             return False
         with self.core.transaction():
             self.core.execute("UPDATE action_items SET text = ? WHERE id = ?", (text, action_id))
