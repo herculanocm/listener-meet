@@ -5,7 +5,6 @@ numa `Task` (latência, modelo, erro traduzido), "testar pelo worker" (job `llm`
 embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor escolhido (CP1). Nada aqui importa SDK."""
 from __future__ import annotations
 
-import asyncio
 import functools
 import json
 from collections.abc import Callable
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QLin
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ..llm.adapters_common import friendly_error
+from ..llm.aio import run_async
 from ..llm.costs import fmt_usd
 from ..llm.models_table import DEFAULT_EMBED_MODELS, DEFAULT_MODELS, PROVIDER_CAPABILITIES
 from ..llm.registry import NetworkConfig, load_provider
@@ -36,14 +36,14 @@ SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é envia
 
 
 def test_connection(kind: str, api_key: str, model: str, net: NetworkConfig) -> ConnectionTest:
-    """Roda numa `Task`: cliente criado e fechado dentro do `asyncio.run()` (contrato "Decoradores e registro")."""
+    """Roda numa `Task`: cliente criado e fechado dentro do `run_async()` (contrato "Decoradores e registro")."""
     async def go() -> ConnectionTest:
         provider = load_provider(kind, api_key, net)
         try:
             return await provider.test_connection(model)
         finally:
             await provider.aclose()
-    return asyncio.run(go())
+    return run_async(go())
 
 
 def list_models(kind: str, api_key: str, net: NetworkConfig) -> tuple[ModelInfo, ...]:
@@ -53,7 +53,7 @@ def list_models(kind: str, api_key: str, net: NetworkConfig) -> tuple[ModelInfo,
             return await provider.list_models()
         finally:
             await provider.aclose()
-    return asyncio.run(go())
+    return run_async(go())
 
 
 def models_cache(infos: tuple[ModelInfo, ...]) -> list[dict[str, Any]]:

@@ -294,3 +294,37 @@ def test_controller_live_window_marks_caption_and_partial_item_and_minutes_read_
         assert c.live_window is None
     finally:
         c.emergency_stop()
+
+
+def test_recording_interrupts_a_model_download_in_progress(qtbot, qapp, store, platform, monkeypatch, tmp_path):
+    """Revisão do L4 a L6: o preparo é fora da gravação (item 10); gravar interrompe o download, que disputaria a rede com a
+    reunião, e avisa uma vez; o fim do filho morto não mexe mais no estado."""
+    from listener.ui import controller as ctl
+    from listener.ui.live_prepare import ModelPreparer
+
+    prep = ModelPreparer()
+    gate = threading.Event()
+    child = ThreadChild(_prepare_target(store.base_dir, gate, tmp_path / "modelos"), pid=7100)
+    assert prep.start(store, lambda argv, env=None: child)
+    qtbot.waitUntil(lambda: prep.state.get("model") == "small", timeout=5000)
+    monkeypatch.setattr(ctl, "preparer", lambda: prep)
+    c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    notes: list[str] = []
+    monkeypatch.setattr(c, "notify", notes.append)
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+    try:
+        assert c.start_recording(cfg, {"title": "com download", "live_enabled": False})
+        assert not prep.running and prep.state["state"] == "error" and "interrompido pela gravação" in prep.state["message"]
+        assert child.killed and [n for n in notes if "Download dos modelos" in n] == [notes[0]]
+        gate.set()
+        qtbot.wait(200)                                                          # o `exit` do filho morto chega e é ignorado
+        assert prep.state["state"] == "error" and prep.starts == 1
+        platform.pump(0.6)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+    finally:
+        gate.set()
+        c.emergency_stop()

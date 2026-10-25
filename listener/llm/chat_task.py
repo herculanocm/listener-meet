@@ -1,10 +1,9 @@
 """Chat sobre uma reunião (F3 item 10, U-019): a transcrição vai como prefixo estável do prompt (cache dos provedores),
 depois o histórico curto e a pergunta; resposta em streaming (`StreamTask`); cada `[mm:ss]` da resposta é reescrito para o
 segmento mais próximo (até 5 s) como link `listener://play?seg=<id>` ou fica como texto quando não há segmento; tudo em
-`chat_messages` (com `citations_json` e custo) e `llm_calls`. Roda fora da thread do Qt com `asyncio.run` e cliente próprio."""
+`chat_messages` (com `citations_json` e custo) e `llm_calls`. Roda fora da thread do Qt com `run_async` e cliente próprio."""
 from __future__ import annotations
 
-import asyncio
 import html
 import re
 from collections.abc import Callable, Sequence
@@ -15,6 +14,7 @@ from ..log import get_logger
 from ..model import ChatRole, LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
 from . import prompts, redact
+from .aio import run_async
 from .base import LlmError, classify_exception
 from .costs import cost_usd, price_for
 from .jobconfig import LlmJobConfig
@@ -115,7 +115,7 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
         finally:
             await provider.aclose()
 
-    comp, text, err = asyncio.run(go())
+    comp, text, err = run_async(go())
     version = prompts.prompt_version(LlmTask.CHAT)
     task = str(LlmTask.CHAT)
     if err is not None:

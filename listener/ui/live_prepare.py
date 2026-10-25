@@ -142,6 +142,18 @@ class ModelPreparer(QObject):
                     log.warning("preparo dos modelos do ao vivo falhou: %s", message)
                     self._set({"state": "error", "message": message})
 
+    def cancel(self, reason: str) -> bool:
+        """Interrompe o download em curso (ao começar a gravar: o preparo é fora da gravação, item 10, e o download disputaria
+        a rede com a reunião); retomar depois continua de onde parou. False sem nada rodando."""
+        proc, self.proc = self.proc, None
+        if proc is None:
+            return False
+        with suppress(OSError):
+            proc.kill()
+        log.info("preparo dos modelos do ao vivo interrompido: %s", reason)
+        self._set({"state": "error", "message": reason})
+        return True
+
     def _set(self, state: dict[str, Any]) -> None:
         self.state = state
         self.changed.emit(dict(state))

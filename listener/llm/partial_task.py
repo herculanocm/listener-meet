@@ -1,5 +1,5 @@
 """Resumo parcial ao vivo (F4 item 7, Q6, CP10), no padrão do chat: roda fora da thread do Qt (uma `StreamTask`, QThread com
-`asyncio.run` e cliente próprio), uma chamada por vez (o controlador só lança outra quando esta volta), cancelável entre
+`run_async` e cliente próprio), uma chamada por vez (o controlador só lança outra quando esta volta), cancelável entre
 esperas de 0,2 s (Cancelar a gravação, sair do app).
 
 Lê o parcial atual da reunião e as legendas novas desde ele (`captions.id` acima do `last_caption_id` guardado no
@@ -29,6 +29,7 @@ from ..store.captions import CaptionRow
 from ..store.llm_calls import LlmCallInsert
 from ..store.summaries import SummaryInsert
 from . import prompts, redact
+from .aio import run_async
 from .base import LlmError, LLMProvider, classify_exception
 from .costs import cost_usd, fmt_usd, price_for
 from .jobconfig import LlmJobConfig
@@ -244,7 +245,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
                 with suppress(Exception):
                     await p.aclose()
 
-    comp, err, was_cancelled = asyncio.run(go())
+    comp, err, was_cancelled = run_async(go())
     alive = store.get_meeting(meeting_id) is not None
     call_mid = meeting_id if alive else None
     version, digest = prompts.prompt_version(LlmTask.PARTIAL), schema_hash(prompts.partial.SCHEMA)
@@ -278,9 +279,11 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
              if isinstance(it, Mapping) and isinstance(it.get("caption_id"), int)}
     times.update(store.captions.start_times(meeting_id, cited - times.keys()))
     data = normalize(raw, times)
-    t_until = max(int(r["t_end_ms"] or 0) for r in used)
+    prev_until = int((store.summaries.current(meeting_id, SummaryKind.PARTIAL) or {}).get("t_until_ms") or 0)
+    t_until = max(prev_until, *(int(r["t_end_ms"] or 0) for r in used))    # uma legenda atrasada não faz o "até" recuar
     data.update(last_caption_id=max(int(r["id"]) for r in used), captions=len(used), left=left,
-                t_from_ms=min(int(r["t_start_ms"] or 0) for r in used))
+                t_from_ms=min(int(r["t_start_ms"] or 0) for r in used),
+                interval_min=int(store.get(SPECS["live.summary_interval_min"])))   # o `--check` conta pelo que valia
     try:
         summary_id = store.summaries.insert(SummaryInsert(meeting_id, SummaryKind.PARTIAL, json.dumps(data, ensure_ascii=False),
                                                           render_markdown(data, ctx.output_language), cfg.provider_id, comp.model, version,

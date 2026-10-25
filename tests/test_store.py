@@ -643,8 +643,11 @@ def test_summaries_actions_llm_calls_and_chat_repos(store):
     store.chat.add(mid, ChatRole.ASSISTANT, "Foi decidido X [12:03].", "gemini", "x", [{"t_ms": 723000, "segment_id": 4}], 0.001)
     msgs = store.chat.list_for_meeting(mid)
     assert [m["role"] for m in msgs] == ["user", "assistant"] and '"segment_id": 4' in msgs[1]["citations_json"]
-    store.delete_meeting(mid)                                                                                     # cascata
-    assert store._q("SELECT COUNT(*) FROM llm_calls")[0][0] == 0 and store._q("SELECT COUNT(*) FROM chat_messages")[0][0] == 0
+    store.delete_meeting(mid)                                         # cascata no chat; as chamadas pagas ficam soltas e sem conteúdo
+    assert store._q("SELECT COUNT(*) FROM chat_messages")[0][0] == 0
+    left = store._q("SELECT COUNT(*), COUNT(meeting_id), COUNT(request_blob), COUNT(response_blob) FROM llm_calls")[0]
+    assert tuple(left) == (3, 0, 0, 0)
+    assert store.llm_calls.month_total() == pytest.approx(0.0125)                                  # o custo do mês continua certo
 
 
 def test_set_llm_suggestion_refuses_decided_voices_and_json_default_knows_new_types(store):

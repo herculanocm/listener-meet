@@ -94,6 +94,12 @@ class LlmCallsRepo:
     def set_meeting(self, call_id: int, meeting_id: int) -> None:
         self.core.execute("UPDATE llm_calls SET meeting_id = ? WHERE id = ?", (meeting_id, call_id))
 
+    def detach_meeting(self, meeting_id: int) -> int:
+        """Antes de apagar a reunião (Cancelar): as chamadas pagas ficam, para o custo do mês, mas sem a reunião e sem o
+        conteúdo guardado (pedido e resposta)."""
+        return self.core.execute("UPDATE llm_calls SET meeting_id = NULL, request_blob = NULL, response_blob = NULL "
+                                 "WHERE meeting_id = ?", (meeting_id,))
+
     def list_for_meeting(self, meeting_id: int) -> list[LlmCallRow]:
         rows = self.core.q("SELECT id, meeting_id, job_id, task, provider, model, prompt_version, schema_hash, input_tokens, "
                            "output_tokens, cached_tokens, audio_tokens, cost_usd, latency_ms, status, error, strategy, created_at "

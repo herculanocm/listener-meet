@@ -1,10 +1,9 @@
 """Glossário do warm-up (handoff §4, F3 item 4, U-018): o app casa os participantes digitados com `people` localmente
 (casefold, `difflib`, nome inteiro ou primeiro nome único) e pede à LLM os termos prováveis e o mapeamento do que sobrou,
-numa única chamada feita numa `Task` do app (`asyncio.run` com cliente próprio). `llm_calls.meeting_id` fica nulo até a
+numa única chamada feita numa `Task` do app (`run_async` com cliente próprio). `llm_calls.meeting_id` fica nulo até a
 reunião existir (o controlador religa). Sem provedor com chave: `GlossaryResult.error` e o warm-up segue sem glossário."""
 from __future__ import annotations
 
-import asyncio
 import difflib
 import json
 import re
@@ -16,6 +15,7 @@ from ..log import get_logger
 from ..model import LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
 from . import prompts, redact
+from .aio import run_async
 from .base import LlmError, classify_exception
 from .costs import cost_usd, price_for
 from .jobconfig import LlmJobConfig
@@ -125,7 +125,7 @@ def request_glossary(store: Store, title: str | None, participants: str | None) 
         finally:
             await provider.aclose()
 
-    comp, err = asyncio.run(go())
+    comp, err = run_async(go())
     prices = store.providers.list_prices(cfg.provider_kind or None)
     version, digest = prompts.prompt_version(LlmTask.GLOSSARY), schema_hash(prompts.glossary.SCHEMA)
     if err is not None or comp is None:

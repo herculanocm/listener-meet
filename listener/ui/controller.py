@@ -45,7 +45,7 @@ from ..store.jobs import HELD
 from ..pipeline import review
 from ..platform.common import process
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
-from .live_prepare import shutdown_preparer
+from .live_prepare import preparer, shutdown_preparer
 from .queue import QueueDialog
 from .review import ReviewDialog
 from .settings_min import SettingsDialog
@@ -75,6 +75,7 @@ WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carre
 REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
 LIVE_MODELS_MISSING = "modelos do ao vivo ausentes: prepare nas Configurações (Ao vivo)"
 LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente."
+PREPARE_INTERRUPTED = "interrompido pela gravação: prepare de novo depois dela (continua de onde parou)"
 LIVE_RETRIES = 1                     # F4: uma nova tentativa por gravação quando o filho cai
 LIVE_CLOSE_GRACE_S = 10.0            # Parar: o filho fecha a janela em curso em até 10 s; depois, kill
 LIVE_EOF_GRACE_S = 8.0               # ...e transcreve a fila até 8 s depois do EOF (sobra folga para o bye)
@@ -195,6 +196,7 @@ class Controller(QObject):
         self.partial_status: dict[str, Any] = {"state": "idle", "meeting_id": None}
         self._partial_meeting: int | None = None
         self._partial_last_at = 0.0
+        self._partial_backlog = False                    # o último parcial deixou legendas para depois (corte da entrada)
         self._partial_last_caption = 0
         self._partial_stopped: str | None = None
         self._partial_warned = False
@@ -322,6 +324,9 @@ class Controller(QObject):
         self.state = AppState.RECORDING
         self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
         self._marked_items = set()
+        prep = preparer()
+        if prep.running and prep.cancel(PREPARE_INTERRUPTED):   # F4 item 10: o download não disputa a rede com a reunião
+            self.notify(f"Download dos modelos do ao vivo {PREPARE_INTERRUPTED}.")
         try:
             self._start_live(rec, fields)
         except Exception:                                # o ao vivo nunca impede a gravação
@@ -1020,6 +1025,7 @@ class Controller(QObject):
         self._partial_task = None                        # a chamada de uma gravação anterior termina sozinha e é ignorada
         self._partial_stopped = None
         self._partial_warned = False
+        self._partial_backlog = False
         self._partial_last_at = self.monotonic()
         self._partial_meeting = meeting_id if self.live is not None else None
         if self._partial_meeting is None:
@@ -1064,8 +1070,14 @@ class Controller(QObject):
         except Exception as e:                            # banco ocupado: confere de novo no próximo disparo
             log.debug("intervalo do resumo parcial não lido: %s", e)
             return
-        if interval <= 0 or self.monotonic() - self._partial_last_at < interval * 60:
+        now = self.monotonic()
+        if self._partial_backlog:                         # o corte da entrada deixou legendas: seguem já, sem esperar o intervalo
+            self._partial_last_at = now
+        elif interval <= 0 or now - self._partial_last_at < interval * 60:
             return
+        else:                                              # cadência fixa: o disparo de 15 s não empurra o próximo intervalo
+            due = self._partial_last_at + interval * 60
+            self._partial_last_at = due if now - due < interval * 60 else now
         self._run_partial(manual=False)
 
     def request_partial_now(self) -> str:
@@ -1080,7 +1092,9 @@ class Controller(QObject):
             return self._partial_stopped
         if self._partial_tasks:
             return "o resumo parcial já está sendo atualizado"
-        self._partial_last_at = self.monotonic()           # sem legenda nova, a próxima conferência é no próximo intervalo
+        if manual:                                         # o automático já acertou a cadência no `_partial_tick`
+            self._partial_last_at = self.monotonic()
+        self._partial_backlog = False
         try:
             fresh = self.store.captions.last_id(mid) > self._partial_last_caption
             keyed = self.store.providers.active_with_key("llm") is not None
@@ -1125,6 +1139,7 @@ class Controller(QObject):
             case partial_task.Outcome.DONE:
                 if current:
                     self._partial_last_caption = max(self._partial_last_caption, res.last_caption_id)
+                    self._partial_backlog = res.left > 0
                 self._set_partial({"state": "done", "summary_id": res.summary_id, "t_until_ms": res.t_until_ms,
                                    "left": res.left}, meeting_id)       # a janela da reunião recarrega, mesmo depois de Parar
             case partial_task.Outcome.BUDGET if current:

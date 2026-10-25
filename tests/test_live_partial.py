@@ -6,6 +6,7 @@ alerta da ata somando o que a reunião já gastou (Q6)."""
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 import pytest
@@ -83,6 +84,15 @@ def test_run_partial_accumulates_supersedes_and_records_the_call(store, monkeypa
     monkeypatch.setattr(partial_task, "MAX_INPUT_CHARS", 800)
     r3 = run_partial(store, mid)
     assert r3.captions == 2 and r3.left == 1 and run_partial(store, mid).captions == 1
+    # revisão do L4 a L6: legendas fora da ordem de tempo (L fecha depois de R) não se perdem no corte, e o "até" não recua
+    late = [_caption(store, mid, t, f"tarde {t} " + "palavra " * 40) for t in (40000, 50000, 45000)]
+    until = store.summaries.current(mid, SummaryKind.PARTIAL)["t_until_ms"]
+    first, second = run_partial(store, mid), run_partial(store, mid)
+    assert (first.captions, first.left, second.captions) == (2, 1, 1)
+    sent = "".join(store.llm_calls.payloads(r.call_id)[0][-1]["text"] for r in (first, second))
+    assert all(f"#{cid} " in sent for cid in late)
+    _caption(store, mid, 1000, "atrasada")                                                         # id novo, tempo antigo
+    assert run_partial(store, mid).t_until_ms == store.summaries.get(second.summary_id)["t_until_ms"] >= until
 
 
 def test_run_partial_failure_budget_cancel_and_deleted_meeting(store, monkeypatch):
@@ -118,6 +128,23 @@ def test_run_partial_failure_budget_cancel_and_deleted_meeting(store, monkeypatc
     assert store._q("SELECT COUNT(*) FROM summaries WHERE kind = 'partial'")[0][0] == 0
 
 
+def test_llm_runner_keeps_the_cost_of_previous_attempts(platform, store):
+    """Revisão do L4 a L6: um runner novo sobre o mesmo job (a nova tentativa) restaura custo e chamadas; antes o
+    `__init__` os zerava depois do `super()`, e o alerta contava duas vezes o gasto da tentativa anterior."""
+    from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
+    from listener.pipeline.llm_steps import LlmJobRunner
+
+    store.upsert_me("Eu")
+    mid = _record(platform, store)
+    _provider_ready(store)
+    _pipeline(store, mid)
+    runner, _status, _ = _run_llm(store)
+    llm = json.loads(store.jobs.get(runner.job_id)["timings_json"])["llm"]
+    assert llm["calls"] > 0 and llm["cost_usd"] > 0
+    again = LlmJobRunner(store, store.jobs.get(runner.job_id), provider=FakeProvider(), heartbeat_thread=False)
+    assert again.calls == llm["calls"] and again.cost_usd == pytest.approx(llm["cost_usd"])
+
+
 def test_minutes_alert_counts_what_the_meeting_already_spent(platform, store):
     """Q6: a mesma conta da ata soma o parcial ao vivo; as opcionais do job automático saem com "já gastos"."""
     from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
@@ -135,6 +162,32 @@ def test_minutes_alert_counts_what_the_meeting_already_spent(platform, store):
     runner2, _status, _ = _run_llm(store)
     skipped = json.loads(store.jobs.get(runner2.job_id)["timings_json"])["llm"]["skipped"]
     assert set(skipped) == {"executive"} and "já gastos US$ 1,00" in skipped["executive"]
+
+
+def test_run_async_does_not_wait_for_a_stuck_executor_thread():
+    """Revisão do L4 a L6: uma resolução de nome travada no executor padrão não segura o fim da chamada cancelada (o
+    `asyncio.run` esperaria a thread por até 300 s, e o app sairia com a QThread ainda rodando)."""
+    import asyncio
+    import time
+
+    from listener.llm.aio import run_async
+
+    release = threading.Event()
+
+    async def go() -> str:
+        fut = asyncio.get_running_loop().run_in_executor(None, release.wait, 5.0)    # o `getaddrinfo` travado
+        try:
+            await asyncio.wait_for(asyncio.shield(fut), 0.05)
+        except TimeoutError:
+            fut.cancel()
+            return "cancelado"
+        return "respondeu"
+
+    t0 = time.monotonic()
+    try:
+        assert run_async(go()) == "cancelado" and time.monotonic() - t0 < 1.0
+    finally:
+        release.set()
 
 
 pytest.importorskip("PySide6")
@@ -228,5 +281,50 @@ def test_controller_partial_timer_interval_manual_budget_and_cancel(qtbot, qapp,
         assert store.get_meeting(mid2) is None and not c._partial_timer.isActive() and c.state == AppState.IDLE
         assert store._q("SELECT COUNT(*) FROM summaries WHERE meeting_id = ?", (mid2,))[0][0] == 0
         assert any(s.get("state") == "running" and s.get("meeting_id") == mid2 for s in states)
+    finally:
+        c.emergency_stop()
+
+
+def test_controller_partial_keeps_its_cadence_and_drains_what_the_cut_left(qtbot, qapp, store, platform, monkeypatch):
+    """Revisão do L4 a L6: o disparo de 15 s não empurra o intervalo (a cadência fica no relógio do início) e o que o corte
+    da entrada deixou para depois segue no disparo seguinte, sem esperar outro intervalo."""
+    from listener.capture.recorder import RecordConfig, SourceSpec
+    from listener.model import AppState
+    from listener.ui import controller as ctl
+
+    monkeypatch.setenv("LISTENER_LIVE", "fake")
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    monkeypatch.setattr(partial_task, "MAX_INPUT_CHARS", 800)                    # duas legendas longas por chamada
+    store.set_setting("live.enabled", True)
+    _ready(store)
+    c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    monkeypatch.setattr(c, "notify", lambda _text: None)
+    now = [1000.0]
+    c.monotonic = lambda: now[0]
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+
+    def tick(seconds: float) -> None:
+        now[0] += seconds
+        c._partial_tick()
+        qtbot.waitUntil(lambda: not c._partial_tasks, timeout=5000)
+
+    try:
+        assert c.start_recording(cfg, {"title": "cadência"})
+        mid = c.recorder.meeting_id
+        for i in range(3):
+            _caption(store, mid, i * 5000, f"fala {i} " + "palavra " * 40)
+        tick(305)                                                             # venceu 5 s depois: a cadência fica em 1300
+        assert c._partial_last_at == 1300.0 and c.partial_status["left"] == 1 and c._partial_backlog
+        tick(15)                                                              # o resto segue já, sem outro intervalo
+        assert c.partial_status["left"] == 0 and not c._partial_backlog
+        assert store._q("SELECT COUNT(*) FROM summaries WHERE meeting_id = ? AND kind = 'partial'", (mid,))[0][0] == 2
+        data = json.loads(store.summaries.current(mid, SummaryKind.PARTIAL)["data_json"])
+        assert data["interval_min"] == 5                                      # o `--check` conta pelo intervalo que valia
+        platform.pump(0.6)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
     finally:
         c.emergency_stop()

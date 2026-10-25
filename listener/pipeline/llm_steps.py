@@ -336,6 +336,8 @@ class LlmJobRunner(BaseJobRunner):
     def __init__(self, store: Store, job: JobRow, *, provider: LLMProvider | None = None, config: LlmJobConfig | None = None,
                  now: Clock | None = None, sleep: Sleep | None = None, heartbeat_s: float = 15.0, heartbeat_thread: bool = True,
                  wait_poll_s: float = 5.0, memory_rss: Callable[[], int | None] | None = None):
+        self.cost_usd = 0.0                              # antes do super(): `_load_timings` restaura as tentativas anteriores
+        self.calls = 0
         super().__init__(store, job, now=now, sleep=sleep, heartbeat_s=heartbeat_s, heartbeat_thread=heartbeat_thread,
                          wait_poll_s=wait_poll_s, memory_rss=memory_rss)
         self._provider_override = provider
@@ -344,9 +346,7 @@ class LlmJobRunner(BaseJobRunner):
         self.parent_job_id: int = 0
         self.auto = False
         self.outcomes: dict[JobStep, TaskOutcome] = {}
-        self.cost_usd = 0.0
         self.estimated_usd: float | None = None
-        self.calls = 0
         self._skipped: dict[str, str] = {}
         self._done_steps: set[JobStep] = set()
         self._prices: list[Any] = []

@@ -4,6 +4,7 @@ antes da reunião; L sem sala fica de fora; "sobretudo" = metade da legenda), pa
 Aceite marcado; reunião sem ao vivo não ganha medição."""
 from __future__ import annotations
 
+import hashlib
 import json
 
 import numpy as np
@@ -27,6 +28,27 @@ def _profile(store: Store, person_id: int, created_at: str) -> None:
     store._x("UPDATE voice_embeddings SET created_at = ? WHERE id = ?", (created_at, eid))
 
 
+def _contents(db) -> dict[str, str]:
+    """Conteúdo dos bancos e dos WAL não vazios (o `-shm` fica de fora: um leitor do WAL atualiza as marcas de leitura nele,
+    e cria um `-wal` vazio quando não há)."""
+    return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in db.iterdir()
+            if p.name.endswith((".db", ".db-wal")) and p.stat().st_size}
+
+
+def test_expected_partials_count_full_intervals_with_speech_and_the_interval_that_was_in_force(store):
+    """Revisão do L4 a L6: silêncio e pausa não pedem parcial, nem o intervalo que fecha a menos de 20 s do fim; o
+    intervalo é o gravado nos parciais (o das Configurações pode ter mudado depois)."""
+    from listener.live import report
+
+    caps = [{"t_start_ms": t} for t in (10_000, 200_000, 650_000, 1_190_000)]          # intervalos 0, 0, 2 e 3 (de 5 min)
+    assert report.expected_partials(caps, 21 * 60_000, 5) == 3                           # o 1 foi silêncio
+    assert report.expected_partials(caps, 20 * 60_000 + 10_000, 5) == 2                # o 3 fecha a 10 s do fim: não conta
+    assert report.expected_partials(caps, 20 * 60_000, 0) == 0 and report.expected_partials([], 60_000, 5) == 0
+    store.set_setting("live.summary_interval_min", 9)
+    assert report._partial_interval(store, [{"interval_min": 5}, {"interval_min": 5}, {"interval_min": 2}, {}]) == 5
+    assert report._partial_interval(store, [{}]) == 9                                     # sem registro: o de agora
+
+
 def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
     platform = FakePlatform(tmp_path)
     db = tmp_path / "db"
@@ -41,7 +63,7 @@ def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
         platform.pump(1.0)
         rec.stop()
         started = store.get_meeting(mid)["started_at"]
-        store._x("UPDATE meetings SET duration_ms = ? WHERE id = ?", (11 * 60_000, mid))           # 11 min, intervalo 5: 2 parciais
+        store._x("UPDATE meetings SET duration_ms = ? WHERE id = ?", (11 * 60_000, mid))           # 11 min, fala só nos 5 primeiros
         _profile(store, ana, "2026-01-01T09:00:00.000-03:00")                                       # perfil antes da reunião
         _profile(store, bia, "2999-01-01T09:00:00.000-03:00")                                       # só depois (revisão desta)
         store._x("INSERT INTO processing_jobs(meeting_id, kind, status, created_at) VALUES (?, 'meeting', 'concluído', ?)",
@@ -66,7 +88,7 @@ def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
         for err in ("sem rede", "cancelado"):
             store.llm_calls.insert(LlmCallInsert(mid, None, "partial", "gemini", "f", None, None, 0, 0, 0, 0, None, 0,
                                                  LlmCallStatus.ERROR, err))
-    before = {p.name: p.stat().st_size for p in db.iterdir() if p.suffix == ".db"}
+    before = _contents(db)
     assert main(["--check", str(db)]) == 0
     reports = {r["meeting"]: r for r in _reports(capsys.readouterr().out)}
     assert reports[plain]["live"] == {"enabled": False}
@@ -78,11 +100,10 @@ def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
     # nome: c1 certo, c2 sem nome, c3 errado; Bia (perfil depois), L sem sala e a legenda sem segmento majoritário ficam fora
     assert {k: live["names"][k] for k in ("n", "correct", "unnamed", "wrong", "pct", "people_with_profile")} == {
         "n": 3, "correct": 1, "unnamed": 1, "wrong": 1, "pct": 33.3, "people_with_profile": 1}
-    assert live["partials"] == {"n": 1, "expected": 2, "interval_min": 5, "failed_calls": 1}
+    assert live["partials"] == {"n": 1, "expected": 1, "interval_min": 5, "failed_calls": 1}      # um intervalo com fala
     gate = live["gate"]
     assert gate["latency_mean"] == {"target": "<= 10 s", "value": 9.2, "ok": True}
     assert gate["latency_p95"]["ok"] is False and gate["cpu"]["ok"] is True and gate["cpu"]["value"] == 29.0
     assert gate["name"] == {"target": ">= 70 %", "value": 33.3, "ok": False} and gate["partials"]["ok"] is False
     assert gate["recording_intact"]["ok"] is True and gate["recording_intact"]["value"] == {"holes": 0, "idx_missing": 0}
-    after = {p.name: p.stat().st_size for p in db.iterdir() if p.suffix == ".db"}
-    assert before == after                                                                         # --check não escreve nada
+    assert _contents(db) == before                                                                 # --check não escreve nada

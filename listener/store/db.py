@@ -200,10 +200,12 @@ class Store:
         return n
 
     def delete_meeting(self, meeting_id: int) -> None:
-        """Pedaços primeiro, depois a linha: uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão."""
+        """Pedaços primeiro, depois a linha: uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão. As chamadas de
+        LLM (glossário, resumo parcial ao vivo) ficam sem a reunião e sem o conteúdo: o custo do mês continua certo (F4)."""
         self.core.audio_schema_for_meeting(meeting_id)     # anexa fora da transação
         with self.core.transaction():
             self.audio.delete_chunks(meeting_id)
+            self.llm_calls.detach_meeting(meeting_id)
             self.meetings.delete_meeting_row(meeting_id)
         self.core.forget_meeting(meeting_id)
 
