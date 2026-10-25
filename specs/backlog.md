@@ -6,22 +6,24 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F3 fechada do lado da LLM:** L0 a L6 implementados (`0cea46c` a `998604f`) e as 14 correções da revisão adversarial
   aplicadas (F3.1: `18fa643`, `d3135e6`, mais `ec4890a` com a passada do revisor sobre o diff das correções). Desvios e
   decisões técnicas na seção Implementação de `features/F3.1-correcoes-revisao.md`.
-- **F4 (ao vivo) aprovada em 25/10 (D-044)**, Q1 a Q6 nos padrões e U-021 a U-023: implementação por lotes (L1 a L6) com
-  agente especialista; o L0 é um script de medição que o dono roda no Windows.
-- **Próximo passo:** implementar a F4; o dono verifica no Windows (B1) e cola a chave do Gemini (B13); depois G1 a G4.
+- **F4 (ao vivo) implementada em 25/10** (D-044): L0 a L6 em sete commits (`b5cdab7` a `64ad255`), ajustes e as
+  correções das duas revisões; desvios e o que só o Windows verifica na seção Implementação de `features/F4-ao-vivo.md`.
+- **Próximo passo:** o dono verifica no Windows (B1, agora com o ao vivo), roda o L0 (B15) e cola a chave do Gemini
+  (B13); depois G1 a G4. Sem fase nova para implementar até lá (F5 e F6 são rascunho).
 
 ## Estado em 25/10/2026
-- Código: F1, F1.1, F1.2, F2, **F3 e F3.1 implementadas**: 208 testes mais 4 pulados no WSL (212 com
-  `LISTENER_SDK_TESTS=1`, que liga os de transporte simulado dos SDKs e o do truststore com clientes reais), ruff e mypy
-  limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
-  Esquema v6. Nada do app importa torch nem os SDKs de LLM (teste estático). Whisper, pyannote (F2 L5) e os três
-  adaptadores de LLM foram escritos às cegas ou contra transporte simulado: só rodam no Windows com o token do Hugging
-  Face (B4) e a chave do Gemini (B13).
-- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três); branch `main`;
-  sem remoto; sem stash. Commit a cada grande alteração (CP16).
+- Código: F1, F1.1, F1.2, F2, F3, F3.1 e **F4 implementadas**: 270 testes mais 5 pulados no Linux de desenvolvimento
+  (274 com `LISTENER_SDK_TESTS=1`, que liga os de transporte simulado dos SDKs e o do truststore com clientes reais),
+  ruff e mypy limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra
+  `llm`. Esquema v7. Nada do app importa torch, ML nem os SDKs de LLM (teste estático). Whisper, pyannote (F2 L5), os
+  três adaptadores de LLM e o processo ao vivo real foram escritos às cegas, contra transporte simulado ou num venv à
+  parte sem torch: só rodam de verdade no Windows com o token do Hugging Face (B4) e a chave do Gemini (B13).
+- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 em lotes,
+  ajustes e revisões); branch `main`; remoto `origin` público no GitHub (o dono faz o push; em 25/10 estava atrás do
+  `main` local); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
-  Windows · **F4 aprovada** (D-044), em implementação · F5 e F6 rascunho inicial · F7 futuro.
+  Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · F5 e F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -37,6 +39,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
 | B13 | chave do Gemini (plano pago) colada em Configurações › LLM › Gemini e "testar conexão" ok | adaptadores reais, canário dos esquemas, latências e preços, G3 |
+| B15 | no Windows: `python scripts/live_probe.py all <gravação real>` (L0 da F4; com `HF_TOKEN` para o torch) e colar as linhas JSON; depois do B1, "Preparar modelos do ao vivo" nas Configurações e uma gravação com a legenda ligada | números do Whisper, do VAD e do torch no Windows; o filho real, o EcoQoS e a ordem de carga torch/CTranslate2; abre o G4 |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 aprovada, D-043) · B14 (F4 aprovada, D-044).
@@ -47,7 +50,9 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 3. Dono instala o extra `pipeline` e cola o token (B4); o primeiro job real verifica o L5, mede RTF e RSS por etapa e a
    sonda Q8; G2 nas gravações do G1; números em `decisoes.md`.
 4. Dono cola a chave (B13); o primeiro job de LLM real valida os adaptadores (canário, latências, preços contra a
-   fatura); G3 nas três reuniões; depois a F4 (ao vivo) pelo fluxo D-040.
+   fatura); G3 nas três reuniões.
+5. Dono roda o L0 (B15); LLM registra os números e ajusta a regra da janela se o Windows divergir do Linux; G4 em três
+   reuniões com headset, medido pelo `--check`.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
@@ -57,9 +62,12 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 - FTS5: confirmado no SQLite do Python 3.12 do WSL (F1.2 M-31); falta confirmar no Windows antes da F5.
 - Testes de interface só cobrem abrir e fechar as telas (pytest-qt offscreen); interação real fica para a F6.
 - O eco do warm-up é medido só no "Testar 3 s", não de forma contínua; o `--check` dá o número preciso.
-- Suíte acima da meta de 8 s: 12,8 a 13,2 s no WSL em 25/10 (já 10,4 s antes da F3.1, com 198 testes; 7,5 s em medições
-  anteriores, então parte é a máquina). Medir de novo com a máquina ociosa; se seguir acima, separar os testes de
-  subprocesso e os de interface em jobs próprios e ver o custo do `gc.collect()` por teste de interface.
+- Suíte acima da meta de 8 s: ~17,5 s no Linux de desenvolvimento depois da F4 (270 testes; 12,8 a 13,2 s antes, com
+  208; o Xeon de 2,1 GHz pesa). Medir no Windows; se seguir acima, separar os testes de subprocesso e os de interface em
+  jobs próprios e ver o custo do `gc.collect()` por teste de interface.
+- F2 no Windows (B1/B4): o worker pesado carrega o CTranslate2 (Whisper) antes do torch (pyannote), a ordem inversa à do
+  F0; se aparecer "OMP: Error #15" (dois `libiomp5md.dll`), importar o torch antes, como o processo ao vivo já faz.
+- F4: o eco do ao vivo usa o limiar do aviso (`capture.echo_corr_min`, 0,25); calibrar no G4 sem headset.
 - F2: invalidar um vetor de confirmação tira-o do centroide, mas a amostra já entrou na média e no desvio do limiar
   (Welford não é reversível sem guardar as amostras); aceito até o G2 mostrar impacto.
 - F2: durante um reprocessamento a revisão mostra o job concluído; a abertura antecipada (P1) vale para o primeiro
@@ -73,4 +81,5 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · tempo de `list_playing_apps`
 (B1, no log) · deriva por canal e deslocamento L/R (G1, `--check`) · F2 no primeiro job real: RTF por etapa e modelo,
 RSS por etapa, sonda Q8 (`speaker_embeddings` e id do modelo), similaridade intra e inter-pessoa por plataforma ·
-precisão dos perfis, desvio do clique e legibilidade (G2).
+precisão dos perfis, desvio do clique e legibilidade (G2) · F4 no Windows (B15): Whisper por janela (`small` e
+`base`), VAD incremental, `import torch` e RSS, embedding por janela; G4: atraso médio e p95, CPU, acerto do nome.

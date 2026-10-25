@@ -1,8 +1,10 @@
 # F4 — Ao vivo: legenda leve com nome e resumo parcial
 
-Status: aprovada · Aprovada por Herculano em: 2026-10-25 (Q1 a Q6 nos padrões; U-021 a U-023 sim; D-044) ·
-Fase e gate: F4 · G4 · CPs: 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17
-Quando ler: ao detalhar ou implementar esta fase (T2). Origem: D-005. Tabelas: `dados.md`. Tamanho-alvo: 10 KB.
+Status: implementada (L0 a L6 e as correções das revisões; o L0 e o G4 dependem do Windows) · Aprovada por Herculano em:
+2026-10-25 (Q1 a Q6 nos padrões; U-021 a U-023 sim; D-044) · Fase e gate: F4 · G4 · CPs: 3, 5, 6, 7, 8, 9, 10, 11, 12,
+13, 14, 15, 17
+Quando ler: ao detalhar ou implementar esta fase (T2). Origem: D-005. Tabelas: `dados.md`. Tamanho-alvo: 15 KB (com a
+Implementação).
 
 ## Objetivo
 Durante a gravação, o usuário lê a legenda de quem fala (nome e cargo, 5 a 10 s de atraso) e um resumo parcial que a
@@ -120,7 +122,7 @@ partir do parcial · GPU (CP14) · usar as legendas como entrada da passagem fin
 | EcoQoS joga o filho nos núcleos E [exp] | desligar o throttling do processo |
 | API interna do VAD do faster-whisper muda | versão fixada; teste do adaptador no Windows |
 | Janela de 3 a 8 s erra mais que o cluster | `match_one` só nomeia acima do limiar da F2; senão "Participante" |
-| `.venv` do WSL sem faster-whisper nem torch [fato] | o filho real só roda no Windows; o WSL usa `LISTENER_LIVE=fake` |
+| `.venv` de desenvolvimento sem faster-whisper nem torch [fato] | testes com `LISTENER_LIVE=fake`; filho real à mão num venv à parte e no Windows |
 
 ## Lotes ([chute] 8,5 dias de foco; o roadmap previa 4 a 6)
 - L0 medição no Windows (atraso por janela, VAD, torch, ONNX): 1 d
@@ -131,11 +133,47 @@ partir do parcial · GPU (CP14) · usar as legendas como entrada da passagem fin
 - L5 resumo parcial: 1 d
 - L6 `--check`, testes, verificação no Windows: 1 d
 
-## Perguntas (padrão assumido entre parênteses)
-- Q1 Ao vivo ligado por padrão? (sim, se a máquina tiver 8 núcleos ou mais; senão desligado)
-- Q2 Nomes ao vivo ligados por padrão? (sim)
-- Q3 Resumo parcial automático com custo? (sim)
-- Q4 Modelo leve padrão? (`small` int8; `base` na degradação)
-- Q5 A janela "Ao vivo" abre sozinha ao gravar? (não; a última legenda fica no widget)
-- Q6 O parcial conta no mesmo alerta de custo da reunião que a ata (US$ 2)? (sim, e o parcial para primeiro, para
-  sobrar orçamento para a ata)
+## Respostas do dono (25/10, D-044): tudo nos padrões
+Q1 ao vivo ligado por padrão com 8 núcleos ou mais · Q2 nomes ao vivo ligados · Q3 parcial automático com custo · Q4
+`small` int8, `base` na degradação · Q5 a janela "Ao vivo" não abre sozinha · Q6 o parcial conta no alerta da reunião e
+para primeiro.
+
+## Implementação (2026-10-25)
+Commits: L0 `b5cdab7`, L1 `eebeaf6`, L2 `3f3d261`, L3 `ee65104`, L4 `f4b5447`, L5 `6bf9d01`, L6 `64ad255`, ajustes
+`4caed36` e `52007e9`, correções das revisões do L0 a L3 `6b517c7` e do L4 a L6 `099ebe1`. Novos:
+`live/{protocol,client,proc,vad,names,report}.py`, `store/captions.py`, `llm/partial_task.py`,
+`llm/prompts/partial.py`, `ui/{live,live_prepare}.py`, `scripts/live_probe.py`, `tests/fake_live.py`,
+`tests/test_live_*.py`. Desvios e decisões técnicas: (a) quadros SILENCED e GAP vão sem amostras, só a contagem; (b) o
+atraso da degradação é medido depois de cada legenda e a fila vazia não zera o contador; (c) canal com janela aberta e
+sem quadros enquanto o outro anda 2 s vira silêncio (o loopback não entrega nada em silêncio); (d) idioma: o de
+`meetings.language` (não há configuração de idioma da transcrição) ou automático até 2 detecções concordantes >= 0,7 em
+janelas que viraram legenda com 2 s de fala; sem consenso em 6, a maior soma das >= 0,5; (e) `initial_prompt` =
+glossário da reunião, `pipeline.glossary` e o fim da legenda anterior do canal; (f) com nomes, o torch é importado antes
+do Whisper (a ordem do F0; a inversa arrisca "OMP: Error #15" com dois `libiomp5md.dll`) e o modelo de embedding carrega
+na thread `live-names` (estado `names_ready`); nomes desligados não dão nome nenhum, nem ao usuário em L; (g) eco:
+janela de L com correlação >= `capture.echo_corr_min` contra R sai, salvo com 0,5 s de fala própria (L com sinal, R em
+silêncio); o limiar é o do aviso e se calibra no G4; (h) `captions.confidence` = cosseno do nome; `model` =
+`faster-whisper:small:int8`; (i) com o ao vivo, a lease pausa o pesado mesmo sem `pipeline.pause_on_record`; (j) nice
+pelo pai (`setpriority`) no posix; no Windows, BELOW_NORMAL e CREATE_NO_WINDOW nas flags e o filho desliga o EcoQoS em
+si mesmo (num venv o pid do `Popen` é o do lançador); (k) o filho duplica o fd 1 para o protocolo e aponta o 1 para o
+stderr (no Windows, com `SetStdHandle`); (l) depois do EOF só começa a janela que cabe no prazo de 8 s (média do custo
+por janela); o app mata em 10 s; (m) falha transitória de partida ganha a nova tentativa; `LiveError`, reunião
+inexistente e protocolo de outra versão não; (n) parcial: a LLM cita o `caption_id` e o projeto o converte em `t_ms`;
+entrada até ~20 mil caracteres escolhida pelos ids (o resto vai no próximo); sem retentativa de rede (o próximo
+intervalo tenta); timeout de 60 s; uma chamada por vez; (o) Q6: o parcial para quando o custo da reunião chega a 50 % de
+`llm.cost_alert_usd`, e o alerta da ata passou a somar o que a reunião já gastou fora do job (parcial, glossário, chat);
+(p) `live.summary_interval_min = 0` desliga o parcial automático (decisão do orquestrador: cortar o custo sem perder a
+ata); (q) configurações `ui.live_geometry` e `ui.live_on_top` (sempre visível ligado); o evento `marker` ganhou `origin`
+(`legenda` ou `parcial`); `upsert_preset` com None mantém o valor guardado; (r) `--check`: o acerto do nome só conta
+legendas cobertas (metade ou mais) por um segmento do mesmo canal de quem tinha perfil antes da reunião, sem L fora da
+sala; CPU do aceite = média da soma app + ao vivo; espera-se um parcial por intervalo inteiro com fala, pelo intervalo
+gravado em cada parcial; (s) o preparo dos modelos só mostra progresso por modelo, e gravar o interrompe (o download
+disputaria a rede com a reunião); (t) o parcial mantém a cadência do intervalo, o que o corte deixou segue no disparo
+seguinte e o "até" não recua; (u) Cancelar mantém as chamadas de LLM pagas sem a reunião e sem o conteúdo (custo do
+mês); (v) `llm/aio.py` (`run_async`) troca o `asyncio.run` das chamadas do app: não espera o executor padrão na saída;
+(w) da F3, corrigido aqui: o runner do job `llm` zerava o custo e as chamadas das tentativas anteriores. Medido no Linux
+(decisoes.md): o filho real com `small` tem atraso de 8,5 a 12,4 s em fala contínua (domina o corte de 10 s). Suíte: 270
+testes mais 5 pulados em ~17,5 s. Só o Windows verifica: o L0 (`scripts/live_probe.py all`), a prioridade, o EcoQoS e os
+handles sob `pythonw` num venv, o `perf_counter` entre processos, o loopback em silêncio, o kill no Cancelar, torch e
+wespeaker reais (tempo, RAM, ordem de carga), `--live --prepare` com proxy e EDR, a interface com DPI real e a bandeja
+do Windows 11, o parcial com o Gemini real e o G4 em três reuniões.

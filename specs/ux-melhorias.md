@@ -22,6 +22,6 @@ implementadas na F1.1 (D-035). Status: proposta | aprovada | vetada | implementa
 | U-015 | Preset "sala de reunião": diariza também o L e desliga "L é sempre eu" | Warm-up | aprovada (metadado na F1; lógica na F2) |
 | U-016 | Detector de eco e alinhamento por correlação cruzada L×R: aviso no warm-up; deslocamento L/R no `--check` | Warm-up, `--check` | implementada (F1.1) |
 | U-017 | Instrução para fixar o ícone da bandeja no Windows 11 (ícones novos vão para o menu oculto) | Primeiro uso | implementada (F1.1) |
-| U-021 | Janela "Ao vivo": legendas rolando com nome e cargo e o resumo parcial, com "atualizar agora" | Ao vivo | aprovada (F4, D-044) |
-| U-022 | Clique numa legenda cria um marcador naquele instante com o texto dela | Ao vivo | aprovada (F4, D-044) |
-| U-023 | Possíveis decisões e ações do parcial com "marcar" (marcador que a ata lê) | Ao vivo | aprovada (F4, D-044) |
+| U-021 | Janela "Ao vivo": legendas rolando com nome e cargo e o resumo parcial, com "atualizar agora" | Ao vivo | implementada (F4) |
+| U-022 | Clique numa legenda cria um marcador naquele instante com o texto dela | Ao vivo | implementada (F4) |
+| U-023 | Possíveis decisões e ações do parcial com "marcar" (marcador que a ata lê) | Ao vivo | implementada (F4) |

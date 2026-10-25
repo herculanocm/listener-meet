@@ -69,5 +69,6 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | 25/10 | F2, WSL, sem modelos: suíte · runner falso · `iter_windows` | 148 testes em 4,3 a 5,1 s · reunião de 3 s processada em 13 ms · janela de 600 s com pico de 1,35× o tamanho da janela (52 MB) |
 | 25/10 | F4, Linux de desenvolvimento (Xeon Silver 4208, 2,1 GHz), faster-whisper 1.2.1 int8, 2 threads, janelas de 3 a 10 s | `base` 1,22 a 1,29 s e `small` 3,53 a 3,59 s por janela, quase sem variar com a duração (o encoder processa 30 s); carga 0,5 e 1,2 s |
 | 25/10 | F4, VAD Silero v6 do faster-whisper (ONNX), incremental com `h`, `c` e contexto carregados | probabilidades idênticas à chamada única (diferença 0,0); 6 s de áudio em 30 ms (~0,5 % de um núcleo) |
+| 25/10 | F4, filho `--live` real no mesmo Linux (venv à parte, sem torch), fala real em inglês, 2 threads | `small`: carga 1,3 s, atraso 8,5 a 12,4 s em fala contínua (domina o corte de 10 s), ~6 % da máquina; `base`: carga 0,5 s, atraso 1,5 a 3,4 s; reamostragem de 48 kHz e degradação forçada (`small` → `base` → pular) ok |
 | pendente | pyannote community-1 por hora de áudio em CPU | precisa de `HF_TOKEN` (B4) |
 | pendente | banco por hora de reunião; deriva e deslocamento L/R; `list_playing_apps` | G1 e B1 |
