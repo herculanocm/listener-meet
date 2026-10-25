@@ -6,8 +6,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F3 fechada do lado da LLM:** L0 a L6 implementados (`0cea46c` a `998604f`) e as 14 correções da revisão adversarial
   aplicadas (F3.1: `18fa643`, `d3135e6`, mais `ec4890a` com a passada do revisor sobre o diff das correções). Desvios e
   decisões técnicas na seção Implementação de `features/F3.1-correcoes-revisao.md`.
-- **Próximo passo:** o dono verifica no Windows (B1) e cola a chave do Gemini (B13); depois G1, G2 e G3 em reuniões
-  reais; a F4 (ao vivo) só depois, pelo fluxo D-040 (spec, arquiteto, aprovação).
+- **F4 (ao vivo) em revisão:** spec reescrita e revisada pelo arquiteto contra o código (desvio de PCM no chunker, processo
+  `--live` com pipes, `match_one`, v7, 8,5 dias); falta o dono responder Q1 a Q6 e U-021 a U-023 e aprovar (B14).
+- **Próximo passo:** o dono verifica no Windows (B1), cola a chave do Gemini (B13) e responde a F4 (B14); depois G1, G2 e
+  G3 em reuniões reais; com a F4 aprovada, o L0 (medição no Windows) abre a implementação.
 
 ## Estado em 25/10/2026
 - Código: F1, F1.1, F1.2, F2, **F3 e F3.1 implementadas**: 208 testes mais 4 pulados no WSL (212 com
@@ -20,7 +22,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   sem remoto; sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
-  Windows · F4 a F6 rascunho inicial · F7 futuro.
+  Windows · **F4 em revisão** (aguarda o dono) · F5 e F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -36,6 +38,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
 | B13 | chave do Gemini (plano pago) colada em Configurações › LLM › Gemini e "testar conexão" ok | adaptadores reais, canário dos esquemas, latências e preços, G3 |
+| B14 | responder Q1 a Q6 e U-021 a U-023 da `features/F4-ao-vivo.md` (em bloco: "padrões" basta) e aprovar | código da F4, começando pelo L0 no Windows |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 aprovada, D-043).
