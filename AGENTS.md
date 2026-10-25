@@ -25,15 +25,23 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
 - CP17: Python 3.12 é o piso e só sobe; sem retrocompatibilidade com versões anteriores; usar os recursos e otimizações
   da versão em uso, performance primeiro.
 
-## Fluxo
-1. Ache a spec da entrega em `specs/features/`; se não existir, escreva uma com o template de `specs/README.md`.
+## Fluxo por entrega (D-040)
+1. **Spec.** A LLM orquestradora rascunha a spec em `specs/features/` com o template de `specs/README.md`.
    Status: `rascunho` → `em revisão` → `aprovada` → `implementada` → `verificada`.
-2. Toda melhoria (UI/UX, técnica, dados) é item numerado "incluir? sim/não" na spec; ele responde em bloco.
-3. Só `aprovada` ("Aprovada por Herculano em AAAA-MM-DD" na spec, ou dito no chat com data) libera código, e só o que a
-   spec diz. Desvio ou descoberta volta para a spec, não para o código.
-4. Cada fase fecha com o gate medido em reunião real (`specs/roadmap.md`), anotado em `specs/decisoes.md`.
-5. Ao encerrar a sessão: atualizar `specs/backlog.md` (único lugar de estado), o status da spec e `memory/` se houver
-   fato novo sobre a máquina ou sobre o dono; commitar (CP16).
+2. **Revisão de arquitetura.** Um agente arquiteto, somente leitura, revisa a spec contra o código real e devolve lacunas,
+   decisões de desenho com recomendação e riscos com mitigação. A orquestradora incorpora tudo: decisão técnica entra com
+   padrão; só decisão de produto vira pergunta ao dono, como item numerado "incluir? sim/não" (ele responde em bloco).
+3. **Aprovação.** Só `aprovada` ("Aprovada por Herculano em AAAA-MM-DD" na spec, ou dito no chat com data) libera código
+   (CP13), e só o que a spec diz. Desvio ou descoberta volta para a spec, não para o código.
+4. **Implementação.** Um agente especialista implementa com briefing completo (spec, decisões já tomadas, restrições);
+   testes, ruff e mypy verdes antes de cada commit (CP16); um implementador por vez quando os arquivos se cruzam; relatório
+   final com o que só o Windows verifica. Correção abaixo de duas horas, a orquestradora faz direto, sem agente.
+5. **Revisão e fechamento.** Um agente revisor novo lê só o diff (bugs, corridas, cláusulas); o implementador corrige com o
+   contexto que já tem; a orquestradora verifica por conta própria (testes, lint, tipos, telas), atualiza `specs/backlog.md`
+   (único lugar de estado), `specs/decisoes.md` e `memory/` se houver fato novo, e commita. O dono verifica no Windows e
+   mede o gate em reunião real (`specs/roadmap.md`), anotado em `specs/decisoes.md`.
+
+Pontos de contato do dono por entrega: aprovar a spec, verificar no Windows, medir o gate.
 
 ## Convenções
 PT-BR em documentos, commits e interface; código com nomes em inglês e comentários em PT-BR. Stack fixa pelo handoff:
