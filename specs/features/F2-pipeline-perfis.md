@@ -1,6 +1,6 @@
 # F2 — Pós-reunião: transcrição, diarização e perfis de voz
 
-Status: aprovada; implementação delegada ao agente especialista, lotes L1 a L6 com commit por lote (CP16) · Aprovada por
+Status: implementada (L1 a L6; L5 e o G2 dependem do token, B4, e do Windows) · Aprovada por
 Herculano em: 2026-10-24 (Q1 a Q9, D-036; reaprovada no mesmo dia após a revisão de arquitetura, P1 a P6 nos padrões,
 D-041) · Fase e gate: F2 · G2 ·
 CPs: 3, 5, 8, 9, 10, 11 (parte "depois da reunião", sem a LLM), 12, 13, 14, 15, 16, 17
@@ -14,9 +14,10 @@ nomeado por perfis de voz persistentes. Abaixo do limiar vai para uma revisão m
 A LLM entra na F3 sem mudar este desenho.
 
 ## Decisões já tomadas (D-036)
-Worker em subprocesso (Q1) · token HF em `providers` (Q2) · limiar 0,60, margem 0,05, autocalibração em [0,45; 0,75] (Q3) ·
-large-v3-turbo int8 padrão, small e medium (Q4) · clusters abaixo de 10 s só na revisão (Q5) · leitura mínima nesta fase
-(Q6) · fila pausa em gravação (Q7) · embeddings do pipeline se expostos e com o mesmo modelo (Q8) · coluna `platform` (Q9).
+Worker em subprocesso (Q1) · token HF em `providers` (Q2) · limiar 0,60, margem 0,05, autocalibração em [0,45; 0,75]
+(Q3) · large-v3-turbo int8 padrão, small e medium (Q4) · clusters abaixo de 10 s só na revisão (Q5) · leitura mínima
+nesta fase (Q6) · fila pausa em gravação (Q7) · embeddings do pipeline se expostos e com o mesmo modelo (Q8) · coluna
+`platform` (Q9).
 
 ## Escopo
 1. **Estrutura.** `listener/pipeline/`: `types.py` (dataclasses `frozen, slots`: `Word`, `Turn`, `AudioWindow`,
@@ -126,61 +127,63 @@ macOS (F7, mas `platform/common/process.py` já é portável).
 ## Cláusulas
 CP3 reprocessar troca atômica só por ação do usuário; artefatos de job são dado derivado · CP5 pyannote diariza e dá
 embeddings; perfis persistentes e refinados · CP8 item 16 editável; `config_json` prova "vale para o próximo job" · CP9
-artefatos e tudo o mais no SQLite; modelos na pasta própria (exceção registrada) · CP10 token em `providers` · CP11 parte
-"depois da reunião" sem LLM; a LLM nunca sobrescreverá alta confiança · CP12 U-005, U-006, U-007 parcial · CP14 CPU int8 ·
-CP15 `spawn_detached` e `lower_own_priority` em `platform/` · CP16 commit por lote · CP17 `slots`, PEP 695, `match` nas
-mensagens do runner, `itertools.batched`, `autocommit`.
+artefatos e tudo o mais no SQLite; modelos na pasta própria (exceção registrada) · CP10 token em `providers` · CP11
+parte "depois da reunião" sem LLM; a LLM nunca sobrescreverá alta confiança · CP12 U-005, U-006, U-007 parcial · CP14
+CPU int8 · CP15 `spawn_detached` e `lower_own_priority` em `platform/` · CP16 commit por lote · CP17 `slots`, PEP 695,
+`match` nas mensagens do runner, `itertools.batched`, `autocommit`.
 
 ## Dados (migração v4 do main, em Python, idempotente, dentro de `BEGIN IMMEDIATE` com a versão)
-Novas: `processing_jobs` (item 2), `clusters` (id, meeting_id, job_id, channel, cluster, speech_ms, centroid BLOB, person_id,
-similarity, margin, status, merged_into), `job_artifacts` (item 10). Colunas: `segments` + `words_json`, `cluster_id`,
-`job_id`; `voice_profiles` + `threshold`, `sim_mean`, `sim_std`; `voice_embeddings` + `platform`; `meetings` + `language`.
-Índices: `segments(meeting_id, t_start_ms)`, `clusters(meeting_id)`, `processing_jobs(status, id)`,
-`voice_embeddings(profile_id)`, único `voice_profiles(person_id, model)`. Enums novos em `model.py`: `JobStep`,
+Novas: `processing_jobs` (item 2), `clusters` (id, meeting_id, job_id, channel, cluster, speech_ms, centroid BLOB,
+person_id, similarity, margin, status, merged_into), `job_artifacts` (item 10). Colunas: `segments` + `words_json`,
+`cluster_id`, `job_id`; `voice_profiles` + `threshold`, `sim_mean`, `sim_std`; `voice_embeddings` + `platform`;
+`meetings` + `language`. Índices: `segments(meeting_id, t_start_ms)`, `clusters(meeting_id)`, `processing_jobs(status,
+id)`, `voice_embeddings(profile_id)`, único `voice_profiles(person_id, model)`. Enums novos em `model.py`: `JobStep`,
 `ClusterStatus`, `EmbeddingSource`, `SegmentSource`, `Attribution.CHANNEL`, eventos de job e `PROFILE_CONFIRM`.
 Repositórios: `store/jobs.py`, `store/profiles.py`, `store/people.py`, `store/segments.py`; `Core(role=APP | WORKER |
 READONLY)`. Detalhe em `dados.md` após a implementação.
 
 ## Comportamento
-1. Parar → `_on_stopped` cria o job → lança o worker se couber. 2. Worker: prioridade baixa, log próprio, claim, heartbeat,
-etapas na ordem do item 9 com artefato por janela; lease e cancelamento lidos entre janelas. 3. Fim: `processada`; sem
-cluster abaixo do limiar, a revisão abre "tudo confirmado". 4. Revisão concluída: `revisada`; perfis atualizados.
-5. Reprocessar: item 12. 6. Queda: a próxima execução retoma pelos artefatos; logoff mata o worker (retomada) e o app
-fechado deixa o worker terminar a fila (P2).
+1. Parar → `_on_stopped` cria o job → lança o worker se couber. 2. Worker: prioridade baixa, log próprio, claim,
+heartbeat, etapas na ordem do item 9 com artefato por janela; lease e cancelamento lidos entre janelas. 3. Fim:
+`processada`; sem cluster abaixo do limiar, a revisão abre "tudo confirmado". 4. Revisão concluída: `revisada`; perfis
+atualizados. 5. Reprocessar: item 12. 6. Queda: a próxima execução retoma pelos artefatos; logoff mata o worker
+(retomada) e o app fechado deixa o worker terminar a fila (P2).
 
 ## Aceite (G2), nas três reuniões do G1
 80 % ou mais do tempo de fala de R com a pessoa certa após uma rodada de confirmações · na terceira reunião, quem foi
 confirmado nas duas anteriores é nomeado sozinho em 70 % ou mais do tempo · tempo de relógio do job ÷ duração da reunião
-(de `timings_json`) até 1,5× com o app de reunião fechado; a estimativa usa a taxa de fala do VAD; se o pyannote medir acima
-de 0,8× no B4, vale o plano B de P5 · clique numa fala toca o áudio com desvio abaixo de 200 ms · texto pt-BR legível sem
-edição em 9 de 10 falas ao acaso · memória do worker (RSS logado) abaixo de 2,5 GB numa reunião de 3 h · suíte de testes
-abaixo de 5 s sem modelos.
+(de `timings_json`) até 1,5× com o app de reunião fechado; a estimativa usa a taxa de fala do VAD; se o pyannote medir
+acima de 0,8× no B4, vale o plano B de P5 · clique numa fala toca o áudio com desvio abaixo de 200 ms · texto pt-BR
+legível sem edição em 9 de 10 falas ao acaso · memória do worker (RSS logado) abaixo de 2,5 GB numa reunião de 3 h ·
+suíte de testes abaixo de 5 s sem modelos.
 
 ## Riscos
 pyannote não medido (R-1: sonda de RTF no primeiro job; plano B) · memória do clustering cresce com o quadrado em áudio
-longo (R-2: janela de 60 min, descarregar ocioso) · dois processos no SQLite (R-3: WAL, `busy_timeout`, transações curtas,
-áudio `mode=ro`, até 8 anexos) · modelos sem rede ou token (R-4: item 17) · codec por plataforma (R-5: Q9, medir no G2) ·
-fala sobreposta (R-6: só turnos limpos; `confidence` baixa marcada) · gravação com worker rodando (R-8: lease, janela
-corrente termina em até 7 min de relógio) · interface congelando (R-9: só metadados; áudio no clique) · PyInstaller (R-10:
-`worker_command` resolve `sys.frozen`; venv e atalho continuam) · alucinação em silêncio (R-11: VAD, pular janela sem fala)
-· dois workers (R-12: claim com `NOT EXISTS` fresco; `poll()`) · clique com desvio (R-14: primeira palavra − 150 ms).
+longo (R-2: janela de 60 min, descarregar ocioso) · dois processos no SQLite (R-3: WAL, `busy_timeout`, transações
+curtas, áudio `mode=ro`, até 8 anexos) · modelos sem rede ou token (R-4: item 17) · codec por plataforma (R-5: Q9, medir
+no G2) · fala sobreposta (R-6: só turnos limpos; `confidence` baixa marcada) · gravação com worker rodando (R-8: lease,
+janela corrente termina em até 7 min de relógio) · interface congelando (R-9: só metadados; áudio no clique) ·
+PyInstaller (R-10: `worker_command` resolve `sys.frozen`; venv e atalho continuam) · alucinação em silêncio (R-11: VAD,
+pular janela sem fala) · dois workers (R-12: claim com `NOT EXISTS` fresco; `poll()`) · clique com desvio (R-14:
+primeira palavra − 150 ms).
 
 ## Testes sem modelos (WSL e CI)
-`ScriptedTranscriber` (roteiro `(t0, t1, texto)`), `ToneDiarizer` (frequência dominante por 500 ms) e `ToneEmbedder` (vetor
-determinístico de 256 dimensões) sobre os tons de 440, 220 e 330 Hz da `FakePlatform`; `LISTENER_PIPELINE=fake` para o
-worker em subprocesso real. Cobrir: v4 com rollback no meio; `JobsRepo` (claim com dois `Store`, heartbeat vencido,
-`attempts`, cancel, artefatos); `iter_windows` (buraco, corte em silêncio, reamostragem, `tracemalloc` abaixo de 2× janela);
-`Segmenter`; `ProfileMatcher` (LSA, limiar, margem, 10 s, Welford, clip); `stitch` (rótulos trocados; falante novo); runner
-de ponta a ponta com retomada, cancel e lease; reprocessar mantém decisões e falha mantém os antigos; lógica da revisão;
-`--worker --once`; `QueueDialog`, revisão por teclado e leitura com clique (pytest-qt); controlador lança o worker e renova
-a lease. Só com token e áudio real (B4, B5, G1): RTF, RSS, Q8, similaridades intra e inter-pessoa, precisão, desvio do
-clique, legibilidade.
+`ScriptedTranscriber` (roteiro `(t0, t1, texto)`), `ToneDiarizer` (frequência dominante por 500 ms) e `ToneEmbedder`
+(vetor determinístico de 256 dimensões) sobre os tons de 440, 220 e 330 Hz da `FakePlatform`; `LISTENER_PIPELINE=fake`
+para o worker em subprocesso real. Cobrir: v4 com rollback no meio; `JobsRepo` (claim com dois `Store`, heartbeat
+vencido, `attempts`, cancel, artefatos); `iter_windows` (buraco, corte em silêncio, reamostragem, `tracemalloc` abaixo
+de 2× janela); `Segmenter`; `ProfileMatcher` (LSA, limiar, margem, 10 s, Welford, clip); `stitch` (rótulos trocados;
+falante novo); runner de ponta a ponta com retomada, cancel e lease; reprocessar mantém decisões e falha mantém os
+antigos; lógica da revisão; `--worker --once`; `QueueDialog`, revisão por teclado e leitura com clique (pytest-qt);
+controlador lança o worker e renova a lease. Só com token e áudio real (B4, B5, G1): RTF, RSS, Q8, similaridades intra e
+inter-pessoa, precisão, desvio do clique, legibilidade.
 
 ## Lotes de implementação ([chute] 8,5 a 10 dias de foco; testes verdes a cada commit)
 L1 dados (v4, enums, repositórios, `StoreRole.WORKER`, `pipeline.*`) 1 d · L2 núcleo puro (`types`, `base`, `windows`,
-`align`, `profiles`, `stitch`, fakes) 1,5 d, paralelo a L1 · L3 runner 1,5 d · L4 processo e app (`--worker`, `worker.py`,
-`models.py`, plataforma, controlador, fila na bandeja) 1,5 d · L5 adaptadores reais (`whisper.py`, `pyannote.py`, sonda Q8;
-verificados no Windows com token) 1 d mais B4 · L6 revisão e leitura 1,5 d · L7 G2 nas três gravações 0,5 d mais o dono.
+`align`, `profiles`, `stitch`, fakes) 1,5 d, paralelo a L1 · L3 runner 1,5 d · L4 processo e app (`--worker`,
+`worker.py`, `models.py`, plataforma, controlador, fila na bandeja) 1,5 d · L5 adaptadores reais (`whisper.py`,
+`pyannote.py`, sonda Q8; verificados no Windows com token) 1 d mais B4 · L6 revisão e leitura 1,5 d · L7 G2 nas três
+gravações 0,5 d mais o dono.
 
 ## Respostas do dono (24/10, D-041): tudo nos padrões
 - P1 Diarizar e identificar antes de transcrever, com a revisão de falantes aberta enquanto o Whisper roda? Padrão: sim.
@@ -192,6 +195,28 @@ verificados no Windows com token) 1 d mais B4 · L6 revisão e leitura 1,5 d · 
   aceitar até 2× e registrar no G2.
 - P6 "Perfil de um trecho" na F2 é um turno já identificado pelo job; o trecho livre fica para a F6? Padrão: sim.
 
-[fato] faster-whisper turbo int8 com palavras 0,67× em fala contínua; `RETURNING` no SQLite 3.45 e 3.49; o Whisper guarda 224
-tokens de prompt; a `FakePlatform` gera tons distintos por canal. [exp] cosseno da mesma voz entre 0,7 e 0,9 no mesmo áudio;
-o usuário fala 20 a 40 % do tempo e o R 50 a 70 %; pyannote entre 0,6× e 1,0× em CPU. [chute] esforço dos lotes.
+[fato] faster-whisper turbo int8 com palavras 0,67× em fala contínua; `RETURNING` no SQLite 3.45 e 3.49; o Whisper
+guarda 224 tokens de prompt; a `FakePlatform` gera tons distintos por canal. [exp] cosseno da mesma voz entre 0,7 e 0,9
+no mesmo áudio; o usuário fala 20 a 40 % do tempo e o R 50 a 70 %; pyannote entre 0,6× e 1,0× em CPU. [chute] esforço
+dos lotes.
+
+## Implementação (2026-10-24)
+Novos: `store/{jobs,profiles,people,segments}.py`,
+`pipeline/{types,base,windows,align,profiles,stitch,runner,worker,models,estimate,review,whisper,pyannote}.py`,
+`platform/common/process.py`, `ui/{queue,review,transcript,tasks}.py`, `tests/fake_pipeline.py` e
+`tests/test_{jobs,profiles,pipeline_core,runner,worker,adapters,review}.py`. Alterados: `model.py`,
+`store/{schema,core,db,meetings,settings}.py`, `config/defaults.py`, `platform/{base,win32/platform}.py`, `__main__.py`,
+`ui/{controller,tray,settings_min}.py`, `tests/{conftest,fake_platform,test_store,test_ui}.py`. Itens 1 a 18 feitos.
+Desvios pequenos: `clusters.model` (transporte e Q8 precisam do modelo do centroide) e a melhor sugestão guardada também
+em `sem_nome` ("parecida com"); cluster curto acima do limiar vira `ambíguo`; embeddings do R na mesma passagem da
+diarização (uma decodificação por janela, tempos separados por etapa); "tentar de novo" zera `attempts` (o limite de 3 é
+para quedas); o app relança o worker pelo heartbeat fresco mais 60 s de espera (não guarda o `Popen`); o cluster `L` do
+usuário nasce `confirmado` e fica fora da revisão; o corte de janela cai no ponto do silêncio mais perto do nominal; o
+pyannote baixa pelo cache em `HF_HOME` dentro da pasta de modelos, com marca `.ready` e modo offline após a primeira
+carga completa. Medido no WSL: `iter_windows` com janela de 600 s tem pico de 1,35x a janela (51,9 MB) e 5x com janela
+de 60 s sobre pedaços de 60 s (19 MB; a busca de silêncio puxa o pedaço seguinte); runner falso em 13 ms para 3 s de
+áudio; suíte de 128 testes em 4,1 s (85 em 3,1 s antes), ruff e mypy limpos (Linux e `--platform win32`). Só o Windows
+com token (B4) verifica: carga e RTF do faster-whisper e do pyannote community-1, `speaker_embeddings` e o id do modelo
+de embedding (Q8, logado na primeira execução), wespeaker por turno, download com `HF_HOME` sem symlink, erros
+permanentes reais (termos não aceitos, token inválido, sem rede), `CREATE_NO_WINDOW | DETACHED_PROCESS |
+BELOW_NORMAL_PRIORITY_CLASS`, `SetPriorityClass`, `GetProcessMemoryInfo`, o worker vivo após fechar o app (P2) e o G2.

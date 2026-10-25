@@ -12,10 +12,10 @@ legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQ
 | --- | --- | --- | --- |
 | Plataforma | `listener/platform/` | Tudo que depende do SO atrás de `base.py`: dispositivos, apps tocando, mic, loopback de app e de sistema, mudo, atalhos, processos, pastas. `common/` (pastas, pynput para Linux e macOS); `win32/` (sounddevice WASAPI, proc-tap, PyAudioWPatch, pycaw, `RegisterHotKey`, Toolhelp32, identidade do processo, suspensão e foco); `linux/` e `macos/` na F7. Fora daqui não há pycaw, PyAudioWPatch, `ctypes.windll` nem `C:\` | F1, F7 |
 | Captura | `listener/capture/` | Dois canais num relógio único (`perf_counter`, QPC no Windows): L = mic 16 kHz; R = loopback do app (árvore de processos) ou do sistema. Mudo e pausa gravam silêncio; buracos preenchidos por timestamp; pedaços FLAC de ~60 s gravados no SQLite por uma thread de trabalho | F1 |
-| Transcrição | `listener/pipeline/` | faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028); wav2vec2 opcional; glossário no `initial_prompt`; idioma por reunião (D-013). Ao vivo: VAD e janelas de ~8 s (D-005) | F2, F4 |
-| Identificação | `listener/pipeline/` | L = usuário (salvo preset sala, U-015). R: pyannote community-1 diariza; embedding por cluster; cosseno contra perfis persistentes (centroide por pessoa, limiar 0,60 com margem e autocalibração, D-008); confirmações reforçam o perfil | F2 |
+| Transcrição | `listener/pipeline/` | `JobRunner` em janelas de 600 s cortadas no silêncio; faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028; wav2vec2 opcional), glossário e contexto no `initial_prompt`, idioma por reunião (D-013); palavras viram segmentos por turno; artefato por janela e retomada. Ao vivo: VAD e janelas de ~8 s (D-005) | F2, F4 |
+| Identificação | `listener/pipeline/` | L = usuário (salvo preset sala, U-015). R: pyannote community-1 em janelas de até 60 min costuradas; centroide por cluster e atribuição sem repetição contra perfis persistentes (limiar 0,60 calibrado por perfil, margem 0,05, D-008); a revisão mínima reforça o perfil a cada confirmação | F2 |
 | Inteligência | `listener/llm/` | Interface única de provedor (texto, JSON, áudio, embeddings) com adaptadores Gemini, GPT e Claude; prompts e esquemas do projeto. Glossário, resumo parcial, identidade por contexto abaixo do limiar, título, pré-resumo, ata, resumo executivo, transcrição revisada, chat e RAG | F3 |
-| Base | `listener/store/` | `listener.db` mais um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), WAL; conexão por thread, migrações atômicas por arquivo, `Store` como fachada dos repositórios por domínio; FTS5 e sqlite-vec (D-024); modelo e dimensão por vetor (D-009) | F1, F5 |
+| Base | `listener/store/` | `listener.db` mais um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), WAL; conexão por thread, migrações atômicas por arquivo, `Store` como fachada dos repositórios por domínio com papéis APP, WORKER e READONLY; fila com claim atômico e artefatos de job no banco; FTS5 e sqlite-vec (D-024); modelo e dimensão por vetor (D-009) | F1, F2, F5 |
 | Interface | `listener/ui/` | PySide6: assistente de primeiro uso, warm-up, widget flutuante, bandeja, resumo, configurações mínimas; janela principal completa na F6 | F1, F6 |
 | Config | `listener/config/` | Padrões das settings e o ponteiro da pasta do banco (D-029) | F1 |
 | Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, nível configurável (D-033) | F1.1 |
@@ -37,13 +37,18 @@ App Qt na thread principal; parada, mudo do sistema e atalhos em QThreads própr
 blocos imutáveis; uma thread de trabalho (não daemon) faz mono, reamostragem com estado, pedaços, FLAC e grava com
 retentativa, publicando um snapshot imutável para a interface; uma conexão SQLite por thread (F1.2). F2: worker em
 subprocesso de prioridade baixa que lê e escreve só no banco (WAL, `busy_timeout`). `from __future__ import annotations`
-fica em todo módulo até o piso subir para 3.14 (PEP 649); sai em bloco.
+fica em todo módulo até o piso subir para 3.14 (PEP 649); sai em bloco. F2: ao parar, o app cria o job e lança `python
+-m listener --worker` solto (`Platform.spawn_detached`, prioridade baixa, log próprio); o worker faz o claim atômico com
+heartbeat em thread própria, roda as etapas em janelas com artefato por janela, lê a lease da gravação e o cancelamento
+entre janelas e sai após 60 s ocioso; a interface só lê a fila por polling (2 s com job ativo, 30 s sem), nunca importa
+torch e decodifica áudio sob demanda numa `Task` (QThread).
 
 ## Stack
-Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy ·
-faster-whisper ou WhisperX (CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 e
-sqlite-vec · google-genai, openai, anthropic · pynput · empacotamento: venv e atalho; PyInstaller só se necessário.
-Versões medidas: `memory/maquina.md`.
+Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6
+· sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy · faster-whisper ou WhisperX
+(CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 e sqlite-vec ·
+google-genai, openai, anthropic · pynput · empacotamento: venv e atalho; PyInstaller só se necessário. Versões medidas:
+`memory/maquina.md`.
 
 ## Riscos de desenho
 Fala sobreposta no canal R; CPU dividida com o app de reunião; banco cresce 5 a 6 GB por mês a 16 kHz (D-015; indicador
