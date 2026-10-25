@@ -52,3 +52,4 @@ Tudo [fato] medido em 24/10/2026, salvo indicação. Caminhos com `<usuário>` s
   Edge; `Ctrl+Shift+P` imprime em Chrome e Edge; `Ctrl+Alt+letra` é AltGr+letra no ABNT2. pynput `GlobalHotKeys` não
   engole a tecla; `RegisterHotKey` é exclusivo e consome (F1.1 A1).
 - Ferramentas de IA: ler arquivos grandes em lotes menores que 30 KB (limite de saída do Bash no Claude Code).
+- No WSL, `ruff`, `mypy` e `pytest` só existem no venv: `source .venv/bin/activate` antes (25/10).

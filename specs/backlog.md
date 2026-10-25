@@ -2,30 +2,25 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (25/10/2026, troca de conta do dono)
-- **F3 implementada em 8 commits** (`0cea46c` a `998604f`) e revisada pelo revisor adversarial: veredito "fechar com correções
-  pequenas", 14 itens (2 altas, 5 médias, 7 baixas), transcritos em `features/F3.1-correcoes-revisao.md` porque o relatório
-  original ficou em pasta temporária. **O agente que ia corrigir foi interrompido antes de concluir**: as edições parciais
-  (R3-01, R3-05, R3-06 em `ui/chat.py`, `controller.py`, `llm_tabs.py`, `review.py`, `transcript.py`) estão em
-  `git stash list` ("F3.1 parcial do agente"); a árvore em `main` está limpa e verde (193 testes, 3 pulados sem chave).
-- **Próximo passo exato:** aplicar a F3.1 (agente especialista com o briefing da própria spec, ou direto: são correções
-  pequenas), `git stash drop` ou reaproveitar o stash depois de revisar, passada curta do revisor no diff, verificação
-  independente (`pytest`, `ruff`, `mypy` e `mypy --platform win32`, regra de importações), atualizar a seção Implementação da
-  F3, este backlog, `memory/` e commitar (CP16). Depois seguem B1, B2, B4 e o G2 e G3 no Windows, e a F4 pelo fluxo D-040.
-- Os relatórios dos agentes (arquiteto, dev, revisões) vivem fora do repositório e não sobrevivem à troca de sessão; tudo
-  o que importa deles já está nas specs (F1.2, F2, F3, F3.1, `llm-contrato.md`) e em `decisoes.md`.
+## Onde paramos (25/10/2026, fim da sessão)
+- **F3 fechada do lado da LLM:** L0 a L6 implementados (`0cea46c` a `998604f`) e as 14 correções da revisão adversarial
+  aplicadas (F3.1: `18fa643`, `d3135e6`, mais `ec4890a` com a passada do revisor sobre o diff das correções). Desvios e
+  decisões técnicas na seção Implementação de `features/F3.1-correcoes-revisao.md`.
+- **Próximo passo:** o dono verifica no Windows (B1) e cola a chave do Gemini (B13); depois G1, G2 e G3 em reuniões
+  reais; a F4 (ao vivo) só depois, pelo fluxo D-040 (spec, arquiteto, aprovação).
 
 ## Estado em 25/10/2026
-- Código: F1, F1.1, F1.2, F2 e **F3 (L0 a L6) implementadas** (F3.1 pendente): 193 testes em ~7 s no WSL (3 pulados sem
-  chave; com `LISTENER_SDK_TESTS=1` rodam os de transporte simulado dos SDKs), ruff e mypy limpos (Linux e `--platform
-  win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`. Esquema v6. Nada do app importa
-  torch nem os SDKs de LLM (teste estático). Whisper, pyannote (F2 L5) e os três adaptadores de LLM foram escritos às
-  cegas ou contra transporte simulado: só rodam no Windows com o token do Hugging Face (B4) e a chave do Gemini (G3).
-- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze commits, F3 em oito); branch `main`; sem
-  remoto; um stash documentado (F3.1 parcial). Commit a cada grande alteração (CP16).
+- Código: F1, F1.1, F1.2, F2, **F3 e F3.1 implementadas**: 208 testes mais 4 pulados no WSL (212 com
+  `LISTENER_SDK_TESTS=1`, que liga os de transporte simulado dos SDKs e o do truststore com clientes reais), ruff e mypy
+  limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
+  Esquema v6. Nada do app importa torch nem os SDKs de LLM (teste estático). Whisper, pyannote (F2 L5) e os três
+  adaptadores de LLM foram escritos às cegas ou contra transporte simulado: só rodam no Windows com o token do Hugging
+  Face (B4) e a chave do Gemini (B13).
+- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três); branch `main`;
+  sem remoto; sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
-  pendente) · **F3 implementada** (D-043; contrato em `specs/llm-contrato.md`), **F3.1 aprovada e pendente** · G3 depende
-  da chave do Gemini no Windows · F4 a F6 rascunho inicial · F7 futuro.
+  pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
+  Windows · F4 a F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
@@ -50,8 +45,8 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 2. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
 3. Dono instala o extra `pipeline` e cola o token (B4); o primeiro job real verifica o L5, mede RTF e RSS por etapa e a
    sonda Q8; G2 nas gravações do G1; números em `decisoes.md`.
-4. LLM aplica a F3.1 (14 correções), revisor confere o diff, LLM verifica e fecha a F3; dono cola a chave (B13) e o
-   primeiro job de LLM real valida os adaptadores; G3 nas três reuniões; depois a F4 (ao vivo) pelo fluxo D-040.
+4. Dono cola a chave (B13); o primeiro job de LLM real valida os adaptadores (canário, latências, preços contra a
+   fatura); G3 nas três reuniões; depois a F4 (ao vivo) pelo fluxo D-040.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
@@ -61,8 +56,9 @@ B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 apr
 - FTS5: confirmado no SQLite do Python 3.12 do WSL (F1.2 M-31); falta confirmar no Windows antes da F5.
 - Testes de interface só cobrem abrir e fechar as telas (pytest-qt offscreen); interação real fica para a F6.
 - O eco do warm-up é medido só no "Testar 3 s", não de forma contínua; o `--check` dá o número preciso.
-- F2: a suíte encosta no teto de 5 s (4,3 a 5,1 s) por causa da coleta (importa scipy e PySide6 e lança dois subprocessos
-  de worker); se passar com a F3, separar os testes de subprocesso num job próprio.
+- Suíte acima da meta de 8 s: 12,8 a 13,2 s no WSL em 25/10 (já 10,4 s antes da F3.1, com 198 testes; 7,5 s em medições
+  anteriores, então parte é a máquina). Medir de novo com a máquina ociosa; se seguir acima, separar os testes de
+  subprocesso e os de interface em jobs próprios e ver o custo do `gc.collect()` por teste de interface.
 - F2: invalidar um vetor de confirmação tira-o do centroide, mas a amostra já entrou na média e no desvio do limiar
   (Welford não é reversível sem guardar as amostras); aceito até o G2 mostrar impacto.
 - F2: durante um reprocessamento a revisão mostra o job concluído; a abertura antecipada (P1) vale para o primeiro

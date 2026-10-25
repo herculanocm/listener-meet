@@ -229,3 +229,5 @@ fatura, qualidade das atas (2 de 3), acerto da identidade por contexto, troca de
 com EDR (e o worker leve `CREATE_NO_WINDOW` saindo para a rede), forma exata das chamadas nas majors (canário do "testar
 conexão": esquemas estritos na OpenAI, `input_schema` na Anthropic, `response_json_schema` no Gemini), `list_models()`
 reais, tempo de importação dos SDKs, `LLMAudioTranscriber` numa janela real (FLAC até 20 MB), limites de taxa do tier, G3.
+Revisão adversarial do diff: 14 correções (R3-01 a R3-14) aplicadas em 25/10, com os desvios em
+`features/F3.1-correcoes-revisao.md` (seção Implementação); commits `18fa643`, `d3135e6` e `ec4890a`.
