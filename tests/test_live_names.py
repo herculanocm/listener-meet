@@ -51,6 +51,11 @@ def test_match_one_threshold_margin_calibration_and_expected_tie_break():
     assert names.match_one(v, [ref(1, e(0)), ref(2, e(1))], 0.60, 0.05).person_id == 1
     assert names.match_one(np.zeros(8), profiles, 0.6, 0.05) == names.NameMatch(None)
     assert names.match_one(e(0), [], 0.6, 0.05) == names.NameMatch(None)
+    # revisão do L0 a L3: vetor NaN ou perfil corrompido não decidem nem derrubam; um perfil só sem segundo para desempatar
+    one = [ref(1, e(0))]
+    assert names.match_one(np.full(8, np.nan, np.float32), one, 0.6, 0.05) == names.NameMatch(None)
+    assert names.match_one(e(0), [ref(1, np.full(8, np.nan, np.float32))], 0.6, 0.05) == names.NameMatch(None)
+    assert not names.match_one(e(0), one, 0.0, 2.0).decided                         # margem acima do próprio cosseno
 
 
 def test_channel_smoothing_keeps_the_previous_person_only_when_the_voice_is_similar():

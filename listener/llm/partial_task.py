@@ -103,15 +103,18 @@ def partial_state(store: Store, meeting_id: int) -> tuple[dict[str, Any], int]:
 
 
 def select_captions(rows: Sequence[CaptionRow], max_chars: int = MAX_INPUT_CHARS) -> tuple[list[CaptionRow], int]:
-    """As legendas novas em ordem de tempo até o limite de caracteres (ao menos uma); devolve (usadas, quantas sobraram)."""
+    """As legendas novas pela ordem dos ids até o limite de caracteres (ao menos uma), devolvidas em ordem de tempo; devolve
+    (usadas, quantas sobraram). Pelos ids porque o próximo parcial começa depois do maior id usado e L e R entram fora da
+    ordem de tempo: escolher pelo tempo deixaria para trás uma legenda de id menor que nunca mais seria lida."""
     used: list[CaptionRow] = []
     total = 0
-    for r in rows:
+    for r in sorted(rows, key=lambda r: int(r["id"])):
         n = min(len(str(r.get("text") or "")), MAX_CAPTION_CHARS) + 40
         if used and total + n > max_chars:
             break
         used.append(r)
         total += n
+    used.sort(key=lambda r: (int(r.get("t_start_ms") or 0), int(r["id"])))
     return used, len(rows) - len(used)
 
 

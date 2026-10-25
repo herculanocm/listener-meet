@@ -42,8 +42,8 @@ def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float,
     margem menor, decide quem estiver entre os participantes esperados quando só um dos dois está (e passa do próprio
     limiar); senão não decide. Perfis de outra dimensão ou vazios não contam."""
     v = normalize(vec)
-    usable = [p for p in profiles if p.centroid.size == v.size and np.any(p.centroid)]
-    if not usable or not np.any(v):
+    usable = [p for p in profiles if p.centroid.size == v.size and np.any(p.centroid) and np.all(np.isfinite(p.centroid))]
+    if not usable or not np.all(np.isfinite(v)) or not np.any(v):           # vetor NaN (janela estranha) não decide nada
         return NameMatch(None)
     sims = np.stack([normalize(p.centroid) for p in usable]) @ v
     order = np.argsort(-sims)
@@ -55,6 +55,8 @@ def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float,
         return NameMatch(None, best_sim, m, best.person_id, by_person)
     if m >= margin:
         return NameMatch(best.person_id, best_sim, m, best.person_id, by_person)
+    if len(usable) < 2:                                     # um perfil só e margem acima do próprio cosseno: sem segundo
+        return NameMatch(None, best_sim, m, best.person_id, by_person)
     runner = usable[int(order[1])]
     in_best, in_runner = best.person_id in expected_ids, runner.person_id in expected_ids
     if in_best != in_runner:

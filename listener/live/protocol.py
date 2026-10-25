@@ -88,6 +88,8 @@ class Hello:
     def from_msg(cls, msg: dict[str, Any]) -> Self:
         if msg.get("type") != HELLO:
             raise ProtocolError(f"esperava hello, veio {msg.get('type')!r}")
+        if msg.get("v") != PROTOCOL_VERSION:                # app e filho de versões diferentes (código trocado com o app aberto)
+            raise ProtocolError(f"protocolo {msg.get('v')!r} do app, o processo ao vivo fala o {PROTOCOL_VERSION}: reinicie o app")
         try:
             return cls(t0_perf=float(msg["t0_perf"]), names=bool(msg.get("names", True)), model=str(msg.get("model") or "small"),
                        threads=max(1, int(msg.get("threads", 2))), eof_grace_s=max(0.0, float(msg.get("eof_grace_s", 8.0))))

@@ -36,9 +36,15 @@ def _caption(store: Any, mid: int, t0: int, text: str, label: str | None = "Ana 
 def test_partial_prompt_is_strict_fast_and_versioned():
     assert check_strict(prompts.partial.SCHEMA) == [] and TASK_CLASS[LlmTask.PARTIAL] == ModelClass.FAST
     assert prompts.prompt_version(LlmTask.PARTIAL) == "partial/1.0"
-    rows: list[Any] = [{"text": "x" * 500}] * 10
+    rows: list[Any] = [{"id": i + 1, "t_start_ms": i * 1000, "text": "x" * 500} for i in range(10)]
     used, left = select_captions(rows, max_chars=1200)
     assert len(used) == 2 and left == 8 and select_captions(rows[:1], max_chars=10) == (rows[:1], 0)   # ao menos uma
+    # em ordem de tempo, L [0-10 s] (id 3) vem antes de R [2-4 s] (id 1); com espaço para duas, ficam os ids 1 e 2, e a
+    # próxima leitura (ids acima de 2) ainda traz a 3
+    late = [{"id": 3, "t_start_ms": 0, "text": "x" * 500}, {"id": 1, "t_start_ms": 2000, "text": "x" * 500},
+            {"id": 2, "t_start_ms": 4000, "text": "x" * 500}]
+    used, left = select_captions(late, max_chars=1200)
+    assert [r["id"] for r in used] == [1, 2] and left == 1
 
 
 def test_run_partial_accumulates_supersedes_and_records_the_call(store, monkeypatch):

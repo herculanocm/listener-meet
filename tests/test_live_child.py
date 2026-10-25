@@ -15,9 +15,10 @@ from listener.live import protocol as pr
 from listener.live.vad import FRAME, SAMPLE_RATE, Segmenter, SegmenterConfig, WindowSpan
 from listener.store import Store
 from tests import conftest
-from tests.fake_live import EnergyVad, FakeEngines, session_input, tone
+from tests.fake_live import EnergyVad, FakeEngines, FakeTranscriber, session_input, tone
 
 MS = SAMPLE_RATE // 1000
+SR = SAMPLE_RATE
 
 
 def frames_of(ms: int) -> int:
@@ -146,14 +147,20 @@ def test_language_lock_filters_and_prompt():
     lang.observe("pt", 0.8)
     assert lang.language == "pt" and lang.tries == 3
     lang = proc.LanguageLock()
+    lang.observe("pt", 0.52)
+    lang.observe("es", 0.55)
+    assert lang.language is None                                                     # discordantes e incertas: não trava
     lang.observe("en", 0.9)
     lang.observe("pt", 0.6)
-    assert lang.language == "en"                                                     # empate: maior probabilidade
+    lang.observe("en", 0.65)
+    assert lang.language is None and lang.tries == 5
+    lang.observe("pt", 0.58)                                                         # 6 sem consenso: maior soma das >= 0,5
+    assert lang.language == "pt" and lang.tries == 6                                 # pt 1,70 x en 1,55 x es 0,55
     assert proc.LanguageLock("pt-BR").language == "pt"
     lang = proc.LanguageLock()
-    for _ in range(4):
+    for _ in range(8):
         lang.observe(None, 0.0)
-    assert lang.language is None                                                     # sem nenhuma detecção, segue automático
+    assert lang.language is None and lang.tries == 6                                 # sem nenhuma detecção, segue automático
     seg = proc.Segment
     ok = proc.Transcript((seg(" Bom dia. ", 0.1, -0.3, 1.2), seg("ruído", 0.9, -0.3, 1.2), seg("lixo", 0.1, -1.5, 1.2),
                           seg("repete repete", 0.1, -0.3, 3.0), seg(" a todos", 0.0, -0.1, 1.0)))
@@ -290,6 +297,39 @@ def test_emitter_survives_unserializable_lines_and_a_closed_pipe():
     assert em.closed
 
 
+def test_language_votes_only_with_captioned_windows_of_enough_speech(store):
+    """Revisão do L0 a L3: janela filtrada (ruído) e janela com menos de 2 s de fala não votam no idioma."""
+    mid = store.create_meeting("idioma", None, None, None)
+    session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), store, mid, FakeEngines(), clock=lambda: 1001.0)
+    session.hello = pr.Hello(1000.0)
+    tr = FakeTranscriber("small", itertools.count(1), texts=["curta", "", "uma", "duas", "três"])
+    session.transcriber = tr
+    for i, speech_s in enumerate((1.0, 3.0, 3.0, 3.0, 3.0)):
+        session.queue.put(proc.LiveWindow("R", i * 64000, i * 64000 + 48000, round(speech_s * SR), tone(3.0)))
+    session.queue.close()
+    session._loop()
+    assert [c[1] for c in tr.calls] == [None, None, None, None, "pt"]               # trava depois de 2 votos válidos
+    assert session.language.tries == 2 and session.stats.filtered == 1
+
+
+def test_after_eof_only_a_window_that_fits_the_deadline_starts(store):
+    """Revisão do L0 a L3: depois do EOF, uma janela só começa se couber no prazo (média do custo por janela); o resto é
+    pulado e o `bye` sai antes de o app matar o processo."""
+    mid = store.create_meeting("prazo", None, None, None)
+    now = [1000.0]
+    session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), store, mid, FakeEngines(), clock=lambda: now[0],
+                               monotonic=lambda: now[0])
+    session.hello = pr.Hello(1000.0, eof_grace_s=8.0)
+    tr = FakeTranscriber("small", itertools.count(1), before=lambda _n: now.__setitem__(0, now[0] + 3.0))   # 3 s por janela
+    session.transcriber = tr
+    for i in range(5):
+        session.queue.put(proc.LiveWindow("R", i * 16000, (i + 1) * 16000, 16000, tone(1.0)))
+    session.queue.close()
+    session.eof_at = now[0]
+    session._loop()
+    assert len(tr.calls) == 2 and session.stats.captions == 2 and session.stats.skipped == 3   # a 3ª acabaria em 9,6 s
+
+
 def test_session_refuses_without_hello_or_meeting(store):
     mid = store.create_meeting("x", None, None, None)
     out = io.BytesIO()
@@ -303,7 +343,19 @@ def test_session_refuses_without_hello_or_meeting(store):
 
     out = io.BytesIO()
     assert proc.serve(io.BytesIO(pr.encode_control(pr.Hello(1.0).to_msg())), out, store, mid, Broken()) == 1
-    assert "ausente" in _lines(out)[-1]["message"]
+    assert "ausente" in _lines(out)[-1]["message"] and _lines(out)[-1]["retry"] is False
+
+    class Busy(FakeEngines):
+        def transcriber(self, model, threads):
+            raise MemoryError("sem memória para o modelo")
+
+    out = io.BytesIO()                                                               # transitório: o app tenta de novo
+    assert proc.serve(io.BytesIO(pr.encode_control(pr.Hello(1.0).to_msg())), out, store, mid, Busy()) == 1
+    assert _lines(out)[-1]["retry"] is True
+    out = io.BytesIO()                                                               # protocolo de outra versão: sem nova tentativa
+    old = pr.encode_control({**pr.Hello(1.0).to_msg(), "v": pr.PROTOCOL_VERSION + 1})
+    assert proc.serve(io.BytesIO(old), out, store, mid, FakeEngines()) == 2
+    assert "reinicie o app" in _lines(out)[0]["message"] and _lines(out)[0]["retry"] is False
 
 
 def test_live_process_end_to_end_in_fake_mode():

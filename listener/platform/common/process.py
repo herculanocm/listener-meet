@@ -72,6 +72,15 @@ def spawn_child(argv: list[str], env: Mapping[str, str] | None = None) -> subpro
     return p
 
 
+def disable_own_power_throttling() -> bool:
+    """EcoQoS só existe no Windows (`platform/win32`); aqui não há o que desligar (False)."""
+    return False
+
+
+def sync_stdout_handle() -> None:
+    """No posix o fd 1 já é o descritor do SO: nada a sincronizar depois do `dup2`."""
+
+
 def lower_priority_of(pid: int) -> bool:
     """`nice` do processo `pid` + 10 (até 19) no posix; no Windows a prioridade vai nas flags de criação (False aqui)."""
     if sys.platform == "win32":

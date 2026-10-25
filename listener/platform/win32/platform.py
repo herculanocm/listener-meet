@@ -7,6 +7,7 @@ ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12)
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import sys
 import threading
@@ -35,6 +36,7 @@ CREATE_NO_WINDOW, DETACHED_PROCESS, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x
 PROCESS_SET_INFORMATION = 0x0200                       # F4: EcoQoS do filho ao vivo (SetProcessInformation)
 PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling (PROCESS_INFORMATION_CLASS)
 POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
+STD_OUTPUT_HANDLE = -11 & 0xFFFFFFFF                   # (DWORD)-11
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
@@ -628,11 +630,32 @@ class Win32Platform(Platform):
         if sys.platform != "win32":
             return process.spawn_child(argv, env)
         flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
-        p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.PIPE,  # noqa: S603
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
-        if disable_power_throttling(p.pid):
-            log.debug("EcoQoS desligado no processo ao vivo %s", p.pid)
-        return p
+        return subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.PIPE,  # noqa: S603
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+
+    @override
+    def disable_own_power_throttling(self) -> bool:
+        """O filho ao vivo se tira do EcoQoS ao nascer: num venv, `.venv\\Scripts\\python.exe` é um lançador que cria o
+        interpretador como neto, e o EcoQoS (ao contrário da prioridade abaixo do normal) não passa para ele."""
+        return disable_power_throttling(os.getpid())
+
+    @override
+    def sync_stdout_handle(self) -> None:
+        """Num processo sem console (`pythonw`) a UCRT não chama `SetStdHandle` no `dup2`: o handle padrão continuaria
+        sendo o do fd 1 antigo, já fechado (e reaproveitável), e código nativo que escreva nele erraria o destino."""
+        if sys.platform != "win32":
+            return
+        import msvcrt
+        from ctypes import wintypes
+
+        try:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.SetStdHandle.argtypes = (wintypes.DWORD, wintypes.HANDLE)
+            k32.SetStdHandle.restype = wintypes.BOOL
+            if not k32.SetStdHandle(STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(1)):
+                log.info("handle padrão da saída não sincronizado (erro %s)", ctypes.get_last_error())
+        except Exception as e:
+            log.info("handle padrão da saída não sincronizado: %s", e)
 
     @override
     def lower_own_priority(self) -> bool:

@@ -53,8 +53,11 @@ def test_reader_detects_corruption_and_truncation():
     with pytest.raises(pr.ProtocolError, match="esperava hello"):
         pr.Hello.from_msg({"type": "stats"})
     with pytest.raises(pr.ProtocolError, match="hello inválido"):
-        pr.Hello.from_msg({"type": "hello"})
-    assert pr.Hello.from_msg({"type": "hello", "t0_perf": 2, "threads": 0}).threads == 1
+        pr.Hello.from_msg({"type": "hello", "v": pr.PROTOCOL_VERSION})
+    for v in (None, pr.PROTOCOL_VERSION + 1):                                         # app e filho de versões diferentes
+        with pytest.raises(pr.ProtocolError, match="reinicie o app"):
+            pr.Hello.from_msg({"type": "hello", "v": v, "t0_perf": 2})
+    assert pr.Hello.from_msg({"type": "hello", "v": pr.PROTOCOL_VERSION, "t0_perf": 2, "threads": 0}).threads == 1
 
 
 def test_reader_reassembles_frames_split_across_pipe_reads():
@@ -131,27 +134,37 @@ def test_spawn_child_has_binary_pipes_and_lower_priority():
     if sys.platform != "win32":
         assert int(out[6:]) == min(process.NICE_MAX, os.nice(0) + process.NICE_STEP)
         assert process.lower_priority_of(2**22 + 12345) is False                                # pid inexistente: não levanta
+        assert process.disable_own_power_throttling() is False and process.sync_stdout_handle() is None
 
 
 def test_win32_spawn_child_is_below_normal_without_window():
-    """Só no Windows (o CI tem um): prioridade abaixo do normal pelas flags de criação, pipes binários, EcoQoS tentado."""
+    """Só no Windows (o CI tem um): prioridade abaixo do normal pelas flags de criação, pipes binários; o EcoQoS que o filho
+    desliga em si mesmo."""
     if sys.platform != "win32":
         pytest.skip("Win32Platform.spawn_child só existe no Windows")
     import ctypes
 
-    from listener.platform.win32.platform import BELOW_NORMAL_PRIORITY_CLASS, Win32Platform, disable_power_throttling
+    from listener.platform.win32.platform import (BELOW_NORMAL_PRIORITY_CLASS, POWER_THROTTLING_EXECUTION_SPEED,
+                                                  PROCESS_POWER_THROTTLING, ProcessPowerThrottlingState, Win32Platform)
 
-    p = Win32Platform().spawn_child([sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"])
+    plat = Win32Platform()
+    p = plat.spawn_child([sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"])
     try:
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         k32.OpenProcess.restype = ctypes.c_void_p
         h = k32.OpenProcess(0x1000, False, p.pid)                                                # PROCESS_QUERY_LIMITED_INFORMATION
         assert k32.GetPriorityClass(ctypes.c_void_p(h)) == BELOW_NORMAL_PRIORITY_CLASS
         k32.CloseHandle(ctypes.c_void_p(h))
-        assert isinstance(disable_power_throttling(p.pid), bool)
     finally:
         out, _ = p.communicate(b"\r\n\x00", timeout=30)                                          # type: ignore[attr-defined]
     assert out == b"\r\n\x00"
+    # o EcoQoS o filho desliga em si mesmo (num venv o pid do Popen é o do lançador): conferido aqui no próprio processo
+    if plat.disable_own_power_throttling():
+        state = ProcessPowerThrottlingState(1, 0, 0)
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        if k32.GetProcessInformation(ctypes.c_void_p(k32.GetCurrentProcess()), PROCESS_POWER_THROTTLING, ctypes.byref(state),
+                                     ctypes.sizeof(state)):                                      # Windows 11 e Server 2022+
+            assert state.ControlMask & POWER_THROTTLING_EXECUTION_SPEED and not state.StateMask & POWER_THROTTLING_EXECUTION_SPEED
 
 
 def _lines(out: io.BytesIO) -> list[dict]:

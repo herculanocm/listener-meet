@@ -9,19 +9,20 @@ perdido ou uma biblioteca nativa não corrompem as linhas.
 Threads: `live-stdin` lê os quadros, reamostra para 16 kHz, roda o VAD incremental por canal e fecha janelas
 (`vad.Segmenter`) numa fila única para os dois canais (sai primeiro a que fechou antes); a principal transcreve com um só
 `WhisperModel` int8 (`beam_size=1`, sem timestamps, temperatura 0), filtra (`no_speech` e logprob como na F2, compressão
-e alucinações comuns), grava a legenda em `captions` e só então emite a linha `caption`. Idioma: automático nas 2
-primeiras janelas, depois travado no mais frequente (ou o de `meetings.language`). Degradação (máquina pura com relógio
+e alucinações comuns), grava a legenda em `captions` e só então emite a linha `caption`. Idioma: o de
+`meetings.language` ou automático até 2 detecções concordantes (`LanguageLock`). Degradação (máquina pura com relógio
 injetado; o atraso é o da legenda, do fim da janela até o fim da transcrição): acima de 20 s por 30 s troca `small` por
 `base`; persistindo mais 30 s, pula as janelas pendentes menos a mais nova de cada canal; nunca volta sozinho. EOF:
-fecha as janelas em curso, transcreve a fila até o prazo do `hello`, grava `live_stopped`, emite `bye` e sai com 0.
+fecha as janelas em curso, transcreve a fila enquanto a próxima janela couber no prazo do `hello` (pela média do custo
+por janela), grava `live_stopped`, emite `bye` e sai com 0.
 `LISTENER_LIVE=fake` usa `tests/fake_live.py` (sem ML).
 
-Nomes (F4 item 5, só com "nomes ao vivo"): o `PyannoteEmbedder` da F2 (torch com uma thread, importado só aqui) carrega
-numa thread própria enquanto as legendas já saem; cada janela de R (e de L na sala presencial) vira um embedding contra os
-perfis do mesmo modelo (`names.match_one`, limiar e margem da F2, desempate pelos esperados) com suavização por canal;
-`label` = "Nome — Cargo" ou "Participante"; L sem sala é o usuário. Sem token do Hugging Face ou sem os modelos do
-pyannote: linha `state` `names_unavailable` com o motivo, e as legendas seguem sem nome. Nada grava clusters, segmentos
-nem perfis (CP11).
+Nomes (F4 item 5, só com "nomes ao vivo"): o `PyannoteEmbedder` da F2 (torch com uma thread, importado só aqui e antes do
+Whisper) carrega numa thread própria enquanto as legendas já saem; cada janela de R (e de L na sala presencial) vira um
+embedding contra os perfis do mesmo modelo (`names.match_one`, limiar e margem da F2, desempate pelos esperados) com
+suavização por canal; `label` = "Nome — Cargo" ou "Participante"; L sem sala é o usuário. Sem token do Hugging Face ou
+sem os modelos do pyannote: linha `state` `names_unavailable` com o motivo, e as legendas seguem sem nome. Nada grava
+clusters, segmentos nem perfis (CP11).
 
 Eco (sem headset): uma janela de L muito correlacionada com o R do mesmo trecho (`capture.echo_corr_min`, a correlação
 cruzada de `capture.align`) e sem fala própria (L com sinal onde R está em silêncio, ao menos 0,5 s) é o som da reunião
@@ -60,7 +61,7 @@ from ..config.defaults import HF_PROVIDER_ID, LIVE_MODELS, SPECS
 from ..log import attach_file, get_logger, log_versions, setup
 from ..model import EventType
 from ..pipeline.profiles import ProfileRef, expected_person_ids
-from ..platform.common import paths
+from ..platform.common import paths, process
 from ..store import Store
 from ..store.captions import CaptionInsert
 from ..store.core import MAIN_FILE
@@ -98,6 +99,9 @@ ECHO_FRAME_MS = 100              # quadros da conferência de fala própria (L c
 ECHO_OWN_SPEECH_MS = 500         # tanta fala própria numa janela de L e ela nunca é tratada como eco
 CPU_INTERVAL_S = 10.0
 QUEUE_POLL_S = 0.2
+LANG_MIN_SPEECH_S = 2.0          # só janelas com tanta fala (e que viraram legenda) votam no idioma
+TX_GUESS_S = 4.0                 # custo de uma janela antes da primeira medida (`small` int8 no Xeon de 2,1 GHz: 3,6 s)
+TX_EMA = 0.3                     # peso da janela mais recente na média do custo por janela
 
 
 # ---------------------------------------------------------------- motores (real aqui; fake em tests/fake_live.py)
@@ -172,6 +176,8 @@ class PyannoteLive:
     """O `PyannoteEmbedder` da F2 (wespeaker, `window="whole"`) com torch em uma thread (`torch.set_num_threads(1)`)."""
 
     def __init__(self, token: str):
+        import torch  # noqa: F401  (agora, na thread principal e antes do Whisper: ver `LiveSession._prepare_names`)
+
         from ..pipeline.pyannote import PyannoteEmbedder
 
         self._embedder = PyannoteEmbedder(token, torch_threads=1)
@@ -268,14 +274,18 @@ def build_prompt(terms: Sequence[str], previous: str) -> str:
 
 
 class LanguageLock:
-    """Idioma automático nas primeiras janelas (2 detecções com probabilidade >= 0,5; no máximo 4 tentativas), depois
-    travado no mais frequente (empate: maior soma de probabilidades); um idioma fixo da reunião vale desde o começo."""
+    """Idioma automático até 2 detecções concordantes com probabilidade >= 0,7; sem consenso em 6 detecções, trava no de
+    maior soma de probabilidades entre as >= 0,5 (sem nenhuma, segue automático). Quem chama só passa janelas que viraram
+    legenda com 2 s ou mais de fala: ruído e janela curta detectam mal, e um idioma travado errado estraga as legendas da
+    reunião inteira (revisão do L0 a L3). Um idioma fixo da reunião vale desde o começo."""
 
-    def __init__(self, fixed: str | None = None, windows: int = 2, min_prob: float = 0.5, max_tries: int = 4):
+    def __init__(self, fixed: str | None = None, agree: int = 2, min_prob: float = 0.7, max_tries: int = 6,
+                 fallback_prob: float = 0.5):
         self.fixed = (fixed or "").split("-")[0].lower() or None
-        self.windows = windows
+        self.agree = agree
         self.min_prob = min_prob
         self.max_tries = max_tries
+        self.fallback_prob = fallback_prob
         self.locked: str | None = None
         self.tries = 0
         self.seen: list[tuple[str, float]] = []
@@ -285,18 +295,23 @@ class LanguageLock:
         return self.fixed or self.locked
 
     def observe(self, language: str | None, prob: float) -> None:
-        if self.language is not None:
+        if self.language is not None or self.tries >= self.max_tries:
             return
         self.tries += 1
-        if language and prob >= self.min_prob:
+        if language:
             self.seen.append((language, prob))
-        if len(self.seen) >= self.windows or (self.tries >= self.max_tries and self.seen):
-            counts = Counter(lang for lang, _ in self.seen)
+        confident = Counter(lang for lang, p in self.seen if p >= self.min_prob)
+        agreed = [lang for lang, n in confident.items() if n >= self.agree]
+        if agreed:
+            self.locked = agreed[0]
+        elif self.tries >= self.max_tries:
             weight: dict[str, float] = {}
             for lang, p in self.seen:
-                weight[lang] = weight.get(lang, 0.0) + p
-            self.locked = max(counts, key=lambda lang: (counts[lang], weight[lang]))
-            log.info("idioma do ao vivo travado em %s (%s)", self.locked, dict(counts))
+                if p >= self.fallback_prob:
+                    weight[lang] = weight.get(lang, 0.0) + p
+            self.locked = max(weight, key=weight.__getitem__) if weight else None
+        if self.locked:
+            log.info("idioma do ao vivo travado em %s (%s)", self.locked, [(lang, round(p, 2)) for lang, p in self.seen])
 
 
 class Stage(StrEnum):
@@ -625,6 +640,7 @@ class LiveSession:
         self.language = LanguageLock()
         self.terms: list[str] = []
         self.eof_at: float | None = None
+        self._tx_s: float | None = None                          # custo médio de uma janela (Whisper e nome), em s
         self._cpu_at: float | None = None
         self._thread: threading.Thread | None = None
         # nomes (L3): o embedder só vale depois de carregado pela thread `live-names`
@@ -664,22 +680,23 @@ class LiveSession:
             self.streams = {ch: ChannelStream(ch, self.engines.vad(), self.seg_cfg) for ch in ("L", "R")}
         except Exception as e:
             log.exception("VAD do ao vivo não carregou")
-            return self._fail(str(e), 1)
+            return self._fail(str(e), 1, retry=not isinstance(e, LiveError))
         self._thread = threading.Thread(target=self._read_loop, name="live-stdin", daemon=True)
         self._thread.start()                                       # o VAD já fecha janelas enquanto o Whisper carrega
+        embedder = self._prepare_names(meeting) if self.hello.names else None
         t0 = time.perf_counter()
         try:
             self.transcriber = self.engines.transcriber(model, self.hello.threads)
         except Exception as e:
             log.exception("modelo %s do ao vivo não carregou", model)
-            return self._fail(str(e), 1)
+            return self._fail(str(e), 1, retry=not isinstance(e, LiveError))
         log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s)", self.meeting_id, self.transcriber.name,
                  time.perf_counter() - t0, self.hello.threads, self.engines.name)
         self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": self.hello.names,
                                              "engine": self.engines.name, "pid": os.getpid()})
         self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
-        if self.hello.names:
-            self._start_names(meeting)
+        if embedder is not None:
+            self._start_names(embedder)
         self._loop()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
@@ -692,9 +709,11 @@ class LiveSession:
         return 0
 
     # ---- nomes (L3)
-    def _start_names(self, meeting: MeetingRow) -> None:
-        """Perfis, pessoas e limiares lidos aqui (thread principal); a carga do embedder (torch) numa thread própria, para as
-        primeiras legendas não esperarem; até lá, R sai sem nome."""
+    def _prepare_names(self, meeting: MeetingRow) -> Embedder | None:
+        """Antes do Whisper (thread principal): perfis, pessoas e limiares, e o embedder criado, o que já importa o torch.
+        O torch entra antes do CTranslate2 porque, no Windows, as duas rodas trazem o seu `libiomp5md.dll` e a ordem torch
+        -> faster-whisper é a que o F0 rodou; a inversa pode abortar o processo com "OMP: Error #15" [exp]. None = sem
+        nomes nesta gravação (o motivo já foi emitido)."""
         self.people = {int(p["id"]): dict(p) for p in self.store.people.list_people()}
         me = self.store.get_me()
         self.me = dict(me) if me else None
@@ -706,12 +725,17 @@ class LiveSession:
             embedder = self.engines.embedder(self.store, self.hello.threads)
         except Exception as e:
             self._names_unavailable(str(e))
-            return
+            return None
         names = {pid: str(p.get("name") or "") for pid, p in self.people.items()}
         self.profiles = [ProfileRef(int(p["id"]), int(p["person_id"]), p["centroid"], p.get("threshold"),
                                     names.get(int(p["person_id"]), ""))
                          for p in self.store.profiles.list_profiles(embedder.model)
                          if p.get("person_id") is not None and int(p.get("n_samples") or 0) > 0]
+        return embedder
+
+    def _start_names(self, embedder: Embedder) -> None:
+        """A carga do modelo de embedding numa thread própria, para as primeiras legendas não esperarem; até lá, R sai sem
+        nome."""
         if self.names_sync:
             self._load_names(embedder)
             return
@@ -740,9 +764,11 @@ class LiveSession:
         return {"requested": self.hello.names, "ready": self.embedder is not None, "error": self.names_error,
                 "profiles": len(self.profiles), "kept": sum(n.kept for n in self.namers.values())}
 
-    def _fail(self, message: str, code: int) -> int:
+    def _fail(self, message: str, code: int, retry: bool = False) -> int:
+        """`retry` falso só no que uma nova tentativa não resolve (`LiveError`, reunião inexistente, protocolo); o resto
+        (modelo preso pelo antivírus, memória, banco ocupado) ganha a nova tentativa do app."""
         log.error("reunião %s: ao vivo não começou: %s", self.meeting_id, message)
-        self.out.emit({"type": ERROR, "message": message, "retry": False})
+        self.out.emit({"type": ERROR, "message": message, "retry": retry})
         return code
 
     # ---- leitura (thread `live-stdin`)
@@ -836,26 +862,39 @@ class LiveSession:
     def _loop(self) -> None:
         while True:
             if self.eof_at is not None and self.monotonic() - self.eof_at > self.hello.eof_grace_s:
-                left = self.queue.drain()
-                if left:
-                    self.stats.skipped += len(left)
-                    log.warning("reunião %s: prazo do fim esgotado; %d janela(s) sem legenda", self.meeting_id, len(left))
+                self._skip_rest("prazo do fim esgotado")
                 break
             job = self.queue.take(QUEUE_POLL_S)
             if job is None:
                 if self.queue.closed and not len(self.queue):
                     break
                 continue
+            if self.eof_at is not None and self.monotonic() - self.eof_at + self._tx_estimate() > self.hello.eof_grace_s:
+                self.stats.skipped += 1                          # não termina antes do prazo: o app mataria no meio, sem `bye`
+                self._skip_rest("a próxima janela não cabe no prazo do fim")
+                break
             if self.degrade.skipping(self._age(job)):            # modo pular: só a mais nova de cada canal
                 survives, dropped = self.queue.prune(job)
                 self.stats.skipped += dropped
                 if not survives:
                     continue
+            started = self.clock()
             self._transcribe(job)
+            took = max(0.0, self.clock() - started)
+            self._tx_s = took if self._tx_s is None else (1 - TX_EMA) * self._tx_s + TX_EMA * took
             latency = self._age(job)                             # o atraso que a legenda teve (ou teria)
             stage = self.degrade.update(latency)
             if stage is not None:
                 self._on_stage(stage, latency)
+
+    def _skip_rest(self, why: str) -> None:
+        left = self.queue.drain()
+        self.stats.skipped += len(left)
+        log.warning("reunião %s: %s; %d janela(s) sem legenda", self.meeting_id, why, len(left))
+
+    def _tx_estimate(self) -> float:
+        """Custo esperado da próxima janela (média móvel com folga de 20 %); antes da primeira medida, o chute."""
+        return (TX_GUESS_S if self._tx_s is None else self._tx_s) * 1.2
 
     def _on_stage(self, stage: Stage, delay: float) -> None:
         self.stats.degradations += 1
@@ -883,7 +922,6 @@ class LiveSession:
             self.stats.errors += 1
             log.exception("reunião %s: transcrição da janela %s %d-%d ms falhou", self.meeting_id, job.channel, job.start_ms, job.end_ms)
             return
-        self.language.observe(result.language, result.language_prob)
         text = caption_text(result)
         if not text:
             self.stats.filtered += 1
@@ -891,6 +929,8 @@ class LiveSession:
                       [(sg.text.strip()[:60], round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
                        for sg in result.segments])
             return
+        if job.speech >= LANG_MIN_SPEECH_S * SAMPLE_RATE:
+            self.language.observe(result.language, result.language_prob)
         person_id, label, confidence = self._name(job)
         latency_ms = round((self.clock() - (self.hello.t0_perf + job.end / SAMPLE_RATE)) * 1000)
         row = CaptionInsert(self.meeting_id, job.channel, job.start_ms, job.end_ms, text, person_id, label, confidence,
@@ -925,8 +965,13 @@ class LiveSession:
             self.stats.errors += 1
             log.exception("reunião %s: embedding da janela %s %d ms falhou", self.meeting_id, job.channel, job.start_ms)
             return None, None, None
-        match = match_one(vec, self.profiles, self.threshold, self.margin, self.expected_ids)
-        person, similarity = self.namers[job.channel].decide(vec, match)
+        try:
+            match = match_one(vec, self.profiles, self.threshold, self.margin, self.expected_ids)
+            person, similarity = self.namers[job.channel].decide(vec, match)
+        except Exception:
+            self.stats.errors += 1
+            log.exception("reunião %s: nome da janela %s %d ms falhou", self.meeting_id, job.channel, job.start_ms)
+            return None, None, None
         sim = round(float(similarity), 4) if similarity is not None and math.isfinite(similarity) else None
         if person is None:
             return None, PARTICIPANT, sim
@@ -1009,12 +1054,29 @@ def prepare(db_dir: Path | None, out: BinaryIO) -> int:
 
 
 # ---------------------------------------------------------------- entrada
-def _protocol_stdout() -> BinaryIO:
-    """Cópia do descritor 1 para o protocolo; o 1 passa a apontar para o stderr (descartado pelo app)."""
+def _platform_hooks() -> tuple[Callable[[], bool], Callable[[], None]]:
+    """(`disable_own_power_throttling`, `sync_stdout_handle`) da plataforma; a versão portável quando a camada não existe
+    (Linux antes da F7)."""
+    try:
+        from ..platform import get_platform
+
+        p = get_platform()
+    except NotImplementedError:
+        return process.disable_own_power_throttling, process.sync_stdout_handle
+    return p.disable_own_power_throttling, p.sync_stdout_handle
+
+
+def _protocol_stdout(sync_handle: Callable[[], None]) -> BinaryIO:
+    """Cópia do descritor 1 para o protocolo; o 1 passa a apontar para o stderr (descartado pelo app), e o handle padrão do
+    SO acompanha (`sync_handle`)."""
     with suppress(Exception):
         sys.stdout.flush()
     fd = os.dup(1)
     os.dup2(2, 1)
+    try:
+        sync_handle()
+    except Exception as e:
+        log.debug("handle padrão não sincronizado: %s", e)
     return os.fdopen(fd, "wb")
 
 
@@ -1031,13 +1093,14 @@ def main(argv: list[str] | None = None) -> int:
     if db_dir is None or args.meeting is None:
         print("live: informe --db DIR e --meeting ID", file=sys.stderr)  # noqa: T201
         return 2
-    out = _protocol_stdout()
+    no_throttling, sync_handle = _platform_hooks()
+    out = _protocol_stdout(sync_handle)
     try:
         store = Store.open_worker(db_dir)
     except Exception as e:
         print(f"live: não abri o banco em {db_dir}: {e}", file=sys.stderr)  # noqa: T201
-        with suppress(Exception):
-            _emit(out, {"type": ERROR, "message": f"banco indisponível: {e}", "retry": False})
+        with suppress(Exception):                                # banco ocupado passa: o app tenta de novo uma vez
+            _emit(out, {"type": ERROR, "message": f"banco indisponível: {e}", "retry": True})
         return 3
     with store:
         with suppress(Exception):
@@ -1048,11 +1111,13 @@ def main(argv: list[str] | None = None) -> int:
                 versions[dist] = metadata.version(dist)
         log_versions({"papel": "live", "pid": str(os.getpid()), "banco": str(store.base_dir), "reunião": str(args.meeting),
                       **({"modo": "fake"} if is_fake() else {}), **versions})
+        if no_throttling():
+            log.info("EcoQoS desligado no processo ao vivo %s", os.getpid())
         try:
             engines = build_engines(store)
         except Exception as e:
             log.exception("motores do ao vivo indisponíveis")
             with suppress(Exception):
-                _emit(out, {"type": ERROR, "message": str(e), "retry": False})
+                _emit(out, {"type": ERROR, "message": str(e), "retry": not isinstance(e, LiveError)})
             return 1
         return serve(sys.stdin.buffer, out, store, int(args.meeting), engines)

@@ -5,7 +5,9 @@ Roda no venv Python 3.12 do Windows (extra `pipeline` instalado). Não faz parte
   python scripts/live_probe.py whisper AUDIO [--models small,base] [--threads 2] [--offset 0] [--repeat 3] [--language pt]
   python scripts/live_probe.py vad AUDIO [--seconds 120]
   python scripts/live_probe.py torch AUDIO [--repeat 3]
-  python scripts/live_probe.py all AUDIO            torch primeiro (RSS limpo), depois vad e whisper
+  python scripts/live_probe.py all AUDIO            torch primeiro (RSS limpo), depois vad e whisper; é também a ordem
+                                                    do processo ao vivo com nomes (torch e CTranslate2 trazem cada um o
+                                                    seu libiomp5md.dll; se aparecer "OMP: Error #15", anote a ordem)
 
 AUDIO: wav/flac/mp3 (lido com soundfile; reamostrado para 16 kHz mono). Use uma gravação real de reunião com fala
 logo no começo (ou passe --offset em segundos). Cada medida imprime uma linha JSON; os números vão para

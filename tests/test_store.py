@@ -555,7 +555,7 @@ def test_captions_repo_inserts_lists_after_id_and_cascades(store):
     assert r["model"] == "faster-whisper:small:int8"
     assert r["confidence"] == pytest.approx(0.71) and r["created_at"] and rows[0]["confidence"] is None
     assert [x["id"] for x in store.captions.list_for_meeting(mid, after_id=a)] == [b]
-    assert len(store.captions.list_for_meeting(mid, limit=1)) == 1 and store.captions.count(mid) == 2
+    assert store.captions.count(mid) == 2 and store.captions.last_id(mid) == b
     store.delete_meeting(mid)                                                          # Cancelar: a FK em cascata limpa as legendas
     assert store.captions.count(mid) == 0
 

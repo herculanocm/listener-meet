@@ -52,14 +52,12 @@ class CaptionsRepo:
              None if row.confidence is None else float(row.confidence), row.model,
              None if row.latency_ms is None else int(row.latency_ms), _now()))
 
-    def list_for_meeting(self, meeting_id: int, after_id: int = 0, limit: int | None = None) -> list[CaptionRow]:
-        """Em ordem de tempo; `after_id` traz só as novas (resumo parcial e janela "Ao vivo" leem por incremento)."""
-        sql = "SELECT * FROM captions WHERE meeting_id = ? AND id > ? ORDER BY t_start_ms, id"
-        params: tuple[int, ...] = (meeting_id, int(after_id))
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (*params, int(limit))
-        return [cast(CaptionRow, dict(r)) for r in self.core.q(sql, params)]
+    def list_for_meeting(self, meeting_id: int, after_id: int = 0) -> list[CaptionRow]:
+        """Em ordem de tempo; `after_id` traz só as novas (resumo parcial e janela "Ao vivo" leem por incremento). O filho
+        grava por fim de janela, então L e R entram fora da ordem de tempo: o cursor seguinte é o maior id lido, nunca o da
+        última linha, e quem usa só parte das linhas escolhe pela ordem dos ids (revisão do L0 a L3)."""
+        return [cast(CaptionRow, dict(r)) for r in self.core.q(
+            "SELECT * FROM captions WHERE meeting_id = ? AND id > ? ORDER BY t_start_ms, id", (meeting_id, int(after_id)))]
 
     def count(self, meeting_id: int) -> int:
         return int(self.core.q("SELECT COUNT(*) FROM captions WHERE meeting_id = ?", (meeting_id,))[0][0])

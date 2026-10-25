@@ -131,3 +131,39 @@ def test_cancel_kills_the_child_before_deleting_and_a_crash_gets_one_retry(qtbot
         assert store.get_meeting(rec.meeting_id)["status"] == "gravada"
     finally:
         c.emergency_stop()
+
+
+def test_a_new_recording_lets_go_of_the_previous_child_still_closing(qtbot, qapp, store, platform, monkeypatch):
+    """Revisão do L0 a L3: o filho da gravação anterior fecha em até 10 s; se a próxima começar nesse meio (aqui sem ao vivo),
+    ele não vale como o desta: sem lease, e o fim dele não mexe no estado nem avisa queda."""
+    import threading
+
+    monkeypatch.setenv("LISTENER_LIVE", "fake")
+    store.set_setting("live.enabled", True)
+    store.set_setting("pipeline.pause_on_record", False)
+    gate = threading.Event()
+    children: list[ThreadChild] = []
+    monkeypatch.setattr(platform, "spawn_child", thread_spawner(store.base_dir, FakeEngines(before=lambda _n: gate.wait(5)), children))
+    c = _controller(qapp, platform, store, monkeypatch)
+    notes: list[str] = []
+    monkeypatch.setattr(c, "notify", notes.append)
+    try:
+        assert c.start_recording(_cfg(), {"title": "primeira"})
+        rec = c.recorder
+        qtbot.waitUntil(lambda: c.live_status == "live", timeout=5000)
+        platform.pump(1.5)
+        qtbot.waitUntil(lambda: rec.snapshot.blocks[0] >= 15, timeout=5000)    # o áudio já passou pelo desvio
+        c.stop_recording()                                                     # EOF: o filho trava na primeira janela
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert c.live is not None and children[0].returncode is None
+        assert c.start_recording(_cfg(), {"title": "segunda", "live_enabled": False})
+        assert c.live is None and c.live_status == "off" and store.get_setting("pipeline.paused_until") == ""
+        gate.set()
+        qtbot.waitUntil(lambda: children[0].returncode is not None, timeout=10000)
+        qtbot.wait(200)                                                        # o `exit` do filho velho passaria pela fila do Qt
+        assert c.live_status == "off" and not any("parou" in n for n in notes)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+    finally:
+        gate.set()
+        c.emergency_stop()

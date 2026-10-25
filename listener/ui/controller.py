@@ -770,6 +770,9 @@ class Controller(QObject):
     def _start_live(self, rec: Recorder, fields: dict[str, Any]) -> bool:
         """Depois de `rec.start()`: caixas do warm-up (`live_enabled`, `live_names`; ausentes = padrão das Configurações),
         modelos prontos, filho lançado e desvio ligado. Qualquer falha só deixa a gravação sem ao vivo."""
+        old, self.live = self.live, None                 # o filho da gravação anterior ainda fechando (até 10 s) termina
+        if old is not None:                              # sozinho: sem lease, legendas nem queda nesta (revisão do L0 a L3)
+            old.on_message = lambda _msg: None
         self.live_last_caption = None
         self.live_names_status = ""
         self._live_retries = 0

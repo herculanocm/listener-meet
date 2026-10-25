@@ -137,6 +137,10 @@ class Platform(Protocol):
     # F4: processo ao vivo preso ao app, com stdin e stdout binários (stderr descartado), prioridade abaixo do normal e,
     # no Windows, sem janela e com o EcoQoS desligado; morre com a gravação
     def spawn_child(self, argv: list[str], env: Mapping[str, str] | None = None) -> ChildProcess: ...
+    # F4, chamados pelo próprio filho ao vivo ao nascer: num venv do Windows o pid do `Popen` é o do lançador, então o
+    # EcoQoS se desliga de dentro; e, depois do `dup2` do fd 1, o handle padrão do SO passa a seguir o fd
+    def disable_own_power_throttling(self) -> bool: ...
+    def sync_stdout_handle(self) -> None: ...
     def lower_own_priority(self) -> bool: ...        # o worker se rebaixa ao nascer (nunca `preexec_fn`)
     def memory_rss(self) -> int | None: ...          # RSS do próprio processo em bytes, só para o log
 

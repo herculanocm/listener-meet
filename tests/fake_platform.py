@@ -283,6 +283,14 @@ class FakePlatform(Platform):
         return child
 
     @override
+    def disable_own_power_throttling(self) -> bool:
+        return False
+
+    @override
+    def sync_stdout_handle(self) -> None:
+        pass
+
+    @override
     def lower_own_priority(self) -> bool:
         self.lowered += 1
         return True
