@@ -15,7 +15,7 @@ legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQ
 | Transcrição | `listener/pipeline/` | faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028); wav2vec2 opcional; glossário no `initial_prompt`; idioma por reunião (D-013). Ao vivo: VAD e janelas de ~8 s (D-005) | F2, F4 |
 | Identificação | `listener/pipeline/` | L = usuário (salvo preset sala, U-015). R: pyannote community-1 diariza; embedding por cluster; cosseno contra perfis persistentes (centroide por pessoa, limiar 0,60 com margem e autocalibração, D-008); confirmações reforçam o perfil | F2 |
 | Inteligência | `listener/llm/` | Interface única de provedor (texto, JSON, áudio, embeddings) com adaptadores Gemini, GPT e Claude; prompts e esquemas do projeto. Glossário, resumo parcial, identidade por contexto abaixo do limiar, título, pré-resumo, ata, resumo executivo, transcrição revisada, chat e RAG | F3 |
-| Base | `listener/store/` | `listener.db` e `listener-audio.db` anexados (D-003), WAL; FTS5 e sqlite-vec (D-024); modelo e dimensão por vetor (D-009) | F1, F5 |
+| Base | `listener/store/` | `listener.db` mais um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), WAL; conexão por thread, migrações atômicas por arquivo, `Store` como fachada dos repositórios por domínio; FTS5 e sqlite-vec (D-024); modelo e dimensão por vetor (D-009) | F1, F5 |
 | Interface | `listener/ui/` | PySide6: assistente de primeiro uso, warm-up, widget flutuante, bandeja, resumo, configurações mínimas; janela principal completa na F6 | F1, F6 |
 | Config | `listener/config/` | Padrões das settings e o ponteiro da pasta do banco (D-029) | F1 |
 | Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, nível configurável (D-033) | F1.1 |
@@ -33,9 +33,11 @@ legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQ
 5. Histórico, perfis e chat com RAG citando [mm:ss]; clique toca o áudio.
 
 ## Processos e threads
-App Qt na thread principal. Callbacks de áudio só copiam para os chunkers. Uma thread de trabalho faz mono,
-reamostragem, FLAC e grava no banco. F2: worker em subprocesso de prioridade baixa que lê e escreve só no banco (WAL,
-`busy_timeout`).
+App Qt na thread principal; parada, mudo do sistema e atalhos em QThreads próprias. Callbacks de áudio só enfileiram
+blocos imutáveis; uma thread de trabalho (não daemon) faz mono, reamostragem com estado, pedaços, FLAC e grava com
+retentativa, publicando um snapshot imutável para a interface; uma conexão SQLite por thread (F1.2). F2: worker em
+subprocesso de prioridade baixa que lê e escreve só no banco (WAL, `busy_timeout`). `from __future__ import annotations`
+fica em todo módulo até o piso subir para 3.14 (PEP 649); sai em bloco.
 
 ## Stack
 Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy ·

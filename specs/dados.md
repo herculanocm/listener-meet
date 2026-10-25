@@ -1,9 +1,10 @@
 # Modelo de dados canônico (CP9)
 
 Quando ler: ao tocar em qualquer tabela (T2). Dono único das tabelas; as specs citam a tabela e só descrevem o que muda.
-O que existe está em `listener/store/schema.py`. `listener.db` (main) mais os arquivos de áudio anexados (D-003, D-039):
-um por mês, `listener-audio-AAAA-MM.db` (schema `audio` para o mês corrente; os outros anexados sob demanda), cada um com
-`audio_chunks` e `schema_migrations`; WAL em todos; FK ligadas no main. Layout do áudio: `page_size` 32 KB (F1.2 M-19).
+O que existe está em `listener/store/schema.py` e `core.py`. `listener.db` (main) mais um arquivo de áudio por mês de
+`meetings.started_at`, `listener-audio-AAAA-MM.db` (schema `audio_AAAA_MM`; o do mês corrente anexado na abertura, os outros
+sob demanda, até 8 por conexão; D-003, D-039), cada um com `audio_chunks` e `schema_migrations` próprios; o `listener-audio.db`
+da F1 segue lido como schema `audio`. WAL em todos; FK só no main. `page_size` 32 KB no áudio (M-19; legado pequeno recebe VACUUM).
 Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho-alvo: 4 KB.
 
 | Tabela | Arquivo | Colunas principais | Fase | Estado |
@@ -12,8 +13,8 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 | presets | main | id, name UNIQUE, mic_device_id, mic_device_name, source_kind (`app` ou `system`), source_exe, sample_rate, is_in_room | F1 | v1 |
 | people | main | id, name, email, role, company, notes, is_me | F1 | v1 |
 | providers | main | id PK texto, kind, api_key, model, params, is_active_llm, is_active_embed | F1 vazia; F2 linha `huggingface`; F3 | v1 |
-| meetings | main | id, title, title_llm, started_at, ended_at, duration_ms, platform, preset_id, status, expected_participants, is_in_room, notes. Status: gravando, pausada, gravada, cancelada, interrompida; F2: processada, revisada | F1 | v1 |
-| audio_chunks | audio | id, meeting_id, channel (L ou R), idx, t_start_ms, frames, sample_rate, gap_frames, flac BLOB; UNIQUE(meeting_id, channel, idx) | F1 | v1 |
+| meetings | main | id, title, title_llm, started_at, ended_at, duration_ms, platform, preset_id, status, expected_participants, is_in_room, notes, audio_file (v3: arquivo de áudio da reunião). Status: gravando, pausada, gravada, cancelada, interrompida; F2: processada, revisada | F1 | v3 |
+| audio_chunks | audio_AAAA_MM (um por mês; `audio` = legado) | id, meeting_id, channel (L ou R), idx, t_start_ms, frames, sample_rate, gap_frames, flac BLOB; UNIQUE(meeting_id, channel, idx); sem FK entre arquivos: órfãos só são reportados (CP3) | F1 | v1 |
 | markers | main | id, meeting_id (FK cascade), t_ms, note | F1 | v1 |
 | events | main | id, meeting_id (FK cascade; nulo = evento do app), t_ms, type, data JSON. Tipos: start, pause, resume, mute, unmute, marker, source_change, device_lost, alert, warning, stop, cancel, error | F1 | v1 |
 | revisions | main | id, entity, entity_id, field, before, after, author (só acréscimo) | F1 | v1 |
@@ -28,12 +29,13 @@ Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho
 | processing_jobs | main | id, meeting_id, status (pendente, rodando, pausado, concluído, erro, cancelado), step, progress, error, attempts, started_at, finished_at, timings_json, heartbeat_at, worker_pid, claimed_at (F1.2 M-20) | F2 | planejada |
 | clusters | main | id, meeting_id, channel, cluster, speech_ms, centroid BLOB, person_id, similarity, margin, status (auto, confirmado, ambíguo, sem nome, ignorado) | F2 | planejada |
 
-Índices v1: markers(meeting_id, t_ms); events(meeting_id, t_ms); audio.idx_chunks_meeting(meeting_id, channel, t_start_ms).
+Índices v1: markers(meeting_id, t_ms); events(meeting_id, t_ms); idx_chunks_meeting(meeting_id, channel, t_start_ms) em cada arquivo de áudio.
 
 Regras: nada apaga dados (CP3), salvo Cancelar da gravação em curso e Reprocessar (só clusters e segments da reunião);
 `revisions` registra toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
 `listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`, `ui.widget_pos`,
-`ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`. Esquema: v2 (datas com offset, F1.1 A5); v3 na F1.2 (`meetings.audio_file`,
-`user_version` por arquivo, áudio mensal). Detalhe final após a implementação da F1.2.
+`ui.widget_size`, `warmup.last_*`; F2: `pipeline.*`; tipo, faixa e escopo na tabela `SPECS` (M-24). Esquema do main: v1 (F1),
+v2 (datas com offset, A5), v3 (`meetings.audio_file`); áudio: v1 tabela, v2 datas, por arquivo; `user_version` acompanha;
+cada migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo `json_default` (numpy e datas; o resto é erro).
 Fora do SQLite, por decisão: o ponteiro `db-location.json` na pasta de configuração do sistema (D-029) e o arquivo de log
 rotativo escolhido pelo usuário (D-033).
