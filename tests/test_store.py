@@ -21,9 +21,9 @@ def test_monthly_audio_file_and_schema(tmp_path):
     current = s.core.current_audio_file()
     assert (tmp_path / "db" / "listener.db").exists() and (tmp_path / "db" / current).exists()
     assert re.fullmatch(r"listener-audio-\d{4}-\d{2}\.db", current) and s.audio_files() == [current]
-    assert s.schema_version() == 4
+    assert s.schema_version() == 5
     with s.connection() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
         assert c.execute(f"PRAGMA {schema_for(current)}.page_size").fetchone()[0] == AUDIO_PAGE_SIZE
         assert c.execute(f"PRAGMA {schema_for(current)}.journal_mode").fetchone()[0] == "wal"
         assert c.execute(f"PRAGMA {schema_for(current)}.synchronous").fetchone()[0] == 1
@@ -134,7 +134,7 @@ def test_dates_have_offset_and_migration_v2_rewrites_old_rows(tmp_path):
     s._x("DELETE FROM schema_migrations WHERE version > 1")
     s.close()
     s2 = Store(tmp_path)
-    assert s2.schema_version() == 4
+    assert s2.schema_version() == 5
     created = s2.get_me()["created_at"]
     assert created.startswith("2026-10-24T18:03:12.345") and re.search(r"[+-]\d\d:\d\d$", created)
     assert with_offset("") == "" and with_offset(None) is None and with_offset("lixo") == "lixo"
@@ -241,7 +241,7 @@ def test_migration_failure_rolls_back_whole_step(tmp_path, monkeypatch):
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 4 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
+        assert ok.schema_version() == 5 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
 
 
 def test_two_connections_wait_for_each_other(tmp_path):
@@ -308,7 +308,7 @@ def test_v4_creates_queue_tables_and_rolls_back_in_the_middle(tmp_path, monkeypa
     raw.execute("DROP TABLE processing_jobs")
     raw.execute("DROP TABLE clusters")
     raw.execute("DROP TABLE job_artifacts")
-    raw.execute("DELETE FROM schema_migrations WHERE version = 4")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 4")
     raw.execute("PRAGMA user_version = 3")
     raw.close()                                   # as colunas novas de segments/meetings ficam: a v4 precisa tolerar isso
 
@@ -325,7 +325,7 @@ def test_v4_creates_queue_tables_and_rolls_back_in_the_middle(tmp_path, monkeypa
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 4
+        assert ok.schema_version() == 5
         with ok.connection() as c:
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
@@ -362,7 +362,7 @@ def test_worker_role_writes_main_reads_audio_and_refuses_old_schema(tmp_path):
         assert c.execute(f"PRAGMA {schema}.mmap_size").fetchone()[0] == AUDIO_MMAP_BYTES
     w.close()
     raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
-    raw.execute("DELETE FROM schema_migrations WHERE version = 4")
+    raw.execute("DELETE FROM schema_migrations WHERE version = 5")
     raw.close()
     with pytest.raises(RuntimeError, match="abra o app"):                        # o worker nunca migra
         Store.open_worker(tmp_path)
@@ -393,3 +393,39 @@ def test_every_connection_is_opened_with_uri_support(tmp_path, monkeypatch):
         assert all("?" not in f and not f.startswith("file:") for f in files.values())      # URI resolvida em caminho real
     Store.open_readonly(tmp_path).close()
     assert seen and all(uri for _, uri in seen), seen
+
+
+def test_v5_adds_review_columns_to_a_database_already_in_v4(tmp_path):
+    """N-01: um banco que ficou em v4 (sem `calib_n` nem `cluster_id`) ganha as colunas na v5 e a confirmação funciona."""
+    from listener.model import ClusterStatus
+    from listener.store.segments import ClusterInsert
+
+    with Store(tmp_path):
+        pass
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("ALTER TABLE voice_profiles DROP COLUMN calib_n")
+    raw.execute("ALTER TABLE voice_embeddings DROP COLUMN cluster_id")
+    raw.execute("DELETE FROM schema_migrations WHERE version = 5")
+    raw.execute("PRAGMA user_version = 4")
+    raw.close()
+    with pytest.raises(RuntimeError, match="abra o app"):
+        Store.open_worker(tmp_path)                                               # v4 < 5: o worker espera o app migrar
+    with Store(tmp_path) as s:
+        assert s.schema_version() == 5
+        with s.connection() as c:
+            assert c.execute("PRAGMA user_version").fetchone()[0] == 5
+            assert "calib_n" in {r[1] for r in c.execute("PRAGMA table_info(voice_profiles)")}
+            assert "cluster_id" in {r[1] for r in c.execute("PRAGMA table_info(voice_embeddings)")}
+        mid = s.create_meeting("v5", None, None, None)
+        s.finish_meeting(mid, 1000)
+        job = s.jobs.enqueue(mid)
+        ids = s.segments.insert_clusters([ClusterInsert(mid, job, "R", "SPK_0", 5000, np.ones(4, np.float32), "m", ClusterStatus.UNNAMED)])
+        ana = s.people.create_person("Ana")
+        from listener.pipeline import review
+
+        assert review.confirm(s, ids["SPK_0"], ana) == ana
+        p = s.profiles.profile_for(ana, "m")
+        assert p["n_samples"] == 1 and p["calib_n"] in (None, 0)
+        assert s._q("SELECT cluster_id FROM voice_embeddings")[0][0] == ids["SPK_0"]
+    with Store(tmp_path) as again:                                                # reabrir não refaz nada
+        assert again.schema_version() == 5

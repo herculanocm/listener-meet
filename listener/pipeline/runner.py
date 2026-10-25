@@ -172,10 +172,12 @@ class JobRunner:
         if self.kind == JobKind.REPROCESS or others:
             with self.store.transaction():
                 self._transport_decisions(others)
-                self.store.segments.swap_job(self.meeting_id, self.job_id, MeetingStatus.PROCESSED,
-                                             downgrade_reviewed=self._pending_voices())
+                # só vozes novas que ficaram pendentes depois do transporte rebaixam `revisada` (R2-11); no primeiro
+                # processamento "Concluir" com voz sem nome é decisão do usuário e a reunião fica `revisada`
+                downgrade = self.kind == JobKind.REPROCESS and self._pending_voices()
+                self.store.segments.swap_job(self.meeting_id, self.job_id, MeetingStatus.PROCESSED, downgrade_reviewed=downgrade)
         else:
-            self.store.meetings.mark_processed(self.meeting_id, force=self._pending_voices())
+            self.store.meetings.mark_processed(self.meeting_id, force=False)
         self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.DONE, timings=self._timings_dict())
         self.store.set_setting("pipeline.rtf_json", update_rtf(self.store.get_setting("pipeline.rtf_json"), self.timings))
@@ -185,14 +187,15 @@ class JobRunner:
         return JobStatus.DONE
 
     def _cancelled(self) -> JobStatus:
-        """Sem decisão humana nos clusters do job, eles saem com os artefatos (dado derivado); com decisão, ficam com o
-        artefato da costura, para o trecho de 5 s e para a nova tentativa reaproveitar os mesmos ids (R2-10)."""
+        """Sem decisão humana nos clusters do job, eles saem com os artefatos (dado derivado); com decisão, ficam com os
+        artefatos da diarização, do embed do L e da costura: o trecho de 5 s continua disponível e a nova tentativa
+        reaproveita os mesmos ids sem refazer horas de diarização (R2-10, N-03)."""
         clusters = self.store.segments.list_clusters(self.meeting_id, self.job_id)
         decided = any(str(c["status"]) in (ClusterStatus.CONFIRMED, ClusterStatus.IGNORED) or c.get("merged_into") is not None
                       for c in clusters if not (c["channel"] == "L" and c["cluster"] == USER_CLUSTER))
         with self.store.transaction():
             if decided:
-                self.store.jobs.delete_artifacts(self.job_id, keep=(STITCH_ARTIFACT,))
+                self.store.jobs.delete_artifacts(self.job_id, keep=(STITCH_ARTIFACT, str(JobStep.DIARIZE), EMBED_L_ARTIFACT))
             else:
                 self.store.segments.delete_clusters(self.meeting_id, self.job_id)
                 self.store.jobs.delete_artifacts(self.job_id)

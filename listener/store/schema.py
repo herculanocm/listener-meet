@@ -1,7 +1,8 @@
 """Esquema do banco: migrações numeradas por arquivo (F1.1 A6, F1.2 M-01/M-02). Tabelas em specs/dados.md.
 
 main (`listener.db`): v1 = F1; v2 = datas com fuso (A5); v3 = `meetings.audio_file` (áudio mensal, M-19/D-039);
-v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2).
+v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2); v5 = `voice_profiles.calib_n` e
+`voice_embeddings.cluster_id` (correções da revisão da F2).
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -88,8 +89,11 @@ MAIN_V4: tuple[str, ...] = (
 MAIN_V4_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("segments", "words_json", "TEXT"), ("segments", "cluster_id", "INTEGER"), ("segments", "job_id", "INTEGER"),
     ("voice_profiles", "threshold", "REAL"), ("voice_profiles", "sim_mean", "REAL"), ("voice_profiles", "sim_std", "REAL"),
-    ("voice_profiles", "calib_n", "INTEGER"),
-    ("voice_embeddings", "platform", "TEXT"), ("voice_embeddings", "cluster_id", "INTEGER"), ("meetings", "language", "TEXT"),
+    ("voice_embeddings", "platform", "TEXT"), ("meetings", "language", "TEXT"),
+)
+# v5: um banco que já estava em v4 não ganharia colunas acrescentadas à lista da v4 (migração é versionada)
+MAIN_V5_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("voice_profiles", "calib_n", "INTEGER"), ("voice_embeddings", "cluster_id", "INTEGER"),
 )
 
 AUDIO_V1: tuple[str, ...] = (
@@ -118,6 +122,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (2, None),        # datas com offset (A5)
     (3, None),        # meetings.audio_file (ALTER TABLE idempotente em Python) preenchido com o arquivo legado (M-19)
     (4, MAIN_V4),     # F2: tabelas da fila e dos clusters; colunas novas em Python (MAIN_V4_COLUMNS)
+    (5, None),        # F2 revisão: calib_n e voice_embeddings.cluster_id (MAIN_V5_COLUMNS)
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

@@ -52,8 +52,9 @@ nesta fase (Q6) · fila pausa em gravação (Q7) · embeddings do pipeline se ex
    `decode_range` (buracos viram silêncio; reamostra para 16 kHz se a taxa gravada for outra). Whisper: 600 s nominais,
    corte no maior silêncio (RMS abaixo de `capture.silence_rms` por 300 ms ou mais) a ±15 s do ponto, sem sobreposição;
    sem silêncio, corte seco com 2 s de sobreposição e dedup pelo centro da palavra; janela sem fala (RMS) é pulada sem
-   chamar o modelo. pyannote: janelas de até `pipeline.diar_window_s` (3600) com 30 s de sobreposição; 1 h de reunião é
-   uma janela. Nunca mais que isso em memória (230 MB por hora em float32). Sem `blobopen`.
+   chamar o modelo. pyannote: janelas de até `pipeline.diar_window_s` (padrão 1200; 300 a 7200) com 30 s de
+   sobreposição e costura entre elas (3 emendas por hora; a janela corrente termina em cerca de 16 min de relógio a
+   0,8x). Nunca mais que isso em memória (77 MB por janela em float32). Sem `blobopen`.
 5. **Transcrição (D-028).** faster-whisper com `word_timestamps`, `vad_filter` (`min_silence_duration_ms=500`), `beam_size=5`,
    `condition_on_previous_text=False`, `hallucination_silence_threshold=2.0`; descartar segmentos com `no_speech_prob`
    acima de 0,6 ou `avg_logprob` abaixo de −1,0. `initial_prompt` = glossário fixo + participantes esperados + título,
@@ -159,10 +160,10 @@ suíte de testes abaixo de 5 s sem modelos.
 
 ## Riscos
 pyannote não medido (R-1: sonda de RTF no primeiro job; plano B) · memória do clustering cresce com o quadrado em áudio
-longo (R-2: janela de 60 min, descarregar ocioso) · dois processos no SQLite (R-3: WAL, `busy_timeout`, transações
+longo (R-2: janela de 20 min, descarregar ocioso) · dois processos no SQLite (R-3: WAL, `busy_timeout`, transações
 curtas, áudio `mode=ro`, até 8 anexos) · modelos sem rede ou token (R-4: item 17) · codec por plataforma (R-5: Q9, medir
 no G2) · fala sobreposta (R-6: só turnos limpos; `confidence` baixa marcada) · gravação com worker rodando (R-8: lease,
-janela corrente termina em até 7 min de relógio) · interface congelando (R-9: só metadados; áudio no clique) ·
+janela corrente termina em até 7 min de relógio no Whisper e em cerca de 16 min na diarização) · interface congelando (R-9: só metadados; áudio no clique) ·
 PyInstaller (R-10: `worker_command` resolve `sys.frozen`; venv e atalho continuam) · alucinação em silêncio (R-11: VAD,
 pular janela sem fala) · dois workers (R-12: claim com `NOT EXISTS` fresco; `poll()`) · clique com desvio (R-14:
 primeira palavra − 150 ms).
@@ -215,6 +216,21 @@ usuário nasce `confirmado` e fica fora da revisão; o corte de janela cai no po
 pyannote baixa pelo cache em `HF_HOME` dentro da pasta de modelos, com marca `.ready` e modo offline após a primeira
 carga completa. Medido no WSL: `iter_windows` com janela de 600 s tem pico de 1,35x a janela (51,9 MB) e 5x com janela
 de 60 s sobre pedaços de 60 s (19 MB; a busca de silêncio puxa o pedaço seguinte); runner falso em 13 ms para 3 s de
+Revisão adversarial do diff (25/10, R2-01 a R2-27 e segunda passada N-01 a N-03), tudo corrigido com teste por item: o
+app relança o worker quando há job ativo sem heartbeat fresco; `uri=True` em todas as conexões; segmentos numa só
+transação com os parciais apagados; clusters relidos do banco antes dos segmentos (confirmação durante o Whisper chega a
+`segments.person_id`); transporte não sobrescreve decisão tomada no reprocessamento; um vetor `automatico` por reunião;
+`resolve_person` só com `auto` ou `confirmado` (leitura e mescla); correção de pessoa invalida o vetor anterior (`source
+= invalidado`, `cluster_id` em `voice_embeddings`); cancelar sem decisão limpa clusters, com decisão guarda diarização,
+embed do L e costura; `revisada` só volta a `processada` quando um reprocessamento deixa vozes novas pendentes; Sair
+gravando enfileira; token no `deps_key`; `request_cancel` atômico; `auto` só para o melhor da linha e desempate sem
+repetir pessoa; job vigente = concluído mais recente; Welford com `calib_n`; offline no módulo vivo; progresso por canal
+no preset sala; retomada sem decodificar janelas prontas; `job_id` nulo preservado na troca; dimensão do embedding pelo
+primeiro vetor; reuniões sem job entram na fila ao abrir; notas de transporte estáveis; `reload` da revisão só quando os
+clusters mudam. Migração v5 (`voice_profiles.calib_n`, `voice_embeddings.cluster_id`): colunas da revisão em versão
+própria, para um banco já em v4 ganhá-las. Desvio de spec decidido pelo dono: `pipeline.diar_window_s` padrão 1200 s
+(era 3600; R-8: a janela corrente termina em cerca de 16 min a 0,8x; 3 emendas por hora pela costura já testada); item
+4, R-2 e R-8 alinhados.
 áudio; suíte de 128 testes em 4,1 s (85 em 3,1 s antes), ruff e mypy limpos (Linux e `--platform win32`). Só o Windows
 com token (B4) verifica: carga e RTF do faster-whisper e do pyannote community-1, `speaker_embeddings` e o id do modelo
 de embedding (Q8, logado na primeira execução), wespeaker por turno, download com `HF_HOME` sem symlink, erros

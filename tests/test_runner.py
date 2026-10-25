@@ -396,14 +396,18 @@ def test_cancel_removes_undecided_clusters_but_keeps_decided_ones_with_stitch(pl
             acted.append(items[0].cluster_id)
             store.jobs.request_cancel(job2)
 
-    _, status = _run(store, FakeDeps(SCRIPT, before=confirm_then_cancel))
+    deps2 = FakeDeps(SCRIPT, before=confirm_then_cancel)
+    _, status = _run(store, deps2)
     assert status == JobStatus.CANCELLED
     kept = store.segments.list_clusters(mid2, job2)
     assert len(kept) == 2 and store.jobs.artifact_indexes(job2, "stitch") == {0}            # o L do usuário nasce nos segmentos
-    assert store._q("SELECT COUNT(*) FROM job_artifacts WHERE step != 'stitch'")[0][0] == 0
+    assert store.jobs.artifact_indexes(job2, "diarize") == {0, 1} and store.jobs.artifact_indexes(job2, "embed_l")   # N-03
+    assert store._q("SELECT COUNT(*) FROM job_artifacts WHERE step NOT IN ('stitch', 'diarize', 'embed_l')")[0][0] == 0
     assert review.clip_range(store, acted[0]) is not None                                   # trecho de 5 s pela costura
     assert store.jobs.retry(job2)
-    _, status = _run(store, FakeDeps(SCRIPT))
+    deps3 = FakeDeps(SCRIPT)
+    _, status = _run(store, deps3)
+    assert deps3.tones.calls == [] and deps3.tone_embedder.calls == 0                        # nada da diarização refeito
     assert status == JobStatus.DONE and len(store.segments.list_clusters(mid2, job2)) == 3
     c = store.segments.get_cluster(acted[0])
     assert c["status"] == ClusterStatus.CONFIRMED and c["person_id"] == ana
@@ -429,6 +433,21 @@ def test_review_finished_during_transcription_is_not_downgraded(platform, store)
 
     _, status = _run(store, FakeDeps(SCRIPT, before=user_finishes))
     assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED
+    # primeiro processamento: "Concluir" deixando uma voz sem nome é decisão do usuário; o fim do job não rebaixa
+    mid_b = _record(type(platform)(platform.tmp), store)
+    store.jobs.enqueue(mid_b)
+    acted: list[int] = []
+
+    def confirm_one_and_finish(window):
+        if window.channel == "L" and not acted:
+            items = review.review_items(store, mid_b)
+            review.confirm(store, items[0].cluster_id, store.people.find_by_name("Ana")["id"])
+            review.finish(store, mid_b)
+            acted.append(items[1].cluster_id)
+
+    _, status = _run(store, FakeDeps(SCRIPT, before=confirm_one_and_finish))
+    assert status == JobStatus.DONE and store.get_meeting(mid_b)["status"] == MeetingStatus.REVIEWED
+    assert store.segments.get_cluster(acted[0])["status"] == ClusterStatus.UNNAMED
     store.jobs.enqueue(mid, JobKind.REPROCESS)                                             # tudo transportado: continua revisada
     _, status = _run(store, FakeDeps(SCRIPT))
     assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED

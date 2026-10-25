@@ -25,7 +25,7 @@ import numpy as np
 from ..log import get_logger
 from ..model import StoreRole
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS,
-                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS)
+                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS)
 
 log = get_logger("store")
 
@@ -121,16 +121,26 @@ def _main_v3_audio_file(core: Core, conn: sqlite3.Connection, schema: str) -> No
             log.warning("%d reunião(ões) anteriores sem o arquivo de áudio legado %s na pasta", n, LEGACY_AUDIO_FILE)
 
 
-def _main_v4_pipeline(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
-    """Colunas da F2 em tabelas que já existem, só se faltarem (`ALTER TABLE ADD COLUMN` não é idempotente); as tabelas
-    novas e os índices vêm de `MAIN_V4` na mesma transação."""
-    for table, column, type_ in MAIN_V4_COLUMNS:
+def _add_columns(conn: sqlite3.Connection, schema: str, columns: tuple[tuple[str, str, str], ...]) -> None:
+    """`ALTER TABLE ADD COLUMN` só se a coluna faltar (o ALTER não é idempotente)."""
+    for table, column, type_ in columns:
         cols = {r[1] for r in conn.execute(f"PRAGMA {schema}.table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {schema}.{table} ADD COLUMN {column} {type_}")
 
 
-MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline}
+def _main_v4_pipeline(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """Colunas da F2 em tabelas que já existem; as tabelas novas e os índices vêm de `MAIN_V4` na mesma transação."""
+    _add_columns(conn, schema, MAIN_V4_COLUMNS)
+
+
+def _main_v5_review_columns(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """`voice_profiles.calib_n` (Welford só com similaridades medidas) e `voice_embeddings.cluster_id` (invalidação por voz)."""
+    _add_columns(conn, schema, MAIN_V5_COLUMNS)
+
+
+MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
+                                              5: _main_v5_review_columns}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 
