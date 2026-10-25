@@ -51,6 +51,9 @@ def setup(level: str = "INFO") -> logging.Logger:
         qh = logging.handlers.QueueHandler(q)
         qh.name = QUEUE_HANDLER
         log.addHandler(qh)
+        from .llm.redact import install_log_filter
+
+        install_log_filter(LOGGER_NAME)           # chaves de API nunca chegam a stderr nem ao arquivo (CP10, F3 R-6)
         stderr = logging.StreamHandler(sys.stderr)
         stderr.name = STDERR_HANDLER
         stderr.setFormatter(logging.Formatter(_FORMAT))

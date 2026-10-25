@@ -98,3 +98,38 @@ def test_adapter_modules_are_not_imported_by_app_modules_statically():
                     offenders.append(f"{path.name}: from {'.' * node.level}{mod}")
                 offenders += [f"{path.name}: {a.name}" for a in node.names if node.level and a.name in banned_local and not mod]
     assert offenders == []
+
+
+def test_llm_sdks_are_not_imported_at_module_level_outside_the_adapters():
+    """Regra dura da F3 (F3A-24): `llm/registry.py`, `types.py`, `schema.py`, `base.py`, `fake.py`, `prompts/*`, `ui/*`, o
+    runner e o worker nunca importam `google`, `openai`, `anthropic`, `httpx`, `httpx2`, `truststore` nem `pydantic` no
+    nível do módulo; só `llm/gemini.py`, `llm/openai.py` e `llm/anthropic.py` podem."""
+    import ast
+
+    root = Path(__file__).resolve().parent.parent / "listener"
+    adapters = {"gemini.py", "openai.py", "anthropic.py"}
+    files = [p for p in (root / "llm").rglob("*.py") if p.name not in adapters] + list((root / "ui").glob("*.py")) + [
+        root / "pipeline" / "runner.py", root / "pipeline" / "worker.py", root / "pipeline" / "jobbase.py", root / "store" / "core.py",
+        root / "__main__.py"]
+    steps = root / "pipeline" / "llm_steps.py"
+    if steps.exists():
+        files.append(steps)
+    banned = {"google", "openai", "anthropic", "httpx", "httpx2", "truststore", "pydantic", "msgspec", "torch"}
+    offenders: list[str] = []
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [(node.module or "").split(".")[0]]
+            offenders += [f"{path.relative_to(root)}: {n}" for n in names if n in banned]
+    assert offenders == []
+    # pydantic e msgspec não entram no código do projeto nem na suíte, nem dentro de função (contrato "Saída estruturada")
+    for path in list(root.rglob("*.py")) + list((root.parent / "tests").glob("*.py")):
+        for any_node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(any_node, ast.Import):
+                assert not any(a.name.split(".")[0] in ("pydantic", "msgspec") for a in any_node.names), path
+            elif isinstance(any_node, ast.ImportFrom):
+                assert (any_node.module or "").split(".")[0] not in ("pydantic", "msgspec"), path

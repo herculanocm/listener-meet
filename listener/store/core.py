@@ -11,12 +11,14 @@ Cada arquivo de áudio tem `schema_migrations` e `audio_chunks` próprios, `page
 """
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from datetime import date, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +27,7 @@ import numpy as np
 from ..log import get_logger
 from ..model import StoreRole
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS,
-                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS)
+                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES)
 
 log = get_logger("store")
 
@@ -61,7 +63,8 @@ def with_offset(value: str | None) -> str | None:
 
 
 def json_default(o: object) -> Any:
-    """Serializa numpy e datas em `events.data`; o resto levanta `TypeError` em vez de virar texto (M-14)."""
+    """Serializa numpy, datas, dataclasses (`asdict`), enumerações e conjuntos (lista ordenada) em `events.data`,
+    `config_json` e `llm_calls`; o resto levanta `TypeError` em vez de virar texto (M-14, F3 item 16)."""
     if isinstance(o, np.integer):
         return int(o)
     if isinstance(o, np.floating):
@@ -70,6 +73,14 @@ def json_default(o: object) -> Any:
         return o.tolist()
     if isinstance(o, datetime | date):
         return o.isoformat()
+    if isinstance(o, Enum):
+        return o.value
+    if dataclasses.is_dataclass(o) and not isinstance(o, type):
+        return dataclasses.asdict(o)
+    if isinstance(o, frozenset | set):
+        return sorted(o, key=lambda v: (str(type(v)), str(v)))
+    if isinstance(o, bytes | bytearray | memoryview):
+        return f"<{len(o)} bytes>"
     raise TypeError(f"não sei serializar {type(o).__name__} em JSON")
 
 
@@ -139,8 +150,28 @@ def _main_v5_review_columns(_core: Core, conn: sqlite3.Connection, schema: str) 
     _add_columns(conn, schema, MAIN_V5_COLUMNS)
 
 
+def _main_v6_llm(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """F3: colunas da camada de LLM em tabelas existentes, índice sobre `summaries.job_id`, sementes de `llm_prices` e as
+    linhas dos três provedores (Gemini ativo por padrão para texto e embeddings quando nenhum está, CP14)."""
+    from ..llm.costs import PRICE_SEEDS
+
+    _add_columns(conn, schema, MAIN_V6_COLUMNS)
+    for sql in MAIN_V6_INDEXES:
+        conn.execute(sql.format(s=schema))
+    now = _now()
+    conn.executemany(f"INSERT OR IGNORE INTO {schema}.llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, "  # noqa: S608
+                     "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     [(p.provider, p.model, p.input_usd_m, p.output_usd_m, p.cached_usd_m, p.audio_usd_m, now) for p in PRICE_SEEDS])
+    for pid in ("gemini", "openai", "anthropic"):
+        conn.execute(f"INSERT OR IGNORE INTO {schema}.providers(id, kind, updated_at) VALUES (?, ?, ?)", (pid, pid, now))  # noqa: S608
+    for col in ("is_active_llm", "is_active_embed"):
+        active = conn.execute(f"SELECT COUNT(*) FROM {schema}.providers WHERE {col} = 1").fetchone()[0]  # noqa: S608
+        if not active:
+            conn.execute(f"UPDATE {schema}.providers SET {col} = 1 WHERE id = 'gemini'")  # noqa: S608
+
+
 MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
-                                              5: _main_v5_review_columns}
+                                              5: _main_v5_review_columns, 6: _main_v6_llm}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 

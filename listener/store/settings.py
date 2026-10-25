@@ -62,11 +62,16 @@ class SettingsRepo:
         return dict(rows[0]) if rows else None
 
     def upsert_provider(self, provider_id: str, kind: str, api_key: str | None = None, model: str | None = None,
-                        params: str | None = None) -> None:
+                        params: str | None = None, clear_key: bool = False) -> None:
+        """Cria ou atualiza só o que foi passado (F3A-07: antes zerava `model` e `params` ao salvar o token HF).
+        `api_key` vazia ou None com `clear_key` apaga a chave; sem `clear_key`, None mantém a atual."""
+        key = api_key if (api_key or clear_key) else None
         self.core.execute("INSERT INTO providers(id, kind, api_key, model, params, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
-                          "ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, api_key = excluded.api_key, model = excluded.model, "
-                          "params = excluded.params, updated_at = excluded.updated_at",
-                          (provider_id, kind, api_key, model, params, _now()))
+                          "ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, "
+                          "api_key = CASE WHEN ? THEN excluded.api_key ELSE COALESCE(excluded.api_key, api_key) END, "
+                          "model = COALESCE(excluded.model, model), params = COALESCE(excluded.params, params), "
+                          "updated_at = excluded.updated_at",
+                          (provider_id, kind, key, model, params, _now(), int(bool(clear_key))))
 
     def provider_key(self, provider_id: str) -> str:
         p = self.get_provider(provider_id)

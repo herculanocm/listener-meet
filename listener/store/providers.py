@@ -1,0 +1,108 @@
+"""Provedores de LLM (`providers`, CP10: chave em texto aberto no SQLite; F3 item 12). A linha `huggingface` da F2 continua
+aqui, fora das sub-abas (`LLM_KINDS`). `update_provider` tem lista branca (padrão de `update_cluster`); `set_active`
+troca o ativo numa só instrução; `active_provider(role)` devolve o ativo para texto ou embeddings."""
+from __future__ import annotations
+
+import json
+from typing import Any, TypedDict, cast
+
+from .core import Core, _now
+
+LLM_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic")
+PROVIDER_FIELDS = frozenset({"api_key", "model", "params", "fast_model", "strong_model", "models_json", "tested_at", "latency_ms",
+                             "base_url"})
+ROLES = {"llm": "is_active_llm", "embed": "is_active_embed"}
+
+
+class ProviderRow(TypedDict, total=False):
+    id: str
+    kind: str
+    api_key: str | None
+    model: str | None
+    params: str | None
+    is_active_llm: int
+    is_active_embed: int
+    updated_at: str | None
+    fast_model: str | None
+    strong_model: str | None
+    models_json: str | None
+    tested_at: str | None
+    latency_ms: int | None
+    base_url: str | None
+
+
+class ProvidersRepo:
+    def __init__(self, core: Core):
+        self.core = core
+
+    def get(self, provider_id: str) -> ProviderRow | None:
+        rows = self.core.q("SELECT * FROM providers WHERE id = ?", (provider_id,))
+        return cast(ProviderRow, dict(rows[0])) if rows else None
+
+    def list_llm(self) -> list[ProviderRow]:
+        """As linhas dos provedores de LLM na ordem fixa (Gemini primeiro, CP14); cria as que faltarem."""
+        for pid in LLM_KINDS:
+            self.core.execute("INSERT OR IGNORE INTO providers(id, kind, updated_at) VALUES (?, ?, ?)", (pid, pid, _now()))
+        rows = {str(r["id"]): cast(ProviderRow, dict(r)) for r in self.core.q("SELECT * FROM providers")}
+        return [rows[pid] for pid in LLM_KINDS if pid in rows]
+
+    def key(self, provider_id: str) -> str:
+        p = self.get(provider_id)
+        return str(p.get("api_key") or "") if p else ""
+
+    def update_provider(self, provider_id: str, **fields: Any) -> None:
+        bad = set(fields) - PROVIDER_FIELDS
+        if bad:
+            raise ValueError(f"campos de provedor desconhecidos: {sorted(bad)}")
+        self.core.execute("INSERT OR IGNORE INTO providers(id, kind, updated_at) VALUES (?, ?, ?)", (provider_id, provider_id, _now()))
+        if not fields:
+            return
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        values = [json.dumps(v, ensure_ascii=False) if isinstance(v, dict | list) else v for v in fields.values()]
+        self.core.execute(f"UPDATE providers SET {cols}, updated_at = ? WHERE id = ?", (*values, _now(), provider_id))  # noqa: S608
+
+    def set_active(self, provider_id: str, *, llm: bool | None = None, embed: bool | None = None) -> None:
+        """Um ativo por papel: `UPDATE providers SET is_active_llm = (id = ?)` (F3A-07); False desativa todos."""
+        with self.core.transaction():
+            for flag, col in ((llm, "is_active_llm"), (embed, "is_active_embed")):
+                if flag is None:
+                    continue
+                if flag:
+                    self.core.execute(f"UPDATE providers SET {col} = (id = ?)", (provider_id,))  # noqa: S608
+                else:
+                    self.core.execute(f"UPDATE providers SET {col} = 0 WHERE id = ?", (provider_id,))  # noqa: S608
+
+    def active_provider(self, role: str = "llm") -> ProviderRow | None:
+        col = ROLES[role]
+        rows = self.core.q(f"SELECT * FROM providers WHERE {col} = 1 AND kind IN (?, ?, ?) ORDER BY id LIMIT 1", LLM_KINDS)  # noqa: S608
+        return cast(ProviderRow, dict(rows[0])) if rows else None
+
+    def active_with_key(self, role: str = "llm") -> ProviderRow | None:
+        """O ativo só conta quando tem chave: sem chave nenhum job `llm` é criado (F3 comportamento 6)."""
+        row = self.active_provider(role)
+        return row if row is not None and (row.get("api_key") or "").strip() else None
+
+    def models(self, provider_id: str) -> list[dict[str, Any]]:
+        """Cache de `list_models()` em `providers.models_json`."""
+        p = self.get(provider_id)
+        try:
+            data = json.loads((p or {}).get("models_json") or "[]")
+        except ValueError:
+            return []
+        return [d for d in data if isinstance(d, dict)]
+
+    # ---------------------------------------------------------------- preços (llm_prices)
+    def list_prices(self, provider: str | None = None) -> list[dict[str, Any]]:
+        if provider is None:
+            rows = self.core.q("SELECT * FROM llm_prices ORDER BY provider, model")
+        else:
+            rows = self.core.q("SELECT * FROM llm_prices WHERE provider = ? ORDER BY model", (provider,))
+        return [dict(r) for r in rows]
+
+    def set_price(self, provider: str, model: str, input_usd_m: float, output_usd_m: float, cached_usd_m: float = 0.0,
+                  audio_usd_m: float = 0.0) -> None:
+        self.core.execute("INSERT INTO llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at) "
+                          "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, model) DO UPDATE SET input_usd_m = excluded.input_usd_m, "
+                          "output_usd_m = excluded.output_usd_m, cached_usd_m = excluded.cached_usd_m, audio_usd_m = excluded.audio_usd_m, "
+                          "updated_at = excluded.updated_at",
+                          (provider, model, float(input_usd_m), float(output_usd_m), float(cached_usd_m), float(audio_usd_m), _now()))

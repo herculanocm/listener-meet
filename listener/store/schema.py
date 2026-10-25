@@ -2,7 +2,8 @@
 
 main (`listener.db`): v1 = F1; v2 = datas com fuso (A5); v3 = `meetings.audio_file` (áudio mensal, M-19/D-039);
 v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2); v5 = `voice_profiles.calib_n` e
-`voice_embeddings.cluster_id` (correções da revisão da F2).
+`voice_embeddings.cluster_id` (correções da revisão da F2); v6 = camada de LLM (F3): `llm_calls`, `chat_messages`,
+`llm_prices` (com sementes), colunas em `summaries`, `action_items`, `clusters`, `meetings` e `providers`, índices.
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -96,6 +97,41 @@ MAIN_V5_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("voice_profiles", "calib_n", "INTEGER"), ("voice_embeddings", "cluster_id", "INTEGER"),
 )
 
+# F3 (v6): tabelas novas; colunas em tabelas existentes e índices sobre elas em Python (`MAIN_V6_COLUMNS`, `MAIN_V6_INDEXES`)
+MAIN_V6: tuple[str, ...] = (
+    ("CREATE TABLE IF NOT EXISTS llm_calls ("
+    "  id INTEGER PRIMARY KEY, meeting_id INTEGER REFERENCES meetings(id) ON DELETE CASCADE, job_id INTEGER, task TEXT NOT NULL,"
+    "  provider TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT, schema_hash TEXT, input_tokens INTEGER NOT NULL DEFAULT 0,"
+    "  output_tokens INTEGER NOT NULL DEFAULT 0, cached_tokens INTEGER NOT NULL DEFAULT 0, audio_tokens INTEGER NOT NULL DEFAULT 0,"
+    "  cost_usd REAL, latency_ms INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, error TEXT, strategy TEXT,"
+    "  request_blob BLOB, response_blob BLOB, created_at TEXT NOT NULL)"),
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_meeting ON llm_calls(meeting_id, id)",
+    ("CREATE TABLE IF NOT EXISTS chat_messages ("
+    "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE, role TEXT NOT NULL,"
+    "  text TEXT NOT NULL, provider TEXT, model TEXT, citations_json TEXT, cost_usd REAL, created_at TEXT NOT NULL)"),
+    "CREATE INDEX IF NOT EXISTS idx_chat_meeting ON chat_messages(meeting_id, id)",
+    ("CREATE TABLE IF NOT EXISTS llm_prices ("
+    "  provider TEXT NOT NULL, model TEXT NOT NULL, input_usd_m REAL NOT NULL DEFAULT 0, output_usd_m REAL NOT NULL DEFAULT 0,"
+    "  cached_usd_m REAL NOT NULL DEFAULT 0, audio_usd_m REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,"
+    "  PRIMARY KEY (provider, model))"),
+    "CREATE INDEX IF NOT EXISTS idx_summaries_meeting_kind ON summaries(meeting_id, kind)",
+    "CREATE INDEX IF NOT EXISTS idx_action_items_meeting ON action_items(meeting_id)",
+)
+MAIN_V6_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("summaries", "data_json", "TEXT"), ("summaries", "prompt_version", "TEXT"), ("summaries", "job_id", "INTEGER"),
+    ("summaries", "call_id", "INTEGER"), ("summaries", "status", "TEXT"), ("summaries", "language", "TEXT"),
+    ("action_items", "summary_id", "INTEGER"), ("action_items", "segment_id", "INTEGER"), ("action_items", "job_id", "INTEGER"),
+    ("action_items", "created_at", "TEXT"),
+    ("clusters", "llm_person_id", "INTEGER"), ("clusters", "llm_name", "TEXT"), ("clusters", "llm_confidence", "REAL"),
+    ("clusters", "llm_evidence_json", "TEXT"), ("clusters", "decision_source", "TEXT"),
+    ("meetings", "glossary", "TEXT"), ("meetings", "expected_people_json", "TEXT"),
+    ("providers", "fast_model", "TEXT"), ("providers", "strong_model", "TEXT"), ("providers", "models_json", "TEXT"),
+    ("providers", "tested_at", "TEXT"), ("providers", "latency_ms", "INTEGER"), ("providers", "base_url", "TEXT"),
+)
+MAIN_V6_INDEXES: tuple[str, ...] = (          # sobre colunas que a própria v6 acrescenta: depois do ALTER
+    "CREATE INDEX IF NOT EXISTS idx_summaries_job ON summaries(job_id)",
+)
+
 AUDIO_V1: tuple[str, ...] = (
     ("CREATE TABLE IF NOT EXISTS {s}.audio_chunks ("
     "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, channel TEXT NOT NULL, idx INTEGER NOT NULL,"
@@ -123,6 +159,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (3, None),        # meetings.audio_file (ALTER TABLE idempotente em Python) preenchido com o arquivo legado (M-19)
     (4, MAIN_V4),     # F2: tabelas da fila e dos clusters; colunas novas em Python (MAIN_V4_COLUMNS)
     (5, None),        # F2 revisão: calib_n e voice_embeddings.cluster_id (MAIN_V5_COLUMNS)
+    (6, MAIN_V6),     # F3: llm_calls, chat_messages, llm_prices; colunas, índices, sementes e provedores em Python
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

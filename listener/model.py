@@ -151,6 +151,45 @@ class Attribution(StrEnum):
     CHANNEL = "canal"              # canal L = o usuário (F2 item 8)
 
 
+class SummaryKind(StrEnum):
+    PRE_SUMMARY = "pre_summary"    # F3: título vai em `meetings.title_llm`, não aqui (F3A-05)
+    MINUTES = "minutes"
+    EXECUTIVE = "executive"
+    PARTIAL = "partial"            # F4: resumo parcial ao vivo
+
+
+class SummaryStatus(StrEnum):
+    CURRENT = "atual"
+    SUPERSEDED = "superada"        # "gerar de novo" acrescenta e marca; nada se apaga (CP3)
+    ERROR = "erro"
+
+
+class ActionStatus(StrEnum):
+    OPEN = "aberta"
+    DONE = "feita"
+    DISCARDED = "descartada"
+    SUPERSEDED = "superada"        # a ata que a gerou foi superada
+
+
+class DecisionSource(StrEnum):
+    """O que o usuário aceitou ao confirmar uma voz (F3 item 5, mede o G3)."""
+    AUTO = "auto"                  # acima do limiar, sem revisão
+    USER = "usuario"               # sem sugestão: escolheu ou criou a pessoa
+    USER_PYANNOTE = "usuario_pyannote"
+    USER_LLM = "usuario_llm"
+    USER_OTHER = "usuario_outro"   # havia sugestão e escolheu outra
+
+
+class LlmCallStatus(StrEnum):
+    OK = "ok"
+    ERROR = "erro"
+
+
+class ChatRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class StoreRole(StrEnum):
     APP = "app"                    # main em escrita, migra, VACUUM de legado
     WORKER = "worker"              # main em escrita sem migrar; áudio só leitura com mmap (F2)

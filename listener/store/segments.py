@@ -19,7 +19,9 @@ from .profiles import from_blob, to_blob
 log = get_logger("store.segments")
 
 BATCH = 1000
-CLUSTER_FIELDS = frozenset({"person_id", "status", "merged_into", "similarity", "margin", "speech_ms"})
+CLUSTER_FIELDS = frozenset({"person_id", "status", "merged_into", "similarity", "margin", "speech_ms", "decision_source"})
+# `llm_*` só entram por `set_llm_suggestion` (CP11: recusa em `auto`, `confirmado` e mesclado); nunca por `update_cluster`
+LLM_SUGGESTION_ALLOWED = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
 
 
 class SegmentRow(TypedDict, total=False):
@@ -56,6 +58,11 @@ class ClusterRow(TypedDict, total=False):
     status: str
     merged_into: int | None
     created_at: str
+    llm_person_id: int | None          # F3: sugestão por contexto (só em ambíguo e sem_nome)
+    llm_name: str | None
+    llm_confidence: float | None
+    llm_evidence_json: str | None
+    decision_source: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +136,21 @@ class SegmentsRepo:
         return self.core.execute("UPDATE segments SET person_id = ?, role_at_time = ? WHERE meeting_id = ? AND cluster_id = ?",
                                  (person_id, role_at_time, meeting_id, cluster_id))
 
+    def set_text_llm(self, meeting_id: int, job_id: int, rows: Iterable[tuple[int, str]]) -> int:
+        """Transcrição revisada (F3 item 8): só `text_llm` dos segmentos do job pai; `text` original fica intacto (CP3).
+        Lotes de até 1000 numa só transação por bloco."""
+        n = 0
+        with self.core.transaction() as c:
+            for batch in batched(rows, BATCH):
+                c.executemany("UPDATE segments SET text_llm = ? WHERE id = ? AND meeting_id = ? AND job_id = ?",
+                              [(text, int(sid), meeting_id, job_id) for sid, text in batch])
+                n += len(batch)
+        return n
+
+    def segments_without_text_llm(self, meeting_id: int, job_id: int) -> int:
+        return int(self.core.q("SELECT COUNT(*) FROM segments WHERE meeting_id = ? AND job_id = ? AND text_llm IS NULL AND text != ''",
+                               (meeting_id, job_id))[0][0])
+
     # ---------------------------------------------------------------- clusters
     @staticmethod
     def _cluster(r: Any) -> ClusterRow:
@@ -169,6 +191,26 @@ class SegmentsRepo:
         cols = ", ".join(f"{k} = ?" for k in fields)
         values = [str(v) if isinstance(v, ClusterStatus) else v for v in fields.values()]
         self.core.execute(f"UPDATE clusters SET {cols} WHERE id = ?", (*values, cluster_id))  # noqa: S608
+
+    def set_llm_suggestion(self, cluster_id: int, person_id: int | None, name: str | None, confidence: float | None,
+                           evidence_json: str | None) -> None:
+        """Sugestão da LLM para uma voz pendente (F3 item 5). Único ponto de escrita de `llm_*`: recusa (`ValueError`) quando
+        o cluster está `auto` ou `confirmado` ou foi mesclado (CP11: a LLM nunca toca uma identificação de alta confiança);
+        `status` e `person_id` nunca mudam aqui."""
+        c = self.get_cluster(cluster_id)
+        if c is None:
+            raise ValueError(f"cluster {cluster_id} não existe")
+        if str(c["status"]) not in LLM_SUGGESTION_ALLOWED or c.get("merged_into") is not None:
+            raise ValueError(f"cluster {cluster_id} está {c['status']}{' (mesclado)' if c.get('merged_into') is not None else ''}: "
+                             "a LLM só sugere para vozes pendentes (CP11)")
+        self.core.execute("UPDATE clusters SET llm_person_id = ?, llm_name = ?, llm_confidence = ?, llm_evidence_json = ? WHERE id = ?",
+                          (person_id, name, confidence, evidence_json, cluster_id))
+
+    def clear_llm_suggestions(self, meeting_id: int, job_id: int) -> int:
+        """Só das vozes ainda pendentes (uma confirmada guarda o que foi sugerido: mede o G3)."""
+        return self.core.execute("UPDATE clusters SET llm_person_id = NULL, llm_name = NULL, llm_confidence = NULL, "
+                                 "llm_evidence_json = NULL WHERE meeting_id = ? AND job_id = ? AND status IN (?, ?) "
+                                 "AND merged_into IS NULL", (meeting_id, job_id, *LLM_SUGGESTION_ALLOWED))
 
     def latest_job_id(self, meeting_id: int) -> int | None:
         """Maior `job_id` já gravado em clusters ou segmentos da reunião (fallback de `current_job_id`)."""

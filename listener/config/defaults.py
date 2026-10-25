@@ -11,8 +11,9 @@ from ..model import SettingScope
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 WHISPER_MODELS = ("large-v3-turbo", "small", "medium")       # F2 Q4: turbo padrão
-TRANSCRIBERS = ("whisper", "llm")                            # F2 item 18: "llm" desabilitado até a F3
+TRANSCRIBERS = ("whisper", "llm")                            # F3 item 9: "llm" habilitado quando o modelo rápido tem áudio
 HF_PROVIDER_ID = "huggingface"
+OUTPUT_LANGUAGES = ("pt-BR", "auto", "en", "es")             # F3 P1: opções fixas mais um código livre
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,16 @@ def _default_threads() -> int:
     return max(1, (os.cpu_count() or 2) - 2)
 
 
+def _language(s: str) -> str:
+    """Código de idioma das saídas da LLM: `pt-BR`, `auto`, `en`, `es` ou outro código curto (`fr`, `de-CH`)."""
+    v = s.strip()
+    if not v:
+        raise ValueError("informe um idioma (pt-BR, auto, en, es ou um código como fr)")
+    if v != "auto" and not v.replace("-", "").isalpha():
+        raise ValueError(f"código de idioma inválido: {s!r}")
+    return v
+
+
 _NOW, _NEXT = SettingScope.NOW, SettingScope.NEXT_RECORDING
 _RATES = frozenset({8000, 16000, 22050, 24000, 32000, 44100, 48000})
 _MIC_RATES = frozenset({8000, 16000, 32000, 44100, 48000})
@@ -119,11 +130,23 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),
+    # F3 (item 12): camada de LLM; o job `llm` grava o snapshot em `config_json` (nunca a chave)
+    SettingSpec("llm.output_language", "pt-BR", _NOW, "Idioma das saídas (pt-BR, auto, en, es ou outro código)", _language, phase="F3"),
+    SettingSpec("llm.auto_tasks", True, _NOW, "Gerar título, pré-resumo, identidade e ata ao processar", _bool, phase="F3"),
+    SettingSpec("llm.cost_alert_usd", 2.0, _NOW, "Alerta de custo por reunião (US$)", float, low=0.0, high=1000.0, phase="F3"),
+    SettingSpec("llm.max_parallel", 2, _NOW, "Chamadas simultâneas à LLM", int, low=1, high=8, phase="F3"),
+    SettingSpec("llm.audio_second_opinion", False, _NOW, "Segunda opinião por áudio na identidade (envia voz)", _bool, phase="F3"),
+    SettingSpec("llm.glossary_enabled", True, _NOW, "Glossário pela LLM no warm-up", _bool, phase="F3"),
+    SettingSpec("llm.store_payloads", True, _NOW, "Guardar pedido e resposta de cada chamada (comprimidos)", _bool, phase="F3"),
+    SettingSpec("llm.proxy_url", "", _NOW, "Proxy HTTP(S) (vazio = o do sistema)", _text, phase="F3"),
+    SettingSpec("llm.ca_bundle", "", _NOW, "Certificado raiz PEM (vazio = padrão)", _text, phase="F3"),
+    SettingSpec("llm.system_certs", True, _NOW, "Aceitar certificados do sistema (truststore)", _bool, phase="F3"),
 )}
 
 CAPTURE_KEYS = tuple(k for k in SPECS if k.startswith("capture."))
 HOTKEY_KEYS = tuple(k for k in SPECS if k.startswith("hotkeys."))
 PIPELINE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("pipeline.") and not s.internal)
+LLM_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("llm.") and not s.internal)
 
 # Vistas derivadas para quem só precisa do texto padrão, do escopo ou do rótulo
 DEFAULTS: dict[str, tuple[str, str]] = {k: (s.default_text, str(s.scope)) for k, s in SPECS.items()}

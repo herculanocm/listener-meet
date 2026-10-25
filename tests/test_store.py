@@ -21,9 +21,9 @@ def test_monthly_audio_file_and_schema(tmp_path):
     current = s.core.current_audio_file()
     assert (tmp_path / "db" / "listener.db").exists() and (tmp_path / "db" / current).exists()
     assert re.fullmatch(r"listener-audio-\d{4}-\d{2}\.db", current) and s.audio_files() == [current]
-    assert s.schema_version() == 5
+    assert s.schema_version() == 6
     with s.connection() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 6
         assert c.execute(f"PRAGMA {schema_for(current)}.page_size").fetchone()[0] == AUDIO_PAGE_SIZE
         assert c.execute(f"PRAGMA {schema_for(current)}.journal_mode").fetchone()[0] == "wal"
         assert c.execute(f"PRAGMA {schema_for(current)}.synchronous").fetchone()[0] == 1
@@ -134,7 +134,7 @@ def test_dates_have_offset_and_migration_v2_rewrites_old_rows(tmp_path):
     s._x("DELETE FROM schema_migrations WHERE version > 1")
     s.close()
     s2 = Store(tmp_path)
-    assert s2.schema_version() == 5
+    assert s2.schema_version() == 6
     created = s2.get_me()["created_at"]
     assert created.startswith("2026-10-24T18:03:12.345") and re.search(r"[+-]\d\d:\d\d$", created)
     assert with_offset("") == "" and with_offset(None) is None and with_offset("lixo") == "lixo"
@@ -241,7 +241,7 @@ def test_migration_failure_rolls_back_whole_step(tmp_path, monkeypatch):
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 5 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
+        assert ok.schema_version() == 6 and "audio_file" in ok.get_meeting(ok.create_meeting(None, None, None, None))
 
 
 def test_two_connections_wait_for_each_other(tmp_path):
@@ -325,7 +325,7 @@ def test_v4_creates_queue_tables_and_rolls_back_in_the_middle(tmp_path, monkeypa
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as ok:
-        assert ok.schema_version() == 5
+        assert ok.schema_version() == 6
         with ok.connection() as c:
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
@@ -362,7 +362,7 @@ def test_worker_role_writes_main_reads_audio_and_refuses_old_schema(tmp_path):
         assert c.execute(f"PRAGMA {schema}.mmap_size").fetchone()[0] == AUDIO_MMAP_BYTES
     w.close()
     raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
-    raw.execute("DELETE FROM schema_migrations WHERE version = 5")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 5")
     raw.close()
     with pytest.raises(RuntimeError, match="abra o app"):                        # o worker nunca migra
         Store.open_worker(tmp_path)
@@ -405,15 +405,15 @@ def test_v5_adds_review_columns_to_a_database_already_in_v4(tmp_path):
     raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
     raw.execute("ALTER TABLE voice_profiles DROP COLUMN calib_n")
     raw.execute("ALTER TABLE voice_embeddings DROP COLUMN cluster_id")
-    raw.execute("DELETE FROM schema_migrations WHERE version = 5")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 5")
     raw.execute("PRAGMA user_version = 4")
     raw.close()
     with pytest.raises(RuntimeError, match="abra o app"):
         Store.open_worker(tmp_path)                                               # v4 < 5: o worker espera o app migrar
     with Store(tmp_path) as s:
-        assert s.schema_version() == 5
+        assert s.schema_version() == 6
         with s.connection() as c:
-            assert c.execute("PRAGMA user_version").fetchone()[0] == 5
+            assert c.execute("PRAGMA user_version").fetchone()[0] == 6
             assert "calib_n" in {r[1] for r in c.execute("PRAGMA table_info(voice_profiles)")}
             assert "cluster_id" in {r[1] for r in c.execute("PRAGMA table_info(voice_embeddings)")}
         mid = s.create_meeting("v5", None, None, None)
@@ -428,4 +428,196 @@ def test_v5_adds_review_columns_to_a_database_already_in_v4(tmp_path):
         assert p["n_samples"] == 1 and p["calib_n"] in (None, 0)
         assert s._q("SELECT cluster_id FROM voice_embeddings")[0][0] == ids["SPK_0"]
     with Store(tmp_path) as again:                                                # reabrir não refaz nada
-        assert again.schema_version() == 5
+        assert again.schema_version() == 6
+
+
+def test_v6_adds_llm_tables_columns_seeds_and_rolls_back_in_the_middle(tmp_path, monkeypatch):
+    """F3 (v6): tabelas, colunas, índices, sementes de preço e provedores numa só transação; falha no meio desfaz tudo;
+    um banco já em v5 (sem as colunas) ganha a v6 ao abrir no app; o worker recusa até lá."""
+    with Store(tmp_path):
+        pass
+    raw = sqlite3.connect(tmp_path / "listener.db", autocommit=True)
+    raw.execute("DROP INDEX idx_summaries_job")
+    for table, col in (("summaries", "data_json"), ("summaries", "job_id"), ("clusters", "llm_person_id"), ("clusters", "decision_source"),
+                       ("meetings", "glossary"), ("providers", "fast_model"), ("action_items", "summary_id")):
+        raw.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+    for table in ("llm_calls", "chat_messages", "llm_prices"):
+        raw.execute(f"DROP TABLE {table}")
+    raw.execute("DROP INDEX idx_summaries_meeting_kind")
+    raw.execute("DELETE FROM providers")
+    raw.execute("DELETE FROM schema_migrations WHERE version = 6")
+    raw.execute("PRAGMA user_version = 5")
+    raw.close()
+    with pytest.raises(RuntimeError, match="abra o app"):
+        Store.open_worker(tmp_path)
+
+    def boom(core, conn, schema):
+        store_core._add_columns(conn, schema, store_core.MAIN_V6_COLUMNS)       # metade feita...
+        raise RuntimeError("falha no meio da v6")                              # ...e cai
+
+    monkeypatch.setitem(store_core.MAIN_PY_MIGRATIONS, 6, boom)
+    with pytest.raises(RuntimeError, match="falha no meio da v6"):
+        Store(tmp_path)
+    raw = sqlite3.connect(tmp_path / "listener.db")
+    tables = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "llm_calls" not in tables and "llm_prices" not in tables
+    assert "data_json" not in {r[1] for r in raw.execute("PRAGMA table_info(summaries)")}  # o ALTER TABLE foi desfeito junto
+    assert raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
+    raw.close()
+    monkeypatch.undo()
+    with Store(tmp_path) as s:
+        assert s.schema_version() == 6
+        with s.connection() as c:
+            assert c.execute("PRAGMA user_version").fetchone()[0] == 6
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+            cols = {t: {r[1] for r in c.execute(f"PRAGMA table_info({t})")} for t in ("summaries", "action_items", "clusters", "meetings",
+                                                                                      "providers")}
+        assert {"llm_calls", "chat_messages", "llm_prices"} <= tables
+        assert {"idx_llm_calls_meeting", "idx_chat_meeting", "idx_summaries_meeting_kind", "idx_summaries_job",
+                "idx_action_items_meeting"} <= indexes
+        assert {"data_json", "prompt_version", "job_id", "call_id", "status", "language"} <= cols["summaries"]
+        assert {"summary_id", "segment_id", "job_id", "created_at"} <= cols["action_items"]
+        assert {"llm_person_id", "llm_name", "llm_confidence", "llm_evidence_json", "decision_source"} <= cols["clusters"]
+        assert {"glossary", "expected_people_json"} <= cols["meetings"]
+        assert {"fast_model", "strong_model", "models_json", "tested_at", "latency_ms", "base_url"} <= cols["providers"]
+        prices = s.providers.list_prices()
+        assert any(p["provider"] == "gemini" and p["model"] == "gemini-2.5-flash" for p in prices) and len(prices) >= 10
+        rows = s.providers.list_llm()
+        assert [r["id"] for r in rows] == ["gemini", "openai", "anthropic"]                       # Gemini primeiro (CP14)
+        assert s.providers.active_provider("llm")["id"] == "gemini" and s.providers.active_provider("embed")["id"] == "gemini"
+        assert s.providers.active_with_key("llm") is None                                         # ativo sem chave não vale
+        mid = s.create_meeting("v6", None, None, None, glossary="SRM, FIDC", expected_people_json="[1]")
+        m = s.get_meeting(mid)
+        assert m["glossary"] == "SRM, FIDC" and m["expected_people_json"] == "[1]"
+    with Store.open_worker(tmp_path) as w:
+        assert w.schema_version() == 6
+
+
+def test_providers_repo_whitelist_active_and_upsert_keeps_fields(store):
+    """F3A-07: `update_provider` com lista branca; `set_active` troca numa instrução; `upsert_provider` não zera `model`/`params`."""
+    store.providers.update_provider("gemini", api_key="AIza-chave-secreta-123456", fast_model="gemini-2.5-flash", params={"top_p": 0.9})
+    p = store.providers.get("gemini")
+    assert p["api_key"] == "AIza-chave-secreta-123456" and p["fast_model"] == "gemini-2.5-flash" and p["params"] == '{"top_p": 0.9}'
+    with pytest.raises(ValueError, match="desconhecidos"):
+        store.providers.update_provider("gemini", is_active_llm=1)                                  # ativo só por `set_active`
+    with pytest.raises(ValueError):
+        store.providers.update_provider("gemini", kind="x")
+    store.providers.set_active("openai", llm=True)
+    assert store.providers.active_provider("llm")["id"] == "openai" and store.providers.active_provider("embed")["id"] == "gemini"
+    store.providers.set_active("anthropic", embed=True)
+    assert store.providers.active_provider("embed")["id"] == "anthropic"
+    store.providers.set_active("openai", llm=False)
+    assert store.providers.active_provider("llm") is None
+    store.providers.set_active("gemini", llm=True)
+    assert store.providers.active_with_key("llm")["id"] == "gemini"
+    store.upsert_provider("huggingface", "huggingface", api_key="hf_1", model="m", params="p")
+    store.upsert_provider("huggingface", "huggingface", api_key="hf_2")                                # só a chave muda
+    hf = store.get_provider("huggingface")
+    assert hf["api_key"] == "hf_2" and hf["model"] == "m" and hf["params"] == "p"
+    store.upsert_provider("huggingface", "huggingface", api_key=None)                                  # None mantém
+    assert store.get_provider("huggingface")["api_key"] == "hf_2"
+    store.settings.upsert_provider("huggingface", "huggingface", api_key=None, clear_key=True)        # apagar é explícito
+    assert store.get_provider("huggingface")["api_key"] is None
+    store.providers.set_price("gemini", "gemini-2.5-flash", 0.5, 3.0)
+    assert next(p for p in store.providers.list_prices("gemini") if p["model"] == "gemini-2.5-flash")["output_usd_m"] == 3.0
+    assert store.providers.models("gemini") == []
+    store.providers.update_provider("gemini", models_json=[{"id": "gemini-2.5-pro"}])
+    assert store.providers.models("gemini") == [{"id": "gemini-2.5-pro"}]
+
+
+def test_summaries_actions_llm_calls_and_chat_repos(store):
+    """F3 itens 6, 10 e 13: "gerar de novo" cria `atual`, marca a anterior e as ações `superada` em `revisions`; edição humana
+    em `revisions`; custo por reunião e por mês; pedido e resposta comprimidos; chat com citações."""
+    from listener.model import ActionStatus, ChatRole, LlmCallStatus, SummaryKind, SummaryStatus
+    from listener.store.actions import ActionInsert
+    from listener.store.llm_calls import LlmCallInsert
+    from listener.store.summaries import SummaryInsert
+
+    mid = store.create_meeting("r", None, None, None)
+    store.finish_meeting(mid, 1000)
+    call = store.llm_calls.insert(LlmCallInsert(mid, 7, "minutes", "gemini", "gemini-2.5-pro", "minutes/1.0", "abc", 1000, 200, 100, 0,
+                                                0.0125, 1200, LlmCallStatus.OK, request={"messages": ["x" * 5000]},
+                                                response={"text": "ata"}))
+    s1 = store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, '{"context": "c"}', "# Ata", "gemini", "gemini-2.5-pro",
+                                              "minutes/1.0", 7, call, "pt-BR"))
+    a1, a2 = store.actions.insert_many([ActionInsert(mid, s1, "Enviar proposta", "Ana", None, "2026-10-30", 1200, None, 7),
+                                        ActionInsert(mid, s1, "Revisar contrato", None, None, None, None, None, 7)])
+    assert store.summaries.current(mid, SummaryKind.MINUTES)["id"] == s1 and store.summaries.has_current(mid, "minutes", 7)
+    assert not store.summaries.has_current(mid, "minutes", 8) and store.summaries.current(mid, "executive") is None
+    assert sorted(a["id"] for a in store.actions.list_for_meeting(mid)) == sorted([a1, a2])
+    assert store.summaries.set_text_edited(s1, "# Ata editada") and not store.summaries.set_text_edited(s1, "# Ata editada")
+    assert store.summaries.display_text(store.summaries.get(s1)) == "# Ata editada"
+    assert store.actions.set_status(a1, ActionStatus.DONE) and store.actions.set_text(a2, "Revisar o contrato")
+    s2 = store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata 2", "openai", "gpt-5", "minutes/1.0", 9, None,
+                                              "pt-BR"))
+    assert store.summaries.get(s1)["status"] == SummaryStatus.SUPERSEDED and store.summaries.current(mid, "minutes")["id"] == s2
+    assert {a["status"] for a in store.actions.list_for_meeting(mid, include_superseded=True)} == {ActionStatus.SUPERSEDED}
+    assert store.actions.list_for_meeting(mid) == []
+    rev = store._q("SELECT entity, field, before, after FROM revisions ORDER BY id")
+    assert [tuple(r) for r in rev] == [("summary", "text_edited", None, "# Ata editada"), ("action_item", "status", "aberta", "feita"),
+                                       ("action_item", "text", "Revisar contrato", "Revisar o contrato"),
+                                       ("summary", "status", "atual", "superada")]
+    assert store.summaries.stale_after_reprocess(mid, 10) == ["minutes"] and store.summaries.stale_after_reprocess(mid, 9) == []
+    assert store.llm_calls.cost_for_meeting(mid) == (0.0125, 0) and store.llm_calls.cost_for_job(7) == 0.0125
+    store.llm_calls.insert(LlmCallInsert(mid, 7, "title", "gemini", "x", None, None, 10, 5, 0, 0, None, 300, LlmCallStatus.OK),
+                           store_payloads=False)
+    assert store.llm_calls.cost_for_meeting(mid) == (0.0125, 1)
+    assert store.llm_calls.month_total() == pytest.approx(0.0125) and store.llm_calls.month_total(provider="openai") == 0.0
+    assert store.llm_calls.avg_latency_ms() == pytest.approx(750.0) and store.llm_calls.avg_latency_ms(task="minutes") == 1200.0
+    assert store.llm_calls.avg_latency_ms(task="nada") is None
+    req, resp = store.llm_calls.payloads(call)
+    assert req["messages"][0] == "x" * 5000 and resp == {"text": "ata"} and store.llm_calls.payloads(call + 1) == (None, None)
+    assert store._q("SELECT length(request_blob) FROM llm_calls WHERE id = ?", (call,))[0][0] < 200                  # zlib
+    assert "request_blob" not in store.llm_calls.get(call) and len(store.llm_calls.list_for_meeting(mid)) == 2
+    loose = store.llm_calls.insert(LlmCallInsert(None, None, "glossary", "gemini", "x", None, None, 1, 1, 0, 0, 0.0, 10, LlmCallStatus.OK))
+    store.llm_calls.set_meeting(loose, mid)
+    assert len(store.llm_calls.list_for_meeting(mid)) == 3
+    store.chat.add(mid, ChatRole.USER, "o que ficou decidido?")
+    store.chat.add(mid, ChatRole.ASSISTANT, "Foi decidido X [12:03].", "gemini", "x", [{"t_ms": 723000, "segment_id": 4}], 0.001)
+    msgs = store.chat.list_for_meeting(mid)
+    assert [m["role"] for m in msgs] == ["user", "assistant"] and '"segment_id": 4' in msgs[1]["citations_json"]
+    store.delete_meeting(mid)                                                                                     # cascata
+    assert store._q("SELECT COUNT(*) FROM llm_calls")[0][0] == 0 and store._q("SELECT COUNT(*) FROM chat_messages")[0][0] == 0
+
+
+def test_set_llm_suggestion_refuses_decided_voices_and_json_default_knows_new_types(store):
+    """CP11: `llm_*` só em `ambíguo` e `sem_nome` sem mescla; `status` e `person_id` intactos. `json_default` serializa
+    dataclasses, enumerações e conjuntos (F3 item 16)."""
+    import json
+
+    from listener.llm.types import Capability, Usage
+    from listener.model import ClusterStatus, DecisionSource
+    from listener.store.core import json_default
+    from listener.store.segments import ClusterInsert
+
+    mid = store.create_meeting("r", None, None, None)
+    ana = store.people.create_person("Ana")
+    ids = store.segments.insert_clusters([ClusterInsert(mid, 1, "R", "SPK_0", 5000, None, None, ClusterStatus.UNNAMED),
+                                          ClusterInsert(mid, 1, "R", "SPK_1", 5000, None, None, ClusterStatus.AMBIGUOUS, ana, 0.62, 0.02),
+                                          ClusterInsert(mid, 1, "R", "SPK_2", 5000, None, None, ClusterStatus.AUTO, ana, 0.9, 0.3),
+                                          ClusterInsert(mid, 1, "R", "SPK_3", 5000, None, None, ClusterStatus.CONFIRMED, ana),
+                                          ClusterInsert(mid, 1, "R", "SPK_4", 5000, None, None, ClusterStatus.UNNAMED)])
+    store.segments.update_cluster(ids["SPK_4"], merged_into=ids["SPK_0"])
+    store.segments.set_llm_suggestion(ids["SPK_0"], ana, "Ana", 0.8, '[{"segment_id": 1, "quote": "valeu, Ana"}]')
+    store.segments.set_llm_suggestion(ids["SPK_1"], None, "Rodrigo", 0.7, "[]")
+    for label in ("SPK_2", "SPK_3", "SPK_4"):
+        with pytest.raises(ValueError, match="CP11"):
+            store.segments.set_llm_suggestion(ids[label], ana, "Ana", 0.9, "[]")
+    with pytest.raises(ValueError):
+        store.segments.set_llm_suggestion(9999, ana, "Ana", 0.9, "[]")
+    c0, c1, c2 = (store.segments.get_cluster(ids[k]) for k in ("SPK_0", "SPK_1", "SPK_2"))
+    assert c0["llm_person_id"] == ana and c0["llm_name"] == "Ana" and c0["status"] == "sem_nome" and c0["person_id"] is None
+    assert c1["llm_person_id"] is None and c1["llm_name"] == "Rodrigo" and c1["person_id"] == ana and c1["status"] == "ambíguo"
+    assert c2["llm_person_id"] is None and c2["llm_name"] is None
+    with pytest.raises(ValueError):
+        store.segments.update_cluster(ids["SPK_0"], llm_name="x")                                     # só por set_llm_suggestion
+    store.segments.update_cluster(ids["SPK_0"], decision_source=DecisionSource.USER_LLM)
+    assert store.segments.get_cluster(ids["SPK_0"])["decision_source"] == "usuario_llm"
+    store.segments.update_cluster(ids["SPK_1"], status=ClusterStatus.CONFIRMED)
+    assert store.segments.clear_llm_suggestions(mid, 1) == 1                                          # só a pendente (SPK_0)
+    assert store.segments.get_cluster(ids["SPK_1"])["llm_name"] == "Rodrigo"
+    out = json.loads(json.dumps({"u": Usage(1, 2), "caps": frozenset({Capability.JSON, Capability.TEXT}), "k": ClusterStatus.AUTO,
+                                 "b": b"xyz"}, default=json_default))
+    assert out == {"u": {"input_tokens": 1, "output_tokens": 2, "cached_tokens": 0, "audio_tokens": 0}, "caps": ["json", "text"],
+                   "k": "auto", "b": "<3 bytes>"}

@@ -26,6 +26,8 @@ class MeetingRow(TypedDict, total=False):
     notes: str | None
     audio_file: str | None
     language: str | None
+    glossary: str | None               # F3: termos prováveis do warm-up (LLM, editados pelo usuário)
+    expected_people_json: str | None   # F3: ids de `people` casados com os participantes esperados
 
 
 class PresetRow(TypedDict, total=False):
@@ -92,15 +94,18 @@ class MeetingsRepo:
 
     # ---------------------------------------------------------------- meetings
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
-                       expected_participants: str | None, is_in_room: bool = False) -> int:
-        """Cria a reunião já apontando para o arquivo de áudio do mês (criado e migrado aqui, antes do primeiro pedaço)."""
+                       expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
+                       expected_people_json: str | None = None) -> int:
+        """Cria a reunião já apontando para o arquivo de áudio do mês (criado e migrado aqui, antes do primeiro pedaço).
+        F3: `glossary` e `expected_people_json` vêm do warm-up (F3A-11)."""
         started = _now()
         audio_file = audio_file_for(started)
         self.core.attach(audio_file)
         return self.core.insert(
-            "INSERT INTO meetings(title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)), audio_file))
+            "INSERT INTO meetings(title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file, glossary, "
+            "expected_people_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)), audio_file,
+             glossary, expected_people_json))
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         rows = self.core.q("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
@@ -139,6 +144,23 @@ class MeetingsRepo:
         with self.core.transaction():
             self.core.execute("UPDATE meetings SET title = ? WHERE id = ?", (title, meeting_id))
             self.add_revision("meeting", meeting_id, "title", before, title, author)
+
+    def set_title_llm(self, meeting_id: int, title: str, author: str = "llm") -> bool:
+        """Título proposto pela LLM (F3 item 6): sobrescreve `title_llm` com `revisions`; o `title` do usuário fica."""
+        m = self.get_meeting(meeting_id)
+        if m is None:
+            return False
+        before = m.get("title_llm")
+        if before == title:
+            return False
+        with self.core.transaction():
+            self.core.execute("UPDATE meetings SET title_llm = ? WHERE id = ?", (title, meeting_id))
+            self.add_revision("meeting", meeting_id, "title_llm", before, title, author)
+        return True
+
+    def set_glossary(self, meeting_id: int, glossary: str | None, expected_people_json: str | None) -> None:
+        self.core.execute("UPDATE meetings SET glossary = ?, expected_people_json = ? WHERE id = ?",
+                          (glossary, expected_people_json, meeting_id))
 
     def audio_files_referenced(self) -> list[str]:
         """Arquivos de áudio citados por alguma reunião (para achar os que sumiram da pasta)."""

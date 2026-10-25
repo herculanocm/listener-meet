@@ -1,6 +1,7 @@
 """Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
-`segments`) atrás dos nomes de método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair;
-`Store.open_readonly(dir)` para o `--check`; `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
+`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`) atrás dos nomes de método da F1. Uma conexão por
+thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`;
+`Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -11,14 +12,19 @@ from typing import TYPE_CHECKING, Any, Self
 
 from ..log import get_logger
 from ..model import EventType, MeetingStatus, StoreRole
+from .actions import ActionsRepo
 from .audio import AudioRepo, ChannelStats, ChunkData, ChunkMeta, ContinuityIssue
+from .chat import ChatRepo
 from .core import LEGACY_AUDIO_FILE, MAIN_FILE, Core, with_offset
 from .jobs import JobsRepo
+from .llm_calls import LlmCallsRepo
 from .meetings import EventRow, MarkerRow, MeetingRow, MeetingsRepo, PresetRow
 from .people import PeopleRepo, PersonRow
 from .profiles import ProfilesRepo
+from .providers import ProvidersRepo
 from .segments import SegmentsRepo
 from .settings import SettingsRepo
+from .summaries import SummariesRepo
 
 if TYPE_CHECKING:
     from ..capture.sinks import EncodedChunk
@@ -39,6 +45,11 @@ class Store:
         self.jobs = JobsRepo(self.core)
         self.profiles = ProfilesRepo(self.core)
         self.segments = SegmentsRepo(self.core)
+        self.providers = ProvidersRepo(self.core)
+        self.summaries = SummariesRepo(self.core)
+        self.actions = ActionsRepo(self.core)
+        self.llm_calls = LlmCallsRepo(self.core)
+        self.chat = ChatRepo(self.core)
 
     @classmethod
     def open_readonly(cls, base_dir: str | Path) -> Self:
@@ -155,8 +166,9 @@ class Store:
 
     # ---------------------------------------------------------------- reuniões
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
-                       expected_participants: str | None, is_in_room: bool = False) -> int:
-        return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room)
+                       expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
+                       expected_people_json: str | None = None) -> int:
+        return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room, glossary, expected_people_json)
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         return self.meetings.get_meeting(meeting_id)
