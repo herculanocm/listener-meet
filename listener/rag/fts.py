@@ -1,10 +1,11 @@
 """Busca por palavra, puro (F5 item 2, F5A-28): a consulta do usuário vira uma expressão FTS5 segura e o `snippet()` vira
 HTML seguro. O usuário nunca escreve a sintaxe do FTS5: cada palavra vai entre aspas (aspas internas dobradas), então `AND`,
 `OR`, `NOT`, `NEAR`, `:`, `^`, `-`, `*`, `+` e parênteses viram texto; E implícito entre as palavras e `*` (prefixo) na
-última; com menos de 10 resultados a busca refaz com OU (`rag.search`). Palavra só de símbolos sai (o tokenizador `unicode61`
-não guarda símbolo) e consulta vazia ou só de símbolos não vai ao FTS. Palavras vazias comuns (artigos, preposições,
-pronomes interrogativos) saem quando sobra outra: a pergunta do chat "o que foi decidido sobre o orçamento?" vira
-`"decidido" "orçamento?"*`, que acha mais com E e não varre o índice inteiro com OU.
+última (só quando a última palavra que o FTS separa tem 3 letras ou mais: em "abc-d" o prefixo seria "d*"); com menos de
+10 resultados a busca refaz com OU (`rag.search`). Caracteres de controle (o `\x00` cortaria a expressão no meio) viram
+espaço; palavra só de símbolos sai (o tokenizador `unicode61` não guarda símbolo) e consulta vazia ou só de símbolos não vai
+ao FTS. Palavras vazias comuns (artigos, preposições, pronomes interrogativos) saem quando sobra outra: a pergunta do chat "o
+que foi decidido sobre o orçamento?" vira `"decidido" "orçamento?"*`, que acha mais com E e não varre o índice com OU.
 
 O destaque troca os marcadores do `snippet()` por negrito depois do `html.escape` (nada do texto vira tag). O trecho achado
 só pelo sentido não tem `snippet()`: `preview` destaca as mesmas palavras em Python, sem acento e sem caixa como o FTS."""
@@ -34,6 +35,7 @@ this these those it its by from as
 STOPWORDS = frozenset(_STOPWORDS.split())
 
 WORD_RE = re.compile(r"\w+")
+CONTROLS = dict.fromkeys((*range(0x20), 0x7F), " ")   # C0 e DEL viram espaço: o `\x00` termina a string no SQLite (R6-03)
 
 
 def fold(text: str) -> str:
@@ -43,6 +45,17 @@ def fold(text: str) -> str:
 
 def _core(term: str) -> str:
     return fold("".join(ch for ch in term if ch.isalnum()))
+
+
+def _tokens(term: str) -> list[str]:
+    """As palavras que o FTS tira de um termo do usuário (pedaços de letras e dígitos, sem acento): "e-mail" -> e, mail."""
+    return WORD_RE.findall(fold(term).replace("_", " "))
+
+
+def _prefixable(term: str) -> bool:
+    """O `*` vale para o último token da frase (o FTS expande só ele): 3 letras ou dígitos ou mais."""
+    tokens = _tokens(term)
+    return bool(tokens) and len(tokens[-1]) >= MIN_PREFIX
 
 
 def quote(term: str) -> str:
@@ -62,7 +75,7 @@ def terms(text: str) -> list[str]:
     palavras vazias; até `MAX_TERMS`, as últimas (no seguimento do chat, a pergunta atual vem depois da anterior)."""
     words: list[str] = []
     seen: set[str] = set()
-    for raw in (text or "").split():
+    for raw in (text or "").translate(CONTROLS).split():
         core = _core(raw)
         if not core or core in seen:
             continue
@@ -78,7 +91,7 @@ def build_query(text: str) -> FtsQuery | None:
     if not words:
         return None
     quoted = [quote(w) for w in words]
-    if len(_core(words[-1])) >= MIN_PREFIX:
+    if _prefixable(words[-1]):
         quoted[-1] += "*"
     return FtsQuery(tuple(words), " ".join(quoted), " OR ".join(quoted))
 
@@ -108,11 +121,11 @@ def _pattern(words: Sequence[str]) -> re.Pattern[str] | None:
     última como prefixo."""
     alts: list[str] = []
     for i, w in enumerate(words):
-        tokens = WORD_RE.findall(fold(w).replace("_", " "))
+        tokens = _tokens(w)
         if not tokens:
             continue
         body = r"\W+".join(re.escape(t) for t in tokens)
-        prefix = i == len(words) - 1 and len(_core(w)) >= MIN_PREFIX
+        prefix = i == len(words) - 1 and _prefixable(w)
         alts.append(rf"(?<!\w){body}" + (r"\w*" if prefix else r"(?!\w)"))
     return re.compile("|".join(alts)) if alts else None
 

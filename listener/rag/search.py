@@ -1,10 +1,13 @@
 """Busca híbrida (F5 itens 2 a 4, F5A-20, F5A-28): a lista por palavra (FTS5, `rank` bm25 com pesos; E implícito e, com
 menos de 10 resultados, OU) e a lista por sentido (assinatura binária do modelo ativo, candidatos por Hamming e reordenação
-pelo cosseno exato dos float32), fundidas por RRF (k = 60), com os filtros (pessoa, período, reunião, tipo) aplicados nas
-duas antes do top-k (no vetor, uma máscara antes dos candidatos). Sem vetor da consulta (sem chave, sem rede) ou sem vetores
-do modelo ativo, só a lista por palavra, com o selo "busca por palavras" e o motivo. As linhas voltam prontas para a tela:
-reunião, título, data, tipo, tempo, falantes, trecho destacado (HTML seguro), posições nas duas listas e a pontuação;
-`group_by_meeting` agrupa para o Histórico (U-024) e `limit_per_meeting` corta para o chat. Tempos de cada parte no log.
+pelo cosseno exato dos float32), fundidas por RRF (k = 60), com os filtros (pessoa, período, reunião) aplicados nas duas
+antes do top-k (no vetor, uma máscara antes dos candidatos). Cada lista, e a fusão, corta por reunião antes do limite
+(`per_meeting`, R6-01): uma reunião com muitos trechos (ou com a palavra no título, que entra em todos com peso 3) não ocupa
+as 50 linhas; o Histórico usa `HISTORY_PER_MEETING` e o chat, `rag.max_per_meeting`. Sem vetor da consulta (sem chave, sem
+rede, índice sem vetores) ou sem vetores do modelo ativo nos trechos filtrados, só a lista por palavra, com o selo "busca por
+palavras" e o motivo. As linhas voltam prontas para a tela: reunião, título, data, tipo, tempo, falantes, trecho destacado
+(HTML seguro), posições nas duas listas e a pontuação; `group_by_meeting` agrupa para o Histórico (U-024). Tempos de cada
+parte no log.
 
 O vetor da consulta (`embed_query`) vem do embedder ativo (`rag.index.embedder_status`) com `task = query`, normalizado, numa
 linha de `llm_calls` com reunião nula e `task = rag_embed`, e passa por um cache LRU por (modelo, texto) no processo. É
@@ -41,6 +44,7 @@ log = get_logger("rag.search")
 RRF_K = 60
 LIST_K = 50                      # cada lista (palavra e sentido) até aqui antes da fusão (o L0 mediu o FTS com LIMIT 50)
 DEFAULT_K = 50                   # linhas fundidas devolvidas (o Histórico)
+HISTORY_PER_MEETING = 5          # teto de trechos por reunião no Histórico (o chat usa `rag.max_per_meeting`, R6-01)
 MIN_AND_RESULTS = 10             # com menos que isto, a busca por palavra refaz com OU
 SNIPPET_TOKENS = 16
 LOAD_BATCH = 20_000              # assinaturas por consulta ao carregar o cache (200 mil x 768 = 19,2 MB no fim)
@@ -50,6 +54,8 @@ QUERY_TIMEOUT_S = 15.0           # a busca não espera mais que isto pelo vetor 
 QUERY_ATTEMPTS = 2
 QUERY_DELAYS = (0.5,)
 NO_QUERY_VECTOR = "sem o vetor da consulta"
+NO_VECTORS = "índice ainda sem vetores do modelo {model}"
+FILTERED_NO_VECTORS = "trechos filtrados sem vetor do modelo (índice incompleto)"
 
 KIND_LABELS: dict[str, str] = {
     ChunkKind.TRANSCRIPT: "transcrição", ChunkKind.DECISION: "decisão", ChunkKind.HIGHLIGHT: "destaque",
@@ -120,7 +126,8 @@ def group_by_meeting(hits: Sequence[SearchHit]) -> list[MeetingHits]:
 
 
 def limit_per_meeting(hits: Sequence[SearchHit], per_meeting: int, limit: int) -> list[SearchHit]:
-    """Os `limit` primeiros com no máximo `per_meeting` de cada reunião (o chat: `rag.top_k` e `rag.max_per_meeting`)."""
+    """Os `limit` primeiros com no máximo `per_meeting` de cada reunião, de uma lista já pronta (o `search` já corta por reunião
+    em cada lista antes do limite, `per_meeting`; isto é para recortar o resultado na tela)."""
     seen: Counter[int] = Counter()
     out: list[SearchHit] = []
     for h in hits:
@@ -275,8 +282,10 @@ _QUERY_LOCK = threading.Lock()
 def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None) -> QueryVector:
     """O vetor da consulta pelo embedder ativo (`task = query`), normalizado, na dimensão do `model_key`; do cache LRU por
     (modelo, texto) quando já pedido neste processo (sem chamada nem custo). Sem embedder pronto ou com erro de rede ou do
-    provedor, `vector` nulo com o motivo (a busca cai para "por palavras"). Uma linha em `llm_calls` por chamada, com reunião
-    e job nulos, `task = rag_embed` e `strategy = query`. Síncrono: chamar fora da thread da interface."""
+    provedor, `vector` nulo com o motivo (a busca cai para "por palavras"); com o índice ainda sem nenhum vetor do modelo,
+    também nulo e sem chamar a rede (a busca cairia em "por palavras" do mesmo jeito, depois de pagar e esperar, R6-06). Uma
+    linha em `llm_calls` por chamada, com reunião e job nulos, `task = rag_embed` e `strategy = query`. Síncrono: chamar fora
+    da thread da interface."""
     from ..llm import redact
     from ..llm.aio import run_async
     from ..llm.costs import cost_usd, price_for
@@ -287,6 +296,8 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None)
         return QueryVector(None, status.model_key, "consulta vazia")
     if not status.ready or status.model_key is None:
         return QueryVector(None, status.model_key, status.reason)
+    if not store.rag.vector_version(status.model_key).size:
+        return QueryVector(None, status.model_key, NO_VECTORS.format(model=status.model_key))
     key = (status.model_key, text)
     with _QUERY_LOCK:
         hit = _QUERY_CACHE.get(key)
@@ -344,12 +355,15 @@ def _record(store: Store, provider_id: str, model: str, tokens: int, cost: float
 
 # ---------------------------------------------------------------- busca
 def search(store: Store, query: str, filters: SearchFilters | None = None, *, query_vector: QueryVector | np.ndarray | None = None,
-           k: int = DEFAULT_K, snippets: bool = True, cache: SignatureCache | None = None) -> SearchResult:
+           k: int = DEFAULT_K, per_meeting: int | None = HISTORY_PER_MEETING, snippets: bool = True,
+           cache: SignatureCache | None = None) -> SearchResult:
     """Busca híbrida (ou só por palavras, com o motivo) com os filtros nas duas listas; até `k` linhas fundidas, prontas para
-    a tela. `query_vector` vem de `embed_query` (None = só por palavras; um `ndarray` vale como vetor do modelo ativo).
+    a tela, com no máximo `per_meeting` trechos de cada reunião (em cada lista antes do limite e na fusão; None = sem teto).
+    `query_vector` vem de `embed_query` (None = só por palavras; um `ndarray` vale como vetor do modelo ativo).
     `snippets=False` pula o `snippet()` (o chat). Só lê o banco: rodar numa `Task`."""
     t0 = time.perf_counter()
     filters = filters or SearchFilters()
+    cap = per_meeting if per_meeting is not None and per_meeting > 0 else None
     if isinstance(query_vector, np.ndarray):
         query_vector = QueryVector(query_vector, index.embedder_status(store).model_key)
     q = fts.build_query(query)
@@ -357,18 +371,30 @@ def search(store: Store, query: str, filters: SearchFilters | None = None, *, qu
         return SearchResult(query, (), False, "consulta vazia", "", False)
     timings: dict[str, float] = {}
     t = time.perf_counter()
-    words, expr, used_or = _by_words(store, q, filters, snippets)
+    words, expr, used_or = _by_words(store, q, filters, snippets, cap)
     timings["fts_ms"] = _ms(t)
     t = time.perf_counter()
-    meaning, reason, missing = _by_meaning(store, query_vector, filters, cache)
+    meaning, reason, missing = _by_meaning(store, query_vector, filters, cache, cap)
     timings["vec_ms"] = _ms(t)
     t = time.perf_counter()
-    fused = rrf([[h.chunk_id for h in words], [cid for cid, _cos in meaning]])[:max(1, k)]
+    fused = rrf([[h.chunk_id for h in words], [cid for cid, _cos in meaning]])
     rows = store.rag.hit_rows([cid for cid, _s, _r in fused])
     snips = {h.chunk_id: h.snippet for h in words}
     cosines = dict(meaning)
-    hits = tuple(_hit(rows[cid], score, ranks, snips.get(cid), cosines.get(cid), q.terms, snippets)
-                 for cid, score, ranks in fused if cid in rows)
+    seen: Counter[int] = Counter()
+    found: list[SearchHit] = []
+    for cid, score, ranks in fused:
+        row = rows.get(cid)
+        if row is None:                                       # saiu no meio do caminho
+            continue
+        mid = int(row["meeting_id"])
+        if cap is not None and seen[mid] >= cap:              # as duas listas juntas podem passar do teto
+            continue
+        seen[mid] += 1
+        found.append(_hit(row, score, ranks, snips.get(cid), cosines.get(cid), q.terms, snippets))
+        if len(found) >= max(1, k):
+            break
+    hits = tuple(found)
     timings["fuse_ms"] = _ms(t)
     timings["total_ms"] = _ms(t0)
     hybrid = not reason
@@ -378,24 +404,25 @@ def search(store: Store, query: str, filters: SearchFilters | None = None, *, qu
     return SearchResult(query, hits, hybrid, reason, expr, used_or, missing, timings)
 
 
-def _by_words(store: Store, q: fts.FtsQuery, filters: SearchFilters, snippets: bool) -> tuple[list[FtsHit], str, bool]:
+def _by_words(store: Store, q: fts.FtsQuery, filters: SearchFilters, snippets: bool,
+              cap: int | None) -> tuple[list[FtsHit], str, bool]:
     tokens = SNIPPET_TOKENS if snippets else 0
     expr, used_or = q.all_terms, False
     try:
-        hits = store.rag.fts_hits(expr, LIST_K, filters, snippet_tokens=tokens)
+        hits = store.rag.fts_hits(expr, LIST_K, filters, snippet_tokens=tokens, per_meeting=cap)
         if len(hits) < MIN_AND_RESULTS and q.any_term != q.all_terms:
             expr, used_or = q.any_term, True
-            hits = store.rag.fts_hits(expr, LIST_K, filters, snippet_tokens=tokens)
+            hits = store.rag.fts_hits(expr, LIST_K, filters, snippet_tokens=tokens, per_meeting=cap)
     except sqlite3.OperationalError as e:  # a expressão é montada aqui e segura; o FTS em si nunca derruba a busca
         log.warning("busca por palavra falhou (%s): %s", expr, e)
         return [], expr, used_or
     return hits, expr, used_or
 
 
-def _by_meaning(store: Store, qv: QueryVector | None, filters: SearchFilters,
-                cache: SignatureCache | None) -> tuple[list[tuple[int, float]], str, int]:
-    """(trecho, cosseno) do melhor para o pior, o motivo de não haver busca por sentido (vazio = híbrida) e quantos trechos
-    não têm vetor do modelo ativo."""
+def _by_meaning(store: Store, qv: QueryVector | None, filters: SearchFilters, cache: SignatureCache | None,
+                cap: int | None) -> tuple[list[tuple[int, float]], str, int]:
+    """(trecho, cosseno) do melhor para o pior, no máximo `cap` por reunião, o motivo de não haver busca por sentido (vazio =
+    híbrida) e quantos trechos não têm vetor do modelo ativo."""
     if qv is None or qv.vector is None:
         return [], (qv.reason if qv is not None and qv.reason else NO_QUERY_VECTOR), 0
     key = index.embedder_status(store).model_key
@@ -404,15 +431,18 @@ def _by_meaning(store: Store, qv: QueryVector | None, filters: SearchFilters,
     view = (cache if cache is not None and cache.model == key else signature_cache(store, key)).view(store)
     missing = max(0, store.rag.count_chunks() - len(view.vids))
     if not len(view.vids):
-        return [], f"nenhum trecho com vetor do modelo {key} ainda (índice incompleto)", missing
+        return [], NO_VECTORS.format(model=key), missing
     query = vectors.normalize(qv.vector)[0]
     if view.mu is not None and view.mu.shape[0] != query.shape[0]:
         return [], f"vetor da consulta com {query.shape[0]} dimensões e índice com {view.mu.shape[0]}", missing
     mask: np.ndarray | None = None
     if filters.active:
-        mask = np.isin(view.chunk_ids, store.rag.chunk_ids_where(filters))
-        if not mask.any():
-            return [], "", missing
+        allowed = store.rag.chunk_ids_where(filters)
+        if not len(allowed):
+            return [], "", missing                            # nada passa nos filtros: nenhuma das duas listas acha
+        mask = np.isin(view.chunk_ids, allowed)
+        if not mask.any():                                    # há trechos nos filtros, nenhum com vetor (R6-04)
+            return [], FILTERED_NO_VECTORS, missing
     sig = vectors.signatures(query, view.mu)[0]
     if vectors.as_words(sig).shape[1] != view.words.shape[1]:
         return [], "assinatura da consulta de outro tamanho que a do índice", missing
@@ -422,8 +452,18 @@ def _by_meaning(store: Store, qv: QueryVector | None, filters: SearchFilters,
     keep = [int(i) for i in cand if stored.get(int(view.vids[i]), (-1,))[0] == int(view.chunk_ids[i])]
     if not keep:
         return [], "", missing
-    pos, scores = vectors.rerank(query, np.stack([stored[int(view.vids[i])][1] for i in keep]), LIST_K)
-    return [(int(view.chunk_ids[keep[int(p)]]), float(s)) for p, s in zip(pos, scores, strict=True)], "", missing
+    pos, scores = vectors.rerank(query, np.stack([stored[int(view.vids[i])][2] for i in keep]), len(keep))
+    out: list[tuple[int, float]] = []
+    seen: Counter[int] = Counter()
+    for p, s in zip(pos, scores, strict=True):                # todos os candidatos em ordem: o teto por reunião vem antes
+        cid, mid, _vec = stored[int(view.vids[keep[int(p)]])]  # do limite da lista (R6-01)
+        if cap is not None and seen[mid] >= cap:
+            continue
+        seen[mid] += 1
+        out.append((cid, float(s)))
+        if len(out) >= LIST_K:
+            break
+    return out, "", missing
 
 
 def _hit(row: dict[str, Any], score: float, ranks: tuple[int | None, ...], snippet: str | None, cosine: float | None,
@@ -445,5 +485,6 @@ def _hit(row: dict[str, Any], score: float, ranks: tuple[int | None, ...], snipp
                      score, cosine, row.get("seg_first"))
 
 
-__all__ = ["DEFAULT_K", "KIND_LABELS", "RRF_K", "MeetingHits", "QueryVector", "SearchFilters", "SearchHit", "SearchResult",
-           "SignatureCache", "clear_caches", "embed_query", "group_by_meeting", "limit_per_meeting", "rrf", "search", "signature_cache"]
+__all__ = ["DEFAULT_K", "HISTORY_PER_MEETING", "KIND_LABELS", "RRF_K", "MeetingHits", "QueryVector", "SearchFilters", "SearchHit",
+           "SearchResult", "SignatureCache", "clear_caches", "embed_query", "group_by_meeting", "limit_per_meeting", "rrf", "search",
+           "signature_cache"]

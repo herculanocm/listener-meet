@@ -9,6 +9,7 @@ vem dos segmentos ou, enquanto o Whisper ainda roda, dos turnos guardados no art
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,31 +175,65 @@ def pending(items: list[ReviewItem]) -> list[ReviewItem]:
     return [i for i in items if i.pending and i.merged_into is None]
 
 
+def _speaker(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow]) -> tuple[str, str, int | None]:
+    """(nome, cargo do dia, pessoa) de um segmento: a pessoa do segmento, senão a do cluster (mescla incluída); sem pessoa, o
+    rótulo da voz e cargo vazio."""
+    pid = s.get("person_id")
+    if pid is None and s.get("cluster_id") is not None and int(s["cluster_id"]) in clusters:
+        pid = resolve_person(clusters[int(s["cluster_id"])], clusters)
+    person = people.get(int(pid)) if pid is not None else None
+    if pid is None or person is None:
+        return (f"Voz {s.get('cluster')}" if s.get("cluster") else "Desconhecido"), "", None
+    return str(person["name"]), str(s.get("role_at_time") or person.get("role") or ""), int(pid)
+
+
+def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow], prefer_llm: bool) -> TranscriptRow:
+    name, role, pid = _speaker(s, people, clusters)
+    first = int(s["t_start_ms"])
+    try:
+        words = json.loads(s.get("words_json") or "[]")
+        if words:
+            first = int(words[0][0])
+    except (ValueError, TypeError, IndexError):
+        pass
+    return TranscriptRow(int(s["id"]), str(s.get("channel") or ""), int(s["t_start_ms"]), int(s["t_end_ms"]), name, role,
+                         str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm, pid)
+
+
+def _reading(store: Store, meeting_id: int) -> tuple[dict[int, dict[str, Any]], int | None, dict[int, ClusterRow]]:
+    job_id = store.segments.current_job_id(meeting_id)
+    return _people(store), job_id, {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
+
+
 def transcript_rows(store: Store, meeting_id: int, prefer_llm: bool = True) -> list[TranscriptRow]:
     """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, o rótulo da voz; toca da primeira palavra menos 150 ms.
     `prefer_llm` mostra a transcrição revisada quando existe (P4); o texto original fica sempre na linha."""
-    people = _people(store)
-    job_id = store.segments.current_job_id(meeting_id)
-    clusters = {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
-    rows: list[TranscriptRow] = []
-    for s in store.segments.list_segments(meeting_id, job_id):
-        pid = s.get("person_id")
-        if pid is None and s.get("cluster_id") is not None and int(s["cluster_id"]) in clusters:  # type: ignore[arg-type]
-            pid = resolve_person(clusters[int(s["cluster_id"])], clusters)  # type: ignore[arg-type]
-        person = people.get(int(pid)) if pid is not None else None
-        name = str(person["name"]) if person else (f"Voz {s.get('cluster')}" if s.get("cluster") else "Desconhecido")
-        role = str(s.get("role_at_time") or (person or {}).get("role") or "") if person else ""
-        first = int(s["t_start_ms"])
-        try:
-            words = json.loads(s.get("words_json") or "[]")
-            if words:
-                first = int(words[0][0])
-        except (ValueError, TypeError, IndexError):
-            pass
-        rows.append(TranscriptRow(int(s["id"]), str(s.get("channel") or ""), int(s["t_start_ms"]), int(s["t_end_ms"]), name, role,
-                                  str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm,
-                                  int(pid) if person is not None and pid is not None else None))
-    return rows
+    people, job_id, clusters = _reading(store, meeting_id)
+    return [_row(s, people, clusters, prefer_llm) for s in store.segments.list_segments(meeting_id, job_id)]
+
+
+def transcript_rows_between(store: Store, meeting_id: int, windows: Iterable[tuple[int, int]],
+                            prefer_llm: bool = True) -> list[TranscriptRow]:
+    """As mesmas linhas da leitura, só dos segmentos vigentes que cruzam as janelas [t0, t1), sem repetir, em ordem de tempo
+    (F5 R6-02: o chat global manda poucas falas de reuniões longas). Sem ler `words_json`: toca do começo do segmento."""
+    people, job_id, clusters = _reading(store, meeting_id)
+    seen: dict[int, TranscriptRow] = {}
+    for t0, t1 in windows:
+        for s in store.segments.overlapping(meeting_id, job_id, t0, t1):
+            if int(s["id"]) not in seen:
+                seen[int(s["id"])] = _row(s, people, clusters, prefer_llm)
+    return sorted(seen.values(), key=lambda r: (r.t_start_ms, r.segment_id))
+
+
+def participants(store: Store, meeting_id: int) -> list[str]:
+    """"Nome — Cargo" de quem fala na reunião (pessoas resolvidas, na ordem da primeira fala), sem ler as falas."""
+    people, job_id, clusters = _reading(store, meeting_id)
+    out: dict[str, None] = {}
+    for s in store.segments.speakers(meeting_id, job_id):
+        name, role, pid = _speaker(s, people, clusters)
+        if pid is not None:
+            out.setdefault(f"{name} — {role}" if role else name)
+    return list(out)
 
 
 # ---------------------------------------------------------------- áudio do card

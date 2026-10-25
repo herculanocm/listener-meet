@@ -1,12 +1,14 @@
 """F5 L3, chat sobre todas as reuniões: as citações por apelido (todas as formas da regex, só as linhas enviadas, até 5 s,
-`[R1]` liga só à reunião, apelido inexistente e reunião apagada ficam como texto, redesenho das citações gravadas), o prompt
-`rag_chat` (apelidos na ordem de relevância, falas pelos segmentos vigentes no intervalo do trecho, linhas de ata, ação,
-executivo e reunião), e o chat global ponta a ponta com o fake (streaming, cancelamento antes e durante, conversa criada,
-seguimento usa a pergunta anterior, mensagens e custo gravados, `llm_calls` com reunião nula, erro redigido, sem trechos,
-sem provedor, avaliação U-027 e o HTML da conversa)."""
+`[R1]` liga só à reunião, apelido inexistente e reunião apagada ficam como texto, redesenho das citações gravadas e o texto
+do histórico, R6-05), o prompt `rag_chat` (apelidos na ordem de relevância, falas pelos segmentos vigentes no intervalo do
+trecho lidos só nessas janelas, R6-02, linhas de ata, ação, executivo e reunião), o teto por reunião que deixa as outras
+reuniões chegarem ao chat (R6-01), e o chat global ponta a ponta com o fake (streaming, cancelamento antes e durante,
+conversa criada, seguimento usa a pergunta anterior, mensagens e custo gravados, `llm_calls` com reunião nula, erro
+redigido, sem trechos, sem provedor, avaliação U-027 e o HTML da conversa)."""
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 import pytest
@@ -17,13 +19,15 @@ from listener.llm.fake import FakeProvider
 from listener.llm.prompts import rag_chat
 from listener.llm.types import LlmTask, Role
 from listener.model import ChunkKind, SummaryKind
+from listener.pipeline import review
 from listener.rag import chat_global, citations, index, search
 from listener.rag.citations import CitedItem, OpenLink, SentLine, Target
 from listener.store import Store
 from listener.store.rag import SearchFilters
+from listener.store.segments import SegmentInsert
 from listener.store.summaries import SummaryInsert
-from tests.test_rag_index import KEY, _meeting, _people, _pipeline_job, _segments
-from tests.test_rag_search import _other_meeting
+from tests.test_rag_index import KEY, MODEL, _meeting, _people, _pipeline_job, _segments
+from tests.test_rag_search import _other_meeting, _qv
 
 QUESTION = "o que foi decidido sobre a auditoria?"
 
@@ -97,11 +101,17 @@ def test_rewrite_links_only_sent_lines_within_five_seconds_and_never_drops_a_cit
     assert "[Orçamento final, 24/10, 12:20]" in again and '[<a href="listener://open?m=5">Orçamento final, 24/10</a>]' in again
     gone = citations.render_saved(text, cites, {})
     assert "[R1 12:05] e [R1 12:20]; ver [R1]" in gone and "href" not in gone
+    # histórico do prompt (R6-05): resolvidas legíveis entre parênteses; não resolvidas sem o apelido (o tempo, se havia)
+    told = citations.history_text(text, cites, {5: ("Orçamento final", "2026-10-24")})
+    assert told.startswith("Fechado (Orçamento final, 24/10, 12:03) e (Orçamento final, 24/10, 12:20); ver (Orçamento final, 24/10)")
+    assert "outra (01:00);" in told and "(Orçamento final, 24/10, 12:03; 00:10)" in told and "R9" not in told and "R2" not in told
+    assert "[sem citação] e [12:03]" in told and "<b>fim</b>" in told and citations.BRACKET_RE.search(told) is None
+    assert citations.history_text("visto [R3] e [R1 00:05]", [], {}) == "visto  e (00:05)"         # [R3] sem tempo: some
     assert citations.render_saved("[R1 12:05] [R2]", [{"alias": "R7", "meeting_id": 5, "t_ms": 1}], {5: ("x", "")}) == "[R1 12:05] [R2]"
     assert chat_task.nearest_segment(735_001, [prompts.common.Line(11, 730_000, "Ana", "x")]) is None    # a F3 segue igual
 
 
-def test_excerpts_use_the_current_segments_by_time_aliases_by_relevance_and_lines_for_the_other_kinds(store):
+def test_excerpts_use_the_current_segments_by_time_aliases_by_relevance_and_lines_for_the_other_kinds(store, monkeypatch):
     who = _people(store)
     mid, job = _meeting(store, who)
     store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "## Decisões\n\n- Aprovar a auditoria. [00:30]\n", "gemini", "m",
@@ -114,7 +124,19 @@ def test_excerpts_use_the_current_segments_by_time_aliases_by_relevance_and_line
     _segments(store, mid, job2, who)
     store.segments.swap_job(mid, job2)
     hits = search.search(store, "auditoria").hits
+
+    def whole(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("o chat não lê a reunião inteira (R6-02)")
+
+    monkeypatch.setattr(chat_global.review, "transcript_rows", whole)
     blocks, targets = chat_global.build_excerpts(store, hits)
+    monkeypatch.undo()
+    def shown(rows: list[Any]) -> list[tuple[Any, ...]]:
+        return [(r.segment_id, r.name, r.role, r.shown_text, r.person_id) for r in rows]
+
+    assert shown(review.transcript_rows_between(store, mid, [(0, 10**9)])) == shown(review.transcript_rows(store, mid))
+    assert [r.t_start_ms for r in review.transcript_rows_between(store, mid, [(65_000, 75_000), (69_000, 71_000)])] == [30_000, 70_000]
+    assert review.participants(store, mid) == ["Ana — CFO", "Bia"]
     assert [b.alias for b in blocks] == ["R1"] and targets["R1"].meeting_id == mid and blocks[0].participants == "Ana — CFO, Bia"
     text = blocks[0].render()
     first = store.segments.list_segments(mid, job2)
@@ -185,7 +207,9 @@ def test_global_chat_end_to_end_streaming_follow_up_records_rating_and_html(stor
     assert second.error is None and second.thread_id == ans.thread_id and queries[-1] == f"{QUESTION}\ne o prazo?"
     req2, _ = store.llm_calls.payloads(second.call_id)
     history = [m for m in req2 if m["role"] == "assistant"][1:]
-    assert history and "Orçamento 2027, " in history[0]["text"] and "[R1 " not in history[0]["text"] and req2[-1]["text"] == "e o prazo?"
+    told = history[0]["text"] if history else ""
+    assert "(Orçamento 2027, " in told and "; Marketing digital, " in told and "e (00:00)." in told and req2[-1]["text"] == "e o prazo?"
+    assert "[" not in told and "R99" not in told and "R1" not in told                       # sem apelido velho (R6-05)
     assert store.llm_calls.get(second.call_id)["strategy"] == "direct" and len(store.chat.list_for_thread(ans.thread_id)) == 4
     # avaliação U-027 e o HTML da conversa
     assert chat_global.rate_answer(store, ans.message_id, 1) and store.chat.get(ans.message_id)["rating"] == 1
@@ -238,3 +262,47 @@ def test_global_chat_without_provider_without_excerpts_and_with_a_provider_error
     store.providers.set_active("gemini", llm=False)
     with pytest.raises(ValueError, match="provedor"):
         chat_global.run_global_chat(store, None, QUESTION)
+
+
+def _mk(store: Store, who: dict[str, int], title: str, lines: list[tuple[int, int, str, str]]) -> int:
+    mid = store.create_meeting(title, None, None, None)
+    store.finish_meeting(mid, lines[-1][1] * 1000)
+    job = _pipeline_job(store, mid)
+    store.segments.insert_segments([SegmentInsert(mid, job, "R", t0 * 1000, t1 * 1000, text, "pyannote", "final", person_id=who[p])
+                                    for t0, t1, p, text in lines])
+    index.sync_text(store, mid)
+    return mid
+
+
+def test_one_meeting_with_many_chunks_does_not_crowd_the_others_out_of_the_lists(store, monkeypatch):
+    """R6-01 (o cenário do revisor): "Orçamento 2027" tem 81 trechos que casam pelo título (peso 3 em todos) e quatro comitês
+    têm a decisão no texto; sem o teto por reunião dentro de cada lista, as 50 linhas eram todas da primeira e o chat via uma
+    reunião só."""
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    who = _people(store)
+    big = _mk(store, who, "Orçamento 2027", [(i * 30, i * 30 + 30, "ana" if i % 2 else "bia",
+                                              f"Item {i}: seguimos com o cronograma e as entregas da semana {i}.") for i in range(160)])
+    committees = [_mk(store, who, f"Comitê {k}", [(0, 40, "ana", f"Decidimos cortar o orçamento de viagens em {10 + k}%."),
+                                                  (40, 100, "bia", "Também falamos do contrato com o fornecedor."),
+                                                  (100, 170, "ana", "Fica para a próxima reunião.")]) for k in range(4)]
+    _llm_ready(store)                     # com chave, mas o índice só tem trechos e FTS: busca por palavras, sem rede (R6-06)
+    q = "o que foi decidido sobre o orçamento?"
+    crowded = search.search(store, q, per_meeting=None, snippets=False)
+    assert len(crowded.hits) == 50 and {h.meeting_id for h in crowded.hits} == {big}           # o problema, sem o teto
+    capped = search.search(store, q, per_meeting=3)
+    per = Counter(h.meeting_id for h in capped.hits)
+    assert set(per) == {big, *committees} and per[big] == 3 and not capped.hybrid and capped.fts_or
+    assert all("<b>" in h.snippet_html for h in capped.hits if h.meeting_id != big)             # o trecho da 2ª consulta
+    shown = Counter(h.meeting_id for h in search.search(store, q).hits)                          # o Histórico: até 5 de cada
+    assert set(shown) == {big, *committees} and shown[big] == search.HISTORY_PER_MEETING
+    ans = chat_global.run_global_chat(store, None, q)
+    assert set(ans.aliases.values()) == {big, *committees} and ans.excerpts == 3 + 4 and not ans.hybrid
+    assert store._q("SELECT COUNT(*) FROM llm_calls WHERE task = 'rag_embed'")[0][0] == 0      # o índice sem vetor: nem pediu
+    # a lista por sentido também corta antes do limite (os candidatos em ordem, até 3 por reunião)
+    for mid in (big, *committees):
+        index.fill_vectors(store, mid, provider=FakeProvider())
+    meaning, reason, _missing = search._by_meaning(store, search.QueryVector(_qv(q).vector, MODEL), SearchFilters(), None, 3)
+    by_meaning = Counter(int(store.rag.get_chunk(cid)["meeting_id"]) for cid, _cos in meaning)
+    assert reason == "" and set(by_meaning) == {big, *committees} and max(by_meaning.values()) == 3
+    hybrid = search.search(store, q, query_vector=_qv(q), per_meeting=3)
+    assert hybrid.hybrid and max(Counter(h.meeting_id for h in hybrid.hits).values()) <= 3       # e a fusão também

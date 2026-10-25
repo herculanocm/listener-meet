@@ -8,7 +8,8 @@ link; apelido desconhecido ou reunião apagada ficam como vieram. Nada some.
 
 `rewrite` devolve o HTML e as citações `[{alias, meeting_id, t_ms, segment_id, cited_ms}]` que `chat_messages` guarda (`t_ms`
 é o da linha casada; nulo = sem link de tempo; `cited_ms` é o que a LLM escreveu). `render_saved` redesenha a conversa a
-partir delas, sem recasar segmentos, com o título atual da reunião."""
+partir delas, sem recasar segmentos, com o título atual da reunião; `history_text` é a mesma resposta para o histórico do
+prompt, com as citações legíveis entre parênteses e as não resolvidas sem o apelido (R6-05)."""
 from __future__ import annotations
 
 import html
@@ -157,11 +158,11 @@ def nearest(t_ms: int, lines: Sequence[SentLine], max_distance_ms: int = MAX_DIS
     return best[1] if best is not None and best[0] <= max_distance_ms else None
 
 
-# (texto, link ou None, citação) de cada citação de um colchete
+# (texto, link ou None, citação) de cada citação de um colchete; texto vazio = a citação não aparece
 type Resolve = Callable[[CitedItem], tuple[str, str | None, Citation]]
 
 
-def _apply(text: str, resolve: Resolve, as_html: bool) -> tuple[str, list[Citation]]:
+def _apply(text: str, resolve: Resolve, as_html: bool, wrap: tuple[str, str] = ("[", "]")) -> tuple[str, list[Citation]]:
     def esc(s: str) -> str:
         return html.escape(s) if as_html else s
 
@@ -176,8 +177,11 @@ def _apply(text: str, resolve: Resolve, as_html: bool) -> tuple[str, list[Citati
         for item in items:
             label, href, cite = resolve(item)
             cites.append(cite)
-            pieces.append(f'<a href="{html.escape(href)}">{html.escape(label)}</a>' if as_html and href else esc(label))
-        out += [esc(text[pos:m.start()]), "[" + "; ".join(pieces) + "]"]
+            if label:
+                pieces.append(f'<a href="{html.escape(href)}">{html.escape(label)}</a>' if as_html and href else esc(label))
+        out.append(esc(text[pos:m.start()]))
+        if pieces:
+            out.append(wrap[0] + "; ".join(pieces) + wrap[1])
         pos = m.end()
     out.append(esc(text[pos:]))
     joined = "".join(out)
@@ -206,22 +210,23 @@ def rewrite(text: str, targets: Mapping[str, Target], *, as_html: bool = True) -
     return _apply(text, resolve, as_html)
 
 
-def render_saved(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str | None, str | None]], *,
-                 as_html: bool = True) -> str:
-    """Redesenha uma resposta guardada a partir das citações gravadas (a i-ésima citação do texto com a i-ésima gravada, se o
-    apelido confere), com o título e a data atuais (`meetings`: id -> (título, AAAA-MM-DD)); reunião apagada ou citação que
-    não confere ficam como vieram."""
+type SavedResolve = Callable[[CitedItem], tuple[str | None, str | None, Citation]]
+
+
+def _saved(saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str | None, str | None]]) -> SavedResolve:
+    """A i-ésima citação do texto com a i-ésima gravada, se o apelido confere: (texto legível com o título e a data atuais,
+    ou None quando não resolve: apelido desconhecido, reunião apagada ou citação que não confere; link; citação)."""
     seq = list(saved)
     count = 0
 
-    def resolve(item: CitedItem) -> tuple[str, str | None, Citation]:
+    def resolve(item: CitedItem) -> tuple[str | None, str | None, Citation]:
         nonlocal count
         cite = dict(seq[count]) if count < len(seq) else {}
         count += 1
         mid = cite.get("meeting_id") if cite.get("alias") == item.alias else None
         info = meetings.get(int(mid)) if mid is not None else None
         if mid is None or info is None:
-            return item.raw, None, cite
+            return None, None, cite
         label = meeting_label(*info)
         t_ms = cite.get("t_ms")
         if t_ms is not None:
@@ -231,12 +236,41 @@ def render_saved(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mappin
             return label, open_link(int(mid)), cite
         return f"{label}, {stamp(item.cited_ms)}", None, cite
 
+    return resolve
+
+
+def render_saved(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str | None, str | None]], *,
+                 as_html: bool = True) -> str:
+    """Redesenha uma resposta guardada a partir das citações gravadas, sem recasar segmentos, com o título e a data atuais
+    (`meetings`: id -> (título, AAAA-MM-DD)); reunião apagada ou citação que não confere ficam como vieram."""
+    base = _saved(saved, meetings)
+
+    def resolve(item: CitedItem) -> tuple[str, str | None, Citation]:
+        label, href, cite = base(item)
+        return (label if label is not None else item.raw), href, cite
+
     return _apply(text, resolve, as_html)[0]
+
+
+def history_text(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str | None, str | None]]) -> str:
+    """A resposta guardada para o histórico do prompt (R6-05): as citações resolvidas legíveis entre parênteses ("(Orçamento
+    2027, 24/10, 12:03)": um formato que a LLM não confunde com o `[R1 12:03]` das linhas novas e que o `BRACKET_RE` não lê) e
+    as não resolvidas sem o apelido (só o tempo, quando havia): um apelido velho poderia casar com outra reunião na pergunta
+    seguinte."""
+    base = _saved(saved, meetings)
+
+    def resolve(item: CitedItem) -> tuple[str, str | None, Citation]:
+        label, _href, cite = base(item)
+        if label is None:
+            label = stamp(item.cited_ms) if item.cited_ms is not None else ""
+        return label, None, cite
+
+    return _apply(text, resolve, False, ("(", ")"))[0]
 
 
 def saved_meeting_ids(saved: Sequence[Mapping[str, Any]]) -> set[int]:
     return {int(c["meeting_id"]) for c in saved if c.get("meeting_id") is not None}
 
 
-__all__ = ["MAX_DISTANCE_MS", "CitedItem", "OpenLink", "SentLine", "Target", "meeting_label", "nearest", "open_link", "parse_bracket",
-           "parse_open_link", "render_saved", "rewrite", "saved_meeting_ids", "short_title", "to_ms"]
+__all__ = ["MAX_DISTANCE_MS", "CitedItem", "OpenLink", "SentLine", "Target", "history_text", "meeting_label", "nearest", "open_link",
+           "parse_bracket", "parse_open_link", "render_saved", "rewrite", "saved_meeting_ids", "short_title", "to_ms"]

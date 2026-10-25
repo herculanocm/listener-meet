@@ -95,14 +95,13 @@ class VectorVersion(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class SearchFilters:
-    """Filtros da busca (F5 item 4), aplicados nas duas listas antes do top-k: pessoas (qualquer uma delas no trecho, por
-    `json_each` em `person_ids`), período pela data da reunião (`AAAA-MM-DD`, inclusivo nas duas pontas), reuniões e tipos
-    de trecho (`ChunkKind`). Vazio = sem filtro."""
+    """Filtros da busca (F5 item 4: pessoa, período, reunião), aplicados nas duas listas antes do top-k: pessoas (qualquer
+    uma delas no trecho, por `json_each` em `person_ids`), período pela data da reunião (`AAAA-MM-DD`, inclusivo nas duas
+    pontas) e reuniões. Vazio = sem filtro."""
     person_ids: tuple[int, ...] = ()
     date_from: str | None = None
     date_to: str | None = None
     meeting_ids: tuple[int, ...] = ()
-    kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for d in (self.date_from, self.date_to):
@@ -111,7 +110,7 @@ class SearchFilters:
 
     @property
     def active(self) -> bool:
-        return bool(self.person_ids or self.date_from or self.date_to or self.meeting_ids or self.kinds)
+        return bool(self.person_ids or self.date_from or self.date_to or self.meeting_ids)
 
     def sql(self) -> tuple[str, tuple[Any, ...], bool]:
         """(" AND ..." sobre `c` = `rag_chunks` e `m` = `meetings`, parâmetros, precisa do JOIN com `meetings`)."""
@@ -120,9 +119,6 @@ class SearchFilters:
         if self.meeting_ids:
             parts.append(f"c.meeting_id IN ({','.join('?' * len(self.meeting_ids))})")
             params += [int(i) for i in self.meeting_ids]
-        if self.kinds:
-            parts.append(f"c.kind IN ({','.join('?' * len(self.kinds))})")
-            params += [str(k) for k in self.kinds]
         if self.person_ids:
             marks = ",".join("?" * len(self.person_ids))
             parts.append(f"EXISTS (SELECT 1 FROM json_each(c.person_ids) p WHERE p.value IN ({marks}))")  # noqa: S608
@@ -249,14 +245,16 @@ class RagRepo:
                 out[int(r[0])] = np.frombuffer(bytes(r[1]), np.float32)
         return out
 
-    def candidate_vectors(self, ids: Sequence[int]) -> dict[int, tuple[int, np.ndarray]]:
-        """(trecho, vetor float32) por id de `rag_vectors`: a reordenação da busca lê só os candidatos e confere que o id ainda
-        é do mesmo trecho que o cache das assinaturas conhece (o id pode ter sido reaproveitado no meio da busca)."""
-        out: dict[int, tuple[int, np.ndarray]] = {}
+    def candidate_vectors(self, ids: Sequence[int]) -> dict[int, tuple[int, int, np.ndarray]]:
+        """(trecho, reunião, vetor float32) por id de `rag_vectors`: a reordenação da busca lê só os candidatos, confere que o
+        vetor ainda é do trecho que o cache das assinaturas conhece (saiu no meio da busca: fica de fora) e corta por reunião
+        (R6-01)."""
+        out: dict[int, tuple[int, int, np.ndarray]] = {}
         for part in batched((int(i) for i in ids), BATCH):
             marks = ",".join("?" * len(part))
-            for r in self.core.q(f"SELECT id, chunk_id, vector FROM rag_vectors WHERE id IN ({marks})", part):  # noqa: S608
-                out[int(r[0])] = (int(r[1]), np.frombuffer(bytes(r[2]), np.float32))
+            for r in self.core.q("SELECT v.id, v.chunk_id, c.meeting_id, v.vector FROM rag_vectors v "  # noqa: S608
+                                 f"JOIN rag_chunks c ON c.id = v.chunk_id WHERE v.id IN ({marks})", part):
+                out[int(r[0])] = (int(r[1]), int(r[2]), np.frombuffer(bytes(r[3]), np.float32))
         return out
 
     def signatures(self, model: str, after_id: int = 0, limit: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -356,19 +354,35 @@ class RagRepo:
         return out
 
     # ---------------------------------------------------------------- busca (L3)
-    def fts_hits(self, match: str, limit: int, filters: SearchFilters | None = None, *, snippet_tokens: int = 16) -> list[FtsHit]:
+    def fts_hits(self, match: str, limit: int, filters: SearchFilters | None = None, *, snippet_tokens: int = 16,
+                 per_meeting: int | None = None) -> list[FtsHit]:
         """Trechos que casam a expressão FTS5 (montada e segura em `rag.fts`; o usuário nunca escreve a sintaxe), do melhor
         para o pior pelo `rank` (bm25 com pesos 3, 2, 1 em título, falantes e texto), com os filtros antes do `LIMIT`.
-        `snippet()` só da coluna do texto, com até `snippet_tokens` palavras (0 = sem trecho destacado: o chat não usa)."""
+        `per_meeting` corta por reunião ANTES do `LIMIT` (`ROW_NUMBER() OVER (PARTITION BY reunião)`, R6-01): uma reunião com
+        muitos trechos, ou com a palavra no título (peso 3 em todos), não ocupa a lista inteira. `snippet()` só da coluna do
+        texto, com até `snippet_tokens` palavras (0 = sem trecho destacado: o chat não usa); com o corte, numa segunda
+        consulta só para as linhas que ficaram (no meio da janela ele seria calculado para todo trecho que casa)."""
         where, params, meetings = (filters or SearchFilters()).sql()
-        snippet = (f"snippet(rag_fts, 2, char(2), char(3), '…', {max(1, min(64, int(snippet_tokens)))})" if snippet_tokens > 0
-                   else "NULL")
+        tokens = max(1, min(64, int(snippet_tokens))) if snippet_tokens > 0 else 0
+        snippet = f"snippet(rag_fts, 2, char(2), char(3), '…', {tokens})"
         join = ""
-        if where:
+        if where or per_meeting:
             join = " JOIN rag_chunks c ON c.id = rag_fts.rowid" + (" JOIN meetings m ON m.id = c.meeting_id" if meetings else "")
-        rows = self.core.q(f"SELECT rag_fts.rowid, rag_fts.rank, {snippet} FROM rag_fts{join} WHERE rag_fts MATCH ?{where} "  # noqa: S608
-                           "ORDER BY rag_fts.rank LIMIT ?", (match, *params, int(limit)))
-        return [FtsHit(int(r[0]), float(r[1]), r[2]) for r in rows]
+        if not per_meeting:
+            rows = self.core.q(f"SELECT rag_fts.rowid, rag_fts.rank, {snippet if tokens else 'NULL'} FROM rag_fts{join} "  # noqa: S608
+                               f"WHERE rag_fts MATCH ?{where} ORDER BY rag_fts.rank LIMIT ?", (match, *params, int(limit)))
+            return [FtsHit(int(r[0]), float(r[1]), r[2]) for r in rows]
+        ranked = self.core.q("SELECT id, r FROM (SELECT rag_fts.rowid AS id, rag_fts.rank AS r, ROW_NUMBER() OVER "  # noqa: S608
+                             f"(PARTITION BY c.meeting_id ORDER BY rag_fts.rank, rag_fts.rowid) AS rn FROM rag_fts{join} "
+                             f"WHERE rag_fts MATCH ?{where}) WHERE rn <= ? ORDER BY r, id LIMIT ?",
+                             (match, *params, int(per_meeting), int(limit)))
+        snippets: dict[int, str] = {}
+        if tokens and ranked:
+            ids = [int(r[0]) for r in ranked]
+            snippets = {int(r[0]): str(r[1]) for r in self.core.q(
+                f"SELECT rowid, {snippet} FROM rag_fts WHERE rag_fts MATCH ? AND rowid IN ({','.join('?' * len(ids))})",  # noqa: S608
+                (match, *ids))}
+        return [FtsHit(int(r[0]), float(r[1]), snippets.get(int(r[0]))) for r in ranked]
 
     def chunk_ids_where(self, filters: SearchFilters) -> np.ndarray:
         """Ids dos trechos que passam nos filtros (a máscara da busca por sentido, antes dos candidatos)."""

@@ -1,9 +1,11 @@
-"""F5 L3, busca: a consulta FTS5 segura (aspas, sintaxe crua vira texto, prefixo na última, palavras vazias, E -> OU abaixo de
-10), o destaque seguro contra HTML (`snippet()` e `preview`), a busca por palavra e a híbrida (RRF, ordem e empates), os
-filtros (pessoa, período, reunião, tipo) nas duas listas, "por palavras" sem vetor da consulta ou sem vetores do modelo
-ativo, o cache das assinaturas (μ refeito, vetor novo de outro processo, trecho apagado, maior id trocado), o vetor da
-consulta (cache, `llm_calls` com reunião nula, falha e tempo esgotado viram o motivo), `group_by_meeting` e
-`limit_per_meeting`, as configurações `rag.*` com os vetores automáticos desligados e o `fmt_usd` abaixo de um centavo."""
+"""F5 L3, busca: a consulta FTS5 segura (aspas, sintaxe crua vira texto, controles fora, prefixo no último token da última
+palavra, palavras vazias, E -> OU abaixo de 10), o destaque seguro contra HTML (`snippet()` e `preview`), a busca por palavra
+e a híbrida (RRF, ordem e empates), o teto por reunião dentro de cada lista (R6-01), os filtros (pessoa, período, reunião)
+nas duas listas, "por palavras" sem vetor da consulta, sem vetores do modelo ativo ou sem vetor nos trechos filtrados, o
+cache das assinaturas (μ refeito, vetor novo de outro processo, trecho apagado, maior id trocado), o vetor da consulta
+(cache, `llm_calls` com reunião nula, falha e tempo esgotado viram o motivo, índice sem vetores não chama a rede),
+`group_by_meeting` e `limit_per_meeting`, as configurações `rag.*` com os vetores automáticos desligados e o `fmt_usd`
+abaixo de um centavo."""
 from __future__ import annotations
 
 import json
@@ -66,6 +68,8 @@ def test_fts_query_quotes_every_word_neutralizes_syntax_and_prefixes_the_last(st
     assert fts.build_query("o que foi decidido sobre o orçamento?").terms == ("decidido", "orçamento?")   # palavras vazias saem
     assert fts.build_query("o que").terms == ("o", "que")                                       # só vazias: ficam
     assert fts.build_query("de").all_terms == '"de"' and fts.build_query("dec").all_terms == '"dec"*'   # prefixo a partir de 3
+    assert fts.build_query("abc-d").all_terms == '"abc-d"' and fts.build_query("e-mail").all_terms == '"e-mail"*'  # o último token
+    assert fts.build_query("audit\x00oria").all_terms == '"audit" "oria"*' and fts.build_query("\x00\x01\x7f") is None  # controles
     assert fts.build_query("Orçamento orcamento ORÇAMENTO").terms == ("Orçamento",)              # sem repetição
     assert fts.build_query(" ".join(f"w{i}" for i in range(40))).terms[0] == "w8"                # as 32 últimas
     for empty in ("", "   ", "?? -- () :: ^ *", '""'):
@@ -81,6 +85,8 @@ def test_fts_query_quotes_every_word_neutralizes_syntax_and_prefixes_the_last(st
         store.rag.fts_hits(q.all_terms, 10)                                                     # nunca erro de sintaxe
         store.rag.fts_hits(q.any_term, 10)
     assert [h.chunk_id for h in store.rag.fts_hits(fts.build_query("text:auditoria").all_terms, 10)] == []   # coluna não é filtro
+    for raw in ("auditoria \x00", "\x00auditoria", "audi\x00toria sexta"):                       # o \x00 cortava a expressão
+        assert search.search(store, raw).hits, repr(raw)
     hits = store.rag.fts_hits(fts.build_query("-auditoria").all_terms, 10)
     assert len(hits) == 1 and "auditoria" in store.rag.get_chunk(hits[0].chunk_id)["text"]       # "-" não exclui: é texto
 
@@ -177,13 +183,17 @@ def test_filters_apply_to_both_lists_before_the_top_k(store):
     check(SearchFilters(person_ids=(who["ana"], 999)), lambda h: h.meeting_id == a)                    # qualquer uma das pessoas
     check(SearchFilters(date_from="2026-08-01", date_to="2026-09-01"), lambda h: h.meeting_id == b)    # inclusivo
     check(SearchFilters(date_from="2026-09-02"), lambda h: h.meeting_id == a)
-    kinds = check(SearchFilters(kinds=(ChunkKind.MEETING,)), lambda h: h.kind == ChunkKind.MEETING)
-    assert {h.meeting_id for h in kinds} == {a, b}
     none = search.search(store, q, SearchFilters(meeting_ids=(9999,)), query_vector=qv)
-    assert none.hits == () and none.hybrid                                                        # o filtro vale; não é falta de vetor
+    assert none.hits == () and none.hybrid                                    # nada passa no filtro: não é falta de vetor
     with pytest.raises(ValueError, match="AAAA-MM-DD"):
         SearchFilters(date_from="01/09/2026")
-    assert not SearchFilters().active and SearchFilters(kinds=("acao",)).active
+    assert not SearchFilters().active and SearchFilters(meeting_ids=(a,)).active
+    # R6-04: trechos nos filtros, nenhum com vetor: "por palavras" com o motivo (não "híbrida" vazia)
+    with store.transaction():
+        store._x("DELETE FROM rag_vectors WHERE chunk_id IN (SELECT id FROM rag_chunks WHERE meeting_id = ?)", (b,))
+    only_b = search.search(store, "campanha redes sociais", SearchFilters(meeting_ids=(b,)), query_vector=_qv("campanha redes sociais"))
+    assert not only_b.hybrid and only_b.reason == search.FILTERED_NO_VECTORS and only_b.hits
+    assert all(h.vec_rank is None for h in only_b.hits) and {h.meeting_id for h in only_b.hits} == {b}
 
 
 def test_words_only_without_query_vector_or_without_vectors_of_the_active_model(store, monkeypatch):
@@ -196,12 +206,15 @@ def test_words_only_without_query_vector_or_without_vectors_of_the_active_model(
     assert not res.hybrid and res.reason == no_key.reason and res.hits
     _ready(store)
     monkeypatch.setenv("LISTENER_LLM", "fake")
-    qv = search.embed_query(store, "auditoria")
-    assert qv.vector is not None
-    res = search.search(store, "auditoria", query_vector=qv)                                      # chave, mas índice sem vetores
-    assert not res.hybrid and "índice incompleto" in res.reason and res.missing_vectors == 5 and res.hits
+    empty = search.embed_query(store, "auditoria")                         # chave, mas índice sem vetores: nem chama a rede (R6-06)
+    assert empty.vector is None and empty.reason == search.NO_VECTORS.format(model=MODEL) and store._q("SELECT id FROM llm_calls") == []
+    res = search.search(store, "auditoria", query_vector=empty)
+    assert not res.hybrid and res.reason == empty.reason and res.hits
+    res = search.search(store, "auditoria", query_vector=_qv("auditoria"))                        # vetor de fora, índice vazio
+    assert not res.hybrid and res.reason == search.NO_VECTORS.format(model=MODEL) and res.missing_vectors == 5 and res.hits
     index.fill_vectors(store, mid, provider=FakeProvider())
-    assert search.search(store, "auditoria", query_vector=qv).hybrid
+    qv = search.embed_query(store, "auditoria")
+    assert qv.vector is not None and not qv.cached and search.search(store, "auditoria", query_vector=qv).hybrid
     other = QueryVector(qv.vector, "openai/text-embedding-3-small@768")
     assert search.search(store, "auditoria", query_vector=other).reason == "o modelo de embeddings mudou: busque de novo"
     assert search.search(store, "auditoria", query_vector=qv.vector).hybrid                       # o vetor puro vale do modelo ativo
@@ -262,15 +275,17 @@ def test_signature_cache_mu_change_new_vector_from_another_process_deleted_chunk
 
 def test_embed_query_caches_records_calls_without_meeting_and_falls_back(store, monkeypatch):
     monkeypatch.setenv("LISTENER_LLM", "fake")
+    mid, _job = _meeting(store, _people(store))
     _ready(store)
+    _indexed(store, mid)                                                                         # com vetor nenhum, nem pede
     qv = search.embed_query(store, "  Orçamento   de 2027 ")
     assert qv.vector is not None and qv.vector.shape == (768,) and abs(float(np.linalg.norm(qv.vector)) - 1.0) < 1e-5
     assert (qv.model_key, qv.cached, qv.reason) == (MODEL, False, "") and qv.cost_usd is not None and qv.cost_usd > 0
-    calls = store._q("SELECT meeting_id, job_id, task, status, strategy, provider, model, cost_usd FROM llm_calls")
+    calls = store._q("SELECT meeting_id, job_id, task, status, strategy, provider, model, cost_usd FROM llm_calls WHERE meeting_id IS NULL")
     assert [tuple(c) for c in calls] == [(None, None, "rag_embed", "ok", "query", "gemini", "gemini-embedding-001", qv.cost_usd)]
     again = search.embed_query(store, "Orçamento de 2027")                                       # mesmo texto (espaços à parte)
     assert again.cached and again.cost_usd == 0.0 and np.array_equal(again.vector, qv.vector)
-    assert len(store._q("SELECT id FROM llm_calls")) == 1                                       # do cache: nenhuma chamada
+    assert len(store._q("SELECT id FROM llm_calls WHERE meeting_id IS NULL")) == 1              # do cache: nenhuma chamada
     with pytest.raises(ValueError):
         again.vector[0] = 1.0                                                                    # o cache não muda por fora
     fake = FakeProvider()

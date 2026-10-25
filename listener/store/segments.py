@@ -19,6 +19,9 @@ from .profiles import from_blob, to_blob
 log = get_logger("store.segments")
 
 BATCH = 1000
+SEGMENT_LOOKBACK_MS = 600_000        # nenhuma fala dura 10 min: a busca por janela de tempo anda só pelo índice de tempo
+LIGHT_COLUMNS = ("id, meeting_id, channel, t_start_ms, t_end_ms, text, text_llm, cluster, person_id, role_at_time, cluster_id, "
+                 "job_id")             # o que a leitura mostra, sem `words_json` (o chat global, F5 R6-02)
 CLUSTER_FIELDS = frozenset({"person_id", "status", "merged_into", "similarity", "margin", "speech_ms", "decision_source"})
 # `llm_*` só entram por `set_llm_suggestion` (CP11: recusa em `auto`, `confirmado` e mesclado); nunca por `update_cluster`
 LLM_SUGGESTION_ALLOWED = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
@@ -125,6 +128,23 @@ class SegmentsRepo:
         else:
             rows = self.core.q("SELECT * FROM segments WHERE meeting_id = ? AND job_id = ? ORDER BY t_start_ms, id", (meeting_id, job_id))
         return [cast(SegmentRow, dict(r)) for r in rows]
+
+    def overlapping(self, meeting_id: int, job_id: int | None, t0: int, t1: int) -> list[SegmentRow]:
+        """Segmentos que cruzam [t0, t1), sem `words_json` (F5 R6-02: o chat global manda poucas falas de reuniões longas):
+        pelo índice (meeting_id, t_start_ms), a partir de `SEGMENT_LOOKBACK_MS` antes de t0."""
+        job, params = (" AND job_id = ?", (job_id,)) if job_id is not None else ("", ())
+        rows = self.core.q(f"SELECT {LIGHT_COLUMNS} FROM segments WHERE meeting_id = ? AND t_start_ms >= ? AND t_start_ms < ? "  # noqa: S608
+                           f"AND t_end_ms > ?{job} ORDER BY t_start_ms, id",
+                           (meeting_id, int(t0) - SEGMENT_LOOKBACK_MS, int(t1), int(t0), *params))
+        return [cast(SegmentRow, dict(r)) for r in rows]
+
+    def speakers(self, meeting_id: int, job_id: int | None) -> list[dict[str, Any]]:
+        """Quem fala na reunião, sem ler as falas: (pessoa, cluster, cargo do dia) distintos na ordem da primeira fala."""
+        job, params = (" AND job_id = ?", (job_id,)) if job_id is not None else ("", ())
+        rows = self.core.q("SELECT person_id, cluster_id, cluster, role_at_time, MIN(t_start_ms) AS first FROM segments "  # noqa: S608
+                           f"WHERE meeting_id = ?{job} GROUP BY person_id, cluster_id, cluster, role_at_time ORDER BY first",
+                           (meeting_id, *params))
+        return [dict(r) for r in rows]
 
     def count_segments(self, meeting_id: int, job_id: int | None = None, *, with_text: bool = False) -> int:
         """Falas da reunião (do job, se dado); `with_text` conta só as que têm texto (F3.1 R3-02: sem fala, sem job `llm`)."""

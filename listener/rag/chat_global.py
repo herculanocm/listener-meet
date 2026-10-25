@@ -1,9 +1,10 @@
 """Chat sobre todas as reuniões (F5 item 11, Q3, Q11, U-027), no padrão do chat de uma reunião (`llm/chat_task.py`): a
 pergunta (com a anterior do usuário na mesma conversa, para o seguimento) vai à busca híbrida com os filtros da tela; até
-`rag.top_k` trechos, no máximo `rag.max_per_meeting` por reunião, cada reunião com um apelido (R1, R2, na ordem de
-relevância); prompt `rag_chat` no modelo rápido; resposta em streaming com cancelamento; as citações `[R1 12:03]` viram links
-para a reunião e a linha enviada mais próxima (`rag/citations.py`). As falas enviadas são os segmentos vigentes que o trecho
-cobre AGORA, escolhidos pelo intervalo de tempo do trecho (o reprocessamento troca os ids, F5A-06).
+`rag.top_k` trechos, no máximo `rag.max_per_meeting` por reunião (o teto vale dentro de cada lista da busca, antes do limite,
+R6-01), cada reunião com um apelido (R1, R2, na ordem de relevância); prompt `rag_chat` no modelo rápido; resposta em
+streaming com cancelamento; as citações `[R1 12:03]` viram links para a reunião e a linha enviada mais próxima
+(`rag/citations.py`). As falas enviadas são os segmentos vigentes que o trecho cobre AGORA, escolhidos pelo intervalo de tempo
+do trecho (o reprocessamento troca os ids, F5A-06), lidos só nessas janelas (R6-02).
 
 A conversa nasce na primeira pergunta (título = a pergunta cortada); pergunta e resposta vão para `chat_messages` com
 `meeting_id` nulo, `thread_id`, `citations_json` e o custo (a chamada do chat mais o vetor da consulta); `llm_calls` com
@@ -34,7 +35,7 @@ from ..store.llm_calls import LlmCallInsert
 from ..store.rag import SearchFilters
 from . import citations
 from .citations import SentLine, Target
-from .search import SearchHit, embed_query, limit_per_meeting, search
+from .search import SearchHit, embed_query, search
 
 if TYPE_CHECKING:
     from ..pipeline.review import TranscriptRow
@@ -44,7 +45,6 @@ log = get_logger("rag.chat")
 
 HISTORY_TURNS = 8                # mensagens da conversa que voltam ao prompt (como o chat da F3)
 TITLE_MAX = 80
-SEARCH_K = 100                   # linhas fundidas antes do corte por reunião (`rag.max_per_meeting` pode ser 1)
 MAX_OUTPUT_TOKENS = 2048
 RATE_SCHEME = "listener"
 
@@ -94,6 +94,12 @@ def _speaker(row: TranscriptRow) -> str:
     return f"{row.name} — {row.role}" if row.role else row.name
 
 
+def _windows(hits: Sequence[SearchHit]) -> list[tuple[int, int]]:
+    """O intervalo de tempo de cada trecho da transcrição (fim pelo menos 1 ms depois do começo)."""
+    return [(int(h.t_start_ms), max(int(h.t_end_ms if h.t_end_ms is not None else h.t_start_ms), int(h.t_start_ms) + 1))
+            for h in hits if h.kind == ChunkKind.TRANSCRIPT and h.t_start_ms is not None]
+
+
 def load_citations(raw: str | None) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw or "[]")
@@ -115,8 +121,9 @@ def _meetings(store: Store, ids: Iterable[int]) -> dict[int, tuple[str | None, s
 def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[MeetingBlock], dict[str, Target]]:
     """Os trechos escolhidos como blocos por reunião (apelido na ordem do melhor trecho de cada uma) e, por apelido, a reunião
     e as linhas enviadas com tempo (o que uma citação pode ligar). Falas: os segmentos vigentes que cruzam o intervalo do
-    trecho, sem repetir, em ordem de tempo; sem nenhum (reprocessada e ainda não reindexada), o texto do trecho. Ata, ação,
-    executivo e marca da reunião: uma linha com o tipo, o tempo quando há e o texto."""
+    trecho, lidos só nessas janelas (sem `words_json`; R6-02: ler a reunião inteira custava ~55 ms por reunião de 2 h), sem
+    repetir, em ordem de tempo; sem nenhum (reprocessada e ainda não reindexada), o texto do trecho. Ata, ação, executivo e
+    marca da reunião: uma linha com o tipo, o tempo quando há e o texto. Participantes: quem fala na reunião inteira."""
     by_meeting: dict[int, list[SearchHit]] = {}
     for h in hits:
         by_meeting.setdefault(h.meeting_id, []).append(h)
@@ -127,11 +134,12 @@ def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[Meetin
         if meeting is None:                                  # apagada entre a busca e o prompt
             continue
         alias = f"R{len(blocks) + 1}"
-        rows = review.transcript_rows(store, mid, prefer_llm=True)
+        windows = _windows(mhits)
+        rows = review.transcript_rows_between(store, mid, windows, prefer_llm=True) if windows else []
         lines, sent = _lines(mhits, rows)
         title = str(meeting.get("title") or meeting.get("title_llm") or "")
         date = str(meeting.get("started_at") or "")[:10]
-        people = ", ".join(dict.fromkeys(_speaker(r) for r in rows if r.person_id is not None))
+        people = ", ".join(review.participants(store, mid))
         blocks.append(MeetingBlock(alias, mid, title, date, people or _clean(str(meeting.get("expected_participants") or "")), lines))
         targets[alias] = Target(mid, title, date, sent)
     return blocks, targets
@@ -156,8 +164,8 @@ def _lines(hits: Sequence[SearchHit], rows: Sequence[TranscriptRow]) -> tuple[tu
 
 
 def _history(store: Store, rows: Sequence[Any]) -> list[tuple[str, str]]:
-    """As últimas mensagens da conversa; as respostas com as citações já legíveis (título e data da reunião), porque os
-    apelidos de uma pergunta não valem na seguinte."""
+    """As últimas mensagens da conversa; as respostas com as citações legíveis entre parênteses (título e data da reunião) e
+    as não resolvidas sem o apelido, porque os apelidos de uma pergunta não valem na seguinte (R6-05)."""
     recent = list(rows)[-HISTORY_TURNS:]
     saved = {int(r["id"]): load_citations(r.get("citations_json")) for r in recent if str(r["role"]) == ChatRole.ASSISTANT}
     meetings = _meetings(store, (mid for cites in saved.values() for mid in citations.saved_meeting_ids(cites)))
@@ -165,7 +173,7 @@ def _history(store: Store, rows: Sequence[Any]) -> list[tuple[str, str]]:
     for r in recent:
         text = str(r["text"])
         if int(r["id"]) in saved:
-            text = citations.render_saved(text, saved[int(r["id"])], meetings, as_html=False)
+            text = citations.history_text(text, saved[int(r["id"])], meetings)
         out.append((str(r["role"]), text))
     return out
 
@@ -202,8 +210,9 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     last = next((str(m["text"]) for m in reversed(previous) if str(m["role"]) == ChatRole.USER), "")
     query = f"{last}\n{question}" if last else question               # seguimento: "e o prazo?" depois de "o que decidimos..."
     qv = embed_query(store, query)
-    found = search(store, query, filters, query_vector=qv, k=SEARCH_K, snippets=False)
-    picked = limit_per_meeting(found.hits, int(store.get(SPECS["rag.max_per_meeting"])), int(store.get(SPECS["rag.top_k"])))
+    found = search(store, query, filters, query_vector=qv, k=int(store.get(SPECS["rag.top_k"])),
+                   per_meeting=int(store.get(SPECS["rag.max_per_meeting"])), snippets=False)
+    picked = list(found.hits)
     blocks, targets = build_excerpts(store, picked)
     aliases = {b.alias: b.meeting_id for b in blocks}
     search_ms = _ms(t0)
