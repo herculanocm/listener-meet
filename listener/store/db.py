@@ -1,6 +1,6 @@
 """Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
-`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`) atrás dos nomes de método da F1. Uma conexão por
-thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`;
+`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`; F5: `rag`) atrás dos nomes de
+método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`;
 `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from .meetings import EventRow, MarkerRow, MeetingRow, MeetingsRepo, PresetRow
 from .people import PeopleRepo, PersonRow
 from .profiles import ProfilesRepo
 from .providers import ProvidersRepo
+from .rag import RagRepo
 from .segments import SegmentsRepo
 from .settings import SettingsRepo
 from .summaries import SummariesRepo
@@ -52,6 +53,7 @@ class Store:
         self.llm_calls = LlmCallsRepo(self.core)
         self.chat = ChatRepo(self.core)
         self.captions = CaptionsRepo(self.core)
+        self.rag = RagRepo(self.core)
 
     @classmethod
     def open_readonly(cls, base_dir: str | Path) -> Self:

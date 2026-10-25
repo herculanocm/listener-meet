@@ -7,6 +7,9 @@ nada: só dividem CPU (R-12). Datas ISO com offset (v2) comparadas por `julianda
 `config_json` recebe o snapshot das `pipeline.*` no primeiro claim e fica ("o modelo vale para o próximo job", CP8).
 F3: duas classes de fila (`kinds`): o worker pesado pega `meeting`, `reprocess` e `embed_range`; o leve pega `llm`. O
 `NOT EXISTS ... rodando fresco` vale por classe, logo um job `llm` não espera uma diarização de 2 h (F3A-03).
+F5: o leve pega também o `index` (índice da busca), sempre depois de todo `llm` pendente (`ORDER BY (kind = 'index'), id`):
+a varredura da abertura enfileira dezenas e o `llm` da reunião de hoje não espera por elas (F5A-02). Um `index` pendente por
+reunião (`enqueue_index`, F5A-04); a fila e a bandeja mostram os `index` agregados (`index_summary`, F5A-05).
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ STALE_S = 60.0           # heartbeat mais velho que isto = worker morto
 MAX_ATTEMPTS = 3
 ACTIVE = (str(JobStatus.PENDING), str(JobStatus.RUNNING), str(JobStatus.PAUSED))
 HELD = (str(JobStatus.RUNNING), str(JobStatus.PAUSED))      # um worker vivo está com o job
+INDEX_REASONS = frozenset({"pipeline", "llm", "review", "edit", "sweep", "reindex"})   # `params_json.reason` do `index`
 
 
 class JobRow(TypedDict, total=False):
@@ -52,12 +56,13 @@ def _before(now: str, seconds: float) -> str:
     return (datetime.fromisoformat(now) - timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
 
 
-def _kinds(kinds: Iterable[JobKind | str] | None) -> tuple[str, tuple[str, ...]]:
-    """Cláusula `AND kind IN (...)` e seus parâmetros; vazia quando a classe não é filtrada (comportamento da F2)."""
+def _kinds(kinds: Iterable[JobKind | str] | None, negate: bool = False) -> tuple[str, tuple[str, ...]]:
+    """Cláusula `AND kind IN (...)` (ou `NOT IN`, com `negate`) e seus parâmetros; vazia quando a classe não é filtrada
+    (comportamento da F2)."""
     values = tuple(str(k) for k in kinds) if kinds is not None else ()
     if not values:
         return "", ()
-    return f" AND kind IN ({','.join('?' * len(values))})", values
+    return f" AND kind {'NOT IN' if negate else 'IN'} ({','.join('?' * len(values))})", values
 
 
 class JobsRepo:
@@ -74,11 +79,41 @@ class JobsRepo:
         rows = self.core.q("SELECT * FROM processing_jobs WHERE id = ?", (job_id,))
         return cast(JobRow, dict(rows[0])) if rows else None
 
-    def list_jobs(self, limit: int = 50) -> list[JobRow]:
-        """Ativos primeiro (na ordem da fila), depois os terminados mais recentes."""
-        rows = self.core.q("SELECT * FROM processing_jobs ORDER BY (status NOT IN (?, ?, ?)), "
-                           "CASE WHEN status IN (?, ?, ?) THEN id ELSE -id END LIMIT ?", (*ACTIVE, *ACTIVE, int(limit)))
+    def list_jobs(self, limit: int = 50, *, kinds: Iterable[JobKind | str] | None = None,
+                  exclude_kinds: Iterable[JobKind | str] | None = None, statuses: Iterable[JobStatus | str] | None = None) -> list[JobRow]:
+        """Ativos primeiro (na ordem da fila), depois os terminados mais recentes; `kinds`, `exclude_kinds` e `statuses` filtram
+        (F5: a fila e a bandeja listam sem os `index`, que seriam dezenas depois da varredura)."""
+        clause, params = _kinds(kinds)
+        not_clause, not_params = _kinds(exclude_kinds, negate=True)
+        wanted = tuple(str(x) for x in statuses) if statuses is not None else ()
+        status_clause = f" AND status IN ({','.join('?' * len(wanted))})" if wanted else ""
+        rows = self.core.q(f"SELECT * FROM processing_jobs WHERE 1 = 1{clause}{not_clause}{status_clause} "  # noqa: S608
+                           "ORDER BY (status NOT IN (?, ?, ?)), CASE WHEN status IN (?, ?, ?) THEN id ELSE -id END LIMIT ?",
+                           (*params, *not_params, *wanted, *ACTIVE, *ACTIVE, int(limit)))
         return [cast(JobRow, dict(r)) for r in rows]
+
+    def enqueue_index(self, meeting_id: int, reason: str) -> int | None:
+        """Um `index` pendente por reunião (F5A-04), numa instrução só (dois processos não duplicam): devolve o id do job novo
+        ou None quando já há um pendente. O que está rodando não conta (pode ter lido o estado antigo)."""
+        if reason not in INDEX_REASONS:
+            raise ValueError(f"motivo de indexação desconhecido: {reason!r}")
+        payload = json.dumps({"reason": reason}, ensure_ascii=False)
+        row = self.core.conn().execute(
+            "INSERT INTO processing_jobs(meeting_id, kind, status, params_json, created_at) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS "
+            "(SELECT 1 FROM processing_jobs WHERE meeting_id = ? AND kind = ? AND status = ?) RETURNING id",
+            (meeting_id, JobKind.INDEX, JobStatus.PENDING, payload, _now(), meeting_id, JobKind.INDEX, JobStatus.PENDING)).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def index_summary(self) -> dict[str, int]:
+        """Jobs `index` agregados para a fila e a bandeja: pendentes, rodando (ou pausados), reuniões com algum ativo e
+        reuniões cujo último `index` terminou em erro (os erros antigos já refeitos não contam)."""
+        row = self.core.q(
+            "SELECT COALESCE(SUM(status = ?), 0), COALESCE(SUM(status IN (?, ?)), 0), COUNT(DISTINCT CASE WHEN status IN (?, ?, ?) "
+            "THEN meeting_id END) FROM processing_jobs WHERE kind = ?", (JobStatus.PENDING, *HELD, *ACTIVE, JobKind.INDEX))[0]
+        errors = self.core.q("SELECT COUNT(*) FROM processing_jobs j WHERE j.kind = ? AND j.status = ? AND j.id = "
+                             "(SELECT MAX(id) FROM processing_jobs k WHERE k.meeting_id = j.meeting_id AND k.kind = ?)",
+                             (JobKind.INDEX, JobStatus.ERROR, JobKind.INDEX))[0][0]
+        return {"pending": int(row[0]), "running": int(row[1]), "meetings": int(row[2]), "errors": int(errors)}
 
     def active(self, kinds: Iterable[JobKind | str] | None = None) -> list[JobRow]:
         clause, params = _kinds(kinds)
@@ -101,18 +136,22 @@ class JobsRepo:
                            f"AND julianday(heartbeat_at) >= julianday(?){clause} ORDER BY id", (*HELD, limit, *params))
         return [cast(JobRow, dict(r)) for r in rows]
 
-    def summary(self) -> dict[str, Any]:
-        """Para o tooltip da bandeja: quantos ativos, qual roda e a porcentagem."""
-        active = self.active()
+    def summary(self, exclude_kinds: Iterable[JobKind | str] | None = None) -> dict[str, Any]:
+        """Para o tooltip da bandeja e o rodapé da fila: quantos ativos, qual roda e a porcentagem (sem os `exclude_kinds`)."""
+        skip = {str(k) for k in exclude_kinds or ()}
+        active = [j for j in self.active() if str(j.get("kind")) not in skip]
         running = next((j for j in active if j["status"] in HELD), None)
+        clause, params = _kinds(exclude_kinds, negate=True)
+        errors = self.core.q(f"SELECT COUNT(*) FROM processing_jobs WHERE status = ?{clause}", (JobStatus.ERROR, *params))[0][0]  # noqa: S608
         return {"active": len(active), "pending": sum(1 for j in active if j["status"] == JobStatus.PENDING),
-                "running": running, "errors": len(self.core.q("SELECT 1 FROM processing_jobs WHERE status = ?", (JobStatus.ERROR,)))}
+                "running": running, "errors": int(errors)}
 
     # ---------------------------------------------------------------- claim e ciclo do worker
     def claim(self, pid: int, config_json: str | None = None, now: str | None = None, stale_s: float = STALE_S,
               max_attempts: int = MAX_ATTEMPTS, kinds: Iterable[JobKind | str] | None = None) -> JobRow | None:
-        """Pega o primeiro `pendente` da classe (`kinds`; None = qualquer) se nenhum worker vivo segura um job dessa classe.
-        A devolução dos jobs com heartbeat vencido e o esgotamento das tentativas valem para todas as classes."""
+        """Pega o primeiro `pendente` da classe (`kinds`; None = qualquer) se nenhum worker vivo segura um job dessa classe;
+        os `index` vão depois de todos os outros pendentes (F5A-02). A devolução dos jobs com heartbeat vencido e o
+        esgotamento das tentativas valem para todas as classes."""
         now = now or _now()
         limit = _before(now, stale_s)
         clause, params = _kinds(kinds)
@@ -126,11 +165,11 @@ class JobsRepo:
             row = c.execute(
                 "UPDATE processing_jobs SET status = ?, worker_pid = ?, claimed_at = ?, heartbeat_at = ?, "  # noqa: S608
                 "started_at = COALESCE(started_at, ?), config_json = COALESCE(config_json, ?) "
-                f"WHERE id = (SELECT id FROM processing_jobs WHERE status = ? AND attempts < ?{clause} ORDER BY id LIMIT 1) "
+                f"WHERE id = (SELECT id FROM processing_jobs WHERE status = ? AND attempts < ?{clause} ORDER BY (kind = ?), id LIMIT 1) "
                 "AND NOT EXISTS (SELECT 1 FROM processing_jobs WHERE status IN (?, ?) AND heartbeat_at IS NOT NULL "
                 f"AND julianday(heartbeat_at) >= julianday(?){clause}) RETURNING *",
-                (JobStatus.RUNNING, int(pid), now, now, now, config_json, JobStatus.PENDING, int(max_attempts), *params, *HELD, limit,
-                 *params),
+                (JobStatus.RUNNING, int(pid), now, now, now, config_json, JobStatus.PENDING, int(max_attempts), *params, JobKind.INDEX,
+                 *HELD, limit, *params),
             ).fetchone()
         return cast(JobRow, dict(row)) if row is not None else None
 

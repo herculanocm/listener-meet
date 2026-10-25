@@ -1,6 +1,7 @@
 """Fila de processamento mínima pela bandeja (F2 item 15, U-005): reunião, etapa, porcentagem, estimativa; pausar e
 retomar (pausa manual), cancelar, tentar de novo e reprocessar (só por ação do usuário, CP3). Só metadados: nada de áudio
-nem de modelos aqui (R-9)."""
+nem de modelos aqui (R-9). F5: os jobs `index` (dezenas depois da varredura) não entram linha a linha: uma linha agregada
+"Índice: N reuniões (M com erro)" fica no fim da tabela (F5A-05)."""
 from __future__ import annotations
 
 import json
@@ -12,7 +13,8 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, Q
 
 from ..config.defaults import SPECS
 from ..llm.costs import fmt_usd
-from ..model import JOB_STEP_LABELS, JobKind, JobStatus
+from ..model import JOB_STEP_LABELS, LIGHT_JOB_KINDS, JobKind, JobStatus
+from ..store.jobs import HELD
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
 
 if TYPE_CHECKING:
@@ -22,7 +24,8 @@ if TYPE_CHECKING:
 REFRESH_MS = 2000
 COLUMNS = ("Reunião", "Tipo", "Estado", "Etapa", "%", "Estimativa", "Detalhe")
 KIND_TEXT: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "reprocessar", JobKind.EMBED_RANGE: "perfil de trecho",
-                             JobKind.LLM: "LLM"}
+                             JobKind.LLM: "LLM", JobKind.INDEX: "índice"}
+INDEX_KINDS: tuple[str, ...] = (str(JobKind.INDEX),)
 
 
 def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, llm_latency_s: float | None = None) -> tuple[str, ...]:
@@ -46,6 +49,23 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, ll
             eta = fmt_remaining(llm_latency_s * left)
     return (f"{title} ({started})" if started else title, KIND_TEXT.get(str(job.get("kind")), str(job.get("kind"))), status,
             label, f"{float(job.get('progress') or 0.0) * 100:.0f}", eta, detail)
+
+
+def index_row_texts(summary: dict[str, int], running: JobRow | None) -> tuple[str, ...] | None:
+    """Linha agregada dos jobs `index` (F5A-05): "Índice: 3 reuniões (1 com erro)"; None quando não há nada a mostrar."""
+    meetings, errors = int(summary.get("meetings") or 0), int(summary.get("errors") or 0)
+    if not meetings and not errors:
+        return None
+    title = f"Índice: {meetings} {'reunião' if meetings == 1 else 'reuniões'}" + (f" ({errors} com erro)" if errors else "")
+    if running is not None:
+        state, step = str(running["status"]), str(running.get("step") or "")
+        label, pct = JOB_STEP_LABELS.get(step, step), f"{float(running.get('progress') or 0.0) * 100:.0f}"
+    elif summary.get("pending"):
+        state, label, pct = str(JobStatus.PENDING), "", "0"
+    else:
+        state, label, pct = str(JobStatus.ERROR), "", ""
+    detail = "a busca por palavra já vale; os vetores vêm em seguida" if meetings else ""
+    return (title, KIND_TEXT[JobKind.INDEX], state, label, pct, "", detail)
 
 
 def llm_job_texts(job: JobRow, label: str) -> tuple[str, str, int]:
@@ -114,12 +134,14 @@ class QueueDialog(QDialog):
     # ---------------------------------------------------------------- leitura
     def refresh(self) -> None:
         selected = self.selected_job_id()
-        self.jobs = self.store.jobs.list_jobs()
+        self.jobs = self.store.jobs.list_jobs(exclude_kinds=INDEX_KINDS)
         rtf = self.store.get_setting("pipeline.rtf_json")
         meetings = {m["id"]: dict(m) for m in self.store.list_meetings()}
         latency_ms = self.store.llm_calls.avg_latency_ms() if any(str(j.get("kind")) == JobKind.LLM for j in self.jobs) else None
         latency_s = latency_ms / 1000 if latency_ms else None
-        self.table.setRowCount(len(self.jobs))
+        running = self.store.jobs.list_jobs(1, kinds=INDEX_KINDS, statuses=HELD)
+        aggregated = index_row_texts(self.store.jobs.index_summary(), running[0] if running else None)
+        self.table.setRowCount(len(self.jobs) + (1 if aggregated else 0))
         for r, job in enumerate(self.jobs):
             for c, text in enumerate(job_row_texts(job, meetings.get(job["meeting_id"]), rtf, latency_s)):
                 item = QTableWidgetItem(text)
@@ -127,15 +149,19 @@ class QueueDialog(QDialog):
                 self.table.setItem(r, c, item)
             if selected == job["id"]:
                 self.table.selectRow(r)
+        if aggregated:                                       # sem id: as ações da seleção não valem para a linha agregada
+            for c, text in enumerate(aggregated):
+                self.table.setItem(len(self.jobs), c, QTableWidgetItem(text))
         paused = self.store.get(SPECS["pipeline.paused_manual"])
         self.btn_pause.setText("Retomar fila" if paused else "Pausar fila")
-        summary = self.store.jobs.summary()
+        summary = self.store.jobs.summary(exclude_kinds=INDEX_KINDS)
         self.status_label.setText(("fila pausada pelo usuário · " if paused else "") + f"{summary['active']} ativo(s), "
                                   f"{summary['pending']} pendente(s), {summary['errors']} com erro")
 
     def selected_job_id(self) -> int | None:
         items = self.table.selectedItems()
-        return int(items[0].data(Qt.ItemDataRole.UserRole)) if items else None
+        data = items[0].data(Qt.ItemDataRole.UserRole) if items else None
+        return int(data) if data is not None else None
 
     def selected_job(self) -> JobRow | None:
         jid = self.selected_job_id()
@@ -157,11 +183,12 @@ class QueueDialog(QDialog):
             self.refresh()
 
     def retry_selected(self) -> None:
-        """"Tentar de novo"; num job `llm` o snapshot do provedor é descartado e o ativo passa a valer (F3 item 15)."""
+        """"Tentar de novo"; num job `llm` o snapshot do provedor é descartado e o ativo passa a valer (F3 item 15); o worker
+        lançado é o da classe do job (F5: `llm` e `index` no leve)."""
         job = self.selected_job()
         if job is not None and self.store.jobs.retry(int(job["id"]), reset_config=str(job.get("kind")) == JobKind.LLM):
             if self.on_launch is not None:
-                self.on_launch(str(job.get("kind")) == JobKind.LLM)
+                self.on_launch(str(job.get("kind")) in LIGHT_JOB_KINDS)
             self.refresh()
 
     def _open_selected(self, fn: Any) -> None:

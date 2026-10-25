@@ -88,12 +88,14 @@ class JobKind(StrEnum):
     REPROCESS = "reprocess"        # mesmo pipeline, troca atômica no fim (F2 item 12)
     EMBED_RANGE = "embed_range"    # perfil de um trecho livre (F6)
     LLM = "llm"                    # tarefas de LLM da reunião (F3): worker leve, sem torch
+    INDEX = "index"                # índice da busca da reunião (F5): trechos, FTS e vetores; worker leve, depois dos `llm`
 
 
-# Classes de fila (F3 item 2): um worker por classe; o pesado carrega torch, o leve só faz rede e JSON
+# Classes de fila (F3 item 2): um worker por classe; o pesado carrega torch, o leve só faz rede e JSON (F5: e o índice)
 HEAVY_JOB_KINDS: frozenset[str] = frozenset({JobKind.MEETING, JobKind.REPROCESS, JobKind.EMBED_RANGE})
-LIGHT_JOB_KINDS: frozenset[str] = frozenset({JobKind.LLM})
-# jobs que escrevem `clusters` e `segments`: só eles definem o job vigente da reunião (`current_job_id`, F3A-04)
+LIGHT_JOB_KINDS: frozenset[str] = frozenset({JobKind.LLM, JobKind.INDEX})
+# jobs que escrevem `clusters` e `segments`: só eles definem o job vigente da reunião (`current_job_id`, F3A-04); o `index`
+# nunca entra aqui (F5)
 PIPELINE_JOB_KINDS: tuple[str, ...] = (str(JobKind.MEETING), str(JobKind.REPROCESS))
 
 
@@ -114,6 +116,8 @@ class JobStep(StrEnum):
     TITLE = "title"
     REVISE = "revise"
     TEST = "test"                  # "testar pelo worker" (F3 item 12)
+    INDEX_TEXT = "index_text"      # F5: trechos e FTS da reunião (`rag.index.sync_text`)
+    INDEX_VECTORS = "index_vectors"   # F5: vetores que faltam do modelo ativo (`rag.index.fill_vectors`)
 
 
 JOB_STEP_LABELS: dict[str, str] = {
@@ -122,7 +126,7 @@ JOB_STEP_LABELS: dict[str, str] = {
     JobStep.TRANSCRIBE_L: "transcrevendo o microfone", JobStep.SEGMENTS: "montando as falas",
     JobStep.IDENTIFY: "LLM: identidade por contexto", JobStep.MINUTES: "LLM: ata", JobStep.EXECUTIVE: "LLM: resumo executivo",
     JobStep.PRE_SUMMARY: "LLM: pré-resumo", JobStep.TITLE: "LLM: título", JobStep.REVISE: "LLM: transcrição revisada",
-    JobStep.TEST: "LLM: teste de conexão",
+    JobStep.TEST: "LLM: teste de conexão", JobStep.INDEX_TEXT: "índice: trechos", JobStep.INDEX_VECTORS: "índice: vetores",
 }
 LLM_STEPS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
                                   JobStep.REVISE, JobStep.TEST)

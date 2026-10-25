@@ -45,6 +45,8 @@ class LlmTask(StrEnum):
     CHAT = "chat"
     TEST = "test"
     PARTIAL = "partial"            # F4: resumo parcial ao vivo
+    RAG_EMBED = "rag_embed"        # F5: embeddings do índice (um registro em `llm_calls` por lote)
+    RAG_CHAT = "rag_chat"          # F5: chat sobre todas as reuniões
 
 
 class Reasoning(StrEnum):
@@ -73,7 +75,7 @@ class ModelClass(StrEnum):
 TASK_CLASS: dict[LlmTask, ModelClass] = {
     LlmTask.GLOSSARY: ModelClass.FAST, LlmTask.TITLE: ModelClass.FAST, LlmTask.PRE_SUMMARY: ModelClass.FAST,
     LlmTask.REVISE: ModelClass.FAST, LlmTask.TRANSCRIBE: ModelClass.FAST, LlmTask.CHAT: ModelClass.FAST, LlmTask.TEST: ModelClass.FAST,
-    LlmTask.PARTIAL: ModelClass.FAST,
+    LlmTask.PARTIAL: ModelClass.FAST, LlmTask.RAG_EMBED: ModelClass.FAST, LlmTask.RAG_CHAT: ModelClass.FAST,   # F5 Q11: o rápido
     LlmTask.IDENTIFY: ModelClass.STRONG, LlmTask.MINUTES: ModelClass.STRONG, LlmTask.EXECUTIVE: ModelClass.STRONG,
 }
 TASK_REASONING: dict[LlmTask, Reasoning] = {t: (Reasoning.LOW if c == ModelClass.STRONG else Reasoning.NONE) for t, c in TASK_CLASS.items()}

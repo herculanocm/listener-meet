@@ -5,6 +5,8 @@ F2: ao parar cria o job e lança o worker (subprocesso solto) quando couber; lea
 fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reuniões processadas sem revisão.
 F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da gravação; o leve (jobs `llm`) a qualquer hora;
 `_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão).
+F5: o leve roda também os `index` (índice da busca); a detecção de job concluído e a dica da bandeja os ignoram (a dica
+acrescenta "· índice N"), e um `index` concluído nunca abre a revisão (F5A-05).
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -73,6 +75,7 @@ QUEUE_POLL_ACTIVE_MS = 2000
 QUEUE_POLL_IDLE_MS = 30000
 WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
 REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
+INDEX_KINDS: tuple[str, ...] = (str(JobKind.INDEX),)    # F5: fora da detecção de concluídos e da dica (seriam dezenas)
 LIVE_MODELS_MISSING = "modelos do ao vivo ausentes: prepare nas Configurações (Ao vivo)"
 LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente."
 PREPARE_INTERRUPTED = "interrompido pela gravação: prepare de novo depois dela (continua de onde parou)"
@@ -225,7 +228,8 @@ class Controller(QObject):
             if self.first_run:
                 self.notify(TRAY_TIP)
         self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
-        self._seen_done = {int(j["id"]) for j in self.store.jobs.list_jobs(limit=500) if j["status"] == JobStatus.DONE}
+        self._seen_done = {int(j["id"]) for j in self.store.jobs.list_jobs(limit=500, exclude_kinds=INDEX_KINDS)
+                           if j["status"] == JobStatus.DONE}
         waiting = self.store.meetings.list_by_status(MeetingStatus.PROCESSED)
         if waiting:
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
@@ -637,24 +641,31 @@ class Controller(QObject):
         return True
 
     def _poll_queue(self) -> None:
-        """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão", "ata pronta" e relançamento dos workers."""
+        """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão", "ata pronta" e relançamento dos workers. Os
+        `index` ficam fora da lista dos concluídos e da contagem (F5A-05): com dezenas deles ativos depois da varredura, o
+        pesado concluído sumiria das 50 linhas e a revisão não abriria."""
         try:
-            jobs = self.store.jobs.list_jobs(limit=50)
+            jobs = self.store.jobs.list_jobs(limit=50, exclude_kinds=INDEX_KINDS)
             active_jobs = self.store.jobs.active()
         except Exception as e:
             log.debug("fila: %s", e)
             return
         done_now = {int(j["id"]): j for j in jobs if j["status"] == JobStatus.DONE}
-        active = len(active_jobs)
-        running = next((j for j in active_jobs if j["status"] in HELD and str(j.get("kind")) in HEAVY_JOB_KINDS), None)
+        shown = [j for j in active_jobs if str(j.get("kind")) not in INDEX_KINDS]
+        indexing = len({int(j["meeting_id"]) for j in active_jobs if str(j.get("kind")) in INDEX_KINDS})
+        active = len(shown)
+        running = next((j for j in shown if j["status"] in HELD and str(j.get("kind")) in HEAVY_JOB_KINDS), None)
         if self.tray is not None:
             if running is not None:
                 pct = float(running["progress"] or 0) * 100
-                self.tray.set_queue_tip(f"processando {len(done_now) + 1}/{len(done_now) + active} · {pct:.0f} %")
+                tip = f"processando {len(done_now) + 1}/{len(done_now) + active} · {pct:.0f} %"
             elif active:
-                self.tray.set_queue_tip(f"{active} na fila")
+                tip = f"{active} na fila"
             else:
-                self.tray.set_queue_tip("")
+                tip = ""
+            if indexing:
+                tip = f"{tip} · índice {indexing}" if tip else f"índice {indexing}"
+            self.tray.set_queue_tip(tip)
         for jid, job in sorted(done_now.items()):
             if jid not in self._seen_done:
                 self._seen_done.add(jid)
@@ -673,10 +684,15 @@ class Controller(QObject):
             self.launch_worker()
         if any(str(j.get("kind")) in LIGHT_JOB_KINDS for j in active_jobs):
             self.launch_worker(light=True)                        # rede e JSON não disputam CPU com a gravação (F3A-13)
-        self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active else QUEUE_POLL_IDLE_MS)
+        self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS if active_jobs else QUEUE_POLL_IDLE_MS)
 
     def _on_job_done(self, job: Any) -> None:
         mid = int(job["meeting_id"])
+        if str(job.get("kind")) in INDEX_KINDS:
+            # F5A-05: o índice não avisa nem abre a revisão; a revisão e a transcrição não mostram nada dele (recarregar a
+            # transcrição levaria a rolagem para o topo a cada edição), então não há janela aberta a recarregar ainda
+            log.debug("reunião %s: índice concluído (job %s)", mid, job["id"])
+            return
         m = self.store.get_meeting(mid) or {}
         title = m.get("title") or f"reunião {mid}"
         if str(job.get("kind")) == JobKind.LLM:

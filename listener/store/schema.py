@@ -5,7 +5,9 @@ v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2)
 `voice_embeddings.cluster_id` (correções da revisão da F2); v6 = camada de LLM (F3): `llm_calls`, `chat_messages`,
 `llm_prices` (com sementes), colunas em `summaries`, `action_items`, `clusters`, `meetings` e `providers`, índices;
 v7 = ao vivo (F4): colunas em `captions` (canal, confiança, rótulo, modelo, atraso) e em `presets` (caixas do warm-up),
-índice das legendas por reunião e tempo.
+índice das legendas por reunião e tempo; v8 = base consultável (F5): `rag_chunks` e `rag_vectors` recriadas (as da v1, se
+tiverem linhas, viram `*_v1`, CP3), `rag_models`, `rag_fts` (FTS5 com conteúdo externo e gatilhos; requisito), `chat_threads`
+e `chat_messages` reconstruída com `meeting_id` nulo (chat global), `thread_id` e `rating`.
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -145,6 +147,46 @@ MAIN_V7_INDEXES: tuple[str, ...] = (          # depois do ALTER, como na v6
     "CREATE INDEX IF NOT EXISTS idx_captions_meeting_time ON captions(meeting_id, t_start_ms)",
 )
 
+# F5 (v8): base consultável. Tudo em Python (`core._main_v8_rag`): a guarda da CP3 antes de recriar as tabelas da v1 e a
+# reconstrução de `chat_messages` (o `meeting_id` deixa de ser NOT NULL) não cabem numa lista fixa de statements.
+RAG_FTS_WEIGHTS: tuple[float, float, float] = (3.0, 2.0, 1.0)      # bm25 de título, falantes e texto (F5 item 2)
+RAG_TABLES: tuple[str, ...] = ("rag_vectors", "rag_models", "rag_chunks")   # ordem da guarda: filhas antes de `rag_chunks`
+RAG_TRIGGERS: tuple[str, ...] = ("rag_chunks_ai", "rag_chunks_ad", "rag_chunks_au")
+MAIN_V8_RAG: tuple[str, ...] = (
+    ("CREATE TABLE rag_chunks ("
+    "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE, kind TEXT NOT NULL,"
+    "  t_start_ms INTEGER, t_end_ms INTEGER, seg_first INTEGER, seg_last INTEGER, title TEXT, speakers TEXT, person_ids TEXT,"
+    "  text TEXT NOT NULL, text_hash TEXT NOT NULL, job_id INTEGER, created_at TEXT NOT NULL)"),
+    "CREATE INDEX idx_rag_chunks_meeting ON rag_chunks(meeting_id, t_start_ms)",
+    ("CREATE TABLE rag_vectors ("
+    "  id INTEGER PRIMARY KEY, chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE, model TEXT NOT NULL,"
+    "  dim INTEGER NOT NULL, vector BLOB NOT NULL, sig BLOB NOT NULL, created_at TEXT NOT NULL, UNIQUE (chunk_id, model))"),
+    "CREATE INDEX idx_rag_vectors_model ON rag_vectors(model, id)",
+    ("CREATE TABLE rag_models ("
+    "  model TEXT PRIMARY KEY, dim INTEGER NOT NULL, mu BLOB, mu_n INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"),
+    ("CREATE VIRTUAL TABLE rag_fts USING fts5(title, speakers, text, content='rag_chunks', content_rowid='id',"
+    "  tokenize='unicode61 remove_diacritics 2')"),
+    f"INSERT INTO rag_fts(rag_fts, rank) VALUES ('rank', 'bm25({', '.join(str(w) for w in RAG_FTS_WEIGHTS)})')",  # noqa: S608
+    ("CREATE TRIGGER rag_chunks_ai AFTER INSERT ON rag_chunks BEGIN"
+    "  INSERT INTO rag_fts(rowid, title, speakers, text) VALUES (new.id, new.title, new.speakers, new.text); END"),
+    ("CREATE TRIGGER rag_chunks_ad AFTER DELETE ON rag_chunks BEGIN"
+    "  INSERT INTO rag_fts(rag_fts, rowid, title, speakers, text) VALUES ('delete', old.id, old.title, old.speakers, old.text); END"),
+    # só o que entra no FTS dispara: o diff troca tempos, segmentos, job e pessoas dos trechos mantidos sem reindexar o texto
+    ("CREATE TRIGGER rag_chunks_au AFTER UPDATE OF title, speakers, text ON rag_chunks BEGIN"
+    "  INSERT INTO rag_fts(rag_fts, rowid, title, speakers, text) VALUES ('delete', old.id, old.title, old.speakers, old.text);"
+    "  INSERT INTO rag_fts(rowid, title, speakers, text) VALUES (new.id, new.title, new.speakers, new.text); END"),
+    "CREATE TABLE IF NOT EXISTS chat_threads (id INTEGER PRIMARY KEY, title TEXT, created_at TEXT NOT NULL)",
+)
+# `chat_messages` reconstruída: criar a nova, copiar com os ids, apagar a antiga, renomear e recriar os índices
+CHAT_V8_TABLE = ("CREATE TABLE chat_messages_v8 ("
+                 "  id INTEGER PRIMARY KEY, meeting_id INTEGER REFERENCES meetings(id) ON DELETE CASCADE,"
+                 "  thread_id INTEGER REFERENCES chat_threads(id) ON DELETE CASCADE, role TEXT NOT NULL, text TEXT NOT NULL,"
+                 "  provider TEXT, model TEXT, citations_json TEXT, cost_usd REAL, rating INTEGER, created_at TEXT NOT NULL)")
+CHAT_V8_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_chat_meeting ON chat_messages(meeting_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_chat_thread ON chat_messages(thread_id, id)",
+)
+
 AUDIO_V1: tuple[str, ...] = (
     ("CREATE TABLE IF NOT EXISTS {s}.audio_chunks ("
     "  id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, channel TEXT NOT NULL, idx INTEGER NOT NULL,"
@@ -174,6 +216,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (5, None),        # F2 revisão: calib_n e voice_embeddings.cluster_id (MAIN_V5_COLUMNS)
     (6, MAIN_V6),     # F3: llm_calls, chat_messages, llm_prices; colunas, índices, sementes e provedores em Python
     (7, None),        # F4: colunas de `captions` e `presets` e o índice das legendas (MAIN_V7_COLUMNS, MAIN_V7_INDEXES)
+    (8, None),        # F5: base consultável (MAIN_V8_RAG, CHAT_V8_*), com a guarda da CP3 e o FTS5 como requisito
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

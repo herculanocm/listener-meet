@@ -6,6 +6,8 @@ modelos carregados uma vez por processo e soltos ao ficar ocioso, saída após 6
 houver fila). `LISTENER_PIPELINE=fake` usa os fakes de `tests/fake_pipeline.py` (testes e CI, sem torch).
 F3: `--light` é o worker da classe leve (só jobs `llm`): nunca importa torch, tem log próprio (`listener-llm.log`) e roda
 mesmo durante uma gravação; o pesado, ao concluir um job que enfileirou tarefas de LLM, lança o leve se ele não estiver vivo.
+F5: o leve também roda o `index` (despacho por `kind`); com `--once` nenhum worker lança o leve (os testes com subprocesso
+não deixam um worker solto, F5A-16).
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from typing import Any
 from ..config import bootstrap
 from ..config.defaults import HF_PROVIDER_ID
 from ..log import attach_file, get_logger, log_versions, setup
-from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, JobStatus
+from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..platform.common import paths, process
 from ..store import Store
 from .base import PermanentError, PipelineDeps
@@ -67,8 +69,22 @@ def run_llm_job(store: Store, job: Any) -> JobStatus:
     return LlmJobRunner(store, job).run()
 
 
+def run_index_job(store: Store, job: Any) -> JobStatus:
+    """Um job `index` (F5) pelo `IndexJobRunner` (`pipeline/index_steps.py`, importado só aqui)."""
+    from .index_steps import IndexJobRunner
+
+    return IndexJobRunner(store, job).run()
+
+
+def run_light_job(store: Store, job: Any) -> JobStatus:
+    """Despacho da classe leve por `kind` (F5A-01): `index` no runner do índice; o resto (`llm`) no da LLM."""
+    if str(job.get("kind")) == JobKind.INDEX:
+        return run_index_job(store, job)
+    return run_llm_job(store, job)
+
+
 def spawn_light_worker(store: Store, spawn: Any) -> bool:
-    """Lança o worker leve quando há job `llm` ativo sem worker vivo (o app pode estar fechado, P2)."""
+    """Lança o worker leve quando há job leve (`llm` ou `index`) ativo sem worker vivo (o app pode estar fechado, P2)."""
     if not store.jobs.active(kinds=LIGHT_JOB_KINDS) or store.jobs.held_fresh(kinds=LIGHT_JOB_KINDS):
         return False
     try:
@@ -160,7 +176,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
             idle_since, released = None, False
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
             if light:
-                status = run_llm_job(store, job)
+                status = run_light_job(store, job)
             else:
                 config = JobConfig.from_json(job.get("config_json"))
                 token = store.settings.provider_key(HF_PROVIDER_ID)
@@ -175,7 +191,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
                         log.warning("job %s: %s", job["id"], e)
                         continue
                 status = JobRunner(store, deps, job, memory_rss=memory).run()
-                if status == JobStatus.DONE:
+                if status == JobStatus.DONE and not once:          # `--once` não deixa um leve solto (F5A-16)
                     spawn_light_worker(store, spawn)
             log.info("job %s terminou: %s", job["id"], status)
             processed += 1

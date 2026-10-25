@@ -26,9 +26,9 @@ import numpy as np
 
 from ..log import get_logger
 from ..model import StoreRole
-from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS,
-                     MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES, MAIN_V7_COLUMNS,
-                     MAIN_V7_INDEXES)
+from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, CHAT_V8_INDEXES, CHAT_V8_TABLE, MAIN_DATE_COLUMNS,
+                     MAIN_MIGRATIONS, MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES,
+                     MAIN_V7_COLUMNS, MAIN_V7_INDEXES, MAIN_V8_RAG, RAG_TABLES, RAG_TRIGGERS)
 
 log = get_logger("store")
 
@@ -178,8 +178,77 @@ def _main_v7_live(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
         conn.execute(sql.format(s=schema))
 
 
+FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
+                "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
+
+
+def fts5_error() -> str | None:
+    """None quando o SQLite deste Python tem FTS5 com `unicode61 remove_diacritics 2`; senão a mensagem do SQLite. Testado
+    numa conexão à parte em memória: a migração não começa pela metade."""
+    try:
+        probe = sqlite3.connect(":memory:", uri=True)          # `uri` como toda conexão do Store (R2-02)
+    except sqlite3.Error as e:
+        return str(e)
+    try:
+        probe.execute("CREATE VIRTUAL TABLE probe USING fts5(x, tokenize='unicode61 remove_diacritics 2')")
+    except sqlite3.Error as e:
+        return str(e)
+    finally:
+        probe.close()
+    return None
+
+
+def _free_name(conn: sqlite3.Connection, schema: str, base: str) -> str:
+    """`rag_chunks_v1`, ou `rag_chunks_v1_2`... se o nome já existir (uma guarda anterior)."""
+    name, n = f"{base}_v1", 1
+    while conn.execute(f"SELECT 1 FROM {schema}.sqlite_master WHERE name = ?", (name,)).fetchone():  # noqa: S608
+        n += 1
+        name = f"{base}_v1_{n}"
+    return name
+
+
+def _main_v8_rag(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """F5: base consultável, numa transação só (F5A-21). Sem FTS5, falha antes de tocar em qualquer tabela (é requisito).
+    `rag_chunks` e `rag_vectors` da v1 (nunca escritas) são recriadas; com linhas, viram `*_v1` em vez de sumir (CP3), sem os
+    índices e gatilhos (os nomes ficam livres para as novas). `rag_fts` é derivado de `rag_chunks` e nasce de novo. A
+    `chat_messages` é reconstruída com os mesmos ids (nada referencia a tabela: seguro com a FK ligada)."""
+    error = fts5_error()
+    if error is not None:
+        raise RuntimeError(FTS5_MISSING.format(error=error))
+    for trigger in RAG_TRIGGERS:
+        conn.execute(f"DROP TRIGGER IF EXISTS {schema}.{trigger}")
+    conn.execute(f"DROP TABLE IF EXISTS {schema}.rag_fts")
+    for table in RAG_TABLES:
+        if not Core._has_table(conn, schema, table):
+            continue
+        rows = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]  # noqa: S608
+        if not rows:
+            conn.execute(f"DROP TABLE {schema}.{table}")
+            continue
+        target = _free_name(conn, schema, table)
+        indexes = [r[0] for r in conn.execute(f"SELECT name FROM {schema}.sqlite_master WHERE type = 'index' AND tbl_name = ? "  # noqa: S608
+                                              "AND sql IS NOT NULL", (table,))]
+        for index in indexes:
+            conn.execute(f"DROP INDEX {schema}.{index}")
+        conn.execute(f"ALTER TABLE {schema}.{table} RENAME TO {target}")
+        log.warning("%s tinha %d linha(s): guardada como %s (CP3)", table, rows, target)
+    for sql in MAIN_V8_RAG:
+        conn.execute(sql)
+    old_cols = [r[1] for r in conn.execute(f"PRAGMA {schema}.table_info(chat_messages)")]
+    conn.execute(f"DROP TABLE IF EXISTS {schema}.chat_messages_v8")
+    conn.execute(CHAT_V8_TABLE)
+    new_cols = {r[1] for r in conn.execute(f"PRAGMA {schema}.table_info(chat_messages_v8)")}
+    common = ", ".join(c for c in old_cols if c in new_cols)
+    if common:
+        conn.execute(f"INSERT INTO {schema}.chat_messages_v8({common}) SELECT {common} FROM {schema}.chat_messages")  # noqa: S608
+    conn.execute(f"DROP TABLE IF EXISTS {schema}.chat_messages")
+    conn.execute(f"ALTER TABLE {schema}.chat_messages_v8 RENAME TO chat_messages")
+    for sql in CHAT_V8_INDEXES:
+        conn.execute(sql)
+
+
 MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
-                                              5: _main_v5_review_columns, 6: _main_v6_llm, 7: _main_v7_live}
+                                              5: _main_v5_review_columns, 6: _main_v6_llm, 7: _main_v7_live, 8: _main_v8_rag}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 

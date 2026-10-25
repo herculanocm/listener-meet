@@ -525,7 +525,7 @@ def test_v7_adds_live_columns_and_index_and_rolls_back_in_the_middle(tmp_path, m
     raw.close()
     monkeypatch.undo()
     with Store(tmp_path) as s:
-        assert s.schema_version() == LATEST == 7
+        assert s.schema_version() == LATEST                                       # v7 e as seguintes (F5: v8)
         with s.connection() as c:
             caps = {r[1] for r in c.execute("PRAGMA table_info(captions)")}
             presets = {r[1] for r in c.execute("PRAGMA table_info(presets)")}
@@ -538,7 +538,123 @@ def test_v7_adds_live_columns_and_index_and_rolls_back_in_the_middle(tmp_path, m
         preset = s.get_preset(pid)
         assert preset["live_enabled"] is None and preset["live_names"] is None                         # nulo = padrão das Configurações
     with Store.open_worker(tmp_path) as w:                                        # o processo ao vivo abre como worker
-        assert w.schema_version() == 7
+        assert w.schema_version() == LATEST
+
+
+def _back_to_v7(path, *, rag_rows: bool = False) -> None:
+    """Banco v8 de volta à forma da v7: `rag_*` da v1 (com linhas, se pedido), sem `rag_models`, `rag_fts`, gatilhos e
+    `chat_threads`, e `chat_messages` da v6 (`meeting_id` NOT NULL), mantendo as mensagens e os ids."""
+    from listener.store.schema import MAIN_V1, RAG_TRIGGERS
+
+    raw = sqlite3.connect(path / "listener.db", autocommit=True)
+    for trigger in RAG_TRIGGERS:
+        raw.execute(f"DROP TRIGGER {trigger}")
+    for table in ("rag_fts", "rag_vectors", "rag_models", "rag_chunks", "chat_threads"):
+        raw.execute(f"DROP TABLE {table}")
+    for sql in MAIN_V1:
+        if "rag_" in sql:
+            raw.execute(sql)
+    raw.execute("CREATE TABLE chat_v6 (id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) "
+                "ON DELETE CASCADE, role TEXT NOT NULL, text TEXT NOT NULL, provider TEXT, model TEXT, citations_json TEXT, "
+                "cost_usd REAL, created_at TEXT NOT NULL)")
+    raw.execute("INSERT INTO chat_v6 SELECT id, meeting_id, role, text, provider, model, citations_json, cost_usd, created_at "
+                "FROM chat_messages")
+    raw.execute("DROP TABLE chat_messages")
+    raw.execute("ALTER TABLE chat_v6 RENAME TO chat_messages")
+    raw.execute("CREATE INDEX idx_chat_meeting ON chat_messages(meeting_id, id)")
+    if rag_rows:
+        mid = raw.execute("SELECT MIN(id) FROM meetings").fetchone()[0]
+        raw.execute("INSERT INTO rag_chunks(meeting_id, t_start_ms, t_end_ms, text, speakers) "
+                    "VALUES (?, 0, 1000, 'trecho da v1', 'Ana')", (mid,))
+        raw.execute("INSERT INTO rag_vectors(chunk_id, model, dim, vector) VALUES (1, 'antigo', 2, x'0000803f00000000')")
+    raw.execute("DELETE FROM schema_migrations WHERE version >= 8")
+    raw.execute("PRAGMA user_version = 7")
+    raw.close()
+
+
+def test_v8_rebuilds_chat_creates_rag_index_and_rolls_back_in_the_middle(tmp_path, monkeypatch):
+    """F5 (v8, F5A-21): FTS5 obrigatório (sem ele, nada muda e a mensagem diz o porquê); falha no meio desfaz tudo; um banco
+    em v7 com conversa da F3 e `rag_*` da v1 com linhas ganha a v8 sem perder nada: as mensagens mantêm os ids e a reunião, as
+    tabelas antigas viram `*_v1` (CP3); o FTS acha sem acento e acompanha os gatilhos; apagar a reunião leva trechos, FTS e
+    vetores pela cascata; `foreign_key_check` vazio."""
+    from listener.model import ChatRole
+
+    with Store(tmp_path) as s:
+        mid = s.create_meeting("Orçamento 2027", None, None, None)
+        other = s.create_meeting("outra", None, None, None)
+        q = s.chat.add(mid, ChatRole.USER, "qual o prazo?")
+        a = s.chat.add(mid, ChatRole.ASSISTANT, "sexta [00:05]", "gemini", "m", [{"t_ms": 5000, "segment_id": None}], 0.001)
+    _back_to_v7(tmp_path, rag_rows=True)
+    with pytest.raises(RuntimeError, match="abra o app"):
+        Store.open_worker(tmp_path)
+    monkeypatch.setattr(store_core, "fts5_error", lambda: "no such module: fts5")
+    with pytest.raises(RuntimeError, match=r"não tem FTS5 \(no such module: fts5\); a busca da F5 precisa dele"):
+        Store(tmp_path)
+    monkeypatch.undo()
+    real = store_core.MAIN_PY_MIGRATIONS[8]
+
+    def boom(core, conn, schema):
+        real(core, conn, schema)                                                  # a v8 inteira feita...
+        raise RuntimeError("falha no fim da v8")                                  # ...e cai antes da linha de versão
+
+    monkeypatch.setitem(store_core.MAIN_PY_MIGRATIONS, 8, boom)
+    with pytest.raises(RuntimeError, match="falha no fim da v8"):
+        Store(tmp_path)
+    monkeypatch.undo()
+    raw = sqlite3.connect(tmp_path / "listener.db")
+    tables = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "rag_fts" not in tables and "chat_threads" not in tables and "rag_chunks_v1" not in tables      # tudo desfeito
+    assert raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
+    raw.close()
+    with Store(tmp_path) as s:
+        assert s.schema_version() == LATEST == 8
+        with s.connection() as c:
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+            triggers = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+            chat_cols = {r[1]: r for r in c.execute("PRAGMA table_info(chat_messages)")}
+            v1 = c.execute("SELECT meeting_id, text, speakers FROM rag_chunks_v1").fetchall()
+            v1_vec = c.execute("SELECT chunk_id, model FROM rag_vectors_v1").fetchall()
+            config = c.execute("SELECT v FROM rag_fts_config WHERE k = 'rank'").fetchone()
+        assert {"rag_chunks", "rag_vectors", "rag_models", "rag_fts", "chat_threads", "rag_chunks_v1", "rag_vectors_v1"} <= tables
+        assert {"idx_rag_chunks_meeting", "idx_rag_vectors_model", "idx_chat_meeting", "idx_chat_thread"} <= indexes
+        assert triggers == {"rag_chunks_ai", "rag_chunks_ad", "rag_chunks_au"} and config[0] == "bm25(3.0, 2.0, 1.0)"
+        assert [tuple(r) for r in v1] == [(mid, "trecho da v1", "Ana")] and [tuple(r) for r in v1_vec] == [(1, "antigo")]   # CP3
+        assert chat_cols["meeting_id"][3] == 0 and {"thread_id", "rating"} <= set(chat_cols)              # meeting_id aceita nulo
+        old = s.chat.list_for_meeting(mid)
+        assert [(m["id"], m["role"], m["meeting_id"], m["thread_id"], m["rating"]) for m in old] == [
+            (q, "user", mid, None, None), (a, "assistant", mid, None, None)]                          # ids e reunião mantidos
+        assert old[1]["citations_json"] == '[{"t_ms": 5000, "segment_id": null}]' and old[1]["cost_usd"] == 0.001
+        thread = s.chat.create_thread("o que decidimos sobre o orçamento?")
+        g = s.chat.add(None, ChatRole.USER, "o que decidimos sobre o orçamento?", thread_id=thread)
+        assert s.chat.list_for_thread(thread)[0]["id"] == g and s.chat.list_for_meeting(mid)[-1]["id"] == a
+        from listener.store.rag import ChunkInsert, ChunkMeta, VectorInsert
+
+        ids = s.rag.insert_chunks([ChunkInsert(mid, "transcricao", 0, 60_000, 1, 2, "Orçamento 2027", "Ana — CFO", (1,),
+                                               "O orçamento de 2027 fecha na sexta.", "h1", 3),
+                                   ChunkInsert(other, "reuniao", None, None, None, None, "outra", "", (), "Reunião: outra", "h2", None)])
+        s.rag.insert_vectors("m@2", 2, [VectorInsert(ids[0], "h1", b"\x00" * 8, b"\x01"),
+                                        VectorInsert(ids[1], "errado", b"\x00" * 8, b"\x01")])
+        assert s.rag.count_vectors("m@2") == 1                                                          # hash diferente: fica de fora
+        with s.connection() as c:
+            hits = [r[0] for r in c.execute("SELECT rowid FROM rag_fts WHERE rag_fts MATCH ?", ('"orcamento"',))]
+            assert hits == [ids[0]]                                                                   # sem acento acha
+            s.rag.update_meta([ChunkMeta(ids[0], 1000, 61_000, 5, 6, (1, 2), 4)])                    # metadado: FTS intacto
+            c.execute("INSERT INTO rag_fts(rag_fts, rank) VALUES ('integrity-check', 1)")
+            assert [r[0] for r in c.execute("SELECT rowid FROM rag_fts WHERE rag_fts MATCH ?", ('"sexta"',))] == [ids[0]]
+            c.execute("UPDATE rag_chunks SET text = 'Sem palavra-chave agora.' WHERE id = ?", (ids[0],))
+            assert not c.execute("SELECT rowid FROM rag_fts WHERE rag_fts MATCH ?", ('"sexta"',)).fetchall()   # o gatilho trocou o texto
+            assert [r[0] for r in c.execute("SELECT rowid FROM rag_fts WHERE rag_fts MATCH ?", ('"palavra"',))] == [ids[0]]
+        s.delete_meeting(mid)                                                     # Cancelar: cascata com a FK ligada
+        with s.connection() as c:
+            assert c.execute("SELECT COUNT(*) FROM rag_chunks").fetchone()[0] == 1 and s.rag.count_vectors() == 0
+            assert c.execute("SELECT COUNT(*) FROM rag_fts_docsize").fetchone()[0] == 1                 # o gatilho de remoção disparou
+            assert not c.execute("SELECT rowid FROM rag_fts WHERE rag_fts MATCH ?", ('"palavra"',)).fetchall()
+            c.execute("INSERT INTO rag_fts(rag_fts, rank) VALUES ('integrity-check', 1)")
+            assert c.execute("PRAGMA foreign_key_check").fetchall() == [] and c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert s.chat.list_for_meeting(mid) == [] and s.chat.list_for_thread(thread)[0]["id"] == g     # o global fica
+    with Store.open_worker(tmp_path) as w:
+        assert w.schema_version() == LATEST
 
 
 def test_captions_repo_inserts_lists_after_id_and_cascades(store):
