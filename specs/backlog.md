@@ -11,7 +11,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, fluxo D-040, F2 em onze commits); branch `main`; sem remoto.
   Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
-  pendente) · F3 a F6 rascunho inicial; a F3 é a próxima a passar pelo fluxo D-040 (arquiteto revisa a spec) · F7 futuro.
+  pendente) · **F3 em rascunho completo** (25/10; passo 2 do fluxo D-040 em curso: arquiteto revisa a spec contra o
+  código; depois P1 a P6 ao dono) · F4 a F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
