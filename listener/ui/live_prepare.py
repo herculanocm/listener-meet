@@ -57,6 +57,7 @@ class ModelPreparer(QObject):
         self.proc: ChildProcess | None = None
         self.state: dict[str, Any] = {"state": "idle"}
         self.starts = 0                    # instrumentação dos testes: downloads lançados
+        self._closed = False               # o app está saindo: a thread leitora não emite mais nada
         self._error = ""
         self._done = False
         self._line.connect(self._on_line, Qt.ConnectionType.QueuedConnection)
@@ -67,7 +68,7 @@ class ModelPreparer(QObject):
 
     def start(self, store: Store, spawn: Spawn) -> bool:
         """Lança o `--prepare`; False quando já há um rodando (nunca dois downloads) ou o filho não nasceu."""
-        if self.running:
+        if self.running or self._closed:
             return False
         argv = process.live_prepare_command(store.base_dir)
         try:
@@ -100,9 +101,13 @@ class ModelPreparer(QObject):
                 if not raw:
                     break
                 try:
-                    self._line.emit(proc, decode_line(raw))
+                    msg = decode_line(raw)
                 except ValueError:
                     log.debug("linha ilegível do preparo: %r", raw[:200])
+                    continue
+                if self._closed:
+                    return
+                self._line.emit(proc, msg)
         except (OSError, ValueError) as e:
             log.debug("leitura do preparo terminou: %s", e)
         code: int | None
@@ -112,7 +117,8 @@ class ModelPreparer(QObject):
             with suppress(OSError):
                 proc.kill()
             code = None
-        self._line.emit(proc, {"type": "exit", "code": code})
+        if not self._closed:
+            self._line.emit(proc, {"type": "exit", "code": code})
 
     def _on_line(self, proc: object, msg: object) -> None:
         if proc is not self.proc or not isinstance(msg, dict):
@@ -141,7 +147,8 @@ class ModelPreparer(QObject):
         self.changed.emit(dict(state))
 
     def shutdown(self) -> None:
-        """O app está saindo: o download não continua órfão."""
+        """O app está saindo: o download não continua órfão e a thread leitora para de emitir."""
+        self._closed = True
         proc, self.proc = self.proc, None
         if proc is not None:
             with suppress(OSError):

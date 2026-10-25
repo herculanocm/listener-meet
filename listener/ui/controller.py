@@ -44,6 +44,8 @@ from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Healt
 from ..store.jobs import HELD
 from ..pipeline import review
 from ..platform.common import process
+from .live import LiveWindow, caption_key, caption_note, item_key, item_note
+from .live_prepare import shutdown_preparer
 from .queue import QueueDialog
 from .review import ReviewDialog
 from .settings_min import SettingsDialog
@@ -51,8 +53,6 @@ from .sources import SourceTable
 from .summary import SummaryDialog
 from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task
 from .transcript import TranscriptDialog
-from .live import LiveWindow, caption_key, caption_note, item_key, item_note
-from .live_prepare import shutdown_preparer
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -984,7 +984,11 @@ class Controller(QObject):
         key = caption_key(caption)
         if key in self._marked_captions:
             return False, "esta legenda já virou marcador"
-        t_ms = self.recorder.mark(caption_note(caption), t_ms=int(caption.get("t_start_ms") or 0), origin="legenda")
+        try:
+            t_ms = self.recorder.mark(caption_note(caption), t_ms=int(caption.get("t_start_ms") or 0), origin="legenda")
+        except Exception as e:                            # banco preso: a gravação segue, o clique só avisa
+            log.warning("marcador da legenda não gravado: %s", e)
+            return False, f"não consegui criar o marcador: {e}"
         self._marked_captions.add(key)
         log.info("reunião %s: marcador de legenda em %d ms", self.recorder.meeting_id, t_ms)
         return True, f"marcador criado em [{stamp(t_ms)}]"
@@ -999,7 +1003,11 @@ class Controller(QObject):
             return False, "este item já virou marcador"
         t = data.get("t_ms")
         t_ms = int(t) if isinstance(t, int | float) else (int(t_until_ms) if t_until_ms is not None else None)
-        t_ms = self.recorder.mark(item_note(kind, data), t_ms=t_ms, origin="parcial")
+        try:
+            t_ms = self.recorder.mark(item_note(kind, data), t_ms=t_ms, origin="parcial")
+        except Exception as e:
+            log.warning("marcador do resumo parcial não gravado: %s", e)
+            return False, f"não consegui criar o marcador: {e}"
         self._marked_items.add(key)
         return True, f"marcador criado em [{stamp(t_ms)}]"
 
@@ -1048,7 +1056,11 @@ class Controller(QObject):
         if (self._partial_meeting is None or rec is None or rec.meeting_id != self._partial_meeting
                 or self.state not in (AppState.RECORDING, AppState.PAUSED) or self._partial_stopped):
             return
-        interval = int(self.store.get(SPECS["live.summary_interval_min"]))
+        try:
+            interval = int(self.store.get(SPECS["live.summary_interval_min"]))
+        except Exception as e:                            # banco ocupado: confere de novo no próximo disparo
+            log.debug("intervalo do resumo parcial não lido: %s", e)
+            return
         if interval <= 0 or self.monotonic() - self._partial_last_at < interval * 60:
             return
         self._run_partial(manual=False)

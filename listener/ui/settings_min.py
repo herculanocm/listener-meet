@@ -115,6 +115,7 @@ class SettingsDialog(QDialog):
         livef.addRow("Modelos", self.prepare_status)
         lay.addWidget(live)
         self.preparer.changed.connect(self._on_prepare_changed)
+        self._preparer_connected = True
         self._on_prepare_changed(self.preparer.state)        # download em curso de uma abertura anterior: segue mostrando
 
         lg = QGroupBox("Log (aplica agora)")
@@ -187,8 +188,10 @@ class SettingsDialog(QDialog):
     @override
     def done(self, result: int) -> None:
         """Aceitar, cancelar ou fechar: solta o preparador (o download segue; uma próxima abertura mostra o progresso)."""
-        with suppress(RuntimeError, TypeError):
-            self.preparer.changed.disconnect(self._on_prepare_changed)
+        if self._preparer_connected:
+            self._preparer_connected = False
+            with suppress(RuntimeError, TypeError):
+                self.preparer.changed.disconnect(self._on_prepare_changed)
         super().done(result)
 
     def _hotkey_status(self, key: str) -> str:

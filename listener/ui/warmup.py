@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
@@ -28,7 +29,7 @@ from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glos
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
-from .live_prepare import missing_models
+from .live_prepare import missing_models, preparer
 from .meters import LevelMeter
 from .sources import SourceTable
 from .tasks import run_task
@@ -125,6 +126,9 @@ class WarmupDialog(QDialog):
         self.live_note.setStyleSheet("color: #e67e22; font-size: 11px;")
         self.live_note.linkActivated.connect(lambda _link: self._open_settings_for_live())
         self.live_check.toggled.connect(self._live_toggled)
+        self._preparer = preparer()                       # download pelo link das Configurações: o aviso some quando terminar
+        self._preparer.changed.connect(self._on_models_changed)
+        self._preparer_connected = True
         self.glossary_edit = QLineEdit()
         self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a LLM sugere; edite à vontade)")
         self.glossary_status = QLabel("")
@@ -208,6 +212,10 @@ class WarmupDialog(QDialog):
     def _shutdown(self) -> None:
         self._timer.stop()
         self._glossary_timer.stop()
+        if self._preparer_connected:                     # `_shutdown` roda mais de uma vez (aceitar e depois fechar)
+            self._preparer_connected = False
+            with suppress(RuntimeError, TypeError):
+                self._preparer.changed.disconnect(self._on_models_changed)
         self._glossary_seq += 1                            # resposta que chegar depois é descartada
         self.sources.stop()
         self._close_mic()
@@ -396,6 +404,10 @@ class WarmupDialog(QDialog):
         missing = missing_models(self.store) if self.live_check.isChecked() else []
         self.live_note.setText(f'modelos ausentes ({", ".join(missing)}): <a href="settings">prepare nas Configurações, Ao vivo</a>'
                                if missing else "")
+
+    def _on_models_changed(self, state: Any) -> None:
+        if isinstance(state, dict) and state.get("state") in ("done", "error"):
+            self._update_live_note()
 
     def _open_settings_for_live(self) -> None:
         if self.on_settings is not None:

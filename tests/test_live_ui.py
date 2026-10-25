@@ -96,10 +96,16 @@ def test_warmup_live_boxes_follow_preset_settings_and_models(qtbot, store, platf
     novo = next(p for p in store.list_presets() if p["name"] == "Novo")
     assert (novo["live_enabled"], novo["live_names"]) == (1, 1)
     opened: list[int] = []
-    monkeypatch.setenv("LISTENER_LIVE", "fake")                                                  # "preparou" nas Configurações
     dlg.on_settings = lambda: opened.append(1)
-    dlg._open_settings_for_live()
-    assert opened == [1] and dlg.live_note.text() == ""
+    dlg._open_settings_for_live()                                                                # fechou sem preparar: o aviso fica
+    assert opened == [1] and "modelos ausentes" in dlg.live_note.text()
+    from listener.ui.live_prepare import preparer
+
+    monkeypatch.setenv("LISTENER_LIVE", "fake")                                                  # o download terminou depois
+    preparer().changed.emit({"state": "done"})
+    assert dlg.live_note.text() == ""
+    dlg.reject()
+    dlg.reject()                                                                                 # fechar duas vezes não reclama
 
 
 def _prepare_target(db: Path, gate: threading.Event | None = None, models: Path | None = None):
