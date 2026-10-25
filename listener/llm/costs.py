@@ -83,7 +83,10 @@ def estimate_cost(input_tokens: int, output_tokens: int, price: Price | None, au
 
 
 def fmt_usd(value: float | None) -> str:
-    """"US$ 0,32"; None = "sem preço cadastrado"."""
+    """"US$ 0,32"; abaixo de um centavo, 4 casas ("US$ 0,0031": uma pergunta ao chat ou o índice de uma reunião, F5A-34);
+    None = "sem preço cadastrado"."""
     if value is None:
         return "sem preço cadastrado"
+    if 0 < abs(value) < 0.01:
+        return f"US$ {value:.4f}".replace(".", ",")
     return f"US$ {value:.2f}".replace(".", ",")

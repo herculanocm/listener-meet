@@ -7,8 +7,8 @@ modelo (`rag_models`), porque os embeddings de texto são anisotrópicos (cossen
 centralizar quase todo bit repete o da direção comum. O `mu` é refeito sempre que o número de vetores do modelo dobra, até
 2 mil, e então congela (`mu_due`); refazer regrava as assinaturas a partir dos float32, sem rede. A busca pega
 max(200, 1 % de n) candidatos (até 2 mil) pela distância de Hamming (`np.bitwise_count`, numpy 2) e os reordena pelo
-cosseno exato dos float32. O cache das assinaturas no app (L3) usa `RagRepo.vector_version` como chave: o `mu_n` muda
-quando o `mu` é refeito."""
+cosseno exato dos float32. O cache das assinaturas no app (`rag.search.SignatureCache`) usa `RagRepo.vector_version` como
+chave: o `mu_n` muda quando o `mu` é refeito e o `created_at` do maior id, quando o SQLite reaproveita o id."""
 from __future__ import annotations
 
 import numpy as np

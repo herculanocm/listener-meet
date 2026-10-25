@@ -288,7 +288,7 @@ class Controller(QObject):
         timer.start()
 
     def _flush_index(self, meeting_id: int) -> None:
-        from ..rag.index import enqueue_index
+        from ..rag.index import auto_index_enabled, enqueue_index
 
         timer = self._index_timers.pop(meeting_id, None)
         if timer is not None:
@@ -296,7 +296,8 @@ class Controller(QObject):
             timer.deleteLater()
         reason = self._index_reasons.pop(meeting_id, "edit")
         try:
-            enqueue_index(self.store, meeting_id, reason)
+            if enqueue_index(self.store, meeting_id, reason) is None and not auto_index_enabled(self.store):
+                return                                        # índice automático desligado: nada na fila, nada a lançar
         except Exception as e:  # a busca nunca atrapalha a edição
             log.warning("reunião %s: não enfileirei o índice da busca: %s", meeting_id, e)
             return

@@ -2,7 +2,8 @@
 a pessoa cujo nome aparece na transcrição com a citação literal; `minutes` cita segmentos reais e os marcadores; `revise`
 devolve os segmentos do bloco com pontuação; `glossary`, `title`, `executive`, `pre_summary`, `transcribe` e `chat` têm saídas
 estáveis; `partial` (F4) mantém os itens do parcial anterior e acrescenta uma decisão na primeira legenda nova e uma ação na
-última. Tudo válido nos esquemas do projeto, para os testes do runner e o worker leve com `LISTENER_LLM=fake`."""
+última; `rag_chat` (F5) cita as primeiras falas dos trechos enviados por apelido. Tudo válido nos esquemas do projeto, para os
+testes do runner e o worker leve com `LISTENER_LLM=fake`."""
 from __future__ import annotations
 
 import json
@@ -164,8 +165,28 @@ def chat(req: Request) -> str:
     return f"Resposta simulada com citação [{stamp}] e outra fora da transcrição [59:59]."
 
 
+BLOCK_RE = re.compile(r"^\[(R\d+)\] ", re.MULTILINE)
+
+
+def rag_chat(req: Request) -> str:
+    """F5: cita a primeira fala de R1 (e de R2 no mesmo colchete, quando há), R1 sem tempo e um apelido que não existe; sem
+    trechos, diz que não achou."""
+    excerpts = next((m.text for m in req.messages if m.role == Role.USER and m.text.startswith("Excerpts")), "")
+    heads = list(BLOCK_RE.finditer(excerpts))
+    if not heads:
+        return "Não encontrei isso nas reuniões."
+    cites: list[str] = []
+    for i, head in enumerate(heads[:2]):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(excerpts)
+        lines = parse_lines(excerpts[head.end():end])
+        cites.append(f"{head.group(1)} {lines[0].stamp}" if lines else head.group(1))
+    return (f"Resposta simulada sobre {len(heads)} reunião(ões) [{'; '.join(cites)}]; ver também [{heads[0].group(1)}] "
+            "e [R99 00:00].")
+
+
 DEFAULTS: dict[LlmTask, Callable[[Request], Any]] = {
     LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: summary_text("Resumo executivo simulado:", 1500),
     LlmTask.PRE_SUMMARY: summary_text("Pré-resumo simulado:", 600), LlmTask.TITLE: title, LlmTask.REVISE: revise,
     LlmTask.GLOSSARY: glossary, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat, LlmTask.PARTIAL: partial,
+    LlmTask.RAG_CHAT: rag_chat,
 }

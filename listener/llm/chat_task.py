@@ -49,12 +49,11 @@ class ChatAnswer:
 
 
 def nearest_segment(t_ms: int, lines: Sequence[Line], max_distance_ms: int = MAX_DISTANCE_MS) -> int | None:
-    best: tuple[int, int] | None = None
-    for ln in lines:
-        d = abs(ln.t_start_ms - t_ms)
-        if best is None or d < best[0]:
-            best = (d, ln.segment_id)
-    return best[1] if best is not None and best[0] <= max_distance_ms else None
+    """O segmento mais próximo do tempo citado, até 5 s (a mesma regra do chat global, `rag.citations.nearest`)."""
+    from ..rag.citations import SentLine, nearest
+
+    best = nearest(t_ms, [SentLine(ln.t_start_ms, ln.segment_id) for ln in lines], max_distance_ms)
+    return best.segment_id if best is not None else None
 
 
 def rewrite_citations(text: str, lines: Sequence[Line]) -> tuple[str, tuple[Citation, ...]]:
@@ -73,6 +72,30 @@ def rewrite_citations(text: str, lines: Sequence[Line]) -> tuple[str, tuple[Cita
         pos = m.end()
     parts.append(html.escape(text[pos:]))
     return "".join(parts).replace("\n", "<br>"), tuple(citations)
+
+
+async def ask(store: Store, provider_id: str, req: Request, emit: Callable[[str], None] | None = None,
+              cancelled: Callable[[], bool] | None = None) -> tuple[Completion | None, str, LlmError | None]:
+    """Uma pergunta ao provedor (o chat de uma reunião e o chat global da F5): em streaming quando `emit` é dado, parando no
+    próximo pedaço quando `cancelled()` (o `Completion` fica nulo e o texto é o que chegou); erro do provedor classificado e
+    devolvido, nunca levantado. Provedor sem SDK ou sem chave levanta antes de chamar."""
+    provider, _row = build_provider(store, provider_id)
+    collected: list[str] = []
+    try:
+        if emit is None:
+            comp = await provider.complete(req)
+            return comp, comp.text, None
+        stream = provider.stream(req)
+        async for piece in stream:
+            collected.append(piece)
+            emit(piece)
+            if cancelled is not None and cancelled():
+                break
+        return stream.result, "".join(collected), None
+    except Exception as e:
+        return None, "".join(collected), classify_exception(e)
+    finally:
+        await provider.aclose()
 
 
 def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str], None] | None = None,
@@ -95,27 +118,7 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
     req = Request(LlmTask.CHAT, cfg.fast_model, prompts.chat.build(chat_ctx), None, max_output_tokens=2048,
                   reasoning=TASK_REASONING[LlmTask.CHAT], timeout_s=120.0, cache_prefix=True)
     store.chat.add(meeting_id, ChatRole.USER, question)
-
-    async def go() -> tuple[Completion | None, str, LlmError | None]:
-        provider, _row = build_provider(store, cfg.provider_id)
-        collected: list[str] = []
-        try:
-            if emit is None:
-                comp = await provider.complete(req)
-                return comp, comp.text, None
-            stream = provider.stream(req)
-            async for piece in stream:
-                collected.append(piece)
-                emit(piece)
-                if cancelled is not None and cancelled():
-                    break
-            return stream.result, "".join(collected), None
-        except Exception as e:
-            return None, "".join(collected), classify_exception(e)
-        finally:
-            await provider.aclose()
-
-    comp, text, err = run_async(go())
+    comp, text, err = run_async(ask(store, cfg.provider_id, req, emit, cancelled))
     version = prompts.prompt_version(LlmTask.CHAT)
     task = str(LlmTask.CHAT)
     if err is not None:

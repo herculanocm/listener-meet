@@ -44,6 +44,10 @@ class ChatRepo:
                                 "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (meeting_id, thread_id, str(role), text, provider, model, payload, cost_usd, _now()))
 
+    def get(self, message_id: int) -> ChatRow | None:
+        rows = self.core.q("SELECT * FROM chat_messages WHERE id = ?", (message_id,))
+        return cast(ChatRow, dict(rows[0])) if rows else None
+
     def list_for_meeting(self, meeting_id: int, limit: int = 200) -> list[ChatRow]:
         rows = self.core.q("SELECT * FROM (SELECT * FROM chat_messages WHERE meeting_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id",
                            (meeting_id, int(limit)))

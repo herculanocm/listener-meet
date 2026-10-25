@@ -143,7 +143,7 @@ def test_fill_vectors_batches_normalizes_signs_refreshes_mu_and_records_calls(st
     assert model["mu_n"] == 4 and model["dim"] == 768                                            # refeito em 2 e 4; 5 não dobra
     _vids, chunk_ids, sigs = store.rag.signatures(MODEL)
     assert np.array_equal(sigs, vectors.signatures(mat, model["mu"])) and len(chunk_ids) == 5     # todas no `mu` vigente
-    assert store.rag.vector_version(MODEL) == (5, int(ids.max()), 4)
+    assert store.rag.vector_version(MODEL)[:3] == (5, int(ids.max()), 4)
     calls = [c for c in store.llm_calls.list_for_meeting(mid) if c["task"] == "rag_embed"]
     assert len(calls) == 3 and {c["job_id"] for c in calls} == {job} and all(c["status"] == "ok" for c in calls)
     assert sorted(c["strategy"] for c in calls) == ["batch:1", "batch:2", "batch:2"] and all(c["cost_usd"] > 0 for c in calls)

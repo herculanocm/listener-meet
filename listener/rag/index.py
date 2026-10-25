@@ -398,8 +398,20 @@ def _reason(e: BaseException) -> str:
 
 
 # ---------------------------------------------------------------- fila
-def enqueue_index(store: Store, meeting_id: int, reason: str) -> int | None:
-    """Um `index` pendente por reunião (F5A-04); devolve o id do job novo, ou None quando já havia um pendente."""
+def auto_index_enabled(store: Store) -> bool:
+    """`rag.auto_index` (F5, Q1): desligado, nenhum `index` entra sozinho (pipeline, `llm`, edições, varredura)."""
+    from ..config.defaults import SPECS
+
+    return bool(store.get(SPECS["rag.auto_index"]))
+
+
+def enqueue_index(store: Store, meeting_id: int, reason: str, *, force: bool = False) -> int | None:
+    """Ponto único de entrada do `index` (F5A-04): um pendente por reunião; devolve o id do job novo, ou None quando já
+    havia um pendente ou quando o índice automático está desligado (`rag.auto_index`). `force` é o pedido do usuário
+    ("reindexar", L5), que passa mesmo desligado."""
+    if not force and not auto_index_enabled(store):
+        log.debug("reunião %s: índice automático desligado; %s não enfileira", meeting_id, reason)
+        return None
     job_id = store.jobs.enqueue_index(meeting_id, reason)
     if job_id is not None:
         log.info("reunião %s: índice na fila (job %s, %s)", meeting_id, job_id, reason)
@@ -409,7 +421,10 @@ def enqueue_index(store: Store, meeting_id: int, reason: str) -> int | None:
 def sweep(store: Store) -> int:
     """Varredura da abertura (F5A-12): reuniões com pipeline concluído e nenhum trecho (todo índice grava ao menos o trecho
     `reuniao`, logo a reunião sem fala não volta a cada abertura) e, só com o embedder pronto, as que têm trecho sem vetor do
-    modelo ativo (as anteriores à F5, as que ficaram sem rede). Devolve quantos `index` entraram na fila."""
+    modelo ativo (as anteriores à F5, as que ficaram sem rede). Devolve quantos `index` entraram na fila (nenhum com o
+    índice automático desligado)."""
+    if not auto_index_enabled(store):
+        return 0
     meetings = set(store.rag.meetings_without_chunks())
     status = embedder_status(store)
     if status.ready and status.model_key:
@@ -420,5 +435,5 @@ def sweep(store: Store) -> int:
     return n
 
 
-__all__ = ["EMBED_DIM", "EmbedderStatus", "FillResult", "SyncResult", "embedder_status", "enqueue_index", "fill_vectors", "gather",
-           "model_key", "parse_model_key", "refresh_mu", "sweep", "sync_text"]
+__all__ = ["EMBED_DIM", "EmbedderStatus", "FillResult", "SyncResult", "auto_index_enabled", "embedder_status", "enqueue_index",
+           "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu", "sweep", "sync_text"]
