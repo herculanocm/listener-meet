@@ -4,7 +4,11 @@ lido por um poller próprio e os atalhos registram fora da thread do Qt. `emerge
 F2: ao parar cria o job e lança o worker (subprocesso solto) quando couber; lease da pausa enquanto grava (Q7); polling da
 fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reuniões processadas sem revisão.
 F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da gravação; o leve (jobs `llm`) a qualquer hora;
-`_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão)."""
+`_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão).
+F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
+`--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
+antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
+`live_state` (estado) por sinais; com o ao vivo, a lease pede pausa ao pesado mesmo sem `pipeline.pause_on_record`."""
 from __future__ import annotations
 
 import functools
@@ -16,14 +20,16 @@ from typing import TYPE_CHECKING, Any, override
 
 from contextlib import suppress
 
-from PySide6.QtCore import QObject, QPoint, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon
 
-from ..capture.clock import Clock
+from ..capture.clock import Clock, SessionClock
 from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
+from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
+from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..log import get_logger
-from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, Health, JobKind, JobStatus, JobStep, MeetingStatus
+from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus
 from ..store.jobs import HELD
 from ..pipeline import review
 from ..platform.common import process
@@ -54,6 +60,11 @@ QUEUE_POLL_ACTIVE_MS = 2000
 QUEUE_POLL_IDLE_MS = 30000
 WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
 REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
+LIVE_MODELS_MISSING = "modelos do ao vivo ausentes: prepare nas Configurações (Ao vivo)"
+LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente."
+LIVE_RETRIES = 1                     # F4: uma nova tentativa por gravação quando o filho cai
+LIVE_CLOSE_GRACE_S = 10.0            # Parar: o filho fecha a janela em curso em até 10 s; depois, kill
+LIVE_EOF_GRACE_S = 8.0               # ...e transcreve a fila até 8 s depois do EOF (sobra folga para o bye)
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
@@ -105,6 +116,10 @@ class LateGlossaryLink:
 
 class Controller(QObject):
     hotkey_pressed = Signal(str)
+    live_caption = Signal(object)        # F4: dict da linha `caption` (channel, t_start_ms, t_end_ms, text, label, person_id...)
+    live_state = Signal(object)          # F4: {"state": off | unavailable | starting | live | degraded | skipping | restarting |
+                                         #      stopping | stopped | crashed | names_unavailable, ...detalhes}
+    _live_message = Signal(object, object)   # (cliente, mensagem): da thread `live-read` para a da interface
 
     def __init__(self, app: QApplication, platform: Platform, store: Store, first_run: bool = False,
                  clock_factory: Callable[[], Clock] | None = None):
@@ -142,6 +157,16 @@ class Controller(QObject):
         self._queue_timer = QTimer(self)
         self._queue_timer.setInterval(QUEUE_POLL_IDLE_MS)
         self._queue_timer.timeout.connect(self._poll_queue)
+        # F4: ao vivo
+        self.live: LiveClient | None = None
+        self.live_status = "off"
+        self.live_names_status = ""
+        self.live_last_caption: dict[str, Any] | None = None
+        self._live_hello: Hello | None = None
+        self._live_retries = 0
+        self._live_error: dict[str, Any] | None = None
+        self._live_models_warned = False
+        self._live_message.connect(self._on_live_message, Qt.ConnectionType.QueuedConnection)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -259,6 +284,11 @@ class Controller(QObject):
             return False
         self.recorder = rec
         self.state = AppState.RECORDING
+        try:
+            self._start_live(rec, fields)
+        except Exception:                                # o ao vivo nunca impede a gravação
+            log.exception("gravação %s segue sem ao vivo", meeting_id)
+            self._set_live_status("unavailable", reason="erro")
         self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos())
         w = self.widget
         w.pause_clicked.connect(self.toggle_pause)
@@ -351,6 +381,7 @@ class Controller(QObject):
         if self.tray:
             self.tray.set_state(AppState.SAVING)
         self._stop_mute_poller()
+        self._stop_live()
         self._run_task(rec.stop, lambda result: self._on_stopped(rec, result))
 
     def _on_stopped(self, rec: Recorder, result: Any) -> None:
@@ -378,6 +409,7 @@ class Controller(QObject):
         rec = self.recorder
         self._timer.stop()
         self._stop_mute_poller()
+        self._terminate_live()                           # antes de apagar: o filho não pode gravar numa reunião apagada
         rec.cancel()
         if rec.muted:
             self.platform.mic_mute().set(False)
@@ -393,6 +425,7 @@ class Controller(QObject):
             rec.cfg.stop_timeout_s = min(rec.cfg.stop_timeout_s, EMERGENCY_STOP_BUDGET_S)
             self._timer.stop()
             self._stop_mute_poller()
+            self._stop_live(detach=True)                 # EOF: o filho termina sozinho, mesmo com o app saindo
             try:
                 rec.stop()
             except Exception:
@@ -481,8 +514,9 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- fila de processamento (F2)
     def _write_lease(self, rec: Recorder) -> None:
-        """O worker lê entre janelas e espera; vencida (app caiu), segue sozinho (F2A-05)."""
-        if not self.store.get(SPECS["pipeline.pause_on_record"]):
+        """O worker lê entre janelas e espera; vencida (app caiu), segue sozinho (F2A-05). Com o ao vivo, a lease pede pausa
+        ao pesado mesmo sem `pipeline.pause_on_record` (F4: os dois juntos estouram a CPU)."""
+        if not self.store.get(SPECS["pipeline.pause_on_record"]) and self.live is None:
             return
         until = (self.now() + timedelta(seconds=LEASE_S)).isoformat(timespec="milliseconds")
         self.store.set_setting("pipeline.paused_until", until)
@@ -680,6 +714,148 @@ class Controller(QObject):
             self._queue_dialog.deleteLater()
             self._queue_dialog = None
 
+    # ---------------------------------------------------------------- ao vivo (F4)
+    def _start_live(self, rec: Recorder, fields: dict[str, Any]) -> bool:
+        """Depois de `rec.start()`: caixas do warm-up (`live_enabled`, `live_names`; ausentes = padrão das Configurações),
+        modelos prontos, filho lançado e desvio ligado. Qualquer falha só deixa a gravação sem ao vivo."""
+        self.live_last_caption = None
+        self.live_names_status = ""
+        self._live_retries = 0
+        enabled = fields.get("live_enabled")
+        if enabled is None:
+            enabled = self.store.get(SPECS["live.enabled"])
+        if not enabled:
+            self._set_live_status("off")
+            return False
+        names = fields.get("live_names")
+        if names is None:
+            names = self.store.get(SPECS["live.names"])
+        model = self.store.get(SPECS["live.model"])
+        models_dir = live_models_dir(self.store.get_setting("pipeline.models_dir"))
+        if not models_ready(models_dir, model):
+            log.warning("gravação %s sem ao vivo: modelos ausentes em %s", rec.meeting_id, models_dir)
+            if not self._live_models_warned:
+                self._live_models_warned = True
+                self.notify(LIVE_MODELS_MISSING)
+            self._set_live_status("unavailable", reason="models")
+            return False
+        t0_perf = rec.clock.t0_perf if isinstance(rec.clock, SessionClock) else time.perf_counter() - rec.clock.rel()
+        self._live_hello = Hello(t0_perf, names=bool(names), model=model, threads=self.store.get(SPECS["live.threads"]),
+                                 eof_grace_s=LIVE_EOF_GRACE_S)
+        return self._spawn_live(rec)
+
+    def _spawn_live(self, rec: Recorder) -> bool:
+        hello = self._live_hello
+        if hello is None:
+            return False
+        argv = process.live_command(self.store.base_dir, rec.meeting_id)
+        client = LiveClient(self.platform.spawn_child, argv, process.live_env(hello.threads), hello, lambda _msg: None,
+                            meeting_id=rec.meeting_id)
+        client.on_message = functools.partial(self._live_message.emit, client)
+        self._live_error = None
+        try:
+            client.start()
+        except Exception as e:
+            log.exception("ao vivo da gravação %s não iniciou", rec.meeting_id)
+            self.notify(f"A legenda ao vivo não iniciou: {e}")
+            self._set_live_status("unavailable", reason=str(e))
+            return False
+        self.live = client
+        rec.set_live_tap(client.tap)
+        self._set_live_status("starting")
+        return True
+
+    def _stop_live(self, detach: bool = False) -> None:
+        """Parar: desliga o desvio e fecha o filho sem bloquear (EOF; ele transcreve a fila e sai; kill no fim do prazo).
+        `detach` (o app está saindo): as mensagens que ainda vierem são descartadas."""
+        if self.recorder is not None:
+            self.recorder.set_live_tap(None)
+        client = self.live
+        if client is None:
+            return
+        if detach:
+            client.on_message = lambda _msg: None
+            self.live = None
+        client.close(LIVE_CLOSE_GRACE_S)
+        self._set_live_status("stopping")
+
+    def _terminate_live(self) -> None:
+        """Cancelar: mata o filho e espera (curto) antes de a reunião ser apagada (a FK em cascata limpa as legendas)."""
+        if self.recorder is not None:
+            self.recorder.set_live_tap(None)
+        client, self.live = self.live, None
+        if client is not None:
+            client.terminate()
+            self._set_live_status("stopped")
+
+    def _set_live_status(self, state: str, **details: Any) -> None:
+        self.live_status = state
+        self.live_state.emit({"state": state, **details})
+
+    def _on_live_message(self, client: object, msg: object) -> None:
+        if not isinstance(msg, dict):
+            return
+        kind = msg.get("type")
+        if client is not self.live:
+            if kind == EXIT:
+                log.debug("ao vivo anterior terminou: %s", msg)
+            return
+        if kind == READY:
+            self._set_live_status("live", model=msg.get("model"), names=msg.get("names"))
+        elif kind == CAPTION:
+            self.live_last_caption = msg
+            self.live_caption.emit(msg)
+        elif kind == STATE:
+            state = str(msg.get("state") or "")
+            details = {k: v for k, v in msg.items() if k not in ("type", "state")}
+            if state == "names_unavailable":                     # a legenda segue, só sem nome
+                self.live_names_status = str(msg.get("reason") or "indisponível")
+                self.live_state.emit({"state": state, **details})
+            else:
+                self._set_live_status(state, **details)
+        elif kind == CPU:
+            self._record_live_cpu(msg)
+        elif kind == ERROR:
+            log.warning("ao vivo: %s", msg.get("message"))
+            self._live_error = msg
+        elif kind == BYE:
+            log.info("ao vivo encerrado: %s", {k: v for k, v in msg.items() if k != "type"})
+        elif kind == EXIT:
+            self._on_live_exit(msg)
+
+    def _record_live_cpu(self, msg: dict[str, Any]) -> None:
+        """`live_cpu` a cada ~10 s com a CPU do app e a do filho, em % da máquina inteira (aceite do G4)."""
+        rec, client = self.recorder, self.live
+        if rec is None or client is None or client.meeting_id != rec.meeting_id:
+            return
+        try:
+            self.store.add_event(rec.meeting_id, round(rec.elapsed() * 1000), EventType.LIVE_CPU,
+                                 {"app_pct": msg.get("app_pct"), "live_pct": msg.get("live_pct")})
+        except Exception as e:
+            log.debug("evento live_cpu não gravado: %s", e)
+
+    def _on_live_exit(self, msg: dict[str, Any]) -> None:
+        client, self.live = self.live, None
+        rec = self.recorder
+        if msg.get("expected"):
+            self._set_live_status("stopped")
+            return
+        if rec is not None:
+            rec.set_live_tap(None)
+        permanent = self._live_error is not None and self._live_error.get("retry") is False
+        recording = rec is not None and client is not None and rec.meeting_id == client.meeting_id and self.state in (
+            AppState.RECORDING, AppState.PAUSED)
+        log.warning("ao vivo caiu (código %s)%s", msg.get("code"), f": {self._live_error.get('message')}" if self._live_error else "")
+        if recording and rec is not None and not permanent and self._live_retries < LIVE_RETRIES:
+            self._live_retries += 1
+            self._set_live_status("restarting", code=msg.get("code"))
+            if self._spawn_live(rec):
+                return
+        reason = str((self._live_error or {}).get("message") or "")
+        self._set_live_status("crashed", code=msg.get("code"), reason=reason)
+        if recording:
+            self.notify(LIVE_STOPPED_TEXT + (f"\n{reason}" if reason else ""))
+
     # ---------------------------------------------------------------- outros
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker)
@@ -704,6 +880,7 @@ class Controller(QObject):
             rec = self.recorder
             self._timer.stop()
             self._stop_mute_poller()
+            self._stop_live(detach=True)
             rec.stop()                                   # síncrono aqui: o usuário mandou sair
             if rec.muted:
                 self.platform.mic_mute().set(False)

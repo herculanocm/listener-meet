@@ -6,6 +6,9 @@ quando o banco não responde. Comandos (`abrir`, `pausar`, `parar`) entram na me
 A interface lê um snapshot imutável (`CaptureSnapshot`) substituído por referência. Nenhum pedaço é descartado: na
 falha definitiva o FLAC fica retido e o resumo lista os `idx` não gravados (CP3). Eventos e marcadores são gravados por
 quem chama (thread da interface), com a conexão dessa thread.
+F4: `set_live_tap(fn)` liga o desvio ao vivo; cada bloco escrito pelo chunker (depois do preenchimento de buracos, na
+thread de trabalho) vai para `fn` em O(1), com pausa e mudo marcados (`TapFlag.SILENCED`) em vez de zeros como fala; uma
+exceção do desvio nunca sobe para a gravação (contada e logada uma vez).
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from ..log import get_logger
 from ..model import EventType, Health, MeetingStatus, SourceKind
 from ..platform.base import AudioDevice, CaptureHandle, ErrorCallback, Platform
 from . import audio
-from .chunker import ChannelChunker, RawChunk
+from .chunker import ChannelChunker, RawChunk, Tap
 from .clock import Clock, SessionClock
 from .sinks import ChunkSink, EncodedChunk, RecorderSink
 
@@ -163,10 +166,11 @@ class _Pipeline:
     """Um canal na thread de trabalho: mono -> reamostragem com estado -> pedaços na taxa gravada."""
 
     def __init__(self, channel: str, sr_in: int, ch_in: int, target_rate: int, chunk_seconds: float,
-                 on_chunk: Callable[[RawChunk], None]):
+                 on_chunk: Callable[[RawChunk], None], tap: Tap | None = None):
         self.channel = channel
         self.target = int(target_rate)
-        self.chunker = ChannelChunker(channel, self.target, 1, on_chunk, chunk_seconds=chunk_seconds, gap_tolerance=GAP_TOLERANCE_S)
+        self.chunker = ChannelChunker(channel, self.target, 1, on_chunk, chunk_seconds=chunk_seconds, gap_tolerance=GAP_TOLERANCE_S,
+                                      tap=tap)
         self.sr_in = int(sr_in)
         self.ch_in = int(ch_in)
         self.resampler: audio.StreamResampler | None = None
@@ -174,6 +178,7 @@ class _Pipeline:
         self._acc: list[np.ndarray] = []
         self._acc_n = 0
         self._acc_t = 0.0
+        self._acc_silenced = False          # F4: um lote nunca mistura pausa ou mudo com fala (a marca vale para o lote todo)
         self.expected_t: float | None = None
         self._set_format(sr_in, ch_in)
 
@@ -191,15 +196,18 @@ class _Pipeline:
         else:
             self.flush()
 
-    def feed(self, block: np.ndarray, t_rel: float) -> None:
+    def feed(self, block: np.ndarray, t_rel: float, silenced: bool = False) -> None:
         mono = audio.to_mono(block)
         n = len(mono)
         if n == 0:
             return
         if self.expected_t is not None and t_rel - self.expected_t > GAP_TOLERANCE_S:
             self.flush()                                  # buraco: termina a cauda antes do silêncio
+        if self._acc and silenced != self._acc_silenced:
+            self._drain()                                 # pausa ou mudo mudou: o lote anterior sai com a marca dele
         if not self._acc:
             self._acc_t = t_rel
+            self._acc_silenced = silenced
         self._acc.append(mono)
         self._acc_n += n
         self.expected_t = t_rel + n / self.sr_in
@@ -213,19 +221,19 @@ class _Pipeline:
         t = self._acc_t
         self._acc, self._acc_n = [], 0
         if self.resampler is None:
-            self.chunker.write(x, t)
+            self.chunker.write(x, t, silenced=self._acc_silenced)
             return
         lag = self.resampler.pending_in / self.sr_in       # entrada retida pelo filtro: a saída começa antes de `t`
         y = self.resampler.process(x)
         if len(y):
-            self.chunker.write(y, t - lag)
+            self.chunker.write(y, t - lag, silenced=self._acc_silenced)
 
     def flush(self) -> None:
         self._drain()
         if self.resampler is not None:
             y = self.resampler.flush()
             if len(y):
-                self.chunker.write(y, None)               # contíguo ao que já saiu
+                self.chunker.write(y, None, silenced=self._acc_silenced)   # contíguo ao que já saiu
         self.expected_t = None
 
     def close(self, end_rel: float) -> None:
@@ -269,6 +277,9 @@ class Recorder:
         self._failures = 0
         self._retry_at: float | None = None
         self._zeros = np.zeros(48000, np.float32)
+        # F4: desvio ao vivo (trocado por referência pela interface, lido pela thread de trabalho)
+        self._live_tap: Tap | None = None
+        self.tap_errors = 0
 
     # ---------------------------------------------------------------- ciclo (thread da interface)
     def start(self) -> None:
@@ -443,6 +454,23 @@ class Recorder:
     def stopped(self) -> bool:
         return self._stopped
 
+    def set_live_tap(self, fn: Tap | None) -> None:
+        """F4: liga (ou desliga, com None) o desvio ao vivo; vale a partir do próximo bloco da thread de trabalho."""
+        self._live_tap = fn
+
+    def _tap(self, channel: str, start_frame: int, rate: int, block: np.ndarray, flags: int) -> None:
+        """Chamado pelo chunker na thread de trabalho: O(1) e nunca derruba a gravação."""
+        fn = self._live_tap
+        if fn is None:
+            return
+        try:
+            fn(channel, start_frame, rate, block, flags)
+        except Exception:
+            self.tap_errors += 1
+            if self.tap_errors == 1:
+                log.exception("reunião %s: desvio ao vivo falhou (a gravação segue; as próximas falhas só são contadas)",
+                              self.meeting_id)
+
     def _stop_handles(self) -> None:
         for h in (self._l_handle, self._r_handle):
             if h is not None:
@@ -562,7 +590,7 @@ class Recorder:
         pipe = self._pipes.get(msg.channel)
         if pipe is None:
             self._pipes[msg.channel] = _Pipeline(msg.channel, msg.sample_rate, msg.channels, self.cfg.target_rate,
-                                                 self.cfg.chunk_seconds, self._on_raw_chunk)
+                                                 self.cfg.chunk_seconds, self._on_raw_chunk, tap=self._tap)
         else:
             pipe.set_input(msg.sample_rate, msg.channels)
         if msg.channel in self._snap.lost:
@@ -592,7 +620,7 @@ class Recorder:
             last[i] = t_rel
         self._snap = replace(snap, levels=(levels[0], levels[1]), last_signal=(last[0], last[1]), blocks=(blocks[0], blocks[1]))
         data = self._silence(len(msg.data)) if silenced else msg.data
-        pipe.feed(data, t_rel)
+        pipe.feed(data, t_rel, silenced)
 
     def _silence(self, n: int) -> np.ndarray:
         if n > len(self._zeros):

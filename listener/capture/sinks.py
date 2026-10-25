@@ -1,6 +1,7 @@
 """Fan-out da captura (F1.2 M-17): o gravador publica pedaços codificados e eventos para quem implementar estes Protocols.
-`Store` implementa os dois (SQLite); a F4 liga um `LiveSink`, a F2 um `JobScheduler`; os testes usam `MemorySink`.
-O pacote `capture` não importa `store`."""
+`Store` implementa os dois (SQLite); os testes usam `MemorySink`; `extra_sinks` recebem os FLAC de ~60 s. O ao vivo da F4
+não passa por aqui (pedaços de 60 s somariam um minuto de atraso): ele lê o PCM pelo desvio `Recorder.set_live_tap`, no
+chunker. O pacote `capture` não importa `store`."""
 from __future__ import annotations
 
 from dataclasses import dataclass

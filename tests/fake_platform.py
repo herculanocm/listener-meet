@@ -127,7 +127,8 @@ class _ChildStdin:
         pass
 
     def close(self) -> None:
-        self.child.done.set()
+        if not self.child.ignore_eof:
+            self.child.done.set()
 
 
 class _ChildStdout:
@@ -145,10 +146,11 @@ class _ChildStdout:
 class FakeChild:
     """Filho ao vivo silencioso (F4): guarda o que recebe no stdin, não escreve nada e sai com 0 no EOF ou no kill."""
 
-    def __init__(self, argv: list[str], env: Mapping[str, str] | None, pid: int):
+    def __init__(self, argv: list[str], env: Mapping[str, str] | None, pid: int, ignore_eof: bool = False):
         self.argv = list(argv)
         self.env = dict(env or {})
         self.pid = pid
+        self.ignore_eof = ignore_eof                 # filho travado: o EOF não o encerra (só o kill)
         self.received = bytearray()
         self.done = threading.Event()
         self.killed = False

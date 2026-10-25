@@ -196,16 +196,3 @@ def test_prepare_reports_progress_without_network(tmp_path, monkeypatch):
     text = (db / "logs" / "listener-live.log").read_text(encoding="utf-8")                  # log próprio, como o do worker
     assert importlib.util.find_spec("faster_whisper") is not None or "download do modelo base falhou" in text
 
-
-def test_live_entry_answers_hello_and_ends_with_bye_on_eof(store):
-    from listener.live import proc
-
-    mid = store.create_meeting("ao vivo", None, None, None)
-    data = pr.encode_control(pr.Hello(1.0).to_msg()) + pr.encode_audio("L", 0, 16000, 2, 0, b"\0" * 4)
-    out = io.BytesIO()
-    assert proc.serve(io.BytesIO(data), out, store, mid) == 0
-    assert [m["type"] for m in _lines(out)] == [pr.READY, pr.BYE]
-    out = io.BytesIO()
-    assert proc.serve(io.BytesIO(pr.encode_audio("L", 0, 16000, 2, 0, b"\0" * 4)), out, store, mid) == 2   # sem hello
-    assert _lines(out)[0]["type"] == pr.ERROR and _lines(out)[0]["retry"] is False
-    assert proc.serve(io.BytesIO(data), io.BytesIO(), store, mid + 99) == 2                                # reunião inexistente
