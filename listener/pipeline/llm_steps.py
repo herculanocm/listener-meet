@@ -426,6 +426,7 @@ class LlmJobRunner(BaseJobRunner):
         log.info("job llm %s concluído: %d chamada(s), %s%s", self.job_id, self.calls, fmt_usd(self.cost_usd),
                  f"; puladas: {', '.join(self._skipped)}" if self._skipped else "")
         self.status = JobStatus.DONE
+        self._enqueue_index()
         return JobStatus.DONE
 
     def _fail_partial(self, failed: list[TaskOutcome]) -> JobStatus:
@@ -440,7 +441,20 @@ class LlmJobRunner(BaseJobRunner):
                              {"job_id": self.job_id, "kind": str(self.kind), "failed": [str(o.step) for o in failed], "error": message,
                               "permanent": permanent, "cost_usd": round(self.cost_usd, 6)})
         self.status = JobStatus.ERROR
+        self._enqueue_index()                                 # o que deu certo (ata, título...) já entra na busca
         return JobStatus.ERROR
+
+    def _enqueue_index(self) -> None:
+        """F5A-03: com alguma tarefa (salvo `test`) feita, o `index` da reunião (um pendente por reunião; o worker leve, que já
+        está vivo, o pega em seguida). Falhar aqui não muda o estado do job."""
+        if not any(o.ok and not o.skipped and o.step != JobStep.TEST for o in self.outcomes.values()):
+            return
+        try:
+            from ..rag.index import enqueue_index
+
+            enqueue_index(self.store, self.meeting_id, "llm")
+        except Exception as e:  # o índice nunca derruba o job de LLM
+            log.warning("job llm %s: não enfileirei o índice da busca: %s", self.job_id, e)
 
     @override
     def _error_text(self, e: BaseException) -> str:

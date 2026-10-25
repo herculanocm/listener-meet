@@ -167,7 +167,25 @@ class JobRunner(BaseJobRunner):
         log.info("job %s concluído: %s", self.job_id, self._timings_dict())
         self.status = JobStatus.DONE
         self._enqueue_llm()
+        self._index_after_pipeline()
         return JobStatus.DONE
+
+    def _index_after_pipeline(self) -> None:
+        """F5A-03: trechos e FTS na hora (a busca por palavra acha a reunião antes da ata) e o job `index`, que pede os vetores
+        depois do job `llm` (o claim põe o `index` atrás). Falhar aqui não desfaz o job concluído: só o log."""
+        try:
+            from ..rag.index import enqueue_index, sync_text
+        except ImportError as e:
+            log.warning("job %s: índice da busca indisponível: %s", self.job_id, e)
+            return
+        try:
+            sync_text(self.store, self.meeting_id)
+        except Exception as e:  # o índice nunca derruba o processamento
+            log.warning("job %s: trechos da busca não gravados (o job index refaz): %s", self.job_id, e)
+        try:
+            enqueue_index(self.store, self.meeting_id, "pipeline")
+        except Exception as e:
+            log.warning("job %s: não enfileirei o índice da busca: %s", self.job_id, e)
 
     def _enqueue_llm(self) -> None:
         """F3 item 2: o job da F2 termina como sempre e enfileira o job `llm` da reunião (worker leve); falhar aqui não

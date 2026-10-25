@@ -2,7 +2,9 @@
 confiança, citação com minuto); Enter aceita o pyannote (motor principal, CP5/CP11), `L` aceita a LLM, setas navegam, O =
 outra pessoa, N = nova pessoa, M = mesclar, I = ignorar, Espaço ouve 5 s (numa `Task`). F3 item 11: abas de título,
 pré-resumo, ata, executivo e ações editáveis com "gerar de novo" por aba (job `llm`), selo de custo no cabeçalho. "Concluir"
-marca a reunião como revisada. Só metadados no construtor (R-9)."""
+marca a reunião como revisada. Só metadados no construtor (R-9). F5: cada decisão sobre uma voz e cada edição das abas
+chama `on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reunião 30 s depois da última; "Concluir" na
+hora)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -27,12 +29,13 @@ log = get_logger("ui.review")
 
 class ReviewDialog(QDialog):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None,
-                 on_launch: Callable[[bool], Any] | None = None):
+                 on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_transcript = on_transcript
         self.on_launch = on_launch
+        self.on_edited = on_edited                         # F5: `on_edited(meeting_id, motivo, now=False)` reindexa a reunião
         self.items: list[review.ReviewItem] = []
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
         self.reloads = 0
@@ -82,10 +85,10 @@ class ReviewDialog(QDialog):
         vlay.addLayout(row2)
         self.tabs = QTabWidget()
         self.tabs.addTab(voices, "Vozes")
-        self.title_tab = TitleTab(store, meeting_id, self.regenerate)
-        self.text_tabs: dict[str, TextTab] = {str(k): TextTab(store, meeting_id, k, self.regenerate)
+        self.title_tab = TitleTab(store, meeting_id, self.regenerate, on_edited=self._text_edited)
+        self.text_tabs: dict[str, TextTab] = {str(k): TextTab(store, meeting_id, k, self.regenerate, on_edited=self._text_edited)
                                               for k in (SummaryKind.PRE_SUMMARY, SummaryKind.MINUTES, SummaryKind.EXECUTIVE)}
-        self.actions_tab = ActionsTab(store, meeting_id)
+        self.actions_tab = ActionsTab(store, meeting_id, on_edited=self._text_edited)
         self.tabs.addTab(self.title_tab, "Título")
         self.tabs.addTab(self.text_tabs[SummaryKind.PRE_SUMMARY], "Pré-resumo")
         self.tabs.addTab(self.text_tabs[SummaryKind.MINUTES], "Ata")
@@ -97,6 +100,16 @@ class ReviewDialog(QDialog):
         lay.addWidget(self.tabs, 1)
         self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
         self.reload(focus=True)
+
+    # ---------------------------------------------------------------- índice da busca (F5)
+    def _edited(self, now: bool = False) -> None:
+        """Uma decisão sobre as vozes mudou quem fala na transcrição: a busca reindexa a reunião."""
+        if self.on_edited is not None:
+            self.on_edited(self.meeting_id, "review", now=now)
+
+    def _text_edited(self) -> None:
+        if self.on_edited is not None:
+            self.on_edited(self.meeting_id, "edit")
 
     # ---------------------------------------------------------------- abas da LLM (F3 item 11)
     def reload_llm(self) -> None:
@@ -188,6 +201,7 @@ class ReviewDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
+        self._edited()
         self._next_pending()
         return True
 
@@ -204,6 +218,7 @@ class ReviewDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
+        self._edited()
         self._next_pending()
         return True
 
@@ -231,6 +246,7 @@ class ReviewDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
+        self._edited()
         self._next_pending()
         return True
 
@@ -253,6 +269,7 @@ class ReviewDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
+        self._edited()
         self._next_pending()
         return True
 
@@ -260,6 +277,7 @@ class ReviewDialog(QDialog):
         it = self.current_item()
         if it is not None:
             review.ignore(self.store, it.cluster_id)
+            self._edited()
             self._next_pending()
 
     def play_current(self) -> None:
@@ -293,6 +311,7 @@ class ReviewDialog(QDialog):
 
     def finish(self) -> None:
         review.finish(self.store, self.meeting_id)
+        self._edited(now=True)                             # "Concluir": a reindexação não espera os 30 s
         self.accept()
 
     # ---------------------------------------------------------------- teclado (U-006)

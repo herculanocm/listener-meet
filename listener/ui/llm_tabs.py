@@ -2,7 +2,9 @@
 (`text_edited` -> `revisions`), "gerar de novo" por aba como job `llm` de uma tarefa (desabilitado enquanto há job `llm` ativo
 para a reunião), marca "gerados antes do reprocessamento" (P7), aviso "não gerado: estimado US$ x, acima do alerta; gerar?"
 (P5) e selo de custo da reunião. A recarga por assinatura nunca apaga uma edição em curso (F3.1 R3-01): com o editor em foco
-ou modificado, a versão nova só acende o aviso "recarregar?". Só metadados e texto: nada de SDK nem de rede aqui."""
+ou modificado, a versão nova só acende o aviso "recarregar?". Só metadados e texto: nada de SDK nem de rede aqui. F5: cada
+edição gravada (título, ata, executivo, ações) chama `on_edited()`, que reindexa a reunião para a busca (o controlador
+espera 30 s sem edição antes de enfileirar)."""
 from __future__ import annotations
 
 import json
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
 KIND_STEP: dict[str, JobStep] = {SummaryKind.MINUTES: JobStep.MINUTES, SummaryKind.EXECUTIVE: JobStep.EXECUTIVE,
                                  SummaryKind.PRE_SUMMARY: JobStep.PRE_SUMMARY}
 KIND_TITLE: dict[str, str] = {SummaryKind.PRE_SUMMARY: "Pré-resumo", SummaryKind.MINUTES: "Ata", SummaryKind.EXECUTIVE: "Executivo"}
+INDEXED_KINDS = frozenset({SummaryKind.MINUTES, SummaryKind.EXECUTIVE})   # F5: o pré-resumo não entra na busca
 STALE_MARK = "gerados antes do reprocessamento"
 NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" grava o seu texto sobre a versão nova (o texto "
                 "da LLM fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
@@ -95,12 +98,13 @@ class TextTab(QWidget):
     (o texto da LLM continua em `text_llm`), para a edição nunca ficar numa versão superada que nenhuma tela mostra (R3-01)."""
 
     def __init__(self, store: Store, meeting_id: int, kind: SummaryKind, on_regenerate: Callable[[JobStep], Any],
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None, on_edited: Callable[[], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.kind = kind
         self.on_regenerate = on_regenerate
+        self.on_edited = on_edited                               # F5: reindexar a reunião (ata e executivo)
         self.summary_id: int | None = None
         self._loaded: tuple[int | None, str] | None = None       # (versão, texto) que estão no editor
         self.newer = False                                       # chegou versão nova durante a edição
@@ -191,15 +195,19 @@ class TextTab(QWidget):
         self._loaded = (target, self.store.summaries.display_text(self.store.summaries.get(target)))
         self.editor.document().setModified(False)
         self.reload(*self._last)
+        if changed and self.on_edited is not None and str(self.kind) in INDEXED_KINDS:
+            self.on_edited()
         return changed
 
 
 class TitleTab(QWidget):
-    def __init__(self, store: Store, meeting_id: int, on_regenerate: Callable[[JobStep], Any], parent: QWidget | None = None):
+    def __init__(self, store: Store, meeting_id: int, on_regenerate: Callable[[JobStep], Any], parent: QWidget | None = None,
+                 on_edited: Callable[[], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_regenerate = on_regenerate
+        self.on_edited = on_edited                               # F5: o título entra em todo trecho da busca
         self._busy = False
         self.title = QLineEdit()
         self.suggestion = QLabel("")
@@ -239,20 +247,24 @@ class TitleTab(QWidget):
 
     def save(self) -> None:
         text = self.title.text().strip()
-        if text:
+        changed = bool(text) and text != str((self.store.get_meeting(self.meeting_id) or {}).get("title") or "")
+        if changed:
             self.store.update_title(self.meeting_id, text)
         self.title.setModified(False)
         self.reload(self._busy)
+        if changed and self.on_edited is not None:
+            self.on_edited()
 
 
 class ActionsTab(QWidget):
     """Ações da ata, uma por linha: texto editável na célula e estado no combo. A recarga compara o que a tabela mostra com
     o banco e só a reconstrói quando algo mudou; com a tabela em edição ou com o foco, acende "recarregar?" (R3-01)."""
 
-    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None):
+    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_edited: Callable[[], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
+        self.on_edited = on_edited                               # F5: ações vigentes entram na busca
         self.table = QTableWidget(0, len(ACTION_COLUMNS))
         self.table.setHorizontalHeaderLabels(list(ACTION_COLUMNS))
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -341,6 +353,8 @@ class ActionsTab(QWidget):
 
     def _after_write(self, action_id: int, written: bool) -> None:
         """A própria edição não conta como versão nova; ação já superada (a ata mudou) recusa a escrita e pede recarga."""
+        if written and self.on_edited is not None:
+            self.on_edited()
         if written and not self.newer:
             self._shown = self._view()
         elif not written and str((self.store.actions.get(action_id) or {}).get("status")) == ActionStatus.SUPERSEDED:

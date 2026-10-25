@@ -198,6 +198,19 @@ class ChatRole(StrEnum):
     ASSISTANT = "assistant"
 
 
+class ChunkKind(StrEnum):
+    """Tipo do trecho do índice (F5 item 1, `rag_chunks.kind`)."""
+    TRANSCRIPT = "transcricao"     # 60 a 120 s de falas, cortado em fim de turno
+    DECISION = "decisao"           # uma linha de lista da ata exibida, por seção
+    HIGHLIGHT = "destaque"
+    PENDING = "pendencia"
+    NEXT_STEP = "proximo_passo"
+    MINUTES = "ata"                # o contexto da ata e qualquer seção desconhecida
+    ACTION = "acao"                # `action_items` vigentes, com dono e prazo
+    EXECUTIVE = "executivo"        # o resumo executivo, sem tempo
+    MEETING = "reuniao"            # título, data, participantes e duração: busca por título e marca de reunião indexada
+
+
 class StoreRole(StrEnum):
     APP = "app"                    # main em escrita, migra, VACUUM de legado
     WORKER = "worker"              # main em escrita sem migrar; áudio só leitura com mmap (F2)

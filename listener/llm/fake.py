@@ -1,12 +1,16 @@
 """`FakeProvider` (F3, testes sem rede e `LISTENER_LLM=fake` no worker leve): roteiro por tarefa, falhas injetáveis (429 com
 `Retry-After`, timeout, JSON inválido, "request too large"), registro de todos os pedidos, streaming em pedaços,
 capacidades e janela configuráveis, contagem de paralelismo (para conferir o semáforo). Sem um roteiro, uma tarefa com
-esquema recebe a instância mínima válida do esquema; sem esquema, um texto fixo."""
+esquema recebe a instância mínima válida do esquema; sem esquema, um texto fixo. F5: `embed` é um saco de palavras com hash
+(sem acento e em minúsculas, cada palavra soma ±1 numa posição, normalizado): determinístico e textos com palavras em comum
+ficam próximos, o que deixa a busca por sentido testável sem rede; aceita falha injetada (`LlmTask.RAG_EMBED`)."""
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
+import re
+import unicodedata
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
@@ -23,6 +27,27 @@ type Script = Callable[[Request], Any] | dict[str, Any] | list[Any] | str
 
 FAKE_FAST = "fake-fast"
 FAKE_STRONG = "fake-strong"
+WORD_RE = re.compile(r"\w+")
+
+
+def fold(text: str) -> str:
+    """Minúsculas e sem acento ("Orçamento" -> "orcamento"), como o `remove_diacritics` do FTS."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+
+
+def bag_of_words(text: str, dim: int) -> np.ndarray:
+    """Cada palavra soma +1 ou -1 (pelo hash) numa posição (pelo hash); normalizado. Texto sem palavra vira um só "token"
+    com o texto inteiro (nunca o vetor nulo)."""
+    v = np.zeros(dim, np.float32)
+    tokens = WORD_RE.findall(fold(text)) or [text]
+    for token in tokens:
+        h = int.from_bytes(hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest(), "little")
+        v[h % dim] += 1.0 if (h >> 63) & 1 else -1.0
+    norm = float(np.linalg.norm(v))
+    if norm == 0.0:                                       # as palavras se anularam: a primeira decide
+        h = int.from_bytes(hashlib.blake2b(tokens[0].encode("utf-8"), digest_size=8).digest(), "little")
+        v[h % dim], norm = 1.0, 1.0
+    return v / norm
 
 
 class FakeProvider:
@@ -129,11 +154,18 @@ class FakeProvider:
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
         d = dim or self.embed_dim
         self.embed_calls.append((len(texts), model, dim, str(task)))
-        out = np.zeros((len(texts), d), np.float32)
-        for i, t in enumerate(texts):
-            seed = int.from_bytes(hashlib.sha256(t.encode("utf-8")).digest()[:4], "little")
-            v = np.random.default_rng(seed).standard_normal(d).astype(np.float32)
-            out[i] = v / float(np.linalg.norm(v))
+        exc = self._take_failure(LlmTask.RAG_EMBED)
+        if exc is not None:
+            raise exc
+        self.in_flight += 1
+        self.peak_parallel = max(self.peak_parallel, self.in_flight)
+        try:
+            await asyncio.sleep(self.delay_s)
+            out = np.zeros((len(texts), d), np.float32)
+            for i, t in enumerate(texts):
+                out[i] = bag_of_words(t, d)
+        finally:
+            self.in_flight -= 1
         return Embeddings(model, d, out, Usage(sum(len(t) for t in texts) // 4, 0))
 
     async def count_tokens(self, req: Request) -> int | None:

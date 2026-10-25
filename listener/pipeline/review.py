@@ -107,6 +107,7 @@ class TranscriptRow:
     play_from_ms: int
     text_llm: str | None = None      # F3 item 8: transcrição revisada, quando existe
     prefer_llm: bool = True          # P4: a leitura mostra a revisada por padrão, com alternância
+    person_id: int | None = None     # F5: a pessoa resolvida (segmento, cluster ou mescla); None = voz sem nome
 
     @property
     def stamp(self) -> str:
@@ -195,7 +196,8 @@ def transcript_rows(store: Store, meeting_id: int, prefer_llm: bool = True) -> l
         except (ValueError, TypeError, IndexError):
             pass
         rows.append(TranscriptRow(int(s["id"]), str(s.get("channel") or ""), int(s["t_start_ms"]), int(s["t_end_ms"]), name, role,
-                                  str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm))
+                                  str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm,
+                                  int(pid) if person is not None and pid is not None else None))
     return rows
 
 

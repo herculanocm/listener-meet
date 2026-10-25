@@ -6,7 +6,9 @@ fila a cada 2 s com job ativo e 30 s sem; aviso "pronta para revisão" e de reun
 F3: duas classes de worker (`launch_worker(light)`): o pesado só fora da gravação; o leve (jobs `llm`) a qualquer hora;
 `_on_job_done` ramifica por `kind` (ata pronta x pronta para revisão).
 F5: o leve roda também os `index` (índice da busca); a detecção de job concluído e a dica da bandeja os ignoram (a dica
-acrescenta "· índice N"), e um `index` concluído nunca abre a revisão (F5A-05).
+acrescenta "· índice N"), e um `index` concluído nunca abre a revisão (F5A-05). Na abertura, a varredura do índice roda numa
+`Task` e lança o leve se enfileirou algo (F5A-12); as edições da revisão e das abas da LLM (`on_edited`) reindexam a
+reunião 30 s depois da última, e "Concluir", fechar a revisão e sair do app disparam na hora.
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -76,6 +78,8 @@ QUEUE_POLL_IDLE_MS = 30000
 WORKER_SPAWN_COOLDOWN_S = 60.0       # tempo para o worker recém-lançado carregar e escrever o primeiro heartbeat
 REVIEW_STEPS = (str(JobStep.TRANSCRIBE_R), str(JobStep.TRANSCRIBE_L), str(JobStep.SEGMENTS))   # clusters já gravados (P1)
 INDEX_KINDS: tuple[str, ...] = (str(JobKind.INDEX),)    # F5: fora da detecção de concluídos e da dica (seriam dezenas)
+INDEX_DEBOUNCE_MS = 30_000           # F5: edição de falantes, título, ata ou ações: reindexa 30 s depois da última
+SWEEP_WAIT_MS = 5000                 # sair do app: espera a varredura do índice antes de fechar o banco
 LIVE_MODELS_MISSING = "modelos do ao vivo ausentes: prepare nas Configurações (Ao vivo)"
 LIVE_STOPPED_TEXT = "A legenda ao vivo parou; a gravação continua normalmente."
 PREPARE_INTERRUPTED = "interrompido pela gravação: prepare de novo depois dela (continua de onde parou)"
@@ -208,6 +212,11 @@ class Controller(QObject):
         self._partial_timer = QTimer(self)
         self._partial_timer.setInterval(PARTIAL_TICK_MS)
         self._partial_timer.timeout.connect(self._partial_tick)
+        # F5: índice da busca (reindexação por edição com espera e varredura da abertura)
+        self.index_debounce_ms = INDEX_DEBOUNCE_MS
+        self._index_timers: dict[int, QTimer] = {}
+        self._index_reasons: dict[int, str] = {}
+        self._sweeps: set[Task] = set()
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -235,6 +244,7 @@ class Controller(QObject):
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
         self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
         self._enqueue_leftovers()
+        self._start_sweep()
         self._poll_queue()
         self._queue_timer.start()
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
@@ -242,6 +252,59 @@ class Controller(QObject):
     def notify(self, message: str) -> None:
         if self.tray is not None:
             self.tray.showMessage("listener-meet", message)
+
+    # ---------------------------------------------------------------- índice da busca (F5)
+    def _start_sweep(self) -> None:
+        """Varredura do índice numa `Task` (F5A-12): reuniões processadas sem trechos e, com embedder pronto, as que têm trecho
+        sem vetor do modelo ativo; com algo na fila, o worker leve sobe."""
+        from ..rag import index as rag_index
+
+        task = run_task(lambda: rag_index.sweep(self.store), self.store, self._on_sweep)
+        self._sweeps.add(task)
+        task.finished.connect(functools.partial(self._sweeps.discard, task))   # o `release` destrói a QThread depois
+
+    def _on_sweep(self, result: Any) -> None:
+        if self._quitting:
+            return
+        if isinstance(result, BaseException):
+            log.warning("varredura do índice falhou: %s", result)
+        elif result:
+            self.launch_worker(light=True)
+
+    def on_edited(self, meeting_id: int, reason: str = "edit", *, now: bool = False) -> None:
+        """Uma edição que muda a busca (falantes, título, ata, executivo, ações): o `index` da reunião entra na fila
+        `index_debounce_ms` depois da última edição (cada uma reinicia a espera); `now` enfileira já ("Concluir")."""
+        self._index_reasons[meeting_id] = reason
+        if now:
+            self._flush_index(meeting_id)
+            return
+        timer = self._index_timers.get(meeting_id)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(functools.partial(self._flush_index, meeting_id))
+            self._index_timers[meeting_id] = timer
+        timer.setInterval(self.index_debounce_ms)
+        timer.start()
+
+    def _flush_index(self, meeting_id: int) -> None:
+        from ..rag.index import enqueue_index
+
+        timer = self._index_timers.pop(meeting_id, None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        reason = self._index_reasons.pop(meeting_id, "edit")
+        try:
+            enqueue_index(self.store, meeting_id, reason)
+        except Exception as e:  # a busca nunca atrapalha a edição
+            log.warning("reunião %s: não enfileirei o índice da busca: %s", meeting_id, e)
+            return
+        self.launch_worker(light=True)
+
+    def _flush_all_index(self) -> None:
+        for mid in list(self._index_timers):
+            self._flush_index(mid)
 
     def _run_task(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> None:
         run_task(fn, self.store, on_done)
@@ -492,6 +555,8 @@ class Controller(QObject):
             with suppress(Exception):
                 self._clear_lease()
                 self._enqueue_processing(rec.meeting_id)
+        with suppress(Exception):
+            self._flush_all_index()                      # F5: edição recente não espera os 30 s para entrar na busca
         self._quitting = True
         self._queue_timer.stop()
         try:
@@ -500,6 +565,9 @@ class Controller(QObject):
             log.debug("parar atalhos: %s", e)
         shutdown_preparer()                              # F4: o download dos modelos não segue órfão
         self._wait_partials()                            # a chamada do parcial em voo é cancelada antes de o banco fechar
+        for task in list(self._sweeps):                  # F5: a varredura do índice usa o banco numa QThread
+            with suppress(RuntimeError):                 # já destruída pelo `release`
+                task.wait(SWEEP_WAIT_MS)
         if self.live_window is not None:                 # guarda a posição antes de o banco fechar
             with suppress(Exception):
                 self.live_window.close()
@@ -726,7 +794,8 @@ class Controller(QObject):
         """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""
         dlg = self._reviews.get(meeting_id)
         if dlg is None:
-            dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript, on_launch=self.launch_worker)
+            dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript, on_launch=self.launch_worker,
+                               on_edited=self.on_edited)
             dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
             self._reviews[meeting_id] = dlg
             self._review_sigs[meeting_id] = self._clusters_signature(meeting_id)
@@ -756,6 +825,8 @@ class Controller(QObject):
         self._review_sigs.pop(meeting_id, None)
         if dlg is not None:
             dlg.deleteLater()
+        if meeting_id in self._index_timers:                     # fechar a revisão não espera os 30 s
+            self._flush_index(meeting_id)
 
     def open_transcript(self, meeting_id: int) -> TranscriptDialog:
         dlg = self._transcripts.get(meeting_id)

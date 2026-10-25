@@ -77,7 +77,8 @@ def test_pyannote_adapters_import_without_torch_and_fail_clearly(forget_adapters
 def test_adapter_modules_are_not_imported_by_app_modules_statically():
     """Regra dura (F2 item 1) conferida no código-fonte: imports de módulo (fora de função) de torch, faster_whisper,
     pyannote, whisper.py, pyannote.py e models.py não aparecem no que o app importa. F4: o lado do app do ao vivo
-    (`live/__init__.py`, `client.py`, `protocol.py`) e o `names.py` puro também, e o onnxruntime (VAD) entra na lista."""
+    (`live/__init__.py`, `client.py`, `protocol.py`) e o `names.py` puro também, e o onnxruntime (VAD) entra na lista. F5: o
+    pacote `rag/` e o runner do índice também."""
     import ast
 
     root = Path(__file__).resolve().parent.parent / "listener"
@@ -85,7 +86,7 @@ def test_adapter_modules_are_not_imported_by_app_modules_statically():
                  root / "pipeline" / "estimate.py", root / "pipeline" / "types.py", root / "pipeline" / "base.py",
                  root / "pipeline" / "windows.py", root / "pipeline" / "align.py", root / "pipeline" / "profiles.py",
                  root / "pipeline" / "stitch.py", root / "live" / "__init__.py", root / "live" / "client.py", root / "live" / "protocol.py",
-                 root / "live" / "names.py"]
+                 root / "live" / "names.py", *(root / "rag").glob("*.py"), root / "pipeline" / "index_steps.py"]
     banned = {"torch", "faster_whisper", "pyannote", "whisperx", "ctranslate2", "huggingface_hub", "onnxruntime"}
     banned_local = {"whisper", "pyannote", "models"}
     offenders: list[str] = []
@@ -112,7 +113,7 @@ def test_llm_sdks_are_not_imported_at_module_level_outside_the_adapters():
     adapters = {"gemini.py", "openai.py", "anthropic.py"}
     files = [p for p in (root / "llm").rglob("*.py") if p.name not in adapters] + list((root / "ui").glob("*.py")) + [
         root / "pipeline" / "runner.py", root / "pipeline" / "worker.py", root / "pipeline" / "jobbase.py", root / "store" / "core.py",
-        root / "__main__.py"]
+        root / "__main__.py", *(root / "rag").glob("*.py"), root / "pipeline" / "index_steps.py"]
     steps = root / "pipeline" / "llm_steps.py"
     if steps.exists():
         files.append(steps)

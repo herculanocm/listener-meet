@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 from ..log import get_logger
 from . import models_table, redact
+from .adapters_common import EMBED_TIMEOUT_S
 from .base import BadResponseError, LlmError, LlmStream, LLMProvider, ProviderUnavailableError, classify_exception
 from .schema import SchemaError, parse_json_text, validate
 from .types import Completion, ConnectionTest, Embeddings, EmbedTask, Message, ModelInfo, ProviderKind, Request, Role
@@ -155,7 +156,8 @@ class RetryingProvider:
     repetem até 3 vezes com 1, 3 e 9 s (jitter de 30 %) ou o `Retry-After`; "request too large" e erros permanentes não
     repetem; com esquema, valida a resposta e reenvia uma vez com a mensagem de erro quando o JSON não vale. Resposta cortada
     no teto de saída (`finish == "length"`) reenvia uma vez com o teto dobrado até o limite do modelo, senão erro claro
-    (F3.1 R3-07)."""
+    (F3.1 R3-07). F5 (F5A-13): `embed` ganha a mesma retentativa, com o timeout dos embeddings (`EMBED_TIMEOUT_S`) por
+    tentativa."""
 
     def __init__(self, inner: LLMProvider, *, attempts: int = 3, delays: Sequence[float] = RETRY_DELAYS, jitter: float = RETRY_JITTER,
                  sleep: Sleep | None = None, rand: Callable[[], float] = random.random, resend_on_invalid: bool = True):
@@ -215,10 +217,13 @@ class RetryingProvider:
         return req, replace(comp, usage=first.usage + comp.usage)
 
     async def _with_retries(self, req: Request) -> Completion:
+        return await self._retrying(lambda: self.inner.complete(req), req.timeout_s)
+
+    async def _retrying[T](self, call: Callable[[], Awaitable[T]], timeout_s: float) -> T:
         for attempt in range(self.attempts):
             try:
-                async with asyncio.timeout(req.timeout_s):
-                    return await self.inner.complete(req)
+                async with asyncio.timeout(timeout_s):
+                    return await call()
             except Exception as e:  # o adaptador traduz os erros do SDK; o resto cai em `classify_exception`
                 err = classify_exception(e)
                 if not err.retryable or attempt == self.attempts - 1:
@@ -248,7 +253,7 @@ class RetryingProvider:
         return self.inner.stream(req)
 
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
-        return await self.inner.embed(texts, model=model, dim=dim, task=task)
+        return await self._retrying(lambda: self.inner.embed(texts, model=model, dim=dim, task=task), EMBED_TIMEOUT_S)
 
     async def count_tokens(self, req: Request) -> int | None:
         try:
