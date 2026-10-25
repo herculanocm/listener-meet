@@ -9,6 +9,8 @@
 - Documentos vivos ficam no Claude Docs (handoffs entre LLMs); a cópia fiel fica em `specs/`.
 - Documentação compacta para IA (D-031): ele zera o contexto entre sessões e usa várias LLMs; arquivos grandes e repetidos
   "estouram o limite de leitura". Regras em `specs/README.md`.
-- Windows é o alvo com a melhor experiência nativa; Linux e macOS implementam o que der (CP15).
+- O propósito do app é o Windows: performance e experiência no Windows nativo primeiro; Linux e macOS implementam o que
+  der (CP15). Desenvolver no Linux ou no WSL está ok, mas testes e funcionalidades só valem depois de rodar no Windows:
+  a LLM confere o ambiente no começo de cada sessão e o lembra do que falta verificar lá (25/10).
 - Python moderno e rápido: piso 3.12, sem retrocompatibilidade, recursos novos e performance primeiro (CP17); quando a
   stack liberar uma versão mais nova, ele quer migrar, não esperar.

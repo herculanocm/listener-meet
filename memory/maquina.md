@@ -1,6 +1,8 @@
-# Esta máquina: Windows 11 corporativo (EDR), sem GPU, e o WSL
+# Ambientes: Windows 11 corporativo (EDR, sem GPU; o alvo), o WSL dele e um Linux Ubuntu nativo
 
 Tudo [fato] medido em 24/10/2026, salvo indicação. Caminhos com `<usuário>` são desta máquina, não do produto.
+Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; `linux` com `microsoft` em
+`platform.release()` (e `/mnt/c`) = WSL; `linux` sem isso = Linux nativo (em 25/10, o Xeon abaixo).
 
 ## Ambiente
 - Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`); venv em

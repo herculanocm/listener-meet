@@ -3,6 +3,19 @@
 Spec-Driven Development: primeiro a spec, depois a aprovação do dono (Herculano), só então o código. O dono decide;
 a LLM propõe, pergunta e executa o que foi aprovado. Tamanho-alvo deste arquivo: 3 KB.
 
+## Começo de toda sessão: em que ambiente estou?
+O app existe para o Windows: performance e experiência no Windows nativo vêm primeiro (CP15). Desenvolver no Linux ou no
+WSL está certo, mas nada está pronto antes de rodar no Windows. Antes de qualquer tarefa, rode
+`python -c "import sys, platform; print(sys.platform, platform.release())"` (no Windows sem `python` no PATH:
+`py -3.12 -c ...`) e diga ao dono, em uma linha, onde a sessão está:
+- `win32` = **Windows nativo**, o alvo. Antes da tarefa pedida, abra "Verificar no Windows" em `specs/backlog.md`, diga
+  o que está pendente e proponha rodar na ordem (gravar reunião e usar chave pedem o OK do dono). Meça tempo, CPU e RAM
+  e anote em `specs/decisoes.md` (Medições) e `memory/maquina.md`.
+- `linux` com `microsoft` na versão = **WSL** (Ubuntu dentro do Windows); `linux` sem isso = **Linux nativo** (Ubuntu).
+  Nos dois, testes só com os fakes (`LISTENER_PIPELINE`, `LISTENER_LLM` e `LISTENER_LIVE` = `fake`; interface com
+  `QT_QPA_PLATFORM=offscreen`): áudio real, modelos, EDR e `listener/platform/win32` não rodam. Ao fechar cada entrega,
+  acrescente em "Verificar no Windows" o que só o Windows verifica e lembre o dono do que está pendente lá.
+
 ## Leitura em camadas (leia a camada da tarefa, não tudo)
 | Camada | Quando | Arquivos |
 | --- | --- | --- |
@@ -34,8 +47,9 @@ Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto,
 3. **Aprovação.** Só `aprovada` ("Aprovada por Herculano em AAAA-MM-DD" na spec, ou dito no chat com data) libera código
    (CP13), e só o que a spec diz. Desvio ou descoberta volta para a spec, não para o código.
 4. **Implementação.** Um agente especialista implementa com briefing completo (spec, decisões já tomadas, restrições);
-   testes, ruff e mypy verdes antes de cada commit (CP16); um implementador por vez quando os arquivos se cruzam; relatório
-   final com o que só o Windows verifica. Correção abaixo de duas horas, a orquestradora faz direto, sem agente.
+   testes, ruff e mypy verdes antes de cada commit (CP16); um implementador por vez quando os arquivos se cruzam;
+   relatório final com o que só o Windows verifica (vai para "Verificar no Windows" no backlog). Correção abaixo de duas
+   horas, a orquestradora faz direto, sem agente.
 5. **Revisão e fechamento.** Um agente revisor novo lê só o diff (bugs, corridas, cláusulas); o implementador corrige com o
    contexto que já tem; a orquestradora verifica por conta própria (testes, lint, tipos, telas), atualiza `specs/backlog.md`
    (único lugar de estado), `specs/decisoes.md` e `memory/` se houver fato novo, e commita. O dono verifica no Windows e

@@ -26,9 +26,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · F5 e F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
-1. T0: `AGENTS.md`, `specs/01-clausulas.md`, este arquivo. Depois só a camada da tarefa.
-2. Testes: `python -m pytest -q` e `ruff check .` (qualquer sistema). No Windows, venv 3.12 em
-   `C:\Users\<usuário>\dev\listener-meet\.venv` e modelos em `C:\Users\<usuário>\listener-meet\models\`.
+1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
+   da tarefa.
+2. Testes: `python -m pytest -q` e `ruff check .` (qualquer sistema). No Windows nativo, antes: "Verificar no Windows".
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Bloqueios que só o dono destrava
@@ -44,15 +44,22 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação, D-031) ·
 B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 aprovada, D-043) · B14 (F4 aprovada, D-044).
 
-## Ordem sugerida das próximas sessões
-1. Dono roda o `--selftest` e o app no Windows (B1); LLM corrige o que aparecer (correção pequena, sem agente).
-2. Dono grava as três reuniões (B2); LLM fecha o G1 em `decisoes.md` com deriva, deslocamento L/R e tamanho do banco.
-3. Dono instala o extra `pipeline` e cola o token (B4); o primeiro job real verifica o L5, mede RTF e RSS por etapa e a
-   sonda Q8; G2 nas gravações do G1; números em `decisoes.md`.
-4. Dono cola a chave (B13); o primeiro job de LLM real valida os adaptadores (canário, latências, preços contra a
-   fatura); G3 nas três reuniões.
-5. Dono roda o L0 (B15); LLM registra os números e ajusta a regra da janela se o Windows divergir do Linux; G4 em três
-   reuniões com headset, medido pelo `--check`.
+## Verificar no Windows (rodar na ordem quando a sessão estiver no Windows nativo)
+Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item concluído ganha a data; números em `decisoes.md`
+(Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
+1. Checkout no último `main` (o dono faz push de onde desenvolveu e pull aqui); venv 3.12 em
+   `C:\Users\<usuário>\dev\listener-meet\.venv`; `pip install -e .[dev,win32,llm]` (mais `[pipeline]` nos itens 5 e 7).
+2. `python -m pytest -q`: aqui rodam também os testes só do Windows (`spawn_child` abaixo do normal, EcoQoS).
+3. `python -m listener --selftest`, depois `python -m listener`: assistente, gravação curta, fila, revisão e
+   Configurações (B1); olhar DPI, bandeja do Windows 11 e tempo de abertura; a LLM corrige o que aparecer.
+4. G1 (B2): três reuniões reais com headset em duas plataformas; `python -m listener --check <pasta do banco>` (deriva,
+   deslocamento L/R e tamanho do banco em `decisoes.md`).
+5. F2 real (B4): token do Hugging Face; o primeiro job mede RTF e RSS por etapa e a sonda Q8; "OMP: Error #15" pede o
+   torch antes do CTranslate2 (como no ao vivo); G2 nas gravações do G1.
+6. F3 real (B13): chave do Gemini, "testar conexão", primeiro job de LLM (canário, latência, preço contra a fatura); G3.
+7. F4 (B15): `python scripts/live_probe.py all <gravação real>` (com `HF_TOKEN`); a regra da janela muda se o Windows
+   divergir do Linux; "Preparar modelos do ao vivo"; gravação com a legenda: atraso, CPU (o processo ao vivo sem "modo
+   de eficiência" no Gerenciador de Tarefas) e nomes; G4 em três reuniões pelo `--check`.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
