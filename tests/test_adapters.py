@@ -115,21 +115,19 @@ def test_llm_sdks_are_not_imported_at_module_level_outside_the_adapters():
     if steps.exists():
         files.append(steps)
     banned = {"google", "openai", "anthropic", "httpx", "httpx2", "truststore", "pydantic", "msgspec", "torch"}
+    never = {"pydantic", "msgspec"}                        # nem dentro de função, no projeto e na suíte (contrato "Saída estruturada")
+    restricted = {p.resolve() for p in files}
     offenders: list[str] = []
-    for path in files:
+    for path in list(root.rglob("*.py")) + list((root.parent / "tests").glob("*.py")):   # cada arquivo analisado uma vez só
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in tree.body:
-            names: list[str] = []
+        top = path.resolve() in restricted
+        for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 names = [a.name.split(".")[0] for a in node.names]
             elif isinstance(node, ast.ImportFrom) and not node.level:
                 names = [(node.module or "").split(".")[0]]
-            offenders += [f"{path.relative_to(root)}: {n}" for n in names if n in banned]
+            else:
+                continue
+            at_top = node in tree.body
+            offenders += [f"{path.name}: {n}" for n in names if n in never or (top and at_top and n in banned)]
     assert offenders == []
-    # pydantic e msgspec não entram no código do projeto nem na suíte, nem dentro de função (contrato "Saída estruturada")
-    for path in list(root.rglob("*.py")) + list((root.parent / "tests").glob("*.py")):
-        for any_node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(any_node, ast.Import):
-                assert not any(a.name.split(".")[0] in ("pydantic", "msgspec") for a in any_node.names), path
-            elif isinstance(any_node, ast.ImportFrom):
-                assert (any_node.module or "").split(".")[0] not in ("pydantic", "msgspec"), path

@@ -80,7 +80,7 @@ def spawn_light_worker(store: Store, spawn: Any) -> bool:
     return True
 
 
-def build_deps(config: JobConfig, token: str, fake: bool) -> PipelineDeps:
+def build_deps(config: JobConfig, token: str, fake: bool, store: Store | None = None) -> PipelineDeps:
     if fake:
         try:
             from tests.fake_pipeline import FakeDeps
@@ -89,7 +89,17 @@ def build_deps(config: JobConfig, token: str, fake: bool) -> PipelineDeps:
         return FakeDeps()
     from .models import real_deps
 
-    return real_deps(config, token)
+    return real_deps(config, token, store)
+
+
+def llm_transcriber_key(store: Store, config: JobConfig) -> tuple[str, str]:
+    """(provedor, modelo rápido) do provedor ativo quando o transcritor é a LLM: trocar nas Configurações reconstrói."""
+    if config.transcriber != "llm":
+        return ("", "")
+    from ..llm.jobconfig import LlmJobConfig
+
+    cfg = LlmJobConfig.from_store(store)
+    return (cfg.provider_id, cfg.fast_model)
 
 
 def config_snapshot(store: Store) -> str:
@@ -156,10 +166,10 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
                 token = store.settings.provider_key(HF_PROVIDER_ID)
                 from .models import deps_key as key_of
 
-                key = ("fake",) if fake else key_of(config, token)
+                key = ("fake",) if fake else key_of(config, token, llm_transcriber_key(store, config))
                 if deps is None or key != deps_key:
                     try:
-                        deps, deps_key = build_deps(config, token, fake), key
+                        deps, deps_key = build_deps(config, token, fake, store), key
                     except PermanentError as e:
                         store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=str(e), count_attempt=False)
                         log.warning("job %s: %s", job["id"], e)

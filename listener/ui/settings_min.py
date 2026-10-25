@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 
 from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES, PIPELINE_KEYS, SPECS,
                                validate_setting)
-from ..llm.jobconfig import audio_capable
+from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
+from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
 from .providers import ProviderTabs
 
@@ -23,6 +24,16 @@ if TYPE_CHECKING:
     from ..store import Store
 
 SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na próxima gravação"}
+
+
+def audio_cost_text(store: Store) -> str:
+    """"≈ US$ 0,12 por hora de áudio" com o preço de áudio do modelo rápido do provedor ativo (32 tokens/s, F3A-40)."""
+    cfg = LlmJobConfig.from_store(store)
+    price = price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, cfg.fast_model)
+    if price is None:
+        return "sem preço cadastrado para estimar o custo por hora de áudio"
+    per_hour = AUDIO_TOKENS_PER_SECOND * 3600 * (price.audio_usd_m or price.input_usd_m) / 1_000_000
+    return f"≈ {fmt_usd(per_hour)} por hora de áudio no modelo {cfg.fast_model}"
 
 
 class SettingsDialog(QDialog):
@@ -141,9 +152,12 @@ class SettingsDialog(QDialog):
             combo = QComboBox()
             for choice in sorted(spec.choices):
                 combo.addItem(choice)
-                if key == "pipeline.transcriber" and choice == "llm" and not self.audio_capable:   # F3 item 9: só com áudio nativo
-                    combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
-                    combo.setToolTip("transcrição pela LLM: precisa de um provedor ativo com chave cujo modelo rápido aceite áudio")
+                if key == "pipeline.transcriber" and choice == "llm":                              # F3 item 9: só com áudio nativo
+                    if not self.audio_capable:
+                        combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
+                        combo.setToolTip("transcrição pela LLM: precisa de um provedor ativo com chave cujo modelo rápido aceite áudio")
+                    else:
+                        combo.setToolTip(f"transcrição pela LLM: {audio_cost_text(self.store)}")
             combo.setCurrentText(self.store.get_setting(key))
             self._combos[key] = combo
             field = combo

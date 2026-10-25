@@ -25,8 +25,9 @@ KIND_TEXT: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "r
                              JobKind.LLM: "LLM"}
 
 
-def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str) -> tuple[str, ...]:
-    """Texto das colunas de um job (separado do widget para o teste e para o tooltip da bandeja)."""
+def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, llm_latency_s: float | None = None) -> tuple[str, ...]:
+    """Texto das colunas de um job (separado do widget para o teste e para o tooltip da bandeja). `llm_latency_s`: latência
+    média das chamadas (`llm_calls`) para estimar o que falta num job `llm` (F3 item 16)."""
     title = (meeting or {}).get("title") or f"reunião {job['meeting_id']}"
     started = str((meeting or {}).get("started_at") or "")[:16].replace("T", " ")
     status = str(job["status"])
@@ -39,14 +40,16 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str) ->
     detail = str(job.get("error") or "")
     label = JOB_STEP_LABELS.get(step, step)
     if str(job.get("kind")) == JobKind.LLM:                              # F3: "LLM: ata (2 de 4)" e custo acumulado (U-020)
-        label, cost = llm_job_texts(job, label)
+        label, cost, left = llm_job_texts(job, label)
         detail = " · ".join(x for x in (cost, detail) if x)
+        if status in (JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.PENDING) and llm_latency_s and left:
+            eta = fmt_remaining(llm_latency_s * left)
     return (f"{title} ({started})" if started else title, KIND_TEXT.get(str(job.get("kind")), str(job.get("kind"))), status,
             label, f"{float(job.get('progress') or 0.0) * 100:.0f}", eta, detail)
 
 
-def llm_job_texts(job: JobRow, label: str) -> tuple[str, str]:
-    """Rótulo com a contagem de tarefas e o custo acumulado do job `llm` (`params_json.tasks`, `timings_json.llm`)."""
+def llm_job_texts(job: JobRow, label: str) -> tuple[str, str, int]:
+    """Rótulo com a contagem de tarefas, custo acumulado e tarefas que faltam do job `llm` (`params_json.tasks`, `timings_json.llm`)."""
     try:
         tasks = json.loads(job.get("params_json") or "{}").get("tasks") or []
     except ValueError:
@@ -60,7 +63,7 @@ def llm_job_texts(job: JobRow, label: str) -> tuple[str, str]:
         label = f"{label} ({min(done + 1, len(tasks))} de {len(tasks)})" if str(job["status"]) in (JobStatus.RUNNING, JobStatus.PAUSED) \
             else f"{label} ({done} de {len(tasks)})"
     cost = llm.get("cost_usd")
-    return label, (f"custo {fmt_usd(float(cost))}" if cost else "")
+    return label, (f"custo {fmt_usd(float(cost))}" if cost else ""), max(0, len(tasks) - done)
 
 
 class QueueDialog(QDialog):
@@ -114,9 +117,11 @@ class QueueDialog(QDialog):
         self.jobs = self.store.jobs.list_jobs()
         rtf = self.store.get_setting("pipeline.rtf_json")
         meetings = {m["id"]: dict(m) for m in self.store.list_meetings()}
+        latency_ms = self.store.llm_calls.avg_latency_ms() if any(str(j.get("kind")) == JobKind.LLM for j in self.jobs) else None
+        latency_s = latency_ms / 1000 if latency_ms else None
         self.table.setRowCount(len(self.jobs))
         for r, job in enumerate(self.jobs):
-            for c, text in enumerate(job_row_texts(job, meetings.get(job["meeting_id"]), rtf)):
+            for c, text in enumerate(job_row_texts(job, meetings.get(job["meeting_id"]), rtf, latency_s)):
                 item = QTableWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, job["id"])
                 self.table.setItem(r, c, item)

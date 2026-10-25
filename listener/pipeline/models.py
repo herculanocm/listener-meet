@@ -146,10 +146,12 @@ def download_pyannote(config: JobConfig, token: str, progress: ProgressFn) -> No
 
 
 def prepare_models(config: JobConfig, token: str, progress: ProgressFn) -> None:
-    """Etapa `download` do job (item 17): só baixa o que falta; erros permanentes têm mensagem própria."""
+    """Etapa `download` do job (item 17): só baixa o que falta; erros permanentes têm mensagem própria. Com
+    `pipeline.transcriber = llm` o Whisper não é baixado (F3 item 9, F3A-20)."""
     apply_environment(config)
     disable_hf_symlinks()
-    download_whisper(config, progress)
+    if config.transcriber != "llm":
+        download_whisper(config, progress)
     download_pyannote(config, token, progress)
     apply_environment(config)                               # agora pode ligar o modo offline
 
@@ -164,11 +166,18 @@ def _adapter(module: str, name: str) -> Any:
         raise PermanentError(f"{INSTALL_HINT} ({e})") from e
 
 
-def real_deps(config: JobConfig, token: str) -> PipelineDeps:
-    """Fábricas preguiçosas dos adaptadores reais; nada é importado até a etapa que precisa."""
+def real_deps(config: JobConfig, token: str, store: Any = None) -> PipelineDeps:
+    """Fábricas preguiçosas dos adaptadores reais; nada é importado até a etapa que precisa. Com `transcriber = llm` o
+    transcritor é o `LLMAudioTranscriber` (D-020), lendo o provedor ativo do `store`."""
     apply_environment(config)
 
     def transcriber() -> Any:
+        if config.transcriber == "llm":
+            if store is None:
+                raise PermanentError("transcrição pela LLM precisa do banco (provedor ativo)")
+            from .llm_audio import llm_transcriber
+
+            return llm_transcriber(store)
         cls = _adapter("whisper", "FasterWhisperTranscriber")
         return cls(whisper_dir(config), config.whisper_model, cpu_threads=config.torch_threads, hq=config.whisper_hq)
 
@@ -182,10 +191,12 @@ def real_deps(config: JobConfig, token: str) -> PipelineDeps:
     return PipelineDeps(transcriber, diarizer, embedder, prepare, name="real")
 
 
-def deps_key(config: JobConfig, token: str = "") -> tuple[str, bool, int, str, str]:
+def deps_key(config: JobConfig, token: str = "", llm: tuple[str, str] = ("", "")) -> tuple[str, bool, int, str, str, str, str, str]:
     """Muda -> o worker reconstrói as dependências (modelo escolhido vale para o próximo job, CP8; token novo colado nas
-    Configurações vale para a próxima tentativa, R2-13). O token entra por hash: nunca em log."""
+    Configurações vale para a próxima tentativa, R2-13). O token entra por hash: nunca em log. F3: inclui o transcritor e,
+    no modo `llm`, o provedor e o modelo rápido (F3A-20)."""
     import hashlib
 
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12] if token else ""
-    return (config.whisper_model, config.whisper_hq, config.torch_threads, config.models_dir, digest)
+    provider, model = llm if config.transcriber == "llm" else ("", "")
+    return (config.whisper_model, config.whisper_hq, config.torch_threads, config.models_dir, digest, config.transcriber, provider, model)

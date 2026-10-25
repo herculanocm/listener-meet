@@ -6,10 +6,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, Qt
-from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QListView, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QListView, QPushButton, QSplitter, QVBoxLayout, QWidget
 
 from ..log import get_logger
 from ..pipeline import review
+from .chat import ChatPanel
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -53,7 +55,7 @@ class TranscriptDialog(QDialog):
         self.played: list[tuple[int, int]] = []           # (t0, t1) pedidos: instrumentação dos testes
         m = store.get_meeting(meeting_id) or {}
         self.setWindowTitle(f"Transcrição — {m.get('title') or f'reunião {meeting_id}'}")
-        self.setMinimumSize(720, 480)
+        self.setMinimumSize(960, 520)
         self.prefer_llm = True
         self.model = SegmentsModel(review.transcript_rows(store, meeting_id, True), self)
         self.view = QListView()
@@ -71,11 +73,25 @@ class TranscriptDialog(QDialog):
         bottom.addWidget(self.toggle)
         bottom.addStretch(1)
         bottom.addWidget(self.btn_review)
+        left = QWidget()
+        llay = QVBoxLayout(left)
+        llay.addWidget(self.view, 1)
+        llay.addWidget(self.status)
+        llay.addLayout(bottom)
+        self.chat = ChatPanel(store, meeting_id)                 # F3 item 10: chat ao lado da transcrição
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(left)
+        self.splitter.addWidget(self.chat)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
         lay = QVBoxLayout(self)
-        lay.addWidget(self.view, 1)
-        lay.addWidget(self.status)
-        lay.addLayout(bottom)
+        lay.addWidget(self.splitter, 1)
         self._update_status()
+
+    @override
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.chat.close_panel()
+        super().closeEvent(event)
 
     def set_prefer_llm(self, on: bool) -> None:
         self.prefer_llm = bool(on)
@@ -84,6 +100,7 @@ class TranscriptDialog(QDialog):
     def reload(self) -> None:
         self.model.replace(review.transcript_rows(self.store, self.meeting_id, self.prefer_llm))
         self._update_status()
+        self.chat.reload()
 
     def _update_status(self) -> None:
         revised = sum(1 for r in self.model.rows if r.text_llm)

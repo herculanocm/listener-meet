@@ -77,11 +77,19 @@ TASK_CLASS: dict[LlmTask, ModelClass] = {
 TASK_REASONING: dict[LlmTask, Reasoning] = {t: (Reasoning.LOW if c == ModelClass.STRONG else Reasoning.NONE) for t, c in TASK_CLASS.items()}
 
 
+BYTES_PER_SECOND = {"audio/wav": 32_000, "audio/x-wav": 32_000, "audio/flac": 12_000, "audio/mpeg": 16_000, "audio/mp3": 16_000}
+
+
 @dataclass(frozen=True, slots=True)
 class AudioPart:
     data: bytes
     mime: str                      # "audio/flac", "audio/wav"
     label: str                     # "voz SPK_3, trecho 1"
+
+    @property
+    def seconds(self) -> float:
+        """Duração estimada pelo tamanho (16 kHz mono: WAV 32 kB/s; FLAC ≈ 12 kB/s [exp]); só para custo prévio e o fake."""
+        return len(self.data) / BYTES_PER_SECOND.get(self.mime, 12_000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +117,8 @@ class Request:
 
     @property
     def audio_seconds(self) -> float:
-        """Estimativa da duração do áudio anexado (FLAC 16 kHz mono ≈ 12 kB/s [exp]); só para custo prévio."""
-        return sum(len(a.data) for m in self.messages for a in m.audio) / 12_000.0
+        """Estimativa da duração do áudio anexado pelo tamanho e pelo tipo; só para custo prévio."""
+        return sum(a.seconds for m in self.messages for a in m.audio)
 
     def with_messages(self, messages: tuple[Message, ...]) -> Request:
         return Request(self.task, self.model, messages, self.json_schema, self.temperature, self.max_output_tokens, self.reasoning,

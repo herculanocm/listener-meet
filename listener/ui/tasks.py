@@ -1,8 +1,11 @@
 """Trabalho fora da thread da interface (M-26): `Task` roda uma função numa QThread e devolve o resultado (ou a exceção)
-por sinal; a referência fica viva até `finished` (QThread sem parent é destruída pelo Qt se for coletada antes)."""
+por sinal; a referência fica viva até `finished` (QThread sem parent é destruída pelo Qt se for coletada antes).
+F3 (item 10, F3A-19): `StreamTask` acrescenta um sinal por pedaço de texto e `cancel()` (um `threading.Event` lido entre
+pedaços) para o chat em streaming."""
 from __future__ import annotations
 
 import functools
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
@@ -47,6 +50,54 @@ class Task(QThread):
 def run_task(fn: Callable[[], Any], store: Store | None, on_done: Callable[[Any], None]) -> Task:
     task = Task(fn, store)
     live_threads.add(task)
+    task.done.connect(on_done)
+    task.finished.connect(functools.partial(release, task))
+    task.start()
+    return task
+
+
+type Emit = Callable[[str], None]
+type Cancelled = Callable[[], bool]
+
+
+class StreamTask(QThread):
+    """`fn(emit, cancelled)` roda numa QThread: chama `emit(pedaço)` a cada trecho (sinal `chunk`) e consulta `cancelled()`
+    entre pedaços; `done(resultado ou exceção)` ao fim. `cancel()` só pede: a função decide quando parar."""
+    chunk = Signal(str)
+    done = Signal(object)
+
+    def __init__(self, fn: Callable[[Emit, Cancelled], Any], store: Store | None):
+        super().__init__(None)
+        self.fn = fn
+        self.store = store
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    @override
+    def run(self) -> None:
+        result: Any
+        try:
+            result = self.fn(self.chunk.emit, self._cancel.is_set)
+        except BaseException as e:  # a exceção é entregue a quem pediu a tarefa
+            log.exception("tarefa em streaming falhou")
+            result = e
+        finally:
+            if self.store is not None:
+                self.store.close_thread()
+        self.done.emit(result)
+
+
+def run_stream(fn: Callable[[Emit, Cancelled], Any], store: Store | None, on_chunk: Callable[[str], None],
+               on_done: Callable[[Any], None]) -> StreamTask:
+    task = StreamTask(fn, store)
+    live_threads.add(task)
+    task.chunk.connect(on_chunk)
     task.done.connect(on_done)
     task.finished.connect(functools.partial(release, task))
     task.start()
