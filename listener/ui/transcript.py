@@ -1,12 +1,12 @@
 """Leitura mínima da transcrição (F2 item 14, Q6): `QListView` com modelo (milhares de falas sem milhares de widgets),
 linhas `[mm:ss] Nome — Cargo: texto`; o clique toca a partir da primeira palavra menos 150 ms (R-14), decodificando só
-esse trecho numa `Task`."""
+esse trecho numa `Task`. F3 item 8 (P4): mostra a transcrição revisada quando existe, com alternância para a original."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, Qt
-from PySide6.QtWidgets import QDialog, QLabel, QListView, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QListView, QPushButton, QVBoxLayout, QWidget
 
 from ..log import get_logger
 from ..pipeline import review
@@ -54,23 +54,43 @@ class TranscriptDialog(QDialog):
         m = store.get_meeting(meeting_id) or {}
         self.setWindowTitle(f"Transcrição — {m.get('title') or f'reunião {meeting_id}'}")
         self.setMinimumSize(720, 480)
-        self.model = SegmentsModel(review.transcript_rows(store, meeting_id), self)
+        self.prefer_llm = True
+        self.model = SegmentsModel(review.transcript_rows(store, meeting_id, True), self)
         self.view = QListView()
         self.view.setModel(self.model)
         self.view.setWordWrap(True)
         self.view.setUniformItemSizes(False)
         self.view.clicked.connect(self._clicked)
-        self.status = QLabel(f"{self.model.rowCount()} fala(s). Clique numa fala para ouvir.")
+        self.status = QLabel("")
+        self.toggle = QCheckBox("mostrar a transcrição revisada pela LLM")
+        self.toggle.setChecked(True)
+        self.toggle.toggled.connect(self.set_prefer_llm)
         self.btn_review = QPushButton("Revisar falantes…")
         self.btn_review.clicked.connect(lambda: self.on_review(self.meeting_id) if self.on_review else None)
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.toggle)
+        bottom.addStretch(1)
+        bottom.addWidget(self.btn_review)
         lay = QVBoxLayout(self)
         lay.addWidget(self.view, 1)
         lay.addWidget(self.status)
-        lay.addWidget(self.btn_review)
+        lay.addLayout(bottom)
+        self._update_status()
+
+    def set_prefer_llm(self, on: bool) -> None:
+        self.prefer_llm = bool(on)
+        self.reload()
 
     def reload(self) -> None:
-        self.model.replace(review.transcript_rows(self.store, self.meeting_id))
-        self.status.setText(f"{self.model.rowCount()} fala(s). Clique numa fala para ouvir.")
+        self.model.replace(review.transcript_rows(self.store, self.meeting_id, self.prefer_llm))
+        self._update_status()
+
+    def _update_status(self) -> None:
+        revised = sum(1 for r in self.model.rows if r.text_llm)
+        mode = "revisada" if self.prefer_llm else "original"
+        self.toggle.setEnabled(revised > 0)
+        self.status.setText(f"{self.model.rowCount()} fala(s), {revised} revisada(s) pela LLM; mostrando a {mode}. "
+                            "Clique numa fala para ouvir.")
 
     def _clicked(self, index: QModelIndex) -> None:
         if not index.isValid():

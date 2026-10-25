@@ -103,8 +103,10 @@ class TranscriptRow:
     t_end_ms: int
     name: str
     role: str
-    text: str
+    text: str                        # original do Whisper (nunca alterado, CP3)
     play_from_ms: int
+    text_llm: str | None = None      # F3 item 8: transcrição revisada, quando existe
+    prefer_llm: bool = True          # P4: a leitura mostra a revisada por padrão, com alternância
 
     @property
     def stamp(self) -> str:
@@ -112,9 +114,13 @@ class TranscriptRow:
         return f"{s // 60:02d}:{s % 60:02d}"
 
     @property
+    def shown_text(self) -> str:
+        return self.text_llm if (self.prefer_llm and self.text_llm) else self.text
+
+    @property
     def line(self) -> str:
         who = f"{self.name} — {self.role}" if self.role else self.name
-        return f"[{self.stamp}] {who}: {self.text}"
+        return f"[{self.stamp}] {who}: {self.shown_text}"
 
 
 # ---------------------------------------------------------------- leitura
@@ -167,8 +173,9 @@ def pending(items: list[ReviewItem]) -> list[ReviewItem]:
     return [i for i in items if i.pending and i.merged_into is None]
 
 
-def transcript_rows(store: Store, meeting_id: int) -> list[TranscriptRow]:
-    """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, o rótulo da voz; toca da primeira palavra menos 150 ms."""
+def transcript_rows(store: Store, meeting_id: int, prefer_llm: bool = True) -> list[TranscriptRow]:
+    """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, o rótulo da voz; toca da primeira palavra menos 150 ms.
+    `prefer_llm` mostra a transcrição revisada quando existe (P4); o texto original fica sempre na linha."""
     people = _people(store)
     job_id = store.segments.current_job_id(meeting_id)
     clusters = {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
@@ -188,7 +195,7 @@ def transcript_rows(store: Store, meeting_id: int) -> list[TranscriptRow]:
         except (ValueError, TypeError, IndexError):
             pass
         rows.append(TranscriptRow(int(s["id"]), str(s.get("channel") or ""), int(s["t_start_ms"]), int(s["t_end_ms"]), name, role,
-                                  str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS)))
+                                  str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm))
     return rows
 
 

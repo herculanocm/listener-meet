@@ -113,7 +113,7 @@ class Controller(QObject):
         self._seen_done: set[int] = set()
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
-        self._review_sigs: dict[int, tuple[int, int]] = {}
+        self._review_sigs: dict[int, tuple[int, ...]] = {}
         self._transcripts: dict[int, TranscriptDialog] = {}
         self._queue_dialog: QueueDialog | None = None
         self._queue_timer = QTimer(self)
@@ -571,14 +571,16 @@ class Controller(QObject):
             self._transcripts[mid].reload()
 
     def _llm_done_text(self, job: Any) -> str:
-        """"ata pronta · US$ 0,32" (U-020); o custo entra quando a camada de LLM grava `llm_calls`."""
-        return "ata pronta."
+        """"ata pronta · US$ 0,32" (U-020) pelo `timings_json.llm` do job."""
+        from .llm_tabs import llm_done_text
+
+        return llm_done_text(dict(job))
 
     def open_review(self, meeting_id: int) -> ReviewDialog:
         """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""
         dlg = self._reviews.get(meeting_id)
         if dlg is None:
-            dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript)
+            dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript, on_launch=self.launch_worker)
             dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
             self._reviews[meeting_id] = dlg
             self._review_sigs[meeting_id] = self._clusters_signature(meeting_id)
@@ -590,9 +592,18 @@ class Controller(QObject):
         dlg.raise_()
         return dlg
 
-    def _clusters_signature(self, meeting_id: int) -> tuple[int, int]:
-        row = self.store._q("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM clusters WHERE meeting_id = ?", (meeting_id,))[0]
-        return int(row[0]), int(row[1])
+    def _clusters_signature(self, meeting_id: int) -> tuple[int, ...]:
+        """Assinatura de recarga da revisão numa só consulta (F3A-08): clusters (quantos, último id, quantos com sugestão da
+        LLM), resumos (último id) e título da LLM; muda -> `ReviewDialog.reload()` sem roubar o foco (R2-26)."""
+        row = self.store._q(
+            "SELECT (SELECT COUNT(*) FROM clusters WHERE meeting_id = ?), "
+            "(SELECT COALESCE(MAX(id), 0) FROM clusters WHERE meeting_id = ?), "
+            "(SELECT COUNT(*) FROM clusters WHERE meeting_id = ? AND (llm_person_id IS NOT NULL OR llm_name IS NOT NULL)), "
+            "(SELECT COALESCE(MAX(id), 0) FROM summaries WHERE meeting_id = ?), "
+            "(SELECT COALESCE(LENGTH(title_llm), 0) FROM meetings WHERE id = ?), "
+            "(SELECT COUNT(*) FROM processing_jobs WHERE meeting_id = ? AND kind = 'llm' AND status IN ('pendente', 'rodando', 'pausado'))",
+            (meeting_id, meeting_id, meeting_id, meeting_id, meeting_id, meeting_id))[0]
+        return tuple(int(v) for v in row)
 
     def _review_closed(self, meeting_id: int, _result: int) -> None:
         dlg = self._reviews.pop(meeting_id, None)

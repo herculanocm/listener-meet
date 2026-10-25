@@ -332,6 +332,6 @@ def test_light_worker_is_launched_during_recording_and_heavy_is_not(qtbot, qapp,
         store.jobs.claim(pid=5, kinds=("llm",))
         store.jobs.finish(int(llm_job["id"]), __import__("listener.model", fromlist=["JobStatus"]).JobStatus.DONE)
         c._poll_queue()
-        assert notes == ["antiga: ata pronta."] and opened == []
+        assert notes == ["antiga: LLM sem tarefas novas."] and opened == []              # sem timings: sem ata nem custo
     finally:
         c.emergency_stop()

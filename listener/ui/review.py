@@ -1,17 +1,22 @@
-"""Revisão mínima de falantes (F2 item 13, U-006): um card por voz com nome sugerido, similaridade, margem e minutos de fala;
-Enter confirma, setas navegam, O = outra pessoa, N = nova pessoa, M = mesclar com outra voz, I = ignorar, Espaço ouve 5 s
-(decodificados só no clique, numa `Task`). "Concluir" marca a reunião como revisada. Só metadados no construtor (R-9)."""
+"""Revisão de falantes (F2 item 13, U-006; F3 item 5): um card por voz com a sugestão do pyannote e a da LLM (origem,
+confiança, citação com minuto); Enter aceita o pyannote (motor principal, CP5/CP11), `L` aceita a LLM, setas navegam, O =
+outra pessoa, N = nova pessoa, M = mesclar, I = ignorar, Espaço ouve 5 s (numa `Task`). F3 item 11: abas de título,
+pré-resumo, ata, executivo e ações editáveis com "gerar de novo" por aba (job `llm`), selo de custo no cabeçalho. "Concluir"
+marca a reunião como revisada. Só metadados no construtor (R-9)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-                               QVBoxLayout, QWidget)
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from ..log import get_logger
+from ..model import JobStep, SummaryKind
 from ..pipeline import review
+from .llm_tabs import ActionsTab, TextTab, TitleTab, cost_badge, last_llm_info, llm_job_active, step_label
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -21,23 +26,29 @@ log = get_logger("ui.review")
 
 
 class ReviewDialog(QDialog):
-    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None):
+    def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None,
+                 on_launch: Callable[[bool], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.on_transcript = on_transcript
+        self.on_launch = on_launch
         self.items: list[review.ReviewItem] = []
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
         self.reloads = 0
+        self.regenerated: list[int] = []                   # ids dos jobs `llm` criados por "gerar de novo"
         m = store.get_meeting(meeting_id) or {}
-        self.setWindowTitle(f"Quem falou — {m.get('title') or f'reunião {meeting_id}'}")
-        self.setMinimumSize(640, 380)
+        self.setWindowTitle(f"Revisão — {m.get('title') or f'reunião {meeting_id}'}")
+        self.setMinimumSize(760, 480)
         self.header = QLabel("")
         self.header.setWordWrap(True)
+        self.cost = QLabel("")
+        self.cost.setStyleSheet("color: #888; font-size: 11px;")
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.list.installEventFilter(self)                 # Enter, Espaço e letras valem com o foco na lista
-        self.btn_confirm = QPushButton("Confirmar (Enter)")
+        self.btn_confirm = QPushButton("Confirmar pyannote (Enter)")
+        self.btn_llm = QPushButton("Aceitar LLM (L)")
         self.btn_other = QPushButton("Outra pessoa (O)")
         self.btn_new = QPushButton("Nova pessoa (N)")
         self.btn_merge = QPushButton("É a mesma que… (M)")
@@ -46,6 +57,7 @@ class ReviewDialog(QDialog):
         self.btn_transcript = QPushButton("Ver transcrição")
         self.btn_finish = QPushButton("Concluir")
         self.btn_confirm.clicked.connect(self._confirm_clicked)
+        self.btn_llm.clicked.connect(self.accept_llm_current)
         self.btn_other.clicked.connect(self.ask_other_person)
         self.btn_new.clicked.connect(self.ask_new_person)
         self.btn_merge.clicked.connect(self.ask_merge)
@@ -54,19 +66,71 @@ class ReviewDialog(QDialog):
         self.btn_transcript.clicked.connect(self._open_transcript)
         self.btn_finish.clicked.connect(self.finish)
         row1, row2 = QHBoxLayout(), QHBoxLayout()
-        for b in (self.btn_confirm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore):
+        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore):
             row1.addWidget(b)
         row2.addWidget(self.btn_play)
         row2.addStretch(1)
         row2.addWidget(self.btn_transcript)
         row2.addWidget(self.btn_finish)
+        voices = QWidget()
+        vlay = QVBoxLayout(voices)
+        vlay.addWidget(self.list, 1)
+        vlay.addLayout(row1)
+        vlay.addLayout(row2)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(voices, "Vozes")
+        self.title_tab = TitleTab(store, meeting_id, self.regenerate)
+        self.text_tabs: dict[str, TextTab] = {str(k): TextTab(store, meeting_id, k, self.regenerate)
+                                              for k in (SummaryKind.PRE_SUMMARY, SummaryKind.MINUTES, SummaryKind.EXECUTIVE)}
+        self.actions_tab = ActionsTab(store, meeting_id)
+        self.tabs.addTab(self.title_tab, "Título")
+        self.tabs.addTab(self.text_tabs[SummaryKind.PRE_SUMMARY], "Pré-resumo")
+        self.tabs.addTab(self.text_tabs[SummaryKind.MINUTES], "Ata")
+        self.tabs.addTab(self.text_tabs[SummaryKind.EXECUTIVE], "Executivo")
+        self.tabs.addTab(self.actions_tab, "Ações")
         lay = QVBoxLayout(self)
         lay.addWidget(self.header)
-        lay.addWidget(self.list, 1)
-        lay.addLayout(row1)
-        lay.addLayout(row2)
+        lay.addWidget(self.cost)
+        lay.addWidget(self.tabs, 1)
         self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
         self.reload(focus=True)
+
+    # ---------------------------------------------------------------- abas da LLM (F3 item 11)
+    def reload_llm(self) -> None:
+        busy = llm_job_active(self.store, self.meeting_id)
+        current = self.store.segments.current_job_id(self.meeting_id)
+        stale = set(self.store.summaries.stale_after_reprocess(self.meeting_id, current))
+        info = last_llm_info(self.store, self.meeting_id)
+        skipped = {str(k): str(v) for k, v in (info.get("skipped") or {}).items()}
+        self.title_tab.reload(busy)
+        for tab in self.text_tabs.values():
+            tab.reload(stale, skipped, busy)
+        self.actions_tab.reload()
+        badge = cost_badge(self.store, self.meeting_id)
+        parts = [badge] if badge else []
+        if busy:
+            parts.append("LLM em andamento")
+        elif info.get("status") == "erro" and info.get("error"):
+            parts.append(f"última LLM falhou: {info['error']}")
+        self.cost.setText(" · ".join(parts))
+
+    def regenerate(self, step: JobStep) -> int | None:
+        """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
+        from ..pipeline.llm_steps import enqueue_llm_job
+
+        if llm_job_active(self.store, self.meeting_id):
+            self.header.setText("Já há um job de LLM em andamento para esta reunião; espere terminar.")
+            return None
+        job_id = enqueue_llm_job(self.store, self.meeting_id, [step])
+        if job_id is None:
+            self.header.setText("Nenhum provedor de LLM ativo com chave: configure um nas Configurações.")
+            return None
+        self.regenerated.append(job_id)
+        if self.on_launch is not None:
+            self.on_launch(True)
+        self.header.setText(f"{step_label(step)}: gerando de novo pela fila (3 a 5 s para começar)…")
+        self.reload_llm()
+        return job_id
 
     # ---------------------------------------------------------------- estado
     def reload(self, keep: int | None = None, focus: bool = False) -> None:
@@ -83,8 +147,9 @@ class ReviewDialog(QDialog):
             self.list.addItem(item)
         waiting = review.pending(self.items)
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else
-                            f"{len(waiting)} voz(es) para confirmar. Enter aceita a sugestão; setas navegam.")
+                            f"{len(waiting)} voz(es) para confirmar. Enter aceita o pyannote, L a LLM; setas navegam.")
         self.btn_transcript.setEnabled(self.store.segments.count_segments(self.meeting_id) > 0)
+        self.reload_llm()
         target = current if current is not None else (waiting[0].cluster_id if waiting else None)
         for i in range(self.list.count()):
             if self.list.item(i).data(Qt.ItemDataRole.UserRole) == target:
@@ -120,6 +185,22 @@ class ReviewDialog(QDialog):
             return False
         try:
             review.confirm(self.store, it.cluster_id, person_id)
+        except ValueError as e:
+            QMessageBox.warning(self, "Revisão", str(e))
+            return False
+        self._next_pending()
+        return True
+
+    def accept_llm_current(self) -> bool:
+        """Tecla `L`: aceita a sugestão da LLM (pessoa cadastrada ou nome novo); `decision_source = usuario_llm`."""
+        it = self.current_item()
+        if it is None:
+            return False
+        if not it.has_llm:
+            self.header.setText("Esta voz não tem sugestão da LLM.")
+            return False
+        try:
+            review.accept_llm(self.store, it.cluster_id)
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
@@ -219,6 +300,8 @@ class ReviewDialog(QDialog):
         """True quando a tecla é um atalho da revisão (setas ficam com a lista)."""
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.confirm_current()
+        elif key == Qt.Key.Key_L:
+            self.accept_llm_current()
         elif key == Qt.Key.Key_O:
             self.ask_other_person()
         elif key == Qt.Key.Key_N:
@@ -237,7 +320,7 @@ class ReviewDialog(QDialog):
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if not self.handle_key(event.key()):
+        if self.tabs.currentIndex() != 0 or not self.handle_key(event.key()):   # nas abas de texto as letras são texto
             super().keyPressEvent(event)
 
     @override
