@@ -159,14 +159,15 @@ class LiveWindow(QWidget):
         self.partial_view.setOpenLinks(False)
         self.partial_view.setOpenExternalLinks(False)
         self.partial_view.anchorClicked.connect(self._anchor)
+        self.partial_when.setWordWrap(True)
         head = QHBoxLayout()
-        head.addWidget(self.partial_title)
-        head.addWidget(self.partial_when, 1)
+        head.addWidget(self.partial_title, 1)
         head.addWidget(self.refresh_btn)
         top = QWidget()
         tl = QVBoxLayout(top)
         tl.setContentsMargins(0, 0, 0, 0)
         tl.addLayout(head)
+        tl.addWidget(self.partial_when)                   # numa linha própria: não corta na largura padrão
         tl.addWidget(self.partial_view, 1)
 
         # --- legendas ---
