@@ -16,8 +16,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **Respostas do dono (26/10, D-050): tudo nos padrões.** Feito: as sondas do Windows em `scripts/win_probe.py`; a suíte
   em rápida e lenta (`--tudo` antes de commitar); o lock `requirements/windows.txt` (versões provadas aqui), o
   `[pipeline]` no `.venv` por ele e o large-v3-turbo copiado para a pasta de modelos do app (o venv do F0 sai depois que
-  o processamento real funcionar, com o token do dono). Em andamento: a F5.1 pelo fluxo D-040, com a metade Windows do
-  L0. O canal R segue sem aviso antecipado (rever depois do G1); o repositório público fica como está.
+  o processamento real funcionar, com o token do dono). O canal R segue sem aviso antecipado (rever depois do G1); o
+  repositório público fica como está.
+- **F5.1 em implementação (26/10):** L0 no Windows (`faa967b`, D-051: o e5-small int8), spec com a revisão de
+  arquitetura incorporada (`59c550e`, A-01 a A-19), extras `local` e `docx` e o lock (`d235950`); L6 (provedor local) e
+  L7 (linha do tempo, destaque contínuo, .docx) com dois implementadores em paralelo, cada um no seu worktree; depois,
+  revisor, verificação e fechamento. Se a sessão cair no meio, o trabalho deles está nos branches `worktree-agent-*`.
+- **Lixo a apagar com o OK do dono:** `~\.cache\huggingface\hub\models--Systran--faster-whisper-small` (464 MB, de um
+  teste que ia à rede antes da correção de 26/10) e `%TEMP%\e5-fp32-*` (448 MB, o fp32 só para comparar no L0).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
@@ -38,7 +44,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 implementada** (D-047; o item 8 e o G5
-  dependem do Windows com o dono) · F5.1 aprovada, separada · F6 rascunho inicial · F7 futuro.
+  dependem do Windows com o dono) · **F5.1 em implementação** (`features/F5.1-busca-local-linha-do-tempo.md`) · F6
+  rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
