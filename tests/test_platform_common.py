@@ -49,7 +49,7 @@ def test_pick_device_prefers_stable_id_then_name_and_ignores_old_indexes():
     assert pick_device(devs, "{0.0.1.00000000}.{zzz}", "Webcam") is None
 
 
-@pytest.mark.parametrize(("n", "text"), [(0, "0 B"), (1023, "1023 B"), (1536, "1.5 KB"), (5 * 1024**3, "5.0 GB"), (2 * 1024**4, "2.0 TB")])
+@pytest.mark.parametrize(("n", "text"), [(0, "0 B"), (1023, "1023 B"), (1536, "1,5 KB"), (5 * 1024**3, "5,0 GB"), (2 * 1024**4, "2,0 TB")])
 def test_human_size(n, text):
     from listener.ui.common import human_size
 

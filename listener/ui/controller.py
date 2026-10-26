@@ -66,7 +66,7 @@ from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import preparer, shutdown_preparer
 from .meeting import MeetingWindow
-from .player import Player, PlayRequest
+from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
 from .review import ReviewDialog
 from .settings_min import SettingsDialog
@@ -106,6 +106,7 @@ LIVE_CLOSE_GRACE_S = 10.0            # Parar: o filho fecha a janela em curso em
 LIVE_EOF_GRACE_S = 8.0               # ...e transcreve a fila até 8 s depois do EOF (sobra folga para o bye)
 PARTIAL_TICK_MS = 15_000             # F4 L5: confere se o resumo parcial venceu (o intervalo é relido a cada disparo, CP8)
 PARTIAL_QUIT_WAIT_MS = 2500          # sair do app: espera a chamada cancelada do parcial terminar (cancelamento a cada 0,2 s)
+PREWARM_AUDIO_MS = 2000              # U-031: pré-aquece o áudio do player logo depois da bandeja, com o app ocioso
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
@@ -272,7 +273,13 @@ class Controller(QObject):
         self._start_sweep()
         self._poll_queue()
         self._queue_timer.start()
+        QTimer.singleShot(PREWARM_AUDIO_MS, self, self._prewarm_audio)
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
+
+    def _prewarm_audio(self) -> None:
+        """U-031: o primeiro "Tocar" sai em ~0,5 s em vez de 2 a 5 s (`player.prewarm_audio`); nada depois da saída."""
+        if not self._quitting:
+            prewarm_audio()
 
     def notify(self, message: str) -> None:
         """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06)."""

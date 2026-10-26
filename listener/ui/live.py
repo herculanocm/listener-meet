@@ -242,7 +242,8 @@ class LiveWindow(QWidget):
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, row)
         latency = row.get("latency_ms")
-        tip = f"canal {row.get('channel') or '?'}" + (f" · atraso {int(latency) / 1000:.1f} s" if latency is not None else "")
+        delay = f" · atraso {int(latency) / 1000:.1f} s".replace(".", ",") if latency is not None else ""   # vírgula (U-032)
+        tip = f"canal {row.get('channel') or '?'}{delay}"
         item.setToolTip(f"{tip}\nclique: marcador neste instante com o texto da legenda")
         self._paint(item, row)
         self.list.insertItem(pos, item)

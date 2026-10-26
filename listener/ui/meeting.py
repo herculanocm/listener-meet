@@ -283,7 +283,7 @@ class MeetingWindow(QWidget):
             out = export.write_atomic(path, export.meeting_markdown(data))
         except OSError as e:
             log.warning("reunião %s: exportar para %s falhou: %s", self.meeting_id, path, e)
-            QMessageBox.warning(self, "Exportar", f"Não consegui salvar o arquivo:\n{path}\n\n{e}")
+            QMessageBox.warning(self, "Exportar", export.save_error_text(path, e))
             return None
         self.exported.append(str(out))
         self.show_message(f"Salvo em {out}.")

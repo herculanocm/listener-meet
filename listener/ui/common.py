@@ -38,11 +38,12 @@ def level_fraction(rms_value: float, floor_db: float = -60.0) -> float:
 
 
 def human_size(n: float) -> str:
+    """Tamanho com vírgula decimal ("446,4 KB", U-032)."""
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
         n /= 1024
-    return f"{n:.1f} TB"
+    return f"{n:.1f} TB".replace(".", ",")
 
 
 def clamp_to_screens(x: int, y: int, w: int, h: int, screens: list[tuple[int, int, int, int]]) -> tuple[int, int] | None:

@@ -46,6 +46,23 @@ def _wait(cond, timeout: float = 5.0) -> None:
         time.sleep(0.005)
 
 
+def test_prewarm_audio_imports_in_the_background_and_never_raises(monkeypatch):
+    """U-031: o `sounddevice` (PortAudio) na thread de quem chama, a da interface, a mesma que abre o microfone, e o
+    `scipy.signal` numa thread de fundo; sem PortAudio nada levanta (o player avisa quando tocar)."""
+    seen: list[tuple[str, str]] = []
+
+    def fake_import(name: str) -> None:
+        seen.append((name, threading.current_thread().name))
+        if name == "sounddevice":
+            raise OSError("PortAudio library not found")
+
+    monkeypatch.setattr(pl.importlib, "import_module", fake_import)
+    thread = pl.prewarm_audio()
+    thread.join(5)
+    assert not thread.is_alive() and thread.daemon
+    assert seen == [("sounddevice", threading.current_thread().name), ("scipy.signal", "prewarm-audio")]
+
+
 def test_pure_helpers_pauses_mix_and_position():
     ev = [{"type": "pause", "t_ms": 1000}, {"type": "pause", "t_ms": 1500}, {"type": "resume", "t_ms": 3000},
           {"type": "marker", "t_ms": 3500}, {"type": "resume", "t_ms": 3600}, {"type": "pause", "t_ms": 5000}]

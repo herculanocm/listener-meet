@@ -80,6 +80,16 @@ def test_filename_is_safe_for_windows_and_write_is_atomic(tmp_path, monkeypatch)
     assert target.read_text(encoding="utf-8") == "nova\n" and sorted(p.name for p in tmp_path.iterdir()) == ["ata.md"]
 
 
+def test_save_error_text_explains_a_file_held_by_another_program():
+    """U-030: no Windows, o .md aberto no Word ou no Excel faz a troca do temporário falhar com "acesso negado" (25/10); o
+    aviso diz o que fazer, sem o erro cru. Outros erros seguem com o texto do sistema."""
+    locked = export.save_error_text("C:\\Docs\\ata.md", PermissionError(13, "[WinError 5] Acesso negado: 'C:\\Docs\\.ata-x.tmp'"))
+    assert "C:\\Docs\\ata.md" in locked and "aberto em outro programa" in locked and "outro nome" in locked
+    assert "WinError" not in locked and ".tmp" not in locked
+    full = export.save_error_text("/x/ata.md", OSError(28, "No space left on device"))
+    assert "/x/ata.md" in full and "No space left on device" in full and "outro programa" not in full
+
+
 def test_quote_with_citation_for_a_line_a_hit_and_an_answer():
     plain, rich = export.quote("  Precisamos aprovar\n a auditoria. ", "Ana — CFO", "Orçamento <2027>", "2026-10-24T10:00:00-03:00", 70_500)
     assert plain == '"Precisamos aprovar a auditoria." — Ana — CFO, Orçamento <2027> (24/10/2026) [01:10]'

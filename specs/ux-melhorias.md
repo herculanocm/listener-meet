@@ -1,7 +1,8 @@
 # Melhorias de UX (U-nnn), CP12
 
 Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 aprovadas e
-implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025 e U-008 na F5.1.
+implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025 e U-008 na F5.1; U-030 a U-033,
+vistas no Windows, aprovadas e implementadas em 26/10 (D-049).
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -33,3 +34,7 @@ Tamanho-alvo: 3 KB.
 | U-027 | "Citação certa?" sim/não em cada resposta do chat global (mede o G5) | Histórico | implementada (F5) |
 | U-028 | Atalho global para abrir o Histórico com o cursor na busca | Atalhos | implementada (F5) |
 | U-029 | "Copiar com citação": fala, trecho ou resposta com reunião, data e [mm:ss] | Histórico | implementada (F5) |
+| U-030 | .md que não salva: "está aberto em outro programa (Word, Excel…); feche e tente de novo, ou salve com outro nome" no lugar do erro cru | Reunião aberta | implementada (D-049) |
+| U-031 | Áudio do player pré-aquecido 2 s depois da bandeja: o primeiro "Tocar" do processo cai de 2 a 5 s para ~0,5 s | Player | implementada (D-049) |
+| U-032 | Vírgula decimal nos números da interface ("446,4 KB", "atraso 1,5 s", "correlação 0,42") | Todas | implementada (D-049) |
+| U-033 | Warm-up: o combo do microfone não engole a largura (a coluna "Janela" das fontes cabe) e o grupo dele sem vazio | Warm-up | implementada (D-049) |

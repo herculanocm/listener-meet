@@ -48,7 +48,8 @@ class SegmentsModel(QAbstractListModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return row.line
         if role == Qt.ItemDataRole.ToolTipRole:
-            return f"canal {row.channel} · {row.t_start_ms / 1000:.1f} a {row.t_end_ms / 1000:.1f} s · clique para ouvir daqui"
+            span = f"{row.t_start_ms / 1000:.1f} a {row.t_end_ms / 1000:.1f} s".replace(".", ",")
+            return f"canal {row.channel} · {span} · clique para ouvir daqui"
         return None
 
     def replace(self, rows: list[review.TranscriptRow]) -> None:

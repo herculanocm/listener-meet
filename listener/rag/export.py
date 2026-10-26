@@ -201,6 +201,16 @@ def default_filename(m: ExportMeeting) -> str:
     return safe_filename(f"{date} {m.shown_title}".strip()) + ".md"
 
 
+def save_error_text(path: str | Path, error: OSError) -> str:
+    """O aviso de um .md que não salvou (U-030). `PermissionError` é, no Windows, o arquivo aberto em outro programa (o Word
+    e o Excel seguram o arquivo e a troca do temporário falha com "acesso negado", visto em 25/10) e, nos outros sistemas,
+    a pasta sem permissão de escrita: a frase cobre os dois, sem o erro cru (que vai para o log); o resto mostra o erro."""
+    if isinstance(error, PermissionError):
+        return (f"Não consegui salvar o arquivo:\n{path}\n\nEle está aberto em outro programa (Word, Excel…) ou a pasta não "
+                "aceita gravação. Feche o arquivo e tente de novo, ou salve com outro nome.")
+    return f"Não consegui salvar o arquivo:\n{path}\n\n{error}"
+
+
 def write_atomic(path: str | Path, text: str) -> Path:
     """Escreve num temporário na mesma pasta (UTF-8, quebras `\\n`) e troca no fim com `os.replace`; em erro o temporário sai
     e o arquivo anterior fica como estava. `OSError` sobe para quem chamou avisar."""

@@ -17,7 +17,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget)
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 log = get_logger("ui.warmup")
 GLOSSARY_DEBOUNCE_MS = 1500
+MIC_NAME_CHARS = 24                 # U-033: largura do combo do microfone em caracteres (o nome inteiro fica na lista e na dica)
 
 
 class WarmupDialog(QDialog):
@@ -74,6 +75,16 @@ class WarmupDialog(QDialog):
         self.mic_combo = QComboBox()
         for d in self._devices:
             self.mic_combo.addItem(d.name, d.id)
+        # U-033: o nome do dispositivo cabe cortado no combo e inteiro na lista e na dica; com o nome todo ("Grupo de
+        # microfones (Tecnologia Intel® Smart Sound para microfones digitais)") o grupo engolia a proporção 1:2 e a coluna
+        # "Janela" das fontes saía cortada (Windows, 25/10)
+        self.mic_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.mic_combo.setMinimumContentsLength(MIC_NAME_CHARS)
+        if self._devices:                                          # a lista aberta nunca mais estreita que o maior nome
+            longest = max(self.mic_combo.fontMetrics().horizontalAdvance(d.name) for d in self._devices)
+            self.mic_combo.view().setMinimumWidth(longest + 32)
+        self.mic_combo.currentTextChanged.connect(self.mic_combo.setToolTip)
+        self.mic_combo.setToolTip(self.mic_combo.currentText())
         self.mic_meter = LevelMeter(height=10)
         self.mic_status = QLabel("ouvindo…")
         self.mic_note = QLabel("")
@@ -168,7 +179,7 @@ class WarmupDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
 
         top = QHBoxLayout()
-        top.addWidget(mic_box, 1)
+        top.addWidget(mic_box, 1, Qt.AlignmentFlag.AlignTop)       # U-033: o grupo abraça o conteúdo, sem o vazio embaixo
         top.addWidget(src_box, 2)
         lay = QVBoxLayout(self)
         lay.addLayout(top)
@@ -345,7 +356,7 @@ class WarmupDialog(QDialog):
 
         audio = np.concatenate(self._test_buffer)
         self._check_echo(audio, r_rate)
-        self.mic_status.setText(f"tocando o teste ({len(audio) / 16000:.1f} s)…")
+        self.mic_status.setText(f"tocando o teste ({len(audio) / 16000:.1f} s)…".replace(".", ","))
         try:
             play(audio, 16000)
         except Exception as e:
@@ -365,13 +376,14 @@ class WarmupDialog(QDialog):
             return
         corr, limit = res["correlation"], self.store.get(SPECS["capture.echo_corr_min"])
         log.info("teste de eco: correlação %.3f, atraso %.0f ms, limite %.2f", corr, res["offset_ms"], limit)
+        corr_text = f"{corr:.2f}".replace(".", ",")                  # vírgula decimal (U-032)
         if corr >= limit:
             self.echo_label.setStyleSheet("color: #e67e22;")
-            self.echo_label.setText(f"Eco: seu microfone está ouvindo a reunião (correlação {corr:.2f}, atraso aproximado "
+            self.echo_label.setText(f"Eco: seu microfone está ouvindo a reunião (correlação {corr_text}, atraso aproximado "
                                     f"{res['offset_ms']:.0f} ms). Use fone ou marque 'Sala de reunião'.")
         else:
             self.echo_label.setStyleSheet("color: #2ecc71;")
-            self.echo_label.setText(f"Sem eco: o microfone não ouve a saída (correlação {corr:.2f}).")
+            self.echo_label.setText(f"Sem eco: o microfone não ouve a saída (correlação {corr_text}).")
 
     # ---------------------------------------------------------------- tick
     def _tick(self) -> None:

@@ -126,6 +126,29 @@ def test_warmup_opens_mic_once_and_builds_config(qtbot, store, platform):
     assert platform.live_streams() == [] and store.get_setting("warmup.last_source_exe") == "meeting.exe"
 
 
+def test_warmup_long_microphone_name_leaves_room_for_the_sources(qtbot, store, platform, monkeypatch):
+    """U-033, visto no Windows (25/10): o nome do microfone pedia a largura inteira no combo e espremia a tabela de fontes
+    (a coluna "Janela" saía cortada), e o grupo do microfone esticava até a altura da tabela, vazio embaixo."""
+    from PySide6.QtWidgets import QGroupBox
+
+    from listener.platform.base import AudioDevice
+    from listener.ui.warmup import WarmupDialog
+
+    name = "Grupo de microfones (Tecnologia Intel® Smart Sound para microfones digitais)"
+    monkeypatch.setattr(platform, "list_input_devices", lambda: [AudioDevice("fake-mic-0", name, "fake", 1, 16000, index=0)])
+    dlg = WarmupDialog(platform, store)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    boxes = {g.title().split(" (")[0]: g for g in dlg.findChildren(QGroupBox)}
+    assert boxes["Microfone"].width() < boxes["Saída"].width()                 # a proporção 1:2 vale com o nome longo
+    assert dlg.mic_combo.sizeHint().width() < dlg.mic_combo.fontMetrics().horizontalAdvance(name)   # o combo não pede o nome todo
+    assert boxes["Microfone"].height() < boxes["Saída"].height()               # o grupo do microfone não estica vazio
+    assert dlg.mic_combo.toolTip() == name                                     # o nome inteiro na dica e na lista aberta
+    assert dlg.mic_combo.view().minimumWidth() > dlg.mic_combo.fontMetrics().horizontalAdvance(name) > dlg.mic_combo.width()
+    dlg.reject()
+
+
 def test_controller_records_and_stops_async(qtbot, qapp, store, platform, monkeypatch):
     from listener.capture.recorder import RecordConfig
     from listener.ui import controller as ctl
@@ -302,6 +325,26 @@ def ctl_specs():
     from listener.config.defaults import SPECS
 
     return SPECS
+
+
+def test_controller_prewarms_audio_after_start_and_never_after_quitting(qtbot, qapp, store, platform, monkeypatch):
+    """U-031: logo depois da bandeja o controlador pré-aquece o áudio do player (o primeiro "Tocar" levava 2 a 5 s no
+    Windows); depois do "Sair" o disparo atrasado não faz nada."""
+    from listener.ui import controller as ctl
+
+    calls: list[int] = []
+    monkeypatch.setattr(ctl, "prewarm_audio", lambda: calls.append(1))
+    monkeypatch.setattr(ctl, "PREWARM_AUDIO_MS", 10)
+    c = ctl.Controller(qapp, platform, store)
+    c.tray = None
+    try:
+        c.start()
+        qtbot.waitUntil(lambda: calls == [1], timeout=3000)
+        c._quitting = True
+        c._prewarm_audio()
+        assert calls == [1]
+    finally:
+        c.emergency_stop()
 
 
 def test_start_enqueues_recorded_meetings_without_a_job(qtbot, qapp, store, platform):

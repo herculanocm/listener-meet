@@ -22,6 +22,7 @@ sistema inteiro: o som do player entraria no canal R) e pausa o som com um aviso
 e avisos em texto puro na barra (R7-07)."""
 from __future__ import annotations
 
+import importlib
 import threading
 import time
 from collections import OrderedDict, deque
@@ -85,6 +86,28 @@ def sounddevice_output() -> OutputStream:
     rate = round(float(info["default_samplerate"]))
     stream: OutputStream = sd.OutputStream(samplerate=rate, channels=1, dtype="float32")
     return stream
+
+
+def prewarm_audio() -> threading.Thread:
+    """U-031: o primeiro "Tocar" do processo levava 2 a 5 s no Windows (25/10): o import do `sounddevice`, que inicia o
+    PortAudio, o do `scipy.signal` da reamostragem e o buffer do MME. Chamado na thread da interface logo depois da bandeja:
+    o `sounddevice` é importado aqui (~0,3 s; o PortAudio inicia na mesma thread que abre o microfone, como sem o
+    pré-aquecimento quando se grava primeiro) e o `scipy.signal` numa thread de fundo (~1 s, só import, sem COM). Sem
+    PortAudio não faz nada: o player avisa quando tocar."""
+    try:
+        importlib.import_module("sounddevice")
+    except Exception as e:  # sem PortAudio: o aviso é do player, na hora de tocar
+        log.debug("pré-aquecimento do áudio: %s", e)
+
+    def scipy_signal() -> None:
+        try:
+            importlib.import_module("scipy.signal")
+        except Exception as e:  # o player importa de novo ao tocar e avisa se faltar
+            log.debug("pré-aquecimento do scipy.signal: %s", e)
+
+    thread = threading.Thread(target=scipy_signal, name="prewarm-audio", daemon=True)
+    thread.start()
+    return thread
 
 
 class PlaybackError(Exception):
@@ -1014,5 +1037,5 @@ class PlayerBar(QWidget):
 
 
 __all__ = ["ERROR", "PAUSED", "PLAYING", "STOPPED", "OutputStream", "PlayRequest", "PlaybackEngine", "Player", "PlayerBar",
-           "PlayerState", "audio_ms", "meeting_ms", "mix", "pause_intervals", "position_ms", "seek_target", "skip_paused",
-           "sounddevice_output"]
+           "PlayerState", "audio_ms", "meeting_ms", "mix", "pause_intervals", "position_ms", "prewarm_audio", "seek_target",
+           "skip_paused", "sounddevice_output"]

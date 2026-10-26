@@ -123,7 +123,7 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     dlg.show()
     assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 voz(es)" in dlg.header.text()
     assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
-    assert "pyannote: Ana (similaridade 0.70, margem 0.03)" in dlg.list.item(0).text()
+    assert "pyannote: Ana (similaridade 0,70, margem 0,03)" in dlg.list.item(0).text()          # vírgula decimal (U-032)
     qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: pelo player único (F5)
     channel, t0, t1 = dlg.played[0]
     req = player.requests[0]

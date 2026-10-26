@@ -81,8 +81,8 @@ class ReviewItem:
             return f"mesclada com a voz #{self.merged_into}"
         if self.status == ClusterStatus.IGNORED:
             return "ignorada"
-        sim = f" (similaridade {self.similarity:.2f}" + (f", margem {self.margin:.2f})" if self.margin is not None else ")") \
-            if self.similarity is not None else ""
+        sim = (f" (similaridade {self.similarity:.2f}" + (f", margem {self.margin:.2f})" if self.margin is not None else ")")
+               ).replace(".", ",") if self.similarity is not None else ""
         llm = f" · {self.llm_text()}" if self.has_llm else ""
         match self.status:
             case ClusterStatus.CONFIRMED:

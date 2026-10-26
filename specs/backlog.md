@@ -2,7 +2,7 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (25/10/2026, à noite no Windows nativo; tudo commitado; push do dono)
+## Onde paramos (26/10/2026, no Windows nativo; tudo commitado; push do dono)
 - **F5 implementada** (D-047): L0 a L5 e as correções das revisões R5 a R8 (as últimas `af2ea3d` e `6e0f235`, mais a
   corrida do worker leve `9e95f60`); desvios e decisões na seção Implementação de `features/F5-rag-historico.md`. A F5.1
   (embeddings locais, linha do tempo, destaque contínuo, .docx) vem depois, em entrega própria.
@@ -10,20 +10,19 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   roda tudo o que não depende dele e ele executa o resto no fim (chaves, reuniões reais, olhar e usar a interface). A
   parte sem o dono terminou em 25/10 (itens 1 e 2 inteiros; 3, 7 e 8 no que não dependia dele); em cada item, "Com o
   dono" diz o que falta.
-- **Perguntas ao dono (25/10; padrão entre parênteses):** (1) no `.md` com o arquivo aberto em outro programa, a
-  mensagem "o arquivo está aberto em outro programa (Word, Excel…); feche e tente de novo, ou salve com outro nome" no
-  lugar do WinError 5 cru (sim); (2) pré-aquecer o áudio (`sounddevice` e `scipy.signal`) em segundo plano depois da
-  bandeja: o primeiro "Tocar" do processo cai de 2 a 5 s para ~0,5 s, com ~1,5 s de um núcleo na abertura (sim); (3)
-  vírgula decimal nos números da interface ("446,4 KB", hoje "446.4 KB") (sim); (4) warm-up com a coluna "Janela" mais
-  larga e sem o vazio no painel do microfone (sim); (5) remover o worktree e o branch do agente do R7 (já no `main`)
-  (sim); (6) apagar o venv do F0, com torch e pyannote, sem o projeto (não, até o item 5 decidir onde fica o `[pipeline]`).
+- **Respostas do dono (26/10, D-049): tudo nos padrões.** U-030 a U-033 implementadas (aviso do `.md` aberto em outro
+  programa, áudio pré-aquecido, vírgula decimal, warm-up); worktree e branch do agente do R7 removidos; o venv do F0 fica
+  até o item 5 decidir onde fica o `[pipeline]`.
+- **Depois da parte do dono:** a F5.1 (aprovada na D-047: embeddings locais com ONNX Runtime, linha do tempo U-008,
+  destaque contínuo U-025, .docx) é a próxima entrega; traz dependências novas (extras `local` e `docx`) e um L0 que
+  mede o e5 int8 contra fp32 no Linux e no Windows: confirmar com o dono antes de começar (CP13).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`.
 - **Com o dono, no Windows:** B1, B2, B4, B13, B15 e os gates G1 a G5. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
-## Estado em 25/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4 e **F5 implementadas**: 368 testes mais 4 pulados no Windows (~46 s; 348
+## Estado em 26/10/2026
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4 e **F5 implementadas**: 372 testes mais 4 pulados no Windows (~46 s; 348
   mais 5 no Linux de desenvolvimento no L5, ~22 s); `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o
   do truststore com clientes reais; ruff e mypy limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12
   e 3.13 mais uma célula com o extra `llm`. Esquema v8. Nada do app importa torch, ML nem os SDKs de LLM (teste
@@ -87,22 +86,22 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
 7. F4 (B15): `python scripts/live_probe.py all <gravação real>` (com `HF_TOKEN`); a regra da janela muda se o Windows
    divergir do Linux; "Preparar modelos do ao vivo"; gravação com a legenda: atraso, CPU (o processo ao vivo sem "modo
    de eficiência" no Gerenciador de Tarefas) e nomes; G4 em três reuniões pelo `--check`. **Sem o dono, 25/10:**
-   `live_probe` sem token no venv do F0 com o áudio TTS (igual ao Linux: a regra da janela fica; `decisoes.md`); `small` e
-   `base` já na pasta de modelos do app. Falta: o embedding do wespeaker (`HF_TOKEN`), a gravação real e a legenda.
+   `live_probe` sem token no venv do F0 com o áudio TTS (igual ao Linux: a regra da janela fica; `decisoes.md`);
+   `small` e `base` já na pasta de modelos do app. Falta: o embedding do wespeaker (`HF_TOKEN`), a gravação real e a legenda.
 8. F5: **sem o dono, 25/10:** `rag_probe fts` e `sig` (FTS5 ok no SQLite 3.49.1; `decisoes.md`); a v8 numa cópia de um
    banco de 24/10 (65 ms, nada perdido) e o `--check` nela; `.md` com o destino aberto por outro processo: falha segura
-   com WinError 5 (o anterior fica, nenhum temporário sobra), mas a mensagem é técnica (pergunta 1); o player no
-   dispositivo padrão do MME (Realtek a 44,1 kHz) tocando silêncio: 0 buraco em 20 s, sem carga e com 12 processos
-   abaixo do normal ocupando a CPU, a pausa confirmada em ~20 ms (o gancho do R8-01 espera até 0,5 s), o primeiro som do
-   processo em 2,2 a 4,7 s (pergunta 2); o atalho `Ctrl+Alt+Shift+H` simulado no app real abre o Histórico na frente com
-   o cursor na busca; copiar (texto e HTML) e sair pelo `app.exec()`: código 0 e o conteúdo fica na área de
-   transferência. Com o dono: `gemini` com `GEMINI_API_KEY` (B13: latência por lote, dimensão, cosseno e recall reais);
-   a primeira abertura com reuniões (varredura: tempo e custo; vetores até 1 min depois da ata); o leve lançado pelo
-   pesado e pelo app; a espera de 30 s das edições; o vetor da consulta atrás do proxy e do EDR (meta de 1,5 s da
-   híbrida); o chat global com o Gemini real (obedece `[R1 12:03]`?); o player com fala real (posição até 1 s antes da
-   fala); o Q9 numa gravação do sistema inteiro e com o loopback do app falhando; a saída com o glossário preso na rede
-   real; o clique nos toasts do Windows 11 e na central; `.md` em Documentos no OneDrive; colar no Outlook, no Teams e
-   no Bloco de Notas; a saída no logoff; `python -m listener --check` e o G5 com 5 ou mais reuniões reais.
+   com WinError 5 (o anterior fica, nenhum temporário sobra), com o aviso do U-030 desde 26/10; o player no dispositivo
+   padrão do MME (Realtek a 44,1 kHz) tocando silêncio: 0 buraco em 20 s, sem carga e com 12 processos abaixo do normal
+   ocupando a CPU, a pausa confirmada em ~20 ms (o gancho do R8-01 espera até 0,5 s), o primeiro som do processo em ~0,5
+   s com o U-031 (era 2,2 a 4,7 s); o atalho `Ctrl+Alt+Shift+H` simulado no app real abre o Histórico na frente com o
+   cursor na busca; copiar (texto e HTML) e sair pelo `app.exec()`: código 0 e o conteúdo fica na área de transferência.
+   Com o dono: `gemini` com `GEMINI_API_KEY` (B13: latência por lote, dimensão, cosseno e recall reais); a primeira
+   abertura com reuniões (varredura: tempo e custo; vetores até 1 min depois da ata); o leve lançado pelo pesado e pelo
+   app; a espera de 30 s das edições; o vetor da consulta atrás do proxy e do EDR (meta de 1,5 s da híbrida); o chat
+   global com o Gemini real (obedece `[R1 12:03]`?); o player com fala real (posição até 1 s antes da fala); o Q9 numa
+   gravação do sistema inteiro e com o loopback do app falhando; a saída com o glossário preso na rede real; o clique
+   nos toasts do Windows 11 e na central; `.md` em Documentos no OneDrive; colar no Outlook, no Teams e no Bloco de
+   Notas; a saída no logoff; `python -m listener --check` e o G5 com 5 ou mais reuniões reais.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
