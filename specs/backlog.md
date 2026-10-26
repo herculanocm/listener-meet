@@ -13,15 +13,20 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   checkout (B4: itens 5 e 7); (4) três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a
   G5. Em cada item, "Com o dono" diz o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
   e o acompanha no resto (lê o log, corrige o que aparecer, mede e anota).
-- **Pergunta em aberto (26/10, ainda sem resposta):** começar a F5.1 (aprovada na D-047: embeddings locais com ONNX
-  Runtime, linha do tempo U-008, destaque contínuo U-025, .docx) em paralelo à lista do dono, com a metade Windows do L0
-  (e5 int8 contra fp32) aqui e a do Linux depois? Traz dependências novas (`onnxruntime` e `tokenizers` no extra `local`,
-  `python-docx` no `docx`) e baixa o e5-small: só com o "sim" explícito dele (CP13). Padrão proposto: sim.
-- **Sondas do Windows de 25 e 26/10 fora do git** (ficaram na pasta temporária da sessão do Claude Code e somem): o app
-  real num perfil isolado (abertura, RAM, CPU parado, atalho do Histórico, saída), as telas capturadas no DPI real
-  fora da área visível, o player no dispositivo real tocando silêncio (buracos, pausa, primeiro som), o `.md` com o destino
-  travado e copiar e sair. Os resultados estão em `decisoes.md` (Medições) e o método em `memory/maquina.md`; para
-  repetir, propor ao dono incluí-las em `scripts/` (CP13).
+- **Perguntas em aberto ao dono (26/10; padrão entre parênteses):** (1) começar a F5.1 (D-047: embeddings locais, linha do
+  tempo U-008, destaque contínuo U-025, .docx) em paralelo à lista dele, com a metade Windows do L0 (e5 int8 contra fp32)
+  aqui e a do Linux depois; dependências novas (`onnxruntime` e `tokenizers` no extra `local`, `python-docx` no `docx`) e
+  o e5-small baixado (sim); (2) as sondas do Windows de 25 e 26/10 (o app real num perfil isolado, as telas no DPI real
+  fora da área visível, o player no dispositivo real tocando silêncio, o `.md` travado e copiar e sair) em `scripts/`:
+  hoje estão fora do git, na pasta temporária da sessão, e somem; resultados em `decisoes.md`, método em
+  `memory/maquina.md` (sim); (3) no item 5, o `[pipeline]` no `.venv` do checkout, o large-v3-turbo do F0 (1,6 GB)
+  copiado para a pasta de modelos do app (sem baixar de novo) e o venv do F0 apagado depois (sim); (4) a suíte em rápida
+  e lenta (subprocesso, tempo real e telas marcados; local roda a rápida, o CI roda tudo), muda o CI (sim); (5) um
+  lockfile da stack com o `uv` (por pip no venv, sem admin) antes do item 5 (sim); (6) o canal R avisar antes dos 10 s
+  quando nunca recebeu som (não: silêncio no começo é normal e o loopback não entrega nada em silêncio; rever depois do
+  G1); (7) repositório já público: a varredura de 26/10 não achou nome, e-mail nem usuário da máquina; "SRM" aparece na
+  CP1, no handoff e num teste ("SRM; FIDC") e "Windows corporativo com EDR" no `maquina.md`: manter e tirar a dívida
+  (manter). P22 (deriva) segue no padrão até o G1.
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
