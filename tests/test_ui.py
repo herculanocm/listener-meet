@@ -221,12 +221,13 @@ def test_controller_enqueues_job_launches_worker_and_renews_lease(qtbot, qapp, s
         assert len(platform.spawned) == 1 and platform.spawned[0][0] == worker_command()
         assert platform.spawned[0][1]["OMP_NUM_THREADS"] == str(store.get(ctl.SPECS["pipeline.torch_threads"]))
         assert c.launch_worker() is False                                                               # cooldown: não relança
-        # o worker (simulado aqui) pega e conclui: o poll avisa e abre a revisão uma vez só
+        # o worker (simulado aqui) pega e conclui: o poll avisa uma vez só; sem voz a confirmar, a revisão não abre (D-055)
         store.jobs.claim(pid=99)
         store.jobs.finish(jobs[0]["id"], JobStatus.DONE)
         c._poll_queue()
         c._poll_queue()
-        assert [n for n in notes if "pronta para revisão" in n] == ["t: pronta para revisão de falantes."] and opened == [rec.meeting_id]
+        assert notes.count("t: processada, sem voz a confirmar.") == 1 and not any("pronta para revisão" in n for n in notes)
+        assert opened == []
         # auto_start desligado: parar não enfileira
         store.set_setting("pipeline.auto_start", False)
         assert c.start_recording(cfg, {"title": "u"})

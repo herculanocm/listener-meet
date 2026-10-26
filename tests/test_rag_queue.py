@@ -207,6 +207,13 @@ def test_controller_ignores_index_jobs_when_detecting_done_and_in_the_tip(qapp, 
         assert tray.tips[-1] == "1 na fila · índice 60" and opened == []
         store.jobs.claim(pid=7, kinds=HEAVY_JOB_KINDS)
         store.jobs.finish(job, JobStatus.DONE)
+        import numpy as np
+
+        from listener.model import ClusterStatus
+        from listener.store.segments import ClusterInsert
+
+        store.segments.insert_clusters([ClusterInsert(heavy_mid, job, "R", "SPK_0", 5000, np.ones(4, np.float32), "m",
+                                                      ClusterStatus.UNNAMED)])   # uma voz a confirmar: a revisão abre (D-055)
         c._poll_queue()
         assert opened == [heavy_mid] and tray.messages == ["Diretoria: pronta para revisão de falantes."]
         assert tray.tips[-1] == "índice 60"

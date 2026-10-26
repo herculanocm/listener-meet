@@ -853,7 +853,8 @@ class Controller(QObject):
             mid = int(running["meeting_id"])
             if mid not in self._review_offered:
                 self._review_offered.add(mid)                         # P1: a revisão abre enquanto o Whisper roda
-                self.open_review(mid)
+                if self._pending_voices(mid):                         # D-055: só com voz a confirmar
+                    self.open_review(mid)
         for mid, dlg in list(self._reviews.items()):            # só quando os clusters mudaram: não rouba o foco (R2-26)
             sig = self._clusters_signature(mid)
             if sig != self._review_sigs.get(mid):
@@ -882,12 +883,26 @@ class Controller(QObject):
             if mid in self._reviews:
                 self._reviews[mid].reload()
         else:
-            self._notify_meeting(f"{title}: pronta para revisão de falantes.", mid)
+            todo = self._pending_voices(mid)
+            self._notify_meeting(f"{title}: {'pronta para revisão de falantes' if todo else 'processada, sem voz a confirmar'}.", mid)
             self._warn_no_llm(mid, int(job["id"]))
             self._review_offered.add(mid)
-            self.open_review(mid)
+            if todo:
+                self.open_review(mid)
         if mid in self._meetings:
             self._meetings[mid].reload()
+
+    def _pending_voices(self, meeting_id: int) -> bool:
+        """D-055: a revisão só abre sozinha (P1 e o fim do job) com voz a confirmar; sem nenhuma, nada sobe por cima do que o
+        usuário está fazendo (antes abria só para dizer "tudo confirmado"); ela segue a um clique, na reunião e na fila."""
+        try:
+            todo = bool(review.pending(review.review_items(self.store, meeting_id)))
+        except Exception as e:  # na dúvida, abre como antes
+            log.debug("vozes pendentes da reunião %s: %s", meeting_id, e)
+            return True
+        if not todo:
+            log.info("reunião %s: nenhuma voz a confirmar; a revisão não abre sozinha", meeting_id)
+        return todo
 
     def _reload_indexed_meetings(self) -> None:
         """O `index` de uma reunião aberta terminou (os `index` ficam fora da detecção dos concluídos, F5A-05): recarrega a
