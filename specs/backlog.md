@@ -52,8 +52,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Git: commits de 24/10 a 26/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 e F5 em
   lotes, F5.1 em lotes paralelos, ajustes, revisões e a verificação no Windows); o branch `main` (mais os dois
   `worktree-agent-*` da F5.1, a apagar com o OK do dono); remoto `origin` público no GitHub (o dono faz
-  o push; em 26/10 o `main` do checkout do Windows, `C:\dev\listener-meet`, estava 15 commits à frente do `origin/main`
-  (`2e81120`), de `2e6e098` em diante); sem stash. Commit a cada grande alteração (CP16).
+  o push; em 26/10 o `main` do checkout do Windows, `C:\dev\listener-meet`, estava à frente do `origin/main`
+  (`2e81120`), de `2e6e098` em diante: `git log --oneline origin/main..main` lista o que falta subir); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 implementada** (D-047; o item 8 e o G5
