@@ -29,16 +29,20 @@ dono não está aqui. Tamanho-alvo: 11 KB.
 - Devolva: o que estranhou, com print.
 
 ## Parte 2 — Chaves (10 min; B4 e B13)
-- [ ] Em huggingface.co, logado: aceite as condições de `pyannote/speaker-diarization-community-1` e de
-      `pyannote/wespeaker-voxceleb-resnet34-LM`; crie um token de leitura (Settings › Access Tokens).
-- [ ] Configurações… › "Processamento": cole o token em "Token do Hugging Face" › Salvar.
-- [ ] Configurações… › "LLM" › aba "Gemini (Google)": cole a chave (plano pago) › "Testar conexão". Esperado: ok, com o
-      modelo e a latência. Confira "Ativo para texto" e "Ativo para embeddings" no Gemini (a Parte 6 troca para o
-      Local).
+Tudo no primeiro grupo das Configurações, "Chaves de acesso" (U-037), com o link de onde conseguir cada uma.
+- [ ] Hugging Face: pelos links do grupo, logado, aceite as condições dos dois repositórios do pyannote e crie um token
+      de leitura (Settings › Access Tokens); cole em "Hugging Face".
+- [ ] Gemini (Google): pelo link, crie a chave (plano pago); cole › "Testar conexão". Esperado, logo abaixo da chave:
+      "ok: <modelo> respondeu em N ms".
+- [ ] Salvar. No grupo "LLM", mais abaixo, confira "Ativo para texto" e "Ativo para embeddings" no Gemini (a Parte 6
+      troca para o Local). No warm-up, o aviso laranja acima do "Gravar" some quando nada falta.
+- [ ] A gravação do primeiro teste (26/10) parou sem o token: Fila de processamento › selecione › "Tentar de novo".
 - Devolva: o texto do "Testar conexão".
 
 ## Parte 3 — Gravação curta de ponta a ponta (25 min; B1, F2, F3)
-Precisa da Parte 2. Sem o token, o processamento para em "quem fala": cole o token e use Fila › "Tentar de novo".
+Precisa da Parte 2 (sem o token, o processamento não sai; o warm-up avisa). A legenda ao vivo só aparece com fala: numa
+chamada de verdade ou com um vídeo tocando no navegador escolhido como fonte (no primeiro teste, a janela de chat do
+Teams não tinha som e o canal R ficou em silêncio).
 - [ ] Abra uma chamada de teste (Teams ou Meet com alguém, ou um vídeo tocando no navegador) e `Ctrl+Alt+Shift+R`
       (warm-up): o app aparece em "Apps tocando agora" com o medidor andando; escolha-o; "Testar 3 s"; título e
       participantes.
@@ -143,6 +147,7 @@ Precisa da Parte 2 e de ao menos uma reunião processada.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
 - Decisões que esperam você (padrão entre parênteses; `backlog.md`, "Perguntas abertas ao dono"): P23, a RAM da busca
   local (aceitar e medir na Parte 6); U-034 a U-036 (sim); a linha dos testes no `AGENTS.md` (sim); `pytest-xdist` (sim,
-  num lote pequeno); o próximo passo (a spec da F6 para você aprovar).
+  num lote pequeno); o próximo passo (a spec da F6 para você aprovar); transcrever sem o token do Hugging Face, sem
+  saber quem fala no R (sim, numa spec).
 - O push é seu: a main está à frente do `origin/main`.
 - A metade Linux do L0 da F5.1 fica para a próxima sessão no Linux; a LLM roda e você só abre a sessão lá.

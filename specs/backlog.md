@@ -7,7 +7,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   uso, chaves, gravação curta de ponta a ponta, reunião aberta, busca com o Gemini, busca local, ao vivo, reuniões reais
   e situações de borda) e devolve o que cada parte pede; a LLM registra os números em `decisoes.md`, marca aqui e
   corrige o que aparecer (pedido do dono, 25/10: a LLM roda sozinha o que não depende dele e o acompanha no resto). Sem
-  o dono, o próximo trabalho depende da pergunta 7 abaixo.
+  o dono, o próximo trabalho depende da pergunta 7 abaixo. **Em 26/10 o dono fez a Parte 1 e gravou a Parte 3 sem as
+  chaves (D-053):** segue pela Parte 2, agora no grupo "Chaves de acesso", com "Tentar de novo" na gravação daquele
+  teste, e refaz a Parte 3 numa chamada de verdade.
 - **Concluído em 25 e 26/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
   - [x] F5: R7 e R8 e o fechamento (**F5 implementada**: `af2ea3d`, `6e0f235`, `b21d675`).
   - [x] "Verificar no Windows" sem o dono: itens 1 e 2 inteiros e a parte sem o dono dos itens 3, 5, 7, 8 e 9, com seis
@@ -26,6 +28,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         as sobras do `base` e do Xet; o fp32 do L0 (448 MB); os temporários de testes e sondas no `%TEMP%` (82 pastas,
         com o `pytest-of-…` de 451 MB) e o scratchpad da sessão (440 MB): ~1,8 GB no total. Ficam o venv do F0 e as duas
         entradas vazias de 24/10 no cache do Hugging Face: saem juntos depois da Parte 3 do roteiro (D-050).
+  - [x] D-053, do primeiro teste do dono: U-037 ("Chaves de acesso" em primeiro nas Configurações e o aviso no
+        warm-up) e o log da gravação sem o título da janela da fonte (nome de terceiro, LGPD).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -35,13 +39,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   5. `AGENTS.md`: "Testes: `python -m pytest -q` (a rápida); antes de commitar, `--tudo` (D-050)" (sim).
   6. `pytest-xdist`, só de desenvolvimento, para a meta de 8 s (sim, num lote pequeno).
   7. Próximo passo sem o dono: detalhar a spec da F6 e passá-la pela revisão de arquitetura para ele aprovar (sim).
+  8. Sem o token do Hugging Face, transcrever mesmo assim, sem saber quem fala no R (o L é você), em vez de o
+     processamento não sair (sim; muda o comportamento da F2, vai para uma spec).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 445 testes mais 7 pulados no Windows com
-  `--tudo` (~55 s; a rápida, 342 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 450 testes mais 7 pulados no Windows com
+  `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
   Esquema v8. Nada do app importa torch, ML, os SDKs de LLM, onnxruntime, tokenizers nem docx no nível do módulo (teste
@@ -96,8 +102,9 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
 3. [ ] Uso real do app (B1). **Sem o dono, concluído em 25/10:** `--selftest` com código 0 (mic a 16 kHz pelo WASAPI,
    primeiro pacote em 382 ms; loopback a 48 kHz; desvio de +12 e −1 ms; sem buracos); `ui_smoke` com a plataforma real
    (atalhos, `list_playing_apps` em 36 a 66 ms, mudo, `keep_awake`); o app num perfil isolado (bandeja em 2,2 s a frio,
-   142 MB, 0,23 % de um núcleo parado); três correções das telas a 150 % (`f6ea99e`). **Falta (dono):** roteiro, partes
-   1, 3 e 4.
+   142 MB, 0,23 % de um núcleo parado); três correções das telas a 150 % (`f6ea99e`). **Com o dono, 26/10:** a parte 1
+   do roteiro (assistente, bandeja, atalhos) e uma gravação de 71 s sem as chaves (D-053). **Falta (dono):** roteiro,
+   partes 2, 3 e 4.
 4. [ ] G1 (B2): três reuniões reais com headset em duas plataformas e o `--check`. **Falta (dono):** roteiro, parte 8.
 5. [ ] F2 real (B4): o primeiro job real (RTF e RAM por etapa, sonda Q8; "OMP: Error #15" pede o torch antes do
    CTranslate2) e o G2. **Sem o dono, concluído em 26/10:** o `[pipeline]` no `.venv` pelo lock (torch 2.8.0+cpu,

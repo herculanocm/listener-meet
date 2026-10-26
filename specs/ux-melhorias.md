@@ -3,7 +3,7 @@
 Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 aprovadas e
 implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025, U-008 e o .docx do U-011 na
 F5.1 (26/10); U-030 a U-033, vistas no Windows, aprovadas e implementadas em 26/10 (D-049); U-034 a U-036 propostas nas
-telas da F5.1 (26/10).
+telas da F5.1 (26/10); U-037 pedida pelo dono no primeiro teste e implementada (D-053).
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -42,3 +42,4 @@ Tamanho-alvo: 3 KB.
 | U-034 | Linha do tempo sem falas: o rodapé repete o "Sem falas nesta reunião." do meio da vista; com áudio, o rodapé ensina o clique ("clique para ouvir daquele ponto") | Reunião aberta | proposta |
 | U-035 | Voz sem pessoa como "Voz 1", "Voz 2"… por reunião, não pelo rótulo interno do pyannote ("Voz SPEAKER_03"), na linha do tempo, na transcrição e na revisão | Reunião aberta | proposta |
 | U-036 | Estado do índice nas Configurações com o nome legível do modelo ("e5-small, local"), não a chave interna (`local/multilingual-e5-small@384`), e sem mandar "preparar em Configurações (Busca)" quem já está nelas | Configurações | proposta |
+| U-037 | "Chaves de acesso" como primeiro grupo das Configurações (Gemini, Hugging Face, GPT e Claude, com Testar, o estado e onde conseguir) e o warm-up avisando antes de gravar quando falta chave ou token; as mensagens apontam para lá | Configurações, Warm-up | implementada (D-053) |
