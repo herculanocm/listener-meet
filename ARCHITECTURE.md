@@ -55,8 +55,9 @@ linhas JSON do stdout e as vira sinal do Qt; o filho grava `captions` (papel WOR
 chamada por vez. F5: o pesado grava trechos e FTS ao concluir; o job `index` (classe leve, depois dos `llm`, nunca
 espera a lease) refaz o diff e pede os vetores em lotes fora de transação; a espera das edições é durável (`not_before`
 no job); no app, a busca roda numa `Task` com contador de geração e um cache das assinaturas do modelo ativo, o chat
-global numa `StreamTask`, a varredura da abertura numa `Task` interrompível e o player numa thread própria com
-`OutputStream`; a saída espera todas antes de fechar o banco.
+global numa `StreamTask`, a varredura da abertura numa `Task` interrompível e o player em duas threads (a alimentadora
+decodifica numa fila de até 3 s; a escritora só escreve no `OutputStream`); o gravador chama um gancho antes de abrir o
+loopback do sistema inteiro, que pausa o player (Q9); a saída cancela e espera todas antes de fechar o banco.
 
 ## Stack
 Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6

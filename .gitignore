@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.claude/worktrees/
 # Modelos de ML baixados e logs (não são dados do usuário, mas não entram no git)
 models/
 *.log

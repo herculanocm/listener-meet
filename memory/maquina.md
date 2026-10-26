@@ -8,7 +8,9 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`; o `python` do
   PATH é o alias do instalador em WindowsApps e abre esse mesmo); checkout em `C:\dev\listener-meet` com o venv do projeto
   em `.venv` dentro dele (`[dev,win32,llm]`, sem ML, 25/10); o venv do F0 em `C:\Users\<usuário>\dev\listener-meet\.venv`
-  tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos em `C:\Users\<usuário>\listener-meet\models\`;
+  tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos do F0 (large-v3-turbo, wav2vec2 pt) em
+  `C:\Users\<usuário>\listener-meet\models\`; a pasta padrão do app (`%LOCALAPPDATA%\listener-meet\models`) já tem `small`
+  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10);
   áudio sintético de calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em
   `C:\Users\<usuário>\listener-meet\f0\`. SQLite do Python do python.org: 3.49.1 com FTS5 (25/10).
 - CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch
@@ -48,7 +50,10 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   (Realtek(R) Audio) [Loopback]" (48 kHz, 2 canais).
 - Console do Windows não é UTF-8 por padrão: `sys.stdout.reconfigure(encoding="utf-8")` (feito em `__main__.py`).
 - ctypes no Windows de 64 bits: sem `restype`, `GetCurrentProcess()` volta `c_long` (-1) e o pseudo-handle chega
-  truncado (0xFFFFFFFF), com erro 6 (handle inválido). Sempre `WinDLL` próprio com `restype` e `argtypes` em `HANDLE` (25/10).
+  truncado (0xFFFFFFFF), com erro 6 (handle inválido); com `restype` mas sem `argtypes`, o handle estoura a conversão.
+  Sempre `WinDLL` próprio com `restype` e `argtypes` em `HANDLE` (25/10).
+- Mic Intel Smart Sound pelo WASAPI: o primeiro pacote chega ~380 ms depois do start (selftest, 25/10). `os.replace`
+  sobre um arquivo aberto por outro processo dá WinError 5, mesmo com FILE_SHARE_DELETE (25/10).
 - Selftest da F1 (mic + loopback do sistema): L e R contínuos, desvio de 19 ms na duração, sem buracos; cinco atalhos
   registram; sessões de áudio e mudo do mic respondem.
 
@@ -74,3 +79,6 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   locais enquanto outro agente escreve, extrair `git archive <sha>` numa pasta à parte e rodar com `PYTHONPATH` nela (o
   pacote está instalado em modo editável apontando para o diretório principal).
 - No WSL, `ruff`, `mypy` e `pytest` só existem no venv: `source .venv/bin/activate` antes (25/10).
+- PowerShell 5.1 no Windows: um here-string passado a executável nativo vira argumento (no git, pathspec): mensagem de
+  commit por arquivo (`git commit -F <arquivo>`). O worktree de agente fica em `.claude/worktrees/` dentro do checkout
+  (fora do git); o briefing manda `git merge --ff-only main` ou `git rebase main` primeiro (25/10).
