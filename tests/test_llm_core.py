@@ -189,6 +189,12 @@ def test_costs_models_table_and_registry_fake():
              "audio_usd_m": 1.25}]
     p = costs.price_for(rows, "gemini", "gemini-2.5-pro")
     assert costs.cost_usd(Usage(1_000_000, 100_000, 200_000, 0), p) == pytest.approx(0.8 * 1.25 + 0.2 * 0.31 + 0.1 * 10.0)
+    # D-056: sem linha própria, a família de preço da tabela de modelos (`price_ref`); a linha própria ganha
+    assert costs.price_for(list(costs.PRICE_SEEDS), "gemini", "gemini-3.8-flash").model == "gemini-2.5-flash"
+    assert costs.price_for(list(costs.PRICE_SEEDS), "gemini", "models/gemini-3.1-pro-preview").model == "gemini-2.5-pro"
+    own = [*rows, {"provider": "gemini", "model": "gemini-3.1-pro", "input_usd_m": 2.0, "output_usd_m": 12.0}]
+    assert costs.price_for(own, "gemini", "gemini-3.1-pro-preview").input_usd_m == 2.0
+    assert costs.price_for(rows, "gemini", "gemini-3.8-flash") is None                    # a referência também precisa de linha
     # R3-10: escrita no cache (Anthropic) cobra 1,25 vez a entrada; a leitura, o preço de cache
     write = Usage(1_000_000, 0, 200_000, 0, 300_000)
     assert costs.cost_usd(write, p) == pytest.approx(0.5 * 1.25 + 0.2 * 0.31 + 0.3 * 1.25 * 1.25)

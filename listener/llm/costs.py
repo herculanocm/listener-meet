@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .models_table import family_for
 from .types import Usage
 
 CHARS_PER_TOKEN = 3.5
@@ -50,11 +51,20 @@ def estimate_tokens(text: str | int) -> int:
 
 def price_for(prices: list[Any], provider: str, model: str) -> Price | None:
     """Linha de preço do modelo: id exato, senão o prefixo mais longo da mesma família (`gemini-2.5-flash-001` casa
-    `gemini-2.5-flash`). `prices` aceita `Price` ou linhas do banco (dict)."""
+    `gemini-2.5-flash`), senão a família de preço da tabela de modelos (`price_ref`, D-056: o `gemini-3.8-flash` custa
+    como o `gemini-2.5-flash` [chute] até ganhar linha própria). `prices` aceita `Price` ou linhas do banco (dict)."""
     rows = [p if isinstance(p, Price) else Price(str(p["provider"]), str(p["model"]), float(p["input_usd_m"] or 0),
                                                  float(p["output_usd_m"] or 0), float(p.get("cached_usd_m") or 0),
                                                  float(p.get("audio_usd_m") or 0)) for p in prices]
     model_id = model.removeprefix("models/")
+    found = _row_for(rows, provider, model_id)
+    family = family_for(provider, model_id) if found is None else None
+    if family is not None and family.price_ref:
+        found = _row_for(rows, provider, family.price_ref)
+    return found
+
+
+def _row_for(rows: list[Price], provider: str, model_id: str) -> Price | None:
     best: Price | None = None
     for p in rows:
         if p.provider != provider:
