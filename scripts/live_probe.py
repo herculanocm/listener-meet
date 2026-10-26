@@ -74,9 +74,10 @@ def rss_mb() -> float | None:
 
             c = Counters()
             c.cb = ctypes.sizeof(c)
-            k32 = ctypes.windll.kernel32
+            k32 = ctypes.WinDLL("kernel32")                 # instância própria; sem argtypes o handle de 64 bits estoura
             k32.GetCurrentProcess.restype = wintypes.HANDLE
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            k32.K32GetProcessMemoryInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD)
+            ok = k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb)
             return round(c.WorkingSetSize / 1e6, 1) if ok else None
         if sys.platform == "linux":
             pages = int(Path("/proc/self/statm").read_text().split()[1])
