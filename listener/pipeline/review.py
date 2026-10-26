@@ -323,7 +323,7 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
         store.add_revision("cluster", cluster_id, "person_id", c.get("person_id"), pid, author)
         store.add_event(int(c["meeting_id"]), None, EventType.PROFILE_CONFIRM,
                         {"cluster_id": cluster_id, "person_id": pid, "similarity": sim, "label": c["cluster"]})
-    log.info("voz %s da reunião %s confirmada como %s (sim %s)", c["cluster"], c["meeting_id"], person.get("name"), sim)
+    log.info("voz %s da reunião %s confirmada como pessoa %s (sim %s)", c["cluster"], c["meeting_id"], pid, sim)   # o id, nunca o nome
     return pid
 
 

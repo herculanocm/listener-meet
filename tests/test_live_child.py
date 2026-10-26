@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import logging
 import sys
 from pathlib import Path
 
@@ -311,6 +312,20 @@ def test_language_votes_only_with_captioned_windows_of_enough_speech(store):
     session._loop()
     assert [c[1] for c in tr.calls] == [None, None, None, None, "pt"]               # trava depois de 2 votos válidos
     assert session.language.tries == 2 and session.stats.filtered == 1
+
+
+def test_a_filtered_window_logs_the_metrics_never_the_speech(store, caplog):
+    """D-056: a janela filtrada vai para o log com o tamanho do texto e as métricas, nunca com o que foi dito."""
+    mid = store.create_meeting("filtro", None, None, None)
+    session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), store, mid, FakeEngines(), clock=lambda: 1001.0)
+    session.hello = pr.Hello(1000.0)
+    session.transcriber = FakeTranscriber("small", itertools.count(1), texts=["Obrigado por assistir."])
+    session.queue.put(proc.LiveWindow("R", 0, 48000, 3 * SR, tone(3.0)))
+    session.queue.close()
+    with caplog.at_level(logging.DEBUG, logger="listener.live"):
+        session._loop()
+    assert session.stats.filtered == 1
+    assert "sem legenda" in caplog.text and "[(22, 0.01, -0.2, 1.1)]" in caplog.text and "assistir" not in caplog.text
 
 
 def test_after_eof_only_a_window_that_fits_the_deadline_starts(store):

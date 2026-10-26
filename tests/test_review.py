@@ -2,6 +2,8 @@
 clique em pytest-qt offscreen; abertura automática pelo controlador quando há clusters do job."""
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from listener.model import ClusterStatus, EventType, MeetingStatus
@@ -32,7 +34,7 @@ def _processed(platform, store) -> tuple[int, list[review.ReviewItem]]:
     return mid, items
 
 
-def test_review_logic_confirm_new_person_merge_ignore_and_finish(platform, store):
+def test_review_logic_confirm_new_person_merge_ignore_and_finish(platform, store, caplog):
     mid, items = _processed(platform, store)
     assert len(items) == 2 and all(i.pending and i.has_centroid and i.channel == "R" for i in items)      # o L do usuário não entra
     assert [i.title for i in items] == ["Voz SPK_0", "Voz SPK_1"] and items[0].summary() == "sem nome" and "min" in items[0].minutes_text
@@ -54,7 +56,9 @@ def test_review_logic_confirm_new_person_merge_ignore_and_finish(platform, store
     # mesma pessoa de novo (outro cluster): calibra com a similaridade ao perfil existente
     sim = review._similarity_to(store, store.segments.get_cluster(items[1].cluster_id), ana)
     assert sim is not None and sim < 0.2
-    review.confirm(store, items[1].cluster_id, ana)
+    with caplog.at_level(logging.INFO, logger="listener.pipeline.review"):
+        review.confirm(store, items[1].cluster_id, ana)
+    assert f"confirmada como pessoa {ana}" in caplog.text and "Ana" not in caplog.text        # D-056: o id, nunca o nome
     prof = store.profiles.profile_for(ana, "fake-tone-256")
     assert prof["n_samples"] == 2 and prof["sim_mean"] == pytest.approx(sim) and prof["threshold"] is None
     assert review.pending(review.review_items(store, mid)) == []

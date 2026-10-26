@@ -928,8 +928,9 @@ class LiveSession:
         text = caption_text(result)
         if not text:
             self.stats.filtered += 1
-            log.debug("janela %s %d-%d ms sem legenda: %s", job.channel, job.start_ms, job.end_ms,
-                      [(sg.text.strip()[:60], round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
+            log.debug("janela %s %d-%d ms sem legenda (caracteres, no_speech, logprob, compressão; o texto não, D-056): %s",
+                      job.channel, job.start_ms, job.end_ms,
+                      [(len(sg.text.strip()), round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
                        for sg in result.segments])
             return
         if job.speech >= LANG_MIN_SPEECH_S * SAMPLE_RATE:
