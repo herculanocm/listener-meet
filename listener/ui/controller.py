@@ -447,7 +447,7 @@ class Controller(QObject):
         for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
             self.store.llm_calls.set_meeting(int(call_id), meeting_id)
         log.info("gravação %s iniciada: mic=%s fonte=%s", meeting_id,
-                 cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.label or cfg.source.kind)
+                 cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.log_text())
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
         # o gravador chama `_before_system_loopback` antes de abrir o loopback do sistema inteiro por qualquer caminho: a

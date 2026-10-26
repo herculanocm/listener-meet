@@ -121,12 +121,22 @@ def test_thirty_minute_gap_stays_under_memory_budget(tmp_path, store):
     assert max(sizes[1:30]) < 20_000                                   # pedaços 100 % silêncio saem do cache
 
 
+def test_source_log_text_never_carries_the_window_title():
+    """D-053: o log e os eventos levam o programa e o pid da fonte; o título da janela traz o nome de quem está do outro lado
+    (dado pessoal de terceiro, LGPD) e fica só na tela."""
+    app = SourceSpec("app", pid=36964, exe="ms-teams.exe", label="ms-teams — Chat | Fulano de Tal | Microsoft Teams")
+    assert app.log_text() == "ms-teams.exe (pid 36964)" and "Fulano" not in app.log_text()
+    assert SourceSpec("system", label="Sistema inteiro").log_text() == "sistema inteiro"
+    assert SourceSpec("none").log_text() == "sem saída"
+
+
 def test_switch_source_with_format_change_keeps_timeline(tmp_path, store):
     platform = FakePlatform(tmp_path, r_format=(48000, 2), system_format=(44100, 1))
     mid = store.create_meeting(None, None, None, None)
     rec = Recorder(platform, store, mid, make_config(), clock=platform.clock, inline_worker=True)
     rec.start()
     platform.pump(0.3)
+    assert rec.R.detail == "meeting.exe (pid 4242)"                   # o log e os eventos: sem o título da janela (D-053)
     old = platform.live_streams()
     rec.switch_source(SourceSpec("system", label="Sistema"))
     assert all(s.stopped for s in old if s.channels == 2)

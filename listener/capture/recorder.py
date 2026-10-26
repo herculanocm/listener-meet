@@ -54,7 +54,14 @@ class SourceSpec:
     kind: str = SourceKind.SYSTEM        # SourceKind: "app" | "system" | "none"
     pid: int | None = None
     exe: str = ""
-    label: str = ""
+    label: str = ""                      # o que a tela mostra: o app e o título da janela
+
+    def log_text(self) -> str:
+        """A fonte para o log e os eventos: o programa e o pid, nunca o título da janela, que traz o nome de quem está do
+        outro lado ("Chat | Fulano de Tal | Microsoft Teams"; LGPD, dado pessoal de terceiro)."""
+        if self.kind == SourceKind.APP:
+            return f"{self.exe or 'app'} (pid {self.pid})"
+        return "sistema inteiro" if self.kind == SourceKind.SYSTEM else "sem saída"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -336,7 +343,7 @@ class Recorder:
         try:
             if spec.kind == SourceKind.APP and spec.pid:
                 handle = self.platform.open_app_loopback(spec.pid, cb, err)
-                self.R.detail = spec.label or spec.exe or f"pid {spec.pid}"
+                self.R.detail = spec.log_text()           # vai para o log e os eventos: sem o título da janela
             elif spec.kind == SourceKind.SYSTEM:
                 self._before_system()
                 handle = self.platform.open_system_loopback(cb, err)
