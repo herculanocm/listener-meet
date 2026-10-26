@@ -216,7 +216,10 @@ def test_costs_models_table_and_registry_fake():
     assert not models_table.is_embedding_model("gemini", "gemini-2.5-pro")
     claude = models_table.model_info("anthropic", "claude-sonnet-4-5")
     assert models_table.effective_capabilities("anthropic", claude) == info.capabilities - {Capability.AUDIO_IN}
-    assert models_table.DEFAULT_MODELS[ProviderKind.GEMINI] == ("gemini-2.5-flash", "gemini-2.5-pro")
+    assert models_table.DEFAULT_MODELS[ProviderKind.GEMINI] == ("gemini-3.8-flash", "gemini-3.1-pro-preview")   # D-055
+    for mid in ("gemini-3.8-flash", "gemini-3.1-pro-preview"):                 # a geração 3 pensa: o adaptador manda o orçamento
+        assert models_table.supports_reasoning("gemini", mid) and models_table.model_info("gemini", mid).output_limit == 65_536
+    assert models_table.family_for("gemini", "gemini-3.1-pro-preview").price_ref == "gemini-2.5-pro"
 
 
 def test_registry_loads_fake_or_refuses_without_key(monkeypatch):

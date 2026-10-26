@@ -36,6 +36,10 @@ FAMILIES: tuple[Family, ...] = (
     Family(G, "gemini-2.5-flash", "Gemini 2.5 Flash", 1_048_576, 65_536, ALL_GEMINI, "gemini-2.5-flash", True),
     Family(G, "gemini-2.5-pro", "Gemini 2.5 Pro", 1_048_576, 65_536, ALL_GEMINI, "gemini-2.5-pro", True),
     Family(G, "gemini-2.0-flash", "Gemini 2.0 Flash", 1_048_576, 8_192, ALL_GEMINI, "gemini-2.5-flash"),
+    # D-055: a geração 3 pensa por padrão e o pensamento conta no teto de saída (sem `thinking_config`, o teste de 64 tokens
+    # voltava vazio); os preços da geração 3 ainda não estão nas sementes [chute: os do 2.5; confira contra a fatura]
+    Family(G, "gemini-3.1-pro", "Gemini 3.1 Pro", 1_048_576, 65_536, ALL_GEMINI, "gemini-2.5-pro", True),
+    Family(G, "gemini-3", "Gemini 3.x", 1_048_576, 65_536, ALL_GEMINI, "gemini-2.5-flash", True),
     Family(G, "gemini-embedding", "Gemini Embedding", 2_048, 0, EMBED_ONLY, "gemini-embedding-001", embedding=True),
     Family(G, "gemini", "Gemini", 1_048_576, 8_192, ALL_GEMINI, "gemini-2.5-flash"),
     Family(O, "gpt-4.1-mini", "GPT-4.1 mini", 1_047_576, 32_768, TEXT_JSON | {Capability.CACHE}, "gpt-4.1-mini"),
@@ -59,7 +63,9 @@ FAMILIES: tuple[Family, ...] = (
 
 # modelo rápido e forte sugeridos por provedor (a sub-aba deixa trocar; `list_models()` mostra os reais)
 DEFAULT_MODELS: dict[ProviderKind, tuple[str, str]] = {
-    ProviderKind.GEMINI: ("gemini-2.5-flash", "gemini-2.5-pro"),
+    # D-055: o 2.5 deixou de servir contas novas em outubro de 2026 (404 "no longer available to new users"); os dois são
+    # os que o próprio erro sugere, conferidos com uma chave nova pelo "testar conexão"
+    ProviderKind.GEMINI: ("gemini-3.8-flash", "gemini-3.1-pro-preview"),
     ProviderKind.OPENAI: ("gpt-4.1-mini", "gpt-5"),
     ProviderKind.ANTHROPIC: ("claude-haiku-4-5", "claude-sonnet-4-5"),
 }

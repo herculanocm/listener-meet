@@ -71,7 +71,7 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     assert "llm.output_language" in dlg._combos and "llm.cost_alert_usd" in dlg._edits and dlg.provider_tabs.tabs.count() == 3
     assert not _item_enabled(dlg._combos["pipeline.transcriber"], "llm")                                # sem provedor com chave
     tab = dlg.provider_tabs.tab_by_id["gemini"]
-    assert tab.key.text() == "" and tab.fast.currentText() == "gemini-2.5-flash" and tab.strong.currentText() == "gemini-2.5-pro"
+    assert tab.key.text() == "" and tab.fast.currentText() == "gemini-3.8-flash" and tab.strong.currentText() == "gemini-3.1-pro-preview"
     assert tab.status.text() == "ainda não testado" and tab.prices.rowCount() >= 4
     tab.run_test()
     assert "informe a chave" in tab.status.text()
@@ -217,7 +217,7 @@ def test_fast_model_never_falls_back_to_embeddings_and_prices_validate_before_sa
     store.providers.update_provider("gemini", api_key=KEY, fast_model=None, model="gemini-embedding-001")
     store.providers.set_active("gemini", llm=True)
     cfg = LlmJobConfig.from_store(store)
-    assert cfg.fast_model == "gemini-2.5-flash" and cfg.strong_model == "gemini-2.5-pro"
+    assert cfg.fast_model == "gemini-3.8-flash" and cfg.strong_model == "gemini-3.1-pro-preview"
     monkeypatch.setenv("LISTENER_LLM", "fake")
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)

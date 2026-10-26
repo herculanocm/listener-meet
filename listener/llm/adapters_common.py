@@ -24,6 +24,7 @@ TEST_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False, 
                                "properties": {"ok": {"type": "boolean"}}}
 TEST_PROMPT = 'Reply with exactly this JSON and nothing else: {"ok": true}'
 TEST_TIMEOUT_S = 30.0
+TEST_MAX_TOKENS = 512            # D-055: modelo que sempre pensa (o Gemini 3.1 Pro) gastava os 64 de antes no pensamento
 # timeout por chamada (F3.1 R3-03): o cliente nasce com o teto (`NetworkConfig.timeout_s`, 600 s); geração e streaming levam o
 # `Request.timeout_s`; contar tokens e listar modelos são curtos; embeddings de um lote, no meio-termo
 AUX_TIMEOUT_S = 30.0
@@ -108,8 +109,8 @@ def translate_error(e: BaseException, provider: str) -> LlmError:
 
 async def canary(provider: LLMProvider, model: str) -> ConnectionTest:
     """"Testar conexão": uma chamada com esquema mínimo; confirma chave, rede, modelo e a forma da saída estruturada."""
-    req = Request(LlmTask.TEST, model, (Message(Role.USER, TEST_PROMPT),), TEST_SCHEMA, temperature=0.0, max_output_tokens=64,
-                  timeout_s=TEST_TIMEOUT_S)
+    req = Request(LlmTask.TEST, model, (Message(Role.USER, TEST_PROMPT),), TEST_SCHEMA, temperature=0.0,
+                  max_output_tokens=TEST_MAX_TOKENS, timeout_s=TEST_TIMEOUT_S)
     t0 = now_ms()
     try:
         async with asyncio.timeout(TEST_TIMEOUT_S):
