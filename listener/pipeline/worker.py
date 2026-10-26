@@ -172,6 +172,9 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
     released = False
     processed = 0
     while True:
+        # a espera é lida antes do claim: um `index` que vença entre as duas consultas é pego pelo próprio claim (com o claim
+        # primeiro, ele vencia no meio, nem esperava nem era pego, e o leve saía ocioso com ele pendente)
+        waiting = light and bool(store.jobs.delayed(kinds))
         job = store.jobs.claim(os.getpid(), llm_snapshot(store) if light else config_snapshot(store), kinds=kinds)
         if job is not None:
             idle_since, released = None, False
@@ -201,7 +204,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
             continue
         if once:
             break
-        if light and store.jobs.delayed(kinds):                    # há `index` esperando a edição assentar (R5-07): fica
+        if waiting:                                                # há `index` esperando a edição assentar (R5-07): fica
             idle_since = None
             time.sleep(poll_s)
             continue

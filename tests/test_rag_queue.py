@@ -93,6 +93,25 @@ def test_light_worker_waits_for_a_delayed_index_instead_of_leaving(tmp_path, sto
     assert store.jobs.get(job)["status"] == JobStatus.DONE
 
 
+def test_light_worker_takes_an_index_that_comes_due_between_the_checks(tmp_path, store, monkeypatch):
+    """O `index` que vence entre a consulta da espera e o claim é pego: com o claim antes da espera, ele não era pego nem
+    esperado e o leve saía ocioso com ele pendente (o teste acima falhava ~1 vez em 5 na suíte do Windows, 25/10)."""
+    store.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
+    mid = _meeting(store)
+    job = store.jobs.enqueue_index(mid, "edit", delay_s=60.0)
+    repo = type(store.jobs)
+    real = repo.delayed
+
+    def comes_due_now(self: Any, kinds: Any = None, now: Any = None) -> int:
+        self.expedite_index(mid)                                    # vence exatamente aqui, entre as duas consultas
+        monkeypatch.setattr(repo, "delayed", real)
+        return real(self, kinds, now)
+
+    monkeypatch.setattr(repo, "delayed", comes_due_now)
+    assert worker._serve(store, once=False, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    assert store.jobs.get(job)["status"] == JobStatus.DONE
+
+
 def test_light_worker_dispatches_by_kind(tmp_path, store, monkeypatch):
     """F5A-01: o `index` vai para o runner do índice; o `llm` continua no da LLM."""
     store.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
