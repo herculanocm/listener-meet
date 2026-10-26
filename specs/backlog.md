@@ -33,6 +33,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         warm-up) e o log da gravação sem o título da janela da fonte (nome de terceiro, LGPD).
   - [x] D-054: U-038, o assistente pede a chave da LLM escolhida (Gemini, GPT ou Claude) e o token do Hugging Face,
         logo depois da pasta do banco (opcionais; a escolhida vira a ativa).
+  - [x] D-055, do segundo teste do dono: o canal R do Teams (a captura soma a raiz do app com as sessões mais fundas;
+        U-040), a revisão sem abrir sozinha quando não há voz a confirmar (U-039) e o Gemini 3 nos padrões (o 2.5 deu
+        404 para conta nova). Falta a prova com uma chamada de verdade no Teams (roteiro, parte 3).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -44,12 +47,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   7. Próximo passo sem o dono: detalhar a spec da F6 e passá-la pela revisão de arquitetura para ele aprovar (sim).
   8. Sem o token do Hugging Face, transcrever mesmo assim, sem saber quem fala no R (o L é você), em vez de o
      processamento não sair (sim; muda o comportamento da F2, vai para uma spec).
+  9. O worker morreu duas vezes no job da reunião 2 (26/10, 15:35 e 15:36) sem queda registrada, e o app fechou depois
+     sem o "app encerrado": algum python.exe foi fechado no Gerenciador de Tarefas? (se não, investigar o antivírus/EDR).
+  10. Quais janelas ainda sobem por cima de outras, além da revisão (resolvida no U-039)? (padrão: nenhuma outra muda).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 453 testes mais 7 pulados no Windows com
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 458 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
@@ -158,6 +164,11 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   está no CI); conferir a cada atualização da stack.
 - Lock só do Windows (`requirements/windows.txt`, 26/10, `uv pip compile` com as versões provadas aqui); o CI e o Linux
   seguem com o `pyproject.toml` sem trava. Um lock do Linux pede o índice CPU do torch (o do PyPI traz CUDA, CP14).
+- D-055: (a) os preços da geração 3 do Gemini não estão nas sementes (a estimativa usa os do 2.5 [chute]: conferir com a
+  fatura e cadastrar em Configurações › LLM › Gemini); (b) a captura do app pega as sessões que existem ao abrir: um
+  processo novo do app que comece a tocar no meio da gravação, mais fundo que filho direto da raiz, fica de fora até a
+  próxima abertura (reabrir a fonte no widget resolve); (c) o "Windows fatal exception: code 0x8001010d" no log é o
+  faulthandler registrando uma exceção COM já tratada (o app segue): ruído, não queda.
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · deriva por canal e

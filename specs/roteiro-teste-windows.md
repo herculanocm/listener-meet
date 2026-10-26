@@ -47,7 +47,9 @@ trocar: o primeiro grupo das Configurações, "Chaves de acesso" (U-037), com o 
 ## Parte 3 — Gravação curta de ponta a ponta (25 min; B1, F2, F3)
 Precisa da Parte 2 (sem o token, o processamento não sai; o warm-up avisa). A legenda ao vivo só aparece com fala: numa
 chamada de verdade ou com um vídeo tocando no navegador escolhido como fonte (no primeiro teste, a janela de chat do
-Teams não tinha som e o canal R ficou em silêncio).
+Teams não tinha som e o canal R ficou em silêncio). Desde o D-055, "Apps tocando agora" tem uma linha por app e a
+captura do Teams soma os processos dele (antes o R do Teams ficava mudo); se o R ainda ficar sem barra com alguém
+falando, escolha "Sistema inteiro" e me avise.
 - [ ] Abra uma chamada de teste (Teams ou Meet com alguém, ou um vídeo tocando no navegador) e `Ctrl+Alt+Shift+R`
       (warm-up): o app aparece em "Apps tocando agora" com o medidor andando; escolha-o; "Testar 3 s"; título e
       participantes.

@@ -61,6 +61,10 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - Saída padrão no MME: "Altofalantes (Realtek(R) Audio)" a 44,1 kHz (o player reamostra de 16 kHz). Monitores mudam
   com o lugar: LU28R55 (4K a 150 %, o principal) e LF24T35 (1080p a 100 %) em 25/10; a tela do notebook (150 %, a
   principal) e um Dell SE2225HM (1080p a 100 %) em 26/10 à tarde.
+- Loopback de processo do Windows (`PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`, via proc-tap): pega o processo e
+  os filhos diretos, não os netos (medido em 26/10 com um tom num neto). O Teams novo daqui: ms-teams.exe raiz, um
+  ms-teams.exe filho com uma sessão de áudio e um msedgewebview2.exe filho cujo filho tem a outra; WhatsApp e Outlook
+  novo também rodam em WebView2. A captura do app soma a raiz com as sessões mais fundas (D-055).
 - Word 16 (Office) instalado: dá para conferir um .docx sem o dono pelo COM do PowerShell (instância nova e oculta,
   `[ref]` nos parâmetros por referência no 5.1, fechar sem salvar e conferir que nenhum WINWORD novo sobrou). Arquivo
   aberto no Word: `os.replace` sobre ele dá WinError 5 (26/10).
