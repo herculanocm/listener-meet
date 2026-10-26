@@ -1,18 +1,23 @@
 """Processos e janelas no Windows via ctypes (Toolhelp32 e EnumWindows), sem psutil.
 
 psutil abre um handle por processo e levava ~4 s nesta máquina (EDR); o snapshot leva ~30 ms. As estruturas e
-assinaturas ctypes ficam no nível do módulo (M-12); `root_of` e `root_pid_for` são puras e rodam em qualquer sistema.
+assinaturas ctypes ficam no nível do módulo (M-12); `root_of`, `root_pid_for`, `app_root`, `group_by_app` e
+`loopback_targets` são puras e rodam em qualquer sistema.
 """
 from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Iterable
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Any
 
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+HOSTED = frozenset({"msedgewebview2.exe"})       # roda dentro de outro app (Teams novo, WhatsApp, Outlook novo)
+SHELL = frozenset({"explorer.exe", "svchost.exe", "sihost.exe", "services.exe", "wininit.exe", "winlogon.exe",
+                   "runtimebroker.exe", "applicationframehost.exe"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +91,54 @@ def root_of(pid: int, procs: dict[int, ProcInfo] | None = None) -> int:
         seen.add(cur.pid)
         cur = procs[cur.ppid]
     return cur.pid
+
+
+def app_root(pid: int, procs: dict[int, ProcInfo] | None = None) -> int:
+    """O app dono de uma sessão de áudio (D-055): sobe pelos pais de mesmo executável (Chromium, Electron) e pelo WebView2
+    até o app que o hospeda; para no shell e nos serviços do sistema. No Teams novo, a chamada toca num msedgewebview2.exe
+    neto do ms-teams.exe raiz, irmão do ms-teams.exe filho que tem a outra sessão: capturar a árvore do filho dava silêncio.
+    O loopback de processo inclui a árvore inteira do pid dado, então a raiz pega tudo o que o app toca."""
+    procs = procs or snapshot_processes()
+    cur = procs.get(pid)
+    if cur is None:
+        return pid
+    seen: set[int] = set()
+    while cur.ppid in procs and cur.ppid not in seen:
+        parent = procs[cur.ppid]
+        name, pname = cur.name.lower(), parent.name.lower()
+        if pname in SHELL or (pname != name and name not in HOSTED):
+            break
+        seen.add(cur.pid)
+        cur = parent
+    return cur.pid
+
+
+def group_by_app(peaks: dict[int, float], procs: dict[int, ProcInfo]) -> dict[int, tuple[float, tuple[int, ...]]]:
+    """As sessões de áudio por app (a raiz de `app_root`): o maior pico entre elas e os pids das sessões."""
+    out: dict[int, tuple[float, tuple[int, ...]]] = {}
+    for pid, peak in peaks.items():
+        root = app_root(pid, procs) if procs else pid
+        best, members = out.get(root, (0.0, ()))
+        out[root] = (max(best, peak), (*members, pid))
+    return out
+
+
+def loopback_targets(root: int, session_pids: Iterable[int], procs: dict[int, ProcInfo]) -> list[int]:
+    """Os processos a capturar para ter tudo o que o app de `root` toca (D-055): a raiz, cujo loopback cobre ela e os filhos
+    diretos, e cada processo do app com sessão de áudio mais fundo que isso (o WebView2 da chamada do Teams é neto da raiz);
+    um filho direto de outro alvo já está nele. Do mais raso ao mais fundo (o pai é decidido antes do filho), a raiz primeiro."""
+    def depth(pid: int) -> int:
+        n, cur = 0, procs.get(pid)
+        while cur is not None and cur.pid != root and n < 64:
+            n, cur = n + 1, procs.get(cur.ppid)
+        return n
+
+    targets = [root]
+    members = [p for p in set(session_pids) if p != root and p in procs and app_root(p, procs) == root]
+    for pid in sorted(members, key=lambda p: (depth(p), p)):
+        if procs[pid].ppid not in targets:
+            targets.append(pid)
+    return targets
 
 
 def window_titles_by_pid() -> dict[int, str]:

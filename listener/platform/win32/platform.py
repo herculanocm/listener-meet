@@ -7,6 +7,7 @@ ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12)
 from __future__ import annotations
 
 import ctypes
+import functools
 import os
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from typing import Any, override
 
 import numpy as np
 
+from ...capture.mixer import FrameMixer
 from ...log import get_logger
 from ..base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
 from ..common import paths, process
@@ -470,14 +472,15 @@ class Win32Platform(Platform):
         apps: list[PlayingApp] = []
         if peaks:
             procs, titles = self._processes()
-            for pid, peak in peaks.items():
-                info = procs.get(pid)
-                exe = info.name if info else f"pid {pid}"
-                root = processes.root_of(pid, procs) if procs else pid
-                title = titles.get(pid) or titles.get(root, "")
+            # D-055: uma linha por app, com o pid da raiz (o Teams novo toca a chamada num WebView2 fora da árvore do
+            # ms-teams.exe que tem a outra sessão); o loopback captura a árvore inteira da raiz
+            for root, (peak, members) in processes.group_by_app(peaks, procs).items():
+                info = procs.get(root)
+                exe = info.name if info else f"pid {root}"
+                title = titles.get(root) or next((titles[m] for m in members if titles.get(m)), "")
                 low = exe.lower()
                 meeting = low in MEETING_EXES or (low in BROWSERS and any(h in title.lower() for h in MEETING_TITLE_HINTS))
-                apps.append(PlayingApp(pid=pid, exe=exe, title=title, peak=peak, is_meeting_app=meeting))
+                apps.append(PlayingApp(pid=root, exe=exe, title=title, peak=peak, is_meeting_app=meeting))
             apps.sort(key=lambda a: (not a.is_meeting_app, -a.peak, a.exe.lower()))
         self.last_list_apps_ms = (time.perf_counter() - t0) * 1000
         log.debug("list_playing_apps: %d sessões, %d apps em %.0f ms", len(sessions), len(apps), self.last_list_apps_ms)
@@ -527,8 +530,54 @@ class Win32Platform(Platform):
         handle = _StreamHandle(start, stop, sample_rate, 1, on_error)
         return handle
 
+    def _session_pids(self) -> set[int]:
+        """Os processos com sessão de áudio agora (qualquer estado), para os alvos do loopback do app."""
+        _com_init()
+        try:
+            from pycaw.pycaw import AudioUtilities
+
+            return {pid for s in AudioUtilities.GetAllSessions() if (pid := _session_pid(s))}
+        except Exception as e:
+            log.debug("sessões de áudio para o loopback: %s", e)
+            return set()
+
     @override
     def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
+        """O som do app de `pid` (a raiz que a lista de apps oferece, D-055): o loopback do Windows pega o processo e os
+        filhos diretos, então cada sessão do app mais funda que isso ganha uma captura própria, somada à da raiz."""
+        procs, _titles = self._processes()
+        targets = processes.loopback_targets(pid, self._session_pids(), procs) if procs else [pid]
+        if len(targets) == 1:
+            return self._open_process_loopback(pid, on_audio, on_error)
+        holder: dict[str, FrameMixer] = {}                 # o formato vem da captura da raiz; os dados, só depois do start
+        main = self._open_process_loopback(pid, lambda block, t: holder["mixer"].feed(0, block, t), on_error)
+        mixer = holder["mixer"] = FrameMixer(len(targets), main.sample_rate, main.channels, on_audio)
+        parts = [main]
+        for i, extra in enumerate(targets[1:], start=1):
+            try:
+                h = self._open_process_loopback(extra, functools.partial(mixer.feed, i), None)
+            except Exception as e:                        # o processo saiu ou recusou: segue com a raiz
+                log.warning("loopback do processo %s (do app %s) não abriu: %s", extra, pid, e)
+                continue
+            if (h.sample_rate, h.channels) != (main.sample_rate, main.channels):
+                log.warning("loopback do processo %s em outro formato (%d Hz, %d canais): fica de fora", extra, h.sample_rate,
+                            h.channels)
+                h.stop()
+                continue
+            parts.append(h)
+        log.info("loopback do app %s: %d processo(s) somados (%s)", pid, len(parts), ", ".join(str(t) for t in targets))
+
+        def start() -> None:
+            for h in parts:
+                h.start()
+
+        def stop() -> None:
+            for h in parts:
+                h.stop()
+
+        return _StreamHandle(start, stop, main.sample_rate, main.channels, on_error)
+
+    def _open_process_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
         from proctap import ProcessAudioCapture
 
         handler: Callable[[bytes, int], None] | None = None
