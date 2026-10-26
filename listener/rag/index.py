@@ -2,7 +2,15 @@
 gravados numa transação só (o FTS acompanha pelos gatilhos), e `fill_vectors` pede ao provedor só os vetores que faltam do
 modelo ativo, fora de transação. O worker pesado chama `sync_text` ao concluir (a busca por palavra acha a reunião antes
 da ata) e enfileira o `index`; o job `index` (classe leve, depois dos `llm`) faz os dois. `embedder_status` diz se há
-embedder pronto (F5A-07: só os pagos nesta entrega; o local é da F5.1); `sweep` é a varredura da abertura (F5A-12).
+embedder pronto (os pagos com chave; o local da F5.1 com o extra e a marca `.ready`); `sweep` é a varredura da abertura
+(F5A-12).
+
+F5.1, o embedder local (`llm/local_embed.py`): chave `local/multilingual-e5-small@384` (`EMBED_DIMS`), lotes de
+`local_embed.BATCH` (8, A-14) um por vez, custo 0 (A-04); antes de cada lote, `defer` (a lease da gravação) encerra a rodada
+com "vetores adiados: gravando" e `deferred` no resultado (A-06), e a varredura completa essas reuniões depois, sem exigir
+modelo confirmado (A-07); as reuniões antigas só entram pela varredura depois do "Reindexar agora" (Q3: o local nunca é
+confirmado sozinho, nem como o primeiro modelo do índice); a estimativa é sem custo, com 0,19 s por trecho até medir o
+próprio modelo (A-05).
 
 Regras duras: nunca `await` dentro de `store.transaction()`; o vetor só entra se o trecho ainda existe com o mesmo hash;
 normaliza sempre; uma linha em `llm_calls` por lote (tarefa `rag_embed`, a reunião e o job do pipeline vigente); sem
@@ -23,6 +31,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
+from ..llm import local_embed
 from ..log import get_logger
 from ..model import ActionStatus, LlmCallStatus, SummaryKind
 from ..pipeline import review
@@ -41,7 +50,11 @@ log = get_logger("rag.index")
 
 EMBED_DIM = 768                  # os dois pagos em 768 (D-009): Gemini `gemini-embedding-001` e OpenAI `text-embedding-3-small`
 EMBED_BATCH = 64
-NO_EMBEDDINGS = {"anthropic": "a Anthropic não oferece embeddings: escolha Gemini ou OpenAI como ativo para embeddings "
+LOCAL = "local"                  # F5.1: o tipo do embedder local (e5-small na CPU, sem custo)
+EMBED_DIMS: dict[str, int] = {LOCAL: local_embed.DIM}         # dimensão por tipo na chave do modelo (A-02); os pagos, 768
+LOCAL_CHUNK_S = 0.19             # e5-small int8 com 2 threads por trecho de ~1.400 caracteres (D-051), até medir
+DEFERRED = "vetores adiados: gravando"
+NO_EMBEDDINGS = {"anthropic": "a Anthropic não oferece embeddings: escolha Gemini, OpenAI ou Local como ativo para embeddings "
                               "(Configurações, LLM)"}
 
 
@@ -52,8 +65,9 @@ class EmbedderStatus(NamedTuple):
     provider_id: str | None = None   # a linha de `providers` que atende (R5-10; hoje igual ao tipo nos pagos)
 
 
-def model_key(kind: str, model: str, dim: int = EMBED_DIM) -> str:
-    return f"{kind}/{model.removeprefix('models/').strip()}@{int(dim)}"
+def model_key(kind: str, model: str, dim: int | None = None) -> str:
+    """"gemini/gemini-embedding-001@768"; sem `dim`, a do tipo (`EMBED_DIMS`: 384 no local) ou 768 (D-009)."""
+    return f"{kind}/{model.removeprefix('models/').strip()}@{int(dim or EMBED_DIMS.get(kind, EMBED_DIM))}"
 
 
 def parse_model_key(key: str) -> tuple[str, str, int]:
@@ -63,9 +77,15 @@ def parse_model_key(key: str) -> tuple[str, str, int]:
     return kind, model, int(dim)
 
 
+def is_local(key: str | None) -> bool:
+    """A chave é do embedder local (F5.1): sem custo, lotes pequenos um por vez, vetores adiados durante a gravação."""
+    return bool(key) and parse_model_key(str(key))[0] == LOCAL
+
+
 def embedder_status(store: Store) -> EmbedderStatus:
     """O "ativo para embeddings" das Configurações (CP2): pronto com chave e um provedor que tem embeddings (D-009: modelo
-    da linha do provedor, senão o padrão; dimensão 768). Uma função só para o índice, a busca e o `--check`."""
+    da linha do provedor, senão o padrão; dimensão 768), ou o local (F5.1) com o extra instalado e a marca `.ready` da
+    pasta de modelos (um modelo só, 384 dimensões, sem chave). Uma função só para o índice, a busca e o `--check`."""
     from ..llm.models_table import DEFAULT_EMBED_MODELS
     from ..llm.types import ProviderKind
 
@@ -75,6 +95,9 @@ def embedder_status(store: Store) -> EmbedderStatus:
     kind, pid = str(row["kind"]), str(row["id"])
     if kind in NO_EMBEDDINGS:
         return EmbedderStatus(False, NO_EMBEDDINGS[kind], None, pid)
+    if kind == LOCAL:                                    # A-02: sem chave; pronto = o extra e a marca desta revisão
+        ready, reason = local_embed.status(store.get_setting("pipeline.models_dir"))
+        return EmbedderStatus(ready, reason, model_key(LOCAL, local_embed.MODEL), pid)
     try:
         default = DEFAULT_EMBED_MODELS.get(ProviderKind(kind), "")
     except ValueError:
@@ -210,14 +233,19 @@ class FillResult:
     cost_usd: float = 0.0
     batches: int = 0
     pauses: int = 0                      # quantas vezes a fila foi pausada no meio (os lotes no ar terminaram antes)
+    deferred: bool = False               # F5.1 (A-06): o local parou porque a gravação começou; a varredura completa depois
     errors: list[str] = field(default_factory=list)
 
     @property
     def note(self) -> str:
-        """"N trechos sem vetor: motivo" para o `timings_json` do job e o log; vazio quando nada faltou."""
+        """"N trechos sem vetor: motivo" para o `timings_json` do job e o log; vazio quando nada faltou. Adiados pela gravação:
+        "vetores adiados: gravando (N trechos)"."""
         if not self.missing:
             return ""
-        return f"{self.missing} {'trecho' if self.missing == 1 else 'trechos'} sem vetor: {self.reason or 'motivo desconhecido'}"
+        chunks = f"{self.missing} {'trecho' if self.missing == 1 else 'trechos'}"
+        if self.deferred:
+            return f"{DEFERRED} ({chunks})"
+        return f"{chunks} sem vetor: {self.reason or 'motivo desconhecido'}"
 
 
 def refresh_mu(store: Store, key: str, dim: int) -> bool:
@@ -242,13 +270,16 @@ def refresh_mu(store: Store, key: str, dim: int) -> bool:
 def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None = None, status: EmbedderStatus | None = None,
                  on_progress: Callable[[int, int], None] | None = None, check: Callable[[], None] | None = None,
                  paused: Callable[[], bool] | None = None, wait: Callable[[], None] | None = None,
-                 batch_size: int | None = None) -> FillResult:
+                 batch_size: int | None = None, defer: Callable[[], bool] | None = None) -> FillResult:
     """Pede os vetores que faltam do modelo ativo em lotes de `batch_size` num `TaskGroup` sob `llm.max_parallel`, fora de
     transação; grava lote a lote. Antes de cada lote, dentro do laço asyncio e sem bloquear: `check` (heartbeat e
     cancelamento; se levantar, os lotes seguintes não saem e a exceção sobe depois dos que estavam no ar) e `paused` (a fila
     foi pausada: os lotes seguintes não saem, os do ar terminam). Na pausa, `wait` espera FORA do laço (bloqueante, como o
     `checkpoint` do runner: "entre tarefas, nunca no meio", F3) e a rodada recomeça com o que ainda falta (R5-04). Erro de
-    rede ou de provedor não sobe: para os lotes seguintes e vira o motivo da nota. `on_progress(gravados, pedidos)`."""
+    rede ou de provedor não sobe: para os lotes seguintes e vira o motivo da nota. `on_progress(gravados, pedidos)`.
+    O local (F5.1) vai em lotes de `local_embed.BATCH`, um por vez, sem custo (A-04, A-14), e consulta `defer` (a lease da
+    gravação) antes de cada lote: verdadeiro encerra a rodada com os vetores adiados (A-06; os pagos não disputam a CPU e
+    ignoram `defer`)."""
     from ..llm.aio import run_async
 
     status = status or embedder_status(store)
@@ -260,16 +291,21 @@ def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None 
     meeting = store.get_meeting(meeting_id) or {}
     date = str(meeting.get("started_at") or "")[:10]
     job_id = store.segments.current_job_id(meeting_id)
+    size = max(1, batch_size or (local_embed.BATCH if is_local(key) else EMBED_BATCH))
     while True:
         rows = store.rag.missing_vectors(meeting_id, key)
         if not rows:
             break
-        plan = _Plan(store, meeting_id, key, status.provider_id or parse_model_key(key)[0], date, job_id,
-                     list(batched(rows, max(1, batch_size or EMBED_BATCH))), result, on_progress, check, paused)
+        plan = _Plan(store, meeting_id, key, status.provider_id or parse_model_key(key)[0], date, job_id, list(batched(rows, size)),
+                     result, on_progress, check, paused, defer if is_local(key) else None)
         run_async(plan.run(provider))
         if plan.stop_exc is not None:
             result.missing = store.rag.count_missing(meeting_id, key)
             raise plan.stop_exc
+        if plan.deferred:
+            result.deferred, result.reason = True, DEFERRED
+            log.info("reunião %s: gravação em curso; os vetores do local ficam para depois dela", meeting_id)
+            break
         if plan.stop or not plan.paused:
             break
         result.pauses += 1
@@ -289,13 +325,14 @@ class _Plan:
 
     def __init__(self, store: Store, meeting_id: int, key: str, provider_id: str, date: str, job_id: int | None,
                  batches: list[tuple[RagChunkRow, ...]], result: FillResult, on_progress: Callable[[int, int], None] | None,
-                 check: Callable[[], None] | None, paused: Callable[[], bool] | None):
+                 check: Callable[[], None] | None, paused: Callable[[], bool] | None, defer: Callable[[], bool] | None = None):
         from ..config.defaults import SPECS
 
         self.store = store
         self.meeting_id = meeting_id
         self.key = key
         self.kind, self.model, self.dim = parse_model_key(key)
+        self.local = self.kind == LOCAL
         self.provider_id = provider_id
         self.date = date
         self.job_id = job_id
@@ -304,10 +341,13 @@ class _Plan:
         self.on_progress = on_progress
         self.check = check
         self.is_paused = paused
-        self.max_parallel = max(1, int(store.get(SPECS["llm.max_parallel"])))
-        self.prices = store.providers.list_prices(self.kind)
+        self.defer = defer
+        # o local calcula na CPU desta máquina, um lote por vez (A-04); os pagos, sob `llm.max_parallel`
+        self.max_parallel = 1 if self.local else max(1, int(store.get(SPECS["llm.max_parallel"])))
+        self.prices = [] if self.local else store.providers.list_prices(self.kind)
         self.stop = False                                          # erro do provedor: nenhum lote novo, nota com o motivo
         self.paused = False                                        # fila pausada: nenhum lote novo, espera fora do laço
+        self.deferred = False                                      # gravação em curso com o local: nenhum lote novo (A-06)
         self.stop_exc: BaseException | None = None
 
     async def run(self, provider: LLMProvider | None) -> None:
@@ -331,15 +371,18 @@ class _Plan:
                 await provider.aclose()
 
     def _gate(self) -> bool:
-        """Antes de cada lote, dentro do laço e sem bloquear: heartbeat e cancelamento (`check`) e a pausa da fila. False =
-        este lote não sai."""
-        if self.stop or self.paused or self.stop_exc is not None:
+        """Antes de cada lote, dentro do laço e sem bloquear: heartbeat e cancelamento (`check`), a pausa da fila e, no local,
+        a gravação em curso (`defer`, A-06). False = este lote não sai."""
+        if self.stop or self.paused or self.deferred or self.stop_exc is not None:
             return False
         try:
             if self.check is not None:
                 self.check()
             if self.is_paused is not None and self.is_paused():
                 self.paused = True
+                return False
+            if self.defer is not None and self.defer():
+                self.deferred = True
                 return False
         except BaseException as e:  # cancelamento (ou o banco): sobe depois dos lotes no ar
             self.stop, self.stop_exc = True, e
@@ -387,7 +430,7 @@ class _Plan:
         novo com todas as assinaturas (R5-06: nenhuma assinatura fica com um `mu` que outro processo já trocou)."""
         from ..llm.costs import cost_usd, price_for
 
-        cost = cost_usd(usage, price_for(self.prices, self.kind, self.model))
+        cost = 0.0 if self.local else cost_usd(usage, price_for(self.prices, self.kind, self.model))     # o local não custa (A-04)
         self._call(len(rows), usage.input_tokens, cost, latency, LlmCallStatus.OK, None)
         self.result.cost_usd += cost or 0.0
         unit = vectors.normalize(mat)
@@ -456,22 +499,34 @@ def enqueue_index(store: Store, meeting_id: int, reason: str, *, force: bool = F
     return job_id
 
 
+def model_confirmed(store: Store, key: str) -> bool:
+    """A varredura pode completar o modelo nas reuniões antigas? Os pagos, como o `RagRepo.model_confirmed` diz (o primeiro
+    do índice ou o "reindexar agora", R5-09); o local, só depois do "Reindexar agora" (F5.1 Q3: a varredura sozinha ocuparia
+    a CPU por minutos sem o usuário pedir, mesmo sendo o primeiro modelo do índice)."""
+    if is_local(key):
+        row = store.rag.get_model(key)
+        return bool(row is not None and row.get("backfill"))
+    return store.rag.model_confirmed(key)
+
+
 def sweep(store: Store, should_stop: Callable[[], bool] | None = None) -> int:
     """Varredura da abertura (F5A-12): reuniões com pipeline concluído e nenhum trecho (todo índice grava ao menos o trecho
     `reuniao`, logo a reunião sem fala não volta a cada abertura), reuniões cujo último `index` terminou em erro (uma vez
-    por abertura, R5-07) e, só com os vetores automáticos ligados, o embedder pronto e o modelo confirmado (o primeiro do
-    índice, ou o marcado pelo "reindexar agora": `reindex_all`, R5-09), as que têm trecho sem vetor dele (as anteriores à
-    F5, as que ficaram sem rede). `should_stop` (a saída do app) interrompe entre as consultas e entre as reuniões (R5-02).
-    Devolve quantos `index` entraram na fila."""
+    por abertura, R5-07), as que adiaram os vetores do local durante uma gravação (F5.1 A-07: também ao parar ou cancelar a
+    gravação, sem exigir modelo confirmado) e, só com os vetores automáticos ligados, o embedder pronto e o modelo
+    confirmado (`model_confirmed`), as que têm trecho sem vetor dele (as anteriores à F5, as que ficaram sem rede).
+    `should_stop` (a saída do app) interrompe entre as consultas e entre as reuniões (R5-02). Devolve quantos `index`
+    entraram na fila."""
     stop = should_stop or (lambda: False)
     meetings = set(store.rag.meetings_without_chunks())
     if stop():
         return 0
     meetings |= set(store.jobs.failed_index_meetings())
+    meetings |= set(store.jobs.deferred_index_meetings())
     if stop():
         return 0
     status = embedder_status(store)
-    if auto_index_enabled(store) and status.ready and status.model_key and store.rag.model_confirmed(status.model_key):
+    if auto_index_enabled(store) and status.ready and status.model_key and model_confirmed(store, status.model_key):
         store.rag.mark_backfill(status.model_key, parse_model_key(status.model_key)[2])   # o primeiro fica confirmado de vez
         meetings |= set(store.rag.meetings_missing_vectors(status.model_key))
     n = 0
@@ -504,14 +559,24 @@ class ReindexEstimate:
     cost_usd: float | None = None    # None = sem preço cadastrado para o modelo
     batches: int = 0
     seconds: float = 0.0
-    measured: bool = False           # latência dos lotes medida (`rag_embed`) ou o padrão de 2 s
+    measured: bool = False           # latência dos lotes medida (`rag_embed`) ou o padrão de 2 s (0,19 s por trecho no local)
+
+    @property
+    def local(self) -> bool:
+        """O embedder local (F5.1): sem custo; os textos "com custo" ficam só para os pagos (A-05)."""
+        return is_local(self.model_key)
 
     def text(self) -> str:
-        """"1.234 trechos sem vetor em 12 reuniões · ≈ 456.789 tokens · ≈ US$ 0,07 · ≈ 3 min" (o que as Configurações mostram)."""
+        """"1.234 trechos sem vetor em 12 reuniões · ≈ 456.789 tokens · ≈ US$ 0,07 · ≈ 3 min" (o que as Configurações mostram);
+        no local, "1.234 trechos sem vetor em 12 reuniões · sem custo · ≈ 4 min nesta máquina"."""
         from ..llm.costs import fmt_usd
 
         if not self.chunks:
             base = "nenhum trecho sem vetor do modelo ativo"
+        elif self.local:
+            base = (f"{_n(self.chunks)} {'trecho' if self.chunks == 1 else 'trechos'} sem vetor em {self.meetings} "
+                    f"{'reunião' if self.meetings == 1 else 'reuniões'} · sem custo · ≈ {_duration(self.seconds)} nesta máquina"
+                    + ("" if self.measured else f" (pela estimativa de {LOCAL_CHUNK_S:.2f} s por trecho)".replace(".", ",")))
         else:
             cost = f"≈ {fmt_usd(self.cost_usd)}" if self.cost_usd is not None else "sem preço cadastrado"
             minutes = max(1, round(self.seconds / 60)) if self.seconds else 0
@@ -530,11 +595,37 @@ def _n(value: int) -> str:
     return f"{int(value):,}".replace(",", ".")
 
 
+def _duration(seconds: float) -> str:
+    """"40 s" abaixo de um minuto, senão "3 min" (o local é rápido: uma reunião leva segundos)."""
+    return f"{max(1, round(seconds))} s" if seconds < 59.5 else f"{round(seconds / 60)} min"
+
+
+def local_seconds_per_chunk(store: Store, model: str, last: int = 20) -> float | None:
+    """Segundos por trecho medidos nos últimos lotes do local (`rag_embed`, `batch:N` com a latência do lote; A-05: a
+    estimativa usa o próprio modelo assim que ele tiver medida); None sem lote medido."""
+    from ..llm.types import LlmTask
+
+    rows = store._q("SELECT latency_ms, strategy FROM llm_calls WHERE status = ? AND task = ? AND model = ? AND strategy LIKE ? "
+                    "ORDER BY id DESC LIMIT ?", (str(LlmCallStatus.OK), str(LlmTask.RAG_EMBED), model, "batch:%", int(last)))
+    total_ms = 0.0
+    chunks = 0
+    for latency, strategy in rows:
+        try:
+            n = int(str(strategy).removeprefix("batch:"))
+        except ValueError:
+            continue
+        if n > 0:
+            total_ms += float(latency or 0)
+            chunks += n
+    return total_ms / chunks / 1000 if chunks else None
+
+
 def reindex_estimate(store: Store) -> ReindexEstimate:
     """A estimativa do "reindexar tudo" e da troca do embedder (L5, comportamento 4): os trechos sem vetor do modelo ativo
     (os que já têm vetor ficam: só os que faltam são pedidos), tokens ≈ caracteres da entrada ÷ 4, custo pela tabela de
     preços do modelo e minutos pelos lotes de 64 de cada reunião (sob `llm.max_parallel`) e pela latência média dos lotes
-    já medidos (`rag_embed`, `batch:`), ou 2 s por lote sem medida. Só leitura."""
+    já medidos do modelo (`rag_embed`, `batch:`), ou 2 s por lote sem medida. O local (F5.1, A-05): custo 0 e os segundos
+    por trecho medidos no próprio modelo, ou 0,19 s por trecho sem medida. Só leitura."""
     from ..config.defaults import SPECS
     from ..llm.costs import price_for
     from ..llm.types import LlmTask
@@ -547,12 +638,17 @@ def reindex_estimate(store: Store) -> ReindexEstimate:
     chunks = sum(n for _mid, n, _chars in stats)
     tokens = math.ceil(sum(chars for _mid, _n, chars in stats) / CHARS_PER_TOKEN_EMBED)
     kind, model, _dim = parse_model_key(status.model_key)
+    if kind == LOCAL:
+        per_chunk = local_seconds_per_chunk(store, model)
+        batches = sum(math.ceil(n / local_embed.BATCH) for _mid, n, _chars in stats)
+        return ReindexEstimate(status.model_key, status.ready, status.reason, chunks, len(stats), without, tokens, 0.0, batches,
+                               chunks * (per_chunk if per_chunk is not None else LOCAL_CHUNK_S), per_chunk is not None)
     price = price_for(store.providers.list_prices(kind), kind, model)
     cost = round(tokens * price.input_usd_m / 1_000_000, 6) if price is not None else None
     parallel = max(1, int(store.get(SPECS["llm.max_parallel"])))
     batches = sum(math.ceil(n / EMBED_BATCH) for _mid, n, _chars in stats)
     rounds = sum(math.ceil(math.ceil(n / EMBED_BATCH) / parallel) for _mid, n, _chars in stats)
-    latency = store.llm_calls.avg_latency_ms(task=str(LlmTask.RAG_EMBED), strategy_prefix="batch:")
+    latency = store.llm_calls.avg_latency_ms(task=str(LlmTask.RAG_EMBED), model=model, strategy_prefix="batch:")
     per_batch = latency / 1000 if latency else DEFAULT_BATCH_S
     return ReindexEstimate(status.model_key, status.ready, status.reason, chunks, len(stats), without, tokens, cost, batches,
                            rounds * per_batch, latency is not None)
@@ -579,6 +675,7 @@ def reindex_all(store: Store) -> int:
     return sum(1 for mid in store.rag.processed_meetings() if enqueue_index(store, mid, "reindex", force=True) is not None)
 
 
-__all__ = ["AUTO_OFF", "EDIT_DELAY_S", "EMBED_DIM", "EmbedderStatus", "FillResult", "ReindexEstimate", "SyncResult", "auto_index_enabled",
-           "complete_index", "embedder_status", "enqueue_index", "fill_vectors", "gather", "model_key", "parse_model_key", "refresh_mu",
-           "reindex_all", "reindex_estimate", "sweep", "sync_text"]
+__all__ = ["AUTO_OFF", "DEFERRED", "EDIT_DELAY_S", "EMBED_DIM", "EMBED_DIMS", "LOCAL", "EmbedderStatus", "FillResult", "ReindexEstimate",
+           "SyncResult", "auto_index_enabled", "complete_index", "embedder_status", "enqueue_index", "fill_vectors", "gather", "is_local",
+           "local_seconds_per_chunk", "model_confirmed", "model_key", "parse_model_key", "refresh_mu", "reindex_all", "reindex_estimate",
+           "sweep", "sync_text"]

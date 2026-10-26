@@ -15,6 +15,7 @@ EMBED_ONLY = frozenset({Capability.EMBEDDINGS})
 G = ProviderKind.GEMINI
 O = ProviderKind.OPENAI
 A = ProviderKind.ANTHROPIC
+L = ProviderKind.LOCAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,7 @@ FAMILIES: tuple[Family, ...] = (
     Family(A, "claude-sonnet-4", "Claude Sonnet 4.x", 200_000, 64_000, CLAUDE, "claude-sonnet-4-5", True),
     Family(A, "claude-opus-4", "Claude Opus 4.x", 200_000, 32_000, CLAUDE, "claude-opus-4-1", True),
     Family(A, "claude", "Claude", 200_000, 8_192, CLAUDE, "claude-sonnet-4-5"),
+    Family(L, "multilingual-e5", "e5-small (local)", 512, 0, EMBED_ONLY, embedding=True),    # F5.1: corte em 512 tokens, sem custo
 )
 
 # modelo rápido e forte sugeridos por provedor (a sub-aba deixa trocar; `list_models()` mostra os reais)
@@ -61,11 +63,15 @@ DEFAULT_MODELS: dict[ProviderKind, tuple[str, str]] = {
     ProviderKind.OPENAI: ("gpt-4.1-mini", "gpt-5"),
     ProviderKind.ANTHROPIC: ("claude-haiku-4-5", "claude-sonnet-4-5"),
 }
-DEFAULT_EMBED_MODELS: dict[ProviderKind, str] = {ProviderKind.GEMINI: "gemini-embedding-001", ProviderKind.OPENAI: "text-embedding-3-small"}
+DEFAULT_EMBED_MODELS: dict[ProviderKind, str] = {
+    ProviderKind.GEMINI: "gemini-embedding-001", ProviderKind.OPENAI: "text-embedding-3-small",
+    ProviderKind.LOCAL: "multilingual-e5-small",                                         # F5.1: o local tem um modelo só
+}
 PROVIDER_CAPABILITIES: dict[ProviderKind, frozenset[Capability]] = {
     ProviderKind.GEMINI: ALL_GEMINI | {Capability.EMBEDDINGS},
     ProviderKind.OPENAI: TEXT_JSON | {Capability.AUDIO_IN, Capability.EMBEDDINGS, Capability.CACHE, Capability.COUNT_TOKENS},
     ProviderKind.ANTHROPIC: CLAUDE,                                                     # sem embeddings nem áudio [fato]
+    ProviderKind.LOCAL: EMBED_ONLY,                                                     # F5.1 (A-02): só os vetores da busca
 }
 
 

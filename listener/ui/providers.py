@@ -2,7 +2,9 @@
 modelo rápido e forte escolhidos de `list_models()` (cache em `providers.models_json`), parâmetros (JSON), "testar conexão"
 numa `Task` (latência, modelo, erro traduzido), "testar pelo worker" (job `llm` de tarefa `test`), preços editáveis
 (`llm_prices`) e o gasto do mês; acima das abas, o provedor ativo para texto e para embeddings (a Anthropic não oferece
-embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor escolhido (CP1). Nada aqui importa SDK."""
+embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor escolhido (CP1). Nada aqui importa SDK.
+F5.1 (A-01): "Local (e5-small, sem custo)" sempre no "Ativo para embeddings" (sem sub-aba: não tem chave nem modelo a
+escolher); a linha `local` nasce ao salvar com ele escolhido (`ensure_local`), e cada papel é gravado num `UPDATE` só."""
 from __future__ import annotations
 
 import functools
@@ -10,6 +12,7 @@ import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
                                QTabWidget, QVBoxLayout, QWidget)
 
@@ -21,7 +24,7 @@ from ..llm.registry import NetworkConfig, load_provider
 from ..llm.types import Capability, ConnectionTest, ModelInfo, ProviderKind
 from ..log import get_logger
 from ..store.core import _now
-from ..store.providers import LLM_KINDS
+from ..store.providers import LLM_KINDS, LOCAL_ID
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -31,6 +34,9 @@ if TYPE_CHECKING:
 log = get_logger("ui.providers")
 
 TITLES = {"gemini": "Gemini (Google)", "openai": "GPT (OpenAI)", "anthropic": "Claude (Anthropic)"}
+LOCAL_TITLE = "Local (e5-small, sem custo)"
+LOCAL_TIP = ("Busca por sentido calculada nesta máquina, sem chave, sem rede e sem custo; prepare antes em Configurações, "
+             "grupo Busca (135 MB)")
 PRICE_COLUMNS = ("Modelo (id ou prefixo)", "Entrada US$/M", "Saída US$/M", "Cache US$/M", "Áudio US$/M")
 SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é enviado ao provedor escolhido. Áudio só sai com a opção ligada."
 
@@ -270,6 +276,8 @@ class ProviderTabs(QWidget):
             self.active_llm.addItem(TITLES.get(str(row["id"]), str(row["id"])), str(row["id"]))
             if Capability.EMBEDDINGS in PROVIDER_CAPABILITIES[ProviderKind(str(row["kind"]))]:
                 self.active_embed.addItem(TITLES.get(str(row["id"]), str(row["id"])), str(row["id"]))
+        self.active_embed.addItem(LOCAL_TITLE, LOCAL_ID)                # A-01: sempre no combo, sem precisar da linha
+        self.active_embed.setItemData(self.active_embed.count() - 1, LOCAL_TIP, Qt.ItemDataRole.ToolTipRole)
         current_llm = store.providers.active_provider("llm")
         current_embed = store.providers.active_provider("embed")
         self.active_llm.setCurrentIndex(max(0, self.active_llm.findData(str(current_llm["id"])) if current_llm else 0))
@@ -297,9 +305,13 @@ class ProviderTabs(QWidget):
         return None
 
     def save(self) -> None:
+        """As sub-abas e os ativos; cada papel num `UPDATE` só, que escolhe o provedor ou zera o papel ("nenhum"). A linha
+        `local` só nasce aqui, no caminho de escrita, quando ele é o escolhido (A-01)."""
         for tab in self.tab_by_id.values():
             tab.save()
         llm_id = str(self.active_llm.currentData() or "")
         embed_id = str(self.active_embed.currentData() or "")
-        for pid in self.tab_by_id:
-            self.store.providers.set_active(pid, llm=(pid == llm_id), embed=(pid == embed_id))
+        if embed_id == LOCAL_ID:
+            self.store.providers.ensure_local()
+        self.store.providers.set_role("llm", llm_id or None)
+        self.store.providers.set_role("embed", embed_id or None)

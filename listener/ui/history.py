@@ -19,7 +19,9 @@ selo ("busca híbrida" ou "busca por palavras: motivo") e a cobertura do índice
 Menu de contexto "Copiar com citação" (U-029) nos trechos achados e nas respostas. Textos para o usuário sem jargão: "busca
 por sentido", nunca "embedding" nem "FTS". Notas em texto puro e dicas convertidas de texto puro: um título ou nome com "<b>"
 não vira HTML (R7-07) e "S&OP" aparece como está (R8-02). A saída do app cancela o chat em voo e o vetor da consulta presos
-na rede (um `threading.Event` ligado ao `shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (F5A-32)."""
+na rede (um `threading.Event` ligado ao `shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (F5A-32).
+F5.1 (A-11): com o embedder local ativo e pronto, abrir o Histórico abre a sessão do e5 numa `Task` (a primeira busca por
+sentido não espera a carga; a saída espera a `Task`), e um `QTimer` a solta depois de 10 min sem uso."""
 from __future__ import annotations
 
 import functools
@@ -62,6 +64,8 @@ log = get_logger("ui.history")
 WORDS_DELAY_MS = 250             # a parte por palavra a cada pausa curta da digitação
 VECTOR_DELAY_MS = 600            # o vetor da consulta (pago) no Enter ou depois de parar de digitar
 TASK_WAIT_MS = 3000              # saída do app: espera cada busca ou pergunta em voo até isto
+LOCAL_IDLE_S = 600.0             # F5.1 (A-11): a sessão do e5 local é solta depois de 10 min sem uso
+LOCAL_RELEASE_TICK_MS = 60_000   # ...conferido a cada minuto
 PERIODS: tuple[tuple[str, str], ...] = (("all", "Qualquer data"), ("7", "Últimos 7 dias"), ("30", "Últimos 30 dias"),
                                         ("90", "Últimos 90 dias"), ("year", "Este ano"))
 MEETING_COLUMNS = ("Data", "Título", "Duração", "Participantes", "Estado", "Custo")
@@ -108,7 +112,10 @@ def friendly_reason(reason: str) -> str:
              ("trechos filtrados sem vetor", "os trechos filtrados ainda não têm busca por sentido"),
              ("modelo de embeddings mudou", "o modelo da busca por sentido mudou: busque de novo"),
              ("nenhum provedor ativo", "escolha um provedor para a busca por sentido (Configurações, LLM)"),
-             ("anthropic", "o provedor escolhido não faz busca por sentido: escolha Gemini ou OpenAI (Configurações, LLM)"),
+             ("busca local não baixada", "a busca local ainda não foi baixada: prepare em Configurações (Busca)"),     # F5.1 (A-02)
+             ("extra local", "a busca local precisa do extra local instalado (pip install -e .[local])"),
+             ("busca local", "a busca local falhou: prepare de novo em Configurações (Busca)"),
+             ("anthropic", "o provedor escolhido não faz busca por sentido: escolha Gemini, OpenAI ou Local (Configurações, LLM)"),
              ("não tem modelo", "falta o modelo da busca por sentido no provedor (Configurações, LLM)"),
              ("sem chave", "falta a chave do provedor da busca por sentido (Configurações, LLM)"),
              ("sem rede", "sem rede"), ("tempo esgotado", "o provedor não respondeu a tempo"), ("consulta vazia", "consulta vazia"),
@@ -496,6 +503,10 @@ class HistoryPage(QWidget):
         self._vector_timer.setSingleShot(True)
         self._vector_timer.setInterval(VECTOR_DELAY_MS)
         self._vector_timer.timeout.connect(lambda: self.run_search(with_vector=True))
+        self._local_timer = QTimer(self)                          # F5.1 (A-11): solta a sessão do e5 parada há 10 min
+        self._local_timer.setInterval(LOCAL_RELEASE_TICK_MS)
+        self._local_timer.timeout.connect(self._release_local)
+        self._preloading = False
         self.search.textChanged.connect(self._text_changed)
         self.search.returnPressed.connect(self._search_now)
         QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self, self.focus_search)
@@ -561,6 +572,51 @@ class HistoryPage(QWidget):
         self.reload_meetings()
         self.reload_actions()
         self._load_threads(select=self.thread_id)
+        self.preload_local()
+
+    # ---------------------------------------------------------------- busca local (F5.1, A-11)
+    def preload_local(self) -> bool:
+        """Com o embedder local ativo e pronto, abre a sessão do e5 numa `Task` (a saída a espera): a primeira busca por
+        sentido não espera a carga (1 a 1,4 s no Windows, quase toda do tokenizer). Liga a soltura depois de 10 min sem uso.
+        False sem nada a carregar."""
+        from ..llm import local_embed
+        from ..rag.index import embedder_status, is_local
+
+        if self._closed or self._preloading:
+            return False
+        try:
+            status = embedder_status(self.store)
+        except Exception as e:  # banco ocupado: a primeira busca carrega
+            log.debug("pré-carga da busca local: %s", e)
+            return False
+        if not status.ready or not is_local(status.model_key):
+            return False
+        self._local_timer.start()
+        if local_embed.loaded():
+            return False
+        folder = local_embed.model_dir(self.store.get_setting("pipeline.models_dir"))
+        self._preloading = True
+        self._start(functools.partial(local_embed.preload, folder), self._on_preloaded)
+        return True
+
+    def _on_preloaded(self, result: Any) -> None:
+        self._preloading = False
+        if isinstance(result, BaseException):                    # a busca cai para "por palavras", com o motivo no selo
+            log.warning("pré-carga da busca local falhou: %s", result)
+        elif result:
+            log.info("busca local pré-carregada em %.0f ms (Histórico)", float(result))
+
+    def _release_local(self) -> None:
+        from ..llm import local_embed
+
+        if local_embed.release_if_idle(LOCAL_IDLE_S) or not local_embed.loaded():
+            self._local_timer.stop()
+
+    def _watch_local(self) -> None:
+        """Uma busca por sentido ou uma pergunta pode abrir a sessão do e5 de novo depois da soltura: a conferência de
+        ociosidade volta a rodar (ela mesma para quando não há sessão; com um pago, para no primeiro disparo)."""
+        if not self._closed and not self._local_timer.isActive():
+            self._local_timer.start()
 
     def _start(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> QThread:
         task = run_task(fn, self.store, on_done)
@@ -650,6 +706,8 @@ class HistoryPage(QWidget):
         if with_vector and self.result is not None and self.result.query == query:
             self.badge.setText(self.badge.text().split(" · ")[0] + " · buscando por sentido…")
         self._start(fn, functools.partial(self._on_search, gen))
+        if with_vector:
+            self._watch_local()                          # o vetor da consulta pode reabrir a sessão do e5 solta antes
 
     def _on_search(self, gen: int, result: Any) -> None:
         if self._closed or gen != self._gen:
@@ -836,6 +894,7 @@ class HistoryPage(QWidget):
         self.chat_status.setText("procurando nas reuniões…")
         fn = functools.partial(chat_global.run_global_chat, self.store, self.thread_id, text, self.filters())
         task = run_stream(fn, self.store, self._on_chunk, self._on_chat_done)
+        self._watch_local()                              # o vetor da pergunta pode reabrir a sessão do e5 solta antes
         self.chat_task = task
         self._tasks.add(task)
         task.finished.connect(functools.partial(self._tasks.discard, task))
@@ -947,6 +1006,7 @@ class HistoryPage(QWidget):
         self._stop.set()
         self._words_timer.stop()
         self._vector_timer.stop()
+        self._local_timer.stop()                         # a pré-carga da busca local em voo está em `_tasks`: esperada abaixo
         if self.chat_task is not None:
             self.chat_task.cancel()
         for task in list(self._tasks):

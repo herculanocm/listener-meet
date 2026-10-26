@@ -5,7 +5,9 @@ já nasce sem janela); a thread `live-prepare` lê as linhas JSON (`progress`, `
 interface por sinal enfileirado. Um objeto só no app inteiro (`preparer()`, sem parent, vive no módulo): fechar as
 Configurações no meio não mata o download nem deixa thread emitindo para um diálogo destruído (o diálogo se desconecta do
 sinal `changed` ao fechar e, reaberto, mostra o progresso em curso); um segundo pedido com o download rodando é recusado.
-Sair do app mata o filho (`shutdown_preparer`). Sem Qt de interface aqui: só `QObject` e sinais."""
+Sair do app mata o filho (`shutdown_preparer`). Sem Qt de interface aqui: só `QObject` e sinais.
+F5.1 (A-08): o mesmo preparador baixa também a busca local (`start(..., what="rag")`, `--prepare --what rag`); o estado leva
+`what` ("live" ou "rag") e cada grupo das Configurações mostra o seu; continua um download por vez no app inteiro."""
 from __future__ import annotations
 
 import threading
@@ -18,6 +20,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from ..config.defaults import SPECS
 from ..live.client import is_fake, live_models_dir, required_models, whisper_model_dir
 from ..live.protocol import decode_line
+from ..llm import local_embed
 from ..log import get_logger
 from ..platform.common import process
 
@@ -29,6 +32,8 @@ log = get_logger("ui.live_prepare")
 
 type Spawn = Callable[[list[str], Mapping[str, str] | None], ChildProcess]
 EXIT_WAIT_S = 10.0
+LIVE, RAG = "live", "rag"            # o que o preparo baixa (A-08): os modelos do ao vivo ou a busca local
+WHAT_TEXT = {LIVE: "os modelos do ao vivo", RAG: "a busca local"}
 
 
 def missing_models(store: Store) -> list[str]:
@@ -47,15 +52,25 @@ def models_status_text(store: Store) -> str:
     return "prontos (" + " e ".join(required_models(store.get(SPECS["live.model"]))) + ")"
 
 
+def local_status_text(store: Store) -> str:
+    """O estado da busca local nas Configurações (F5.1 item 3): "pronta" ou o motivo, sem jargão."""
+    ok, reason = local_embed.status(store.get_setting("pipeline.models_dir"))
+    if ok:
+        return "pronta (e5-small na pasta de modelos; sem custo e sem rede)"
+    return "não baixada" if reason == local_embed.NOT_DOWNLOADED else reason
+
+
 class ModelPreparer(QObject):
-    """Estado em `state`: {"state": idle | running | done | error, "model", "status", "fraction", "message"}."""
+    """Estado em `state`: {"state": idle | running | done | error, "what": live | rag, "model", "status", "fraction",
+    "message"}."""
     changed = Signal(object)
     _line = Signal(object, object)        # (filho, mensagem): da thread `live-prepare` para a da interface
 
     def __init__(self) -> None:
         super().__init__(None)
         self.proc: ChildProcess | None = None
-        self.state: dict[str, Any] = {"state": "idle"}
+        self.what = LIVE
+        self.state: dict[str, Any] = {"state": "idle", "what": LIVE}
         self.starts = 0                    # instrumentação dos testes: downloads lançados
         self._closed = False               # o app está saindo: a thread leitora não emite mais nada
         self._error = ""
@@ -66,15 +81,17 @@ class ModelPreparer(QObject):
     def running(self) -> bool:
         return self.proc is not None
 
-    def start(self, store: Store, spawn: Spawn) -> bool:
-        """Lança o `--prepare`; False quando já há um rodando (nunca dois downloads) ou o filho não nasceu."""
+    def start(self, store: Store, spawn: Spawn, what: str = LIVE) -> bool:
+        """Lança o `--prepare` (`what`: os modelos do ao vivo ou a busca local, A-08); False quando já há um rodando (nunca
+        dois downloads, nem um de cada) ou o filho não nasceu."""
         if self.running or self._closed:
             return False
-        argv = process.live_prepare_command(store.base_dir)
+        self.what = what if what in WHAT_TEXT else LIVE
+        argv = process.live_prepare_command(store.base_dir, self.what)
         try:
             proc = spawn(argv, process.live_env(1))
         except Exception as e:
-            log.exception("não consegui lançar o preparo dos modelos do ao vivo")
+            log.exception("não consegui lançar o preparo de %s", WHAT_TEXT[self.what])
             self._set({"state": "error", "message": f"não consegui iniciar: {e}"})
             return False
         if proc.stdout is None:
@@ -88,7 +105,7 @@ class ModelPreparer(QObject):
         self.proc = proc
         self.starts += 1
         self._error, self._done = "", False
-        log.info("preparo dos modelos do ao vivo lançado (pid %s): %s", proc.pid, " ".join(argv))
+        log.info("preparo de %s lançado (pid %s): %s", WHAT_TEXT[self.what], proc.pid, " ".join(argv))
         self._set({"state": "running", "model": "", "status": "iniciando…", "fraction": 0.0})
         threading.Thread(target=self._read, args=(proc,), name="live-prepare", daemon=True).start()
         return True
@@ -135,11 +152,11 @@ class ModelPreparer(QObject):
                 self.proc = None
                 code = msg.get("code")
                 if code == 0 and self._done:
-                    log.info("modelos do ao vivo prontos")
+                    log.info("preparo de %s concluído", WHAT_TEXT[self.what])
                     self._set({"state": "done", "fraction": 1.0})
                 else:
                     message = self._error or f"o preparo saiu com código {code}"
-                    log.warning("preparo dos modelos do ao vivo falhou: %s", message)
+                    log.warning("preparo de %s falhou: %s", WHAT_TEXT[self.what], message)
                     self._set({"state": "error", "message": message})
 
     def cancel(self, reason: str) -> bool:
@@ -150,13 +167,13 @@ class ModelPreparer(QObject):
             return False
         with suppress(OSError):
             proc.kill()
-        log.info("preparo dos modelos do ao vivo interrompido: %s", reason)
+        log.info("preparo de %s interrompido: %s", WHAT_TEXT[self.what], reason)
         self._set({"state": "error", "message": reason})
         return True
 
     def _set(self, state: dict[str, Any]) -> None:
-        self.state = state
-        self.changed.emit(dict(state))
+        self.state = {**state, "what": self.what}
+        self.changed.emit(dict(self.state))
 
     def shutdown(self) -> None:
         """O app está saindo: o download não continua órfão e a thread leitora para de emitir."""

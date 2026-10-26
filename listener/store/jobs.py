@@ -11,7 +11,8 @@ F5: o leve pega também o `index` (índice da busca), sempre depois de todo `llm
 outros (`ORDER BY (kind = 'index'), (motivo = 'sweep'), id`): a varredura da abertura enfileira dezenas e nem o `llm` nem o
 `index` da reunião de hoje esperam por elas (F5A-02, R5-08). Um `index` pendente por reunião (`enqueue_index`, F5A-04), com
 espera durável: "não antes de" em `params_json.not_before`, que o claim respeita e cada edição renova (R5-07); a fila e a
-bandeja mostram os `index` agregados (`index_summary`, F5A-05).
+bandeja mostram os `index` agregados (`index_summary`, F5A-05). F5.1 (A-07): `deferred_index_meetings` acha os `index` que
+adiaram os vetores durante a gravação (embedder local), para a varredura completar depois.
 """
 from __future__ import annotations
 
@@ -167,6 +168,15 @@ class JobsRepo:
         rows = self.core.q("SELECT j.meeting_id FROM processing_jobs j WHERE j.kind = ? AND j.status = ? AND j.id = "
                            "(SELECT MAX(k.id) FROM processing_jobs k WHERE k.meeting_id = j.meeting_id AND k.kind = ?) "
                            "ORDER BY j.meeting_id", (JobKind.INDEX, JobStatus.ERROR, JobKind.INDEX))
+        return [int(r[0]) for r in rows]
+
+    def deferred_index_meetings(self) -> list[int]:
+        """F5.1 (A-07): reuniões cujo último `index` concluiu com os vetores adiados pela gravação (`timings_json.index.deferred`,
+        o embedder local com a lease ativa); a varredura as põe na fila de novo, sem exigir modelo confirmado."""
+        rows = self.core.q("SELECT j.meeting_id FROM processing_jobs j WHERE j.kind = ? AND j.status = ? AND j.id = "
+                           "(SELECT MAX(k.id) FROM processing_jobs k WHERE k.meeting_id = j.meeting_id AND k.kind = ?) "
+                           "AND (CASE WHEN json_valid(j.timings_json) THEN json_extract(j.timings_json, '$.index.deferred') END) = 1 "
+                           "ORDER BY j.meeting_id", (JobKind.INDEX, JobStatus.DONE, JobKind.INDEX))
         return [int(r[0]) for r in rows]
 
     def index_summary(self) -> dict[str, int]:

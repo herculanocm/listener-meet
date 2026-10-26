@@ -6,11 +6,15 @@ retentativa (a varredura da próxima abertura tenta de novo). Com os vetores aut
 o FTS, com a nota "vetores automáticos desligados", salvo o pedido forçado (`params_json.force`, "reindexar"). Dentro do
 laço dos lotes só heartbeat e cancelamento, sem bloquear; a pausa manual da fila deixa os lotes no ar terminarem e espera
 fora do laço (R5-04). Não grava `job_start`, `job_step` nem `job_done` em `events`:
-o índice roda a cada edição e encheria a história da reunião; erro e cancelamento continuam lá."""
+o índice roda a cada edição e encheria a história da reunião; erro e cancelamento continuam lá.
+F5.1 (A-06): com o embedder local, a lease da gravação (`pipeline.paused_until`, que só existe com `pause_on_record` ou com
+o ao vivo) adia os vetores antes de cada lote: o job conclui com trechos e FTS, a nota "vetores adiados: gravando" e
+`timings_json.index.deferred`, e a varredura ao parar ou cancelar a gravação completa (A-07). Os pagos não esperam."""
 from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import Any, override
 
 from ..llm.base import LLMProvider
@@ -68,7 +72,8 @@ class IndexJobRunner(BaseJobRunner):
         if self.forced or auto_index_enabled(self.store):
             filled = fill_vectors(self.store, self.meeting_id, provider=self._provider_override, check=self._beat, paused=self._paused,
                                   wait=self.checkpoint,             # a espera da pausa, fora do laço (volta a `rodando` sozinho)
-                                  on_progress=lambda done, total: self._progress(JobStep.INDEX_VECTORS, done / max(1, total)))
+                                  on_progress=lambda done, total: self._progress(JobStep.INDEX_VECTORS, done / max(1, total)),
+                                  defer=self._recording)            # só o local consulta (A-06)
         else:                                                  # vetores automáticos desligados: o FTS já foi; os vetores, não
             key = embedder_status(self.store).model_key
             n = self.store.rag.count_missing(self.meeting_id, key) if key else self.store.rag.count_chunks(self.meeting_id)
@@ -76,7 +81,7 @@ class IndexJobRunner(BaseJobRunner):
         timing = self._timing(JobStep.INDEX_VECTORS, filled.model_key or "")
         timing.wall_s += time.perf_counter() - t0
         self.info.update(model=filled.model_key, wanted=filled.wanted, vectors=filled.written, missing=filled.missing,
-                         calls=filled.calls, cost_usd=round(filled.cost_usd, 6), note=filled.note)
+                         calls=filled.calls, cost_usd=round(filled.cost_usd, 6), note=filled.note, deferred=filled.deferred)
         if filled.note:
             log.info("job index %s (reunião %s): %s", self.job_id, self.meeting_id, filled.note)
         return self._finish_ok()
@@ -95,6 +100,16 @@ class IndexJobRunner(BaseJobRunner):
         self.store.jobs.heartbeat(self.job_id)
         if self.store.jobs.cancel_requested(self.job_id):
             raise JobCancelledError
+
+    def _recording(self) -> bool:
+        """A lease da gravação está de pé (A-06): o `index` não a espera (F5A-19), mas o local adia os vetores por ela."""
+        until = self.store.get_setting("pipeline.paused_until")
+        if not until:
+            return False
+        try:
+            return datetime.fromisoformat(until) > self.now()
+        except ValueError:
+            return False
 
     def _enter(self, step: JobStep) -> None:
         """`_begin_step` sem o evento `job_step` (ver o docstring do módulo)."""

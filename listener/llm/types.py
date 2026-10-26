@@ -59,6 +59,7 @@ class ProviderKind(StrEnum):
     GEMINI = "gemini"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    LOCAL = "local"                # F5.1: só embeddings (e5-small na CPU, `llm/local_embed.py`), sem chave nem custo
 
 
 class EmbedTask(StrEnum):

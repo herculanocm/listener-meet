@@ -32,6 +32,7 @@ ADAPTERS: dict[ProviderKind, tuple[str, str]] = {
     ProviderKind.GEMINI: ("listener.llm.gemini", "GeminiProvider"),
     ProviderKind.OPENAI: ("listener.llm.openai", "OpenAIProvider"),
     ProviderKind.ANTHROPIC: ("listener.llm.anthropic", "AnthropicProvider"),
+    ProviderKind.LOCAL: ("listener.llm.local_embed", "LocalEmbedProvider"),        # F5.1: sem chave nem SSL (A-02)
 }
 RETRY_DELAYS: tuple[float, ...] = (1.0, 3.0, 9.0)
 RETRY_JITTER = 0.3
@@ -102,14 +103,19 @@ def fake_requested() -> bool:
 
 
 def load_provider(kind: ProviderKind | str, api_key: str | None, net: NetworkConfig | None = None, *, provider_id: str | None = None,
-                  params: Mapping[str, Any] | None = None) -> LLMProvider:
-    """Adaptador do provedor por nome (importação preguiçosa) ou o fake (`LISTENER_LLM=fake`). Sem chave: erro permanente."""
+                  params: Mapping[str, Any] | None = None, models_dir: str = "") -> LLMProvider:
+    """Adaptador do provedor por nome (importação preguiçosa) ou o fake (`LISTENER_LLM=fake`). Sem chave: erro permanente.
+    F5.1 (A-02): o `local` não tem chave nem rede (nem proxy, nem certificado); `models_dir` é o `pipeline.models_dir`."""
     kind = ProviderKind(str(kind))
     net = net or NetworkConfig()
     if fake_requested():
         from .fake import FakeProvider
 
         return FakeProvider(kind=kind, provider_id=provider_id or f"fake-{kind}")
+    if kind == ProviderKind.LOCAL:
+        module, cls_name = ADAPTERS[kind]
+        local = getattr(importlib.import_module(module), cls_name)
+        return local(provider_id=provider_id or str(kind), models_dir=models_dir)  # type: ignore[no-any-return]
     if not api_key:
         raise ProviderUnavailableError(f"chave do provedor {provider_id or kind} ausente: informe nas Configurações (LLM)")
     register_proxy_secret(net.proxy_url)
@@ -123,7 +129,7 @@ def load_provider(kind: ProviderKind | str, api_key: str | None, net: NetworkCon
     return getattr(module_obj, cls_name)(api_key, net=net, provider_id=provider_id or str(kind), params=dict(params or {}))  # type: ignore[no-any-return]
 
 
-def provider_from_row(row: Mapping[str, Any], net: NetworkConfig | None = None) -> LLMProvider:
+def provider_from_row(row: Mapping[str, Any], net: NetworkConfig | None = None, *, models_dir: str = "") -> LLMProvider:
     """Linha de `providers` -> adaptador; `params` é JSON opcional (parâmetros extras do provedor)."""
     import json
 
@@ -132,18 +138,21 @@ def provider_from_row(row: Mapping[str, Any], net: NetworkConfig | None = None) 
         params = dict(json.loads(row.get("params") or "{}"))
     except (ValueError, TypeError):
         log.warning("providers.params do %s não é JSON; ignorado", row.get("id"))
-    return load_provider(str(row["kind"]), row.get("api_key"), net, provider_id=str(row["id"]), params=params)
+    return load_provider(str(row["kind"]), row.get("api_key"), net, provider_id=str(row["id"]), params=params, models_dir=models_dir)
 
 
 def build_provider(store: Store, provider_id: str | None = None, *, role: str = "llm",
                    retrying: bool = True) -> tuple[LLMProvider, dict[str, Any]]:
     """Provedor pronto a partir do banco: o `provider_id` pedido (snapshot do job) ou o ativo para o papel (`llm` ou
-    `embed`); a chave é lida agora, nunca copiada para `config_json`. Devolve também a linha, para modelos e preços."""
+    `embed`); a chave é lida agora, nunca copiada para `config_json`. Devolve também a linha, para modelos e preços. O
+    `local` (F5.1) lê a pasta de modelos daqui; os outros, a rede (proxy e certificado)."""
     row = store.providers.get(provider_id) if provider_id else store.providers.active_provider(role)
     if row is None:
         raise ProviderUnavailableError("nenhum provedor de LLM ativo: escolha um nas Configurações (LLM)")
-    net = NetworkConfig.from_store(store)
-    provider = provider_from_row(row, net)
+    if str(row["kind"]) == ProviderKind.LOCAL:
+        provider = provider_from_row(row, models_dir=store.get_setting("pipeline.models_dir"))
+    else:
+        provider = provider_from_row(row, NetworkConfig.from_store(store))
     return (RetryingProvider(provider) if retrying else provider), dict(row)
 
 

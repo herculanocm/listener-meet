@@ -9,6 +9,7 @@ mesmo durante uma gravação; o pesado, ao concluir um job que enfileirou tarefa
 F5: o leve também roda o `index` (despacho por `kind`); com `--once` nenhum worker lança o leve (os testes com subprocesso
 não deixam um worker solto, F5A-16). O leve não sai ocioso enquanto houver `index` esperando o "não antes de" das edições
 (R5-07): a espera é do job, não do app.
+F5.1: no leve, o embedder local calcula com 2 threads (A-03) e o log de abertura traz as versões de onnxruntime e tokenizers.
 """
 from __future__ import annotations
 
@@ -40,7 +41,8 @@ RELEASE_AFTER_S = 10.0
 WORKER_LOG = "listener-worker.log"
 LLM_WORKER_LOG = "listener-llm.log"
 ML_DISTS = ("torch", "ctranslate2", "faster-whisper", "pyannote.audio", "huggingface-hub")
-LLM_DISTS = ("google-genai", "openai", "anthropic", "truststore", "httpx")
+LLM_DISTS = ("google-genai", "openai", "anthropic", "truststore", "httpx", "onnxruntime", "tokenizers")   # F5.1: o embedder local
+LOCAL_EMBED_THREADS = 2              # F5.1 (A-03): o e5 local no worker leve (prioridade baixa); o app usa 1
 
 
 def worker_log_path(store: Store, light: bool = False) -> Path:
@@ -164,6 +166,10 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
     log_versions({"papel": "worker-llm" if light else "worker", "pid": str(os.getpid()), "banco": str(store.base_dir), **versions})
     lower, memory, spawn = _platform_hooks()
     log.info("prioridade baixa: %s", "ok" if lower() else "não aplicada")
+    if light:                                                      # a sessão só abre no primeiro lote do embedder local
+        from ..llm import local_embed
+
+        local_embed.configure(LOCAL_EMBED_THREADS)
     fake = os.environ.get("LISTENER_PIPELINE", "").lower() == "fake"
     kinds = LIGHT_JOB_KINDS if light else HEAVY_JOB_KINDS
     deps: PipelineDeps | None = None

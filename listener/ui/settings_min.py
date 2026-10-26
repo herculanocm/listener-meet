@@ -12,6 +12,10 @@ depois de trocar o modelo e escolher "Depois", completar seria reindexar tudo; s
 "Reindexar tudo…" (com a estimativa de trechos, tokens, US$ e minutos e a confirmação antes);
 trocar o "ativo para embeddings" ou o modelo de embeddings e salvar mostra a mesma estimativa com "Reindexar agora" e
 "Depois" (comportamento 4: os vetores do modelo anterior ficam).
+F5.1: o grupo "Busca" mostra o estado da busca local e "Preparar busca local (135 MB)" com progresso (o mesmo preparador
+do ao vivo, um download por vez; cada grupo mostra o seu, A-08); com o local ativo, os textos falam em minutos nesta máquina
+e sem custo (A-05); terminado o preparo com o local ativo, o controlador oferece "Reindexar agora/Depois"
+(`offer_local_reindex`, A-12).
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
@@ -26,18 +30,50 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 
 from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LIVE_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES,
                                PIPELINE_KEYS, RAG_KEYS, SPECS, validate_setting)
+from ..llm import local_embed
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
-from .live_prepare import ModelPreparer, models_status_text, preparer
+from .live_prepare import LIVE, RAG, ModelPreparer, local_status_text, models_status_text, preparer
 from .providers import ProviderTabs
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
+    from ..rag.index import ReindexEstimate
     from ..store import Store
 
 SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na próxima gravação"}
 REINDEX_TITLE = "Busca por sentido"
+IDLE: dict[str, Any] = {"state": "idle"}
+OTHER_DOWNLOAD = "outro download em curso (um por vez)"
+
+
+def vectors_note(est: ReindexEstimate) -> str:
+    """O que acontece com os vetores: pedidos ao provedor (pago) ou calculados nesta máquina, sem custo (o local, A-05)."""
+    if est.local:
+        return "Os vetores que já existem ficam; só os que faltam são calculados nesta máquina, sem custo."
+    return "Os vetores que já existem ficam; só os que faltam são pedidos ao provedor."
+
+
+def offer_local_reindex(store: Store, parent: QWidget | None, on_launch: Callable[[bool], Any] | None) -> int:
+    """A-12: terminado o preparo da busca local com o local ativo e pronto, "Reindexar agora" ou "Depois" com os minutos
+    (Q3: a varredura não completa sozinha as reuniões antigas no local). Devolve quantos `index` entraram na fila."""
+    from ..rag.index import embedder_status, is_local, reindex_all, reindex_estimate
+
+    status = embedder_status(store)
+    if not status.ready or not is_local(status.model_key):
+        return 0
+    est = reindex_estimate(store)
+    if not est.chunks and not est.without_chunks:
+        return 0
+    text = (f"A busca local está pronta.\n\nReindexar as reuniões nela: {est.text()}.\n\n{vectors_note(est)} A busca por palavra "
+            "segue funcionando enquanto isso.")
+    if not ask_reindex(parent, text, "Reindexar agora", "Depois"):
+        return 0
+    n = reindex_all(store)
+    if n and on_launch is not None:
+        on_launch(True)
+    return n
 
 
 def index_status_text(store: Store) -> str:
@@ -161,14 +197,26 @@ class SettingsDialog(QDialog):
         livef.addRow(prow)
         livef.addRow("Modelos", self.prepare_status)
         lay.addWidget(live)
-        self.preparer.changed.connect(self._on_prepare_changed)
-        self._preparer_connected = True
-        self._on_prepare_changed(self.preparer.state)        # download em curso de uma abertura anterior: segue mostrando
 
-        busca = QGroupBox("Busca (F5: vale já; o índice por palavra é local e grátis, os vetores têm custo)")
+        busca = QGroupBox("Busca (vale já; índice por palavra grátis; vetores com custo só nos pagos)")
         buscaf = QFormLayout(busca)
         for key in RAG_KEYS:
             buscaf.addRow(SPECS[key].label, self._row(key))
+        self.local_btn = QPushButton(f"Preparar busca local ({local_embed.SIZE_MB} MB)")
+        self.local_btn.setToolTip("Baixa para a pasta de modelos o e5-small, a busca por sentido sem custo e sem rede (escolha "
+                                  "Local em \"Ativo para embeddings\", no grupo LLM); fora da gravação.")
+        self.local_btn.clicked.connect(self.prepare_local)
+        self.local_bar = QProgressBar()
+        self.local_bar.setRange(0, 100)
+        self.local_bar.setTextVisible(True)
+        self.local_status = QLabel("")
+        self.local_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.local_status.setWordWrap(True)
+        lrow = QHBoxLayout()
+        lrow.addWidget(self.local_btn)
+        lrow.addWidget(self.local_bar, 1)
+        buscaf.addRow(lrow)
+        buscaf.addRow("Busca local", self.local_status)
         self.index_status = QLabel("")
         self.index_status.setWordWrap(True)
         self.index_status.setStyleSheet("color: #888; font-size: 11px;")
@@ -186,6 +234,9 @@ class SettingsDialog(QDialog):
         buscaf.addRow(brow)
         lay.addWidget(busca)
         self.refresh_index_status()
+        self.preparer.changed.connect(self._on_prepare_changed)
+        self._preparer_connected = True
+        self._on_prepare_changed(self.preparer.state)        # download em curso de uma abertura anterior: segue mostrando
 
         lg = QGroupBox("Log (aplica agora)")
         lgf = QFormLayout(lg)
@@ -264,8 +315,7 @@ class SettingsDialog(QDialog):
 
         est = reindex_estimate(self.store)
         if est.ready and (est.chunks or est.without_chunks):
-            text = (f"Completar o índice da busca?\n\n{est.text()}.\n\nOs vetores que já existem ficam; só os que faltam são pedidos ao "
-                    "provedor.")
+            text = f"Completar o índice da busca?\n\n{est.text()}.\n\n{vectors_note(est)}"
             if not ask_reindex(self, text, "Completar", "Cancelar"):
                 return 0
         n = complete_index(self.store)
@@ -286,8 +336,7 @@ class SettingsDialog(QDialog):
             extra = f"\n\nOs embeddings não estão prontos ({est.reason}): só o índice por palavra é refeito agora."
         else:
             extra = ""
-        text = (f"Refazer o índice de todas as reuniões processadas?\n\n{est.text()}.\n\nOs vetores que já existem ficam; só os que "
-                f"faltam são pedidos ao provedor.{extra}")
+        text = f"Refazer o índice de todas as reuniões processadas?\n\n{est.text()}.\n\n{vectors_note(est)}{extra}"
         if not ask_reindex(self, text, "Reindexar", "Cancelar"):
             return 0
         n = reindex_all(self.store)
@@ -300,13 +349,14 @@ class SettingsDialog(QDialog):
     def offer_reindex(self, before: str | None) -> int:
         """Comportamento 4: o modelo de embeddings ativo mudou (outro provedor ou outro modelo) e está pronto: a estimativa com
         "Reindexar agora" e "Depois"; os vetores do modelo anterior ficam (voltar não custa)."""
-        from ..rag.index import embedder_status, reindex_all, reindex_estimate
+        from ..rag.index import embedder_status, is_local, reindex_all, reindex_estimate
 
         status = embedder_status(self.store)
         if not status.ready or status.model_key is None or status.model_key == before:
             return 0
         est = reindex_estimate(self.store)
-        text = (f"O modelo da busca por sentido agora é {status.model_key}.\n\nReindexar as reuniões neste modelo: {est.text()}."
+        name = "a busca local (e5-small, sem custo)" if is_local(status.model_key) else status.model_key
+        text = (f"O modelo da busca por sentido agora é {name}.\n\nReindexar as reuniões neste modelo: {est.text()}."
                 "\n\nOs vetores do modelo anterior ficam guardados: voltar para ele não custa nada. A busca por palavra segue "
                 "funcionando enquanto isso.")
         if not ask_reindex(self, text, "Reindexar agora", "Depois"):
@@ -317,29 +367,49 @@ class SettingsDialog(QDialog):
             self._launch_light()
         return n
 
-    # ---------------------------------------------------------------- ao vivo (F4)
+    # ---------------------------------------------------------------- ao vivo (F4) e busca local (F5.1)
     def prepare_models(self) -> None:
         if self.recording or self.preparer.running:
             return
         self.preparer.start(self.store, self.platform.spawn_child)
 
+    def prepare_local(self) -> None:
+        """"Preparar busca local (135 MB)" (F5.1 item 3): o e5-small pelo mesmo preparador, um download por vez."""
+        if self.recording or self.preparer.running:
+            return
+        self.preparer.start(self.store, self.platform.spawn_child, RAG)
+
     def _on_prepare_changed(self, state: Any) -> None:
+        """Cada grupo mostra o seu download (A-08): o do outro só desabilita o botão (um por vez no app inteiro)."""
         st = dict(state or {})
+        what = str(st.get("what") or LIVE)
         running = st.get("state") == "running"
-        self.prepare_btn.setEnabled(not running and not self.recording)
-        self.prepare_bar.setVisible(running or st.get("state") == "done")
-        self.prepare_bar.setValue(round(float(st.get("fraction") or 0.0) * 100))
+        self._show_prepare(self.prepare_btn, self.prepare_bar, self.prepare_status, st if what == LIVE else IDLE,
+                           running and what != LIVE, models_status_text)
+        self._show_prepare(self.local_btn, self.local_bar, self.local_status, st if what == RAG else IDLE,
+                           running and what != RAG, local_status_text)
+        if what == RAG and st.get("state") == "done":
+            self.refresh_index_status()                  # a busca local ficou pronta: o estado do índice muda junto
+
+    def _show_prepare(self, btn: QPushButton, bar: QProgressBar, label: QLabel, st: dict[str, Any], other: bool,
+                      status_text: Callable[[Store], str]) -> None:
+        running = st.get("state") == "running"
+        btn.setEnabled(not running and not other and not self.recording)
+        bar.setVisible(running or st.get("state") == "done")
+        bar.setValue(round(float(st.get("fraction") or 0.0) * 100))
         if running:
             model, status = str(st.get("model") or ""), str(st.get("status") or "iniciando…")
-            text = f"{model}: {status}…" if model and status == "baixando" else (f"{model}: {status}" if model else status)
+            text = f"{model}: {status}…" if model and status in ("baixando", "conferindo") else (f"{model}: {status}" if model else status)
         elif st.get("state") == "error":
-            text = f"falhou: {st.get('message') or 'erro'} · {models_status_text(self.store)}"
+            text = f"falhou: {st.get('message') or 'erro'} · {status_text(self.store)}"
         else:
-            text = models_status_text(self.store)
+            text = status_text(self.store)
         if self.recording and not running:
             text += " · prepare depois de parar a gravação"
-            self.prepare_btn.setToolTip("Desabilitado durante a gravação: o download disputaria a CPU e a rede com a reunião.")
-        self.prepare_status.setText(text)
+            btn.setToolTip("Desabilitado durante a gravação: o download disputaria a CPU e a rede com a reunião.")
+        elif other:
+            text += f" · {OTHER_DOWNLOAD}"
+        label.setText(text)
 
     @override
     def done(self, result: int) -> None:

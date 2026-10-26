@@ -35,7 +35,10 @@ disparo, vale em uso: CP8; 0 desliga o automático) venceu e, havendo legendas n
 `llm.partial_task` numa `StreamTask`; "atualizar resumo agora" dispara já. Sem chave ou sem rede: um aviso por gravação e
 nova tentativa no próximo intervalo; no teto do orçamento (Q6), um aviso único e o parcial para nessa reunião. Parar e
 Cancelar param o timer; Cancelar e sair cancelam a chamada em voo (sair espera um pouco por ela); resultado de outra
-gravação só atualiza a janela dela."""
+gravação só atualiza a janela dela.
+F5.1: o embedder local calcula no app com 1 thread (A-03); parar e cancelar a gravação rodam a varredura do índice, que
+completa os vetores que o local adiou durante a gravação (A-07); terminado o preparo da busca local com o local ativo, o
+app oferece "Reindexar agora/Depois" com os minutos (A-12), com as Configurações abertas ou não."""
 from __future__ import annotations
 
 import functools
@@ -55,7 +58,7 @@ from ..capture.recorder import RecordConfig, Recorder
 from ..config.defaults import SPECS
 from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
 from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
-from ..llm import partial_task
+from ..llm import local_embed, partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
@@ -64,7 +67,7 @@ from ..pipeline import review
 from ..platform.common import process
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
-from .live_prepare import preparer, shutdown_preparer
+from .live_prepare import RAG, preparer, shutdown_preparer
 from .meeting import MeetingWindow
 from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
@@ -107,6 +110,7 @@ LIVE_EOF_GRACE_S = 8.0               # ...e transcreve a fila até 8 s depois do
 PARTIAL_TICK_MS = 15_000             # F4 L5: confere se o resumo parcial venceu (o intervalo é relido a cada disparo, CP8)
 PARTIAL_QUIT_WAIT_MS = 2500          # sair do app: espera a chamada cancelada do parcial terminar (cancelamento a cada 0,2 s)
 PREWARM_AUDIO_MS = 2000              # U-031: pré-aquece o áudio do player logo depois da bandeja, com o app ocioso
+APP_LOCAL_THREADS = 1                # F5.1 (A-03): o e5 local no app (vetor da consulta); o worker leve usa 2
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
@@ -243,6 +247,9 @@ class Controller(QObject):
         self._history: HistoryWindow | None = None
         self._notified_meeting: int | None = None
         self._windows_stopped = False
+        # F5.1: as Configurações abertas (pai da pergunta "Reindexar agora/Depois" do fim do preparo da busca local, A-12)
+        self._settings_dialog: SettingsDialog | None = None
+        self._preparer_connected = False
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -270,6 +277,9 @@ class Controller(QObject):
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
         self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
         self._enqueue_leftovers()
+        local_embed.configure(APP_LOCAL_THREADS)              # F5.1 (A-03): a sessão do e5 no app abre só com o Histórico
+        preparer().changed.connect(self._on_preparer_changed)
+        self._preparer_connected = True
         self._start_sweep()
         self._poll_queue()
         self._queue_timer.start()
@@ -326,6 +336,24 @@ class Controller(QObject):
             log.warning("varredura do índice falhou: %s", result)
         elif result:
             self.launch_worker(light=True)
+
+    def _on_preparer_changed(self, state: Any) -> None:
+        """A-12: o preparo da busca local terminou; com o local ativo e pronto e algo a indexar, "Reindexar agora/Depois" com os
+        minutos (Q3: a varredura não completa sozinha). A pergunta sai no próximo giro do laço: as Configurações abertas já
+        mostram "pronta" antes dela (e ela sai sobre elas)."""
+        st = dict(state or {})
+        if not self._quitting and st.get("what") == RAG and st.get("state") == "done":
+            QTimer.singleShot(0, self, self._offer_local_reindex)
+
+    def _offer_local_reindex(self) -> None:
+        if self._quitting:
+            return
+        from .settings_min import offer_local_reindex
+
+        try:
+            offer_local_reindex(self.store, self._settings_dialog, self.launch_worker)
+        except Exception as e:  # a pergunta nunca derruba o app; "Reindexar tudo…" segue nas Configurações
+            log.warning("não ofereci reindexar na busca local: %s", e)
 
     def on_edited(self, meeting_id: int, reason: str = "edit", *, now: bool = False) -> None:
         """Uma edição que muda a busca (falantes, título, ata, executivo, ações): o `index` da reunião entra na fila já, com
@@ -440,8 +468,9 @@ class Controller(QObject):
         self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
         self._marked_items = set()
         prep = preparer()
+        what = "da busca local" if prep.what == RAG else "dos modelos do ao vivo"
         if prep.running and prep.cancel(PREPARE_INTERRUPTED):   # F4 item 10: o download não disputa a rede com a reunião
-            self.notify(f"Download dos modelos do ao vivo {PREPARE_INTERRUPTED}.")
+            self.notify(f"Download {what} {PREPARE_INTERRUPTED}.")
         try:
             self._start_live(rec, fields)
         except Exception:                                # o ao vivo nunca impede a gravação
@@ -562,6 +591,7 @@ class Controller(QObject):
         self._clear_lease()
         self._enqueue_processing(rec.meeting_id)
         if not self._quitting:
+            self._start_sweep()                          # F5.1 (A-07): os vetores que o local adiou durante a gravação
             SummaryDialog(self.store, rec.meeting_id, stats, on_edited=self.on_edited).exec()
 
     def cancel_recording(self) -> None:
@@ -582,6 +612,8 @@ class Controller(QObject):
         log.info("gravação %s cancelada pelo usuário", rec.meeting_id)
         self._finish(rec)
         self._clear_lease()
+        if not self._quitting:
+            self._start_sweep()                          # F5.1 (A-07): os vetores que o local adiou durante a gravação
 
     def emergency_stop(self) -> None:
         """Logoff, desligamento ou `quit()` por fora: para e salva sem diálogo (M-05); o resumo fica para a próxima vez."""
@@ -609,6 +641,10 @@ class Controller(QObject):
             self.platform.hotkeys().stop()
         except Exception as e:
             log.debug("parar atalhos: %s", e)
+        if self._preparer_connected:
+            self._preparer_connected = False
+            with suppress(RuntimeError, TypeError):
+                preparer().changed.disconnect(self._on_preparer_changed)
         shutdown_preparer()                              # F4: o download dos modelos não segue órfão
         self._wait_partials()                            # a chamada do parcial em voo é cancelada antes de o banco fechar
         self._stop_sweeps()                              # F5: a varredura usa o banco numa QThread; termina antes do close
@@ -1429,7 +1465,11 @@ class Controller(QObject):
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
                              recording=self.recorder is not None)
-        accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        self._settings_dialog = dlg
+        try:
+            accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._settings_dialog = None
         dlg.deleteLater()
         if accepted:
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)

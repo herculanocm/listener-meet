@@ -1,6 +1,9 @@
 """Provedores de LLM (`providers`, CP10: chave em texto aberto no SQLite; F3 item 12). A linha `huggingface` da F2 continua
 aqui, fora das sub-abas (`LLM_KINDS`). `update_provider` tem lista branca (padrão de `update_cluster`); `set_active`
-troca o ativo numa só instrução; `active_provider(role)` devolve o ativo para texto ou embeddings."""
+troca o ativo numa só instrução; `active_provider(role)` devolve o ativo para texto ou embeddings.
+F5.1 (A-01): a linha `local` (embeddings na CPU, sem chave) só vale para o papel `embed`; nasce por `INSERT OR IGNORE`
+(`ensure_local`, dado e não esquema) só no caminho de escrita (as Configurações), nunca numa leitura (o `--check` abre só
+leitura); `set_role` faz um único `UPDATE` do papel, que escolhe um provedor ou zera o papel."""
 from __future__ import annotations
 
 import json
@@ -9,9 +12,11 @@ from typing import Any, TypedDict, cast
 from .core import Core, _now
 
 LLM_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic")
+LOCAL_ID = "local"                                    # F5.1: o id e o tipo da linha do embedder local
 PROVIDER_FIELDS = frozenset({"api_key", "model", "params", "fast_model", "strong_model", "models_json", "tested_at", "latency_ms",
                              "base_url"})
 ROLES = {"llm": "is_active_llm", "embed": "is_active_embed"}
+ROLE_KINDS: dict[str, tuple[str, ...]] = {"llm": LLM_KINDS, "embed": (*LLM_KINDS, LOCAL_ID)}
 
 
 class ProviderRow(TypedDict, total=False):
@@ -72,9 +77,23 @@ class ProvidersRepo:
                 else:
                     self.core.execute(f"UPDATE providers SET {col} = 0 WHERE id = ?", (provider_id,))  # noqa: S608
 
-    def active_provider(self, role: str = "llm") -> ProviderRow | None:
+    def set_role(self, role: str, provider_id: str | None) -> None:
+        """O ativo do papel numa instrução só (A-01): `provider_id` passa a ser o único ativo; None (ou vazio) zera o papel."""
         col = ROLES[role]
-        rows = self.core.q(f"SELECT * FROM providers WHERE {col} = 1 AND kind IN (?, ?, ?) ORDER BY id LIMIT 1", LLM_KINDS)  # noqa: S608
+        if provider_id:
+            self.core.execute(f"UPDATE providers SET {col} = (id = ?)", (provider_id,))  # noqa: S608
+        else:
+            self.core.execute(f"UPDATE providers SET {col} = 0 WHERE {col} != 0")  # noqa: S608
+
+    def ensure_local(self) -> None:
+        """A linha `local` (F5.1, A-01), criada só quando o usuário escolhe o embedder local (sem migração: é dado)."""
+        self.core.execute("INSERT OR IGNORE INTO providers(id, kind, updated_at) VALUES (?, ?, ?)", (LOCAL_ID, LOCAL_ID, _now()))
+
+    def active_provider(self, role: str = "llm") -> ProviderRow | None:
+        """O ativo do papel entre os tipos que o papel aceita (o `local` só para `embed`)."""
+        col, kinds = ROLES[role], ROLE_KINDS[role]
+        rows = self.core.q(f"SELECT * FROM providers WHERE {col} = 1 AND kind IN ({','.join('?' * len(kinds))}) "  # noqa: S608
+                           "ORDER BY id LIMIT 1", kinds)
         return cast(ProviderRow, dict(rows[0])) if rows else None
 
     def active_with_key(self, role: str = "llm") -> ProviderRow | None:

@@ -33,9 +33,10 @@ def live_command(db_dir: str | Path, meeting_id: int) -> list[str]:
     return [sys.executable, "-m", "listener", *flags]
 
 
-def live_prepare_command(db_dir: str | Path | None = None) -> list[str]:
-    """`--live --prepare [--db DIR]`: baixa `small` e `base` fora da gravação, com progresso em linhas JSON no stdout."""
-    flags = [LIVE_FLAG, "--prepare", *(("--db", str(db_dir)) if db_dir else ())]
+def live_prepare_command(db_dir: str | Path | None = None, what: str = "live") -> list[str]:
+    """`--live --prepare [--what rag] [--db DIR]`: baixa `small` e `base` (o padrão, `live`) ou o e5-small da busca local
+    (`rag`, F5.1 A-08) fora da gravação, com progresso em linhas JSON no stdout."""
+    flags = [LIVE_FLAG, "--prepare", *(("--what", what) if what != "live" else ()), *(("--db", str(db_dir)) if db_dir else ())]
     if getattr(sys, "frozen", False):
         return [sys.executable, *flags]
     return [sys.executable, "-m", "listener", *flags]

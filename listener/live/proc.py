@@ -29,7 +29,9 @@ cruzada de `capture.align`) e sem fala própria (L com sinal onde R está em sil
 vazando no microfone: sai antes da transcrição (a legenda de R já cobre); misturada com fala própria, fica.
 
 `--prepare` baixa `small` e `base` para `<pasta de modelos>/faster-whisper-<modelo>` (a mesma pasta da F2) com progresso
-em linhas JSON e sai com 0 ou 1.
+em linhas JSON e sai com 0 ou 1. F5.1 (A-08, A-09): `--prepare --what rag` baixa o e5-small da busca local
+(`llm/local_embed.py`) para `<pasta de modelos>/multilingual-e5-small/`, com o `HF_HOME` na pasta de modelos e a telemetria
+do Hugging Face desligada antes de importar o hub; confere o sha256 e grava a marca `.ready`.
 """
 from __future__ import annotations
 
@@ -1009,10 +1011,13 @@ def _emit(out: BinaryIO, msg: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------- --prepare
-def prepare(db_dir: Path | None, out: BinaryIO) -> int:
+PREPARE_WHAT = ("live", "rag")
+
+
+def prepare(db_dir: Path | None, out: BinaryIO, what: str = "live") -> int:
     """Baixa os modelos do ao vivo que faltam (`small` e `base`), com uma linha JSON por passo:
     `{"type": "progress", "model", "status": "baixando" | "pronto", "fraction"}`, `{"type": "error", "model", "message"}`
-    (sai com 1) e `{"type": "done", "models_dir"}` (sai com 0)."""
+    (sai com 1) e `{"type": "done", "models_dir"}` (sai com 0). `what = "rag"`: o e5-small da busca local (F5.1)."""
     setting = ""
     if db_dir is not None and (db_dir / MAIN_FILE).exists():
         try:
@@ -1022,6 +1027,8 @@ def prepare(db_dir: Path | None, out: BinaryIO) -> int:
                     attach_file(live_log_path(store), store.get_setting("log.level"))
         except Exception as e:
             log.warning("não li a pasta de modelos do banco em %s: %s; usando a padrão", db_dir, e)
+    if what == "rag":
+        return prepare_rag(setting, out)
     target = live_models_dir(setting)
     total = len(LIVE_MODELS)
     fake = is_fake()
@@ -1051,6 +1058,27 @@ def prepare(db_dir: Path | None, out: BinaryIO) -> int:
         _emit(out, {"type": "progress", "model": model, "status": "pronto", "fraction": round((i + 1) / total, 3)})
     _emit(out, {"type": "done", "models_dir": str(target)})
     return 0
+
+
+def prepare_rag(models_dir_setting: str, out: BinaryIO) -> int:
+    """`--what rag` (F5.1, A-09): o e5-small na revisão fixada, conferido pelo sha256, e a marca `.ready` no fim
+    (`local_embed.prepare`); arquivo presente só é conferido. O fake (`LISTENER_LIVE=fake`) não baixa nem escreve nada."""
+    from ..llm import local_embed
+
+    folder = local_embed.model_dir(models_dir_setting)
+    if is_fake():
+        names = list(local_embed.FILES)
+        for i, name in enumerate(names):
+            _emit(out, {"type": "progress", "model": local_embed.LABELS.get(name, name), "status": "pronto",
+                        "fraction": round((i + 1) / len(names), 3)})
+        _emit(out, {"type": "done", "models_dir": str(folder)})
+        return 0
+    # antes de importar o hub (lido na importação): o cache e o token dele ficam na pasta de modelos, sem telemetria
+    os.environ.update({"HF_HOME": str(folder.parent / "hf"), "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1"})
+    code = local_embed.prepare(folder, lambda msg: _emit(out, msg))
+    if code == 0:
+        _emit(out, {"type": "done", "models_dir": str(folder)})
+    return code
 
 
 # ---------------------------------------------------------------- entrada
@@ -1085,11 +1113,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", help="pasta do banco (padrão: o ponteiro da configuração do sistema)")
     ap.add_argument("--meeting", type=int, help="reunião em gravação")
     ap.add_argument("--prepare", action="store_true", help="baixa os modelos do ao vivo (small e base) e sai")
+    ap.add_argument("--what", choices=PREPARE_WHAT, default="live",
+                    help="com --prepare: live (small e base, o padrão) ou rag (o e5-small da busca local, F5.1)")
     args = ap.parse_args(argv)
     db_dir = Path(args.db) if args.db else bootstrap.read_db_dir(paths.config_dir())
     setup("INFO")
     if args.prepare:
-        return prepare(db_dir, sys.stdout.buffer)
+        return prepare(db_dir, sys.stdout.buffer, args.what)
     if db_dir is None or args.meeting is None:
         print("live: informe --db DIR e --meeting ID", file=sys.stderr)  # noqa: T201
         return 2

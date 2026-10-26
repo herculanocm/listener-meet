@@ -10,7 +10,8 @@ palavras" e o motivo. As linhas voltam prontas para a tela: reunião, título, d
 parte no log.
 
 O vetor da consulta (`embed_query`) vem do embedder ativo (`rag.index.embedder_status`) com `task = query`, normalizado, numa
-linha de `llm_calls` com reunião nula e `task = rag_embed`, e passa por um cache LRU por (modelo, texto) no processo. É
+linha de `llm_calls` com reunião nula e `task = rag_embed` (custo 0 no local da F5.1, calculado nesta máquina, com o tempo no
+log), e passa por um cache LRU por (modelo, texto) no processo. É
 síncrono (`run_async`, até `QUERY_TIMEOUT_S`): a tela chama numa `Task` (no Enter ou 600 ms depois de parar de digitar) e
 entrega o resultado a `search`, que só lê o banco e também roda numa `Task`; `should_stop` (a saída do app, o chat
 cancelado) cancela a chamada presa na rede em até `POLL_S` (R7-03). As assinaturas ficam num `SignatureCache` por banco e
@@ -328,8 +329,13 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None,
         _record(store, pid, model, 0, None, _ms(t0), LlmCallStatus.ERROR, reason)
         log.warning("vetor da consulta indisponível: %s", reason)
         return QueryVector(None, status.model_key, reason)
-    cost = cost_usd(emb.usage, price_for(store.providers.list_prices(kind), kind, model))
-    _record(store, pid, model, emb.usage.input_tokens, cost, _ms(t0), LlmCallStatus.OK, None)
+    if kind == index.LOCAL:                                   # F5.1: sem custo (A-04)
+        cost: float | None = 0.0
+    else:
+        cost = cost_usd(emb.usage, price_for(store.providers.list_prices(kind), kind, model))
+    elapsed = _ms(t0)
+    _record(store, pid, model, emb.usage.input_tokens, cost, elapsed, LlmCallStatus.OK, None)
+    log.info("vetor da consulta (%s) em %.0f ms", status.model_key, elapsed)    # A-11: com o local, a carga da sessão vem no log dela
     vec.setflags(write=False)
     with _QUERY_LOCK:
         _QUERY_CACHE[key] = vec
