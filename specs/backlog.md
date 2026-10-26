@@ -2,23 +2,28 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (26/10/2026, no Windows nativo; tudo commitado; push do dono)
-- **F5 implementada** (D-047): L0 a L5 e as correções das revisões R5 a R8 (as últimas `af2ea3d` e `6e0f235`, mais a
-  corrida do worker leve `9e95f60`); desvios e decisões na seção Implementação de `features/F5-rag-historico.md`. A F5.1
-  (embeddings locais, linha do tempo, destaque contínuo, .docx) vem depois, em entrega própria.
-- **Próximo passo, comece aqui:** a parte de "Verificar no Windows" (abaixo) que é do dono. Pedido dele (25/10): a LLM
-  roda tudo o que não depende dele e ele executa o resto no fim (chaves, reuniões reais, olhar e usar a interface). A
-  parte sem o dono terminou em 25/10 (itens 1 e 2 inteiros; 3, 7 e 8 no que não dependia dele); em cada item, "Com o
-  dono" diz o que falta.
-- **Respostas do dono (26/10, D-049): tudo nos padrões.** U-030 a U-033 implementadas (aviso do `.md` aberto em outro
-  programa, áudio pré-aquecido, vírgula decimal, warm-up); worktree e branch do agente do R7 removidos; o venv do F0 fica
-  até o item 5 decidir onde fica o `[pipeline]`.
-- **Depois da parte do dono:** a F5.1 (aprovada na D-047: embeddings locais com ONNX Runtime, linha do tempo U-008,
-  destaque contínuo U-025, .docx) é a próxima entrega; traz dependências novas (extras `local` e `docx`) e um L0 que
-  mede o e5 int8 contra fp32 no Linux e no Windows: confirmar com o dono antes de começar (CP13).
+## Onde paramos (26/10/2026, sessão encerrada no Windows nativo; tudo commitado; push do dono)
+- **Feito em 25 e 26/10, no Windows:** o R7 e o R8 da F5 (`af2ea3d`, `6e0f235`) e o fechamento (**F5 implementada**,
+  `b21d675`); a parte de "Verificar no Windows" que não depende do dono (itens 1 e 2 inteiros; 3, 7 e 8 no que não
+  dependia dele), com seis defeitos corrigidos; U-030 a U-033 implementadas (D-049: "Ok pra tudo"); worktree do agente
+  removido; o venv do F0 fica até o item 5 decidir onde fica o `[pipeline]`.
+- **Próximo passo, comece aqui:** a parte do dono em "Verificar no Windows", nesta ordem: (1) usar o app no perfil real
+  (item 3: assistente, gravação curta com o OK dele, fila, revisão, Configurações, o segundo monitor); (2) chave do
+  Gemini (B13: item 6 e o que pede rede no 8); (3) token do Hugging Face e `pip install -e .[pipeline]` no `.venv` do
+  checkout (B4: itens 5 e 7); (4) três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a
+  G5. Em cada item, "Com o dono" diz o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
+  e o acompanha no resto (lê o log, corrige o que aparecer, mede e anota).
+- **Pergunta em aberto (26/10, ainda sem resposta):** começar a F5.1 (aprovada na D-047: embeddings locais com ONNX
+  Runtime, linha do tempo U-008, destaque contínuo U-025, .docx) em paralelo à lista do dono, com a metade Windows do L0
+  (e5 int8 contra fp32) aqui e a do Linux depois? Traz dependências novas (`onnxruntime` e `tokenizers` no extra `local`,
+  `python-docx` no `docx`) e baixa o e5-small: só com o "sim" explícito dele (CP13). Padrão proposto: sim.
+- **Sondas do Windows de 25 e 26/10 fora do git** (ficaram na pasta temporária da sessão do Claude Code e somem): o app
+  real num perfil isolado (abertura, RAM, CPU parado, atalho do Histórico, saída), as telas capturadas no DPI real
+  fora da área visível, o player no dispositivo real tocando silêncio (buracos, pausa, primeiro som), o `.md` com o destino
+  travado e copiar e sair. Os resultados estão em `decisoes.md` (Medições) e o método em `memory/maquina.md`; para
+  repetir, propor ao dono incluí-las em `scripts/` (CP13).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
-  `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`.
-- **Com o dono, no Windows:** B1, B2, B4, B13, B15 e os gates G1 a G5. Toda sessão começa verificando o ambiente (D-045,
+  `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
@@ -30,9 +35,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   Whisper, pyannote (F2 L5), os três adaptadores de LLM e o processo ao vivo real foram escritos às cegas, contra
   transporte simulado ou num venv à parte sem torch: só rodam de verdade no Windows com o token do Hugging Face (B4) e a
   chave do Gemini (B13).
-- Git: commits de 24/10 a 25/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 e F5 em
-  lotes, ajustes e revisões); branch `main`; remoto `origin` público no GitHub (o dono faz o push; em 25/10 à noite o
-  checkout do Windows estava igual ao `origin/main`, em `45a4f3d`); sem stash. Commit a cada grande alteração (CP16).
+- Git: commits de 24/10 a 26/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 e F5 em
+  lotes, ajustes, revisões e a verificação no Windows); só o branch `main`; remoto `origin` público no GitHub (o dono faz
+  o push; em 26/10 o `main` do checkout do Windows, `C:\dev\listener-meet`, estava 11 commits à frente do `origin/main`,
+  de `3248e05` em diante); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 implementada** (D-047; o item 8 e o G5
@@ -41,18 +47,20 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
    da tarefa.
-2. Testes: `python -m pytest -q` e `ruff check .` (qualquer sistema). No Windows nativo, antes: "Verificar no Windows".
+2. Testes: `python -m pytest -q` e `ruff check .` (qualquer sistema; no Windows, pelo venv do checkout:
+   `.venv\Scripts\python.exe -m pytest -q`, `.venv\Scripts\ruff.exe check .` e `.venv\Scripts\mypy.exe`, também com
+   `--platform linux`). No Windows nativo, antes: "Verificar no Windows".
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Bloqueios que só o dono destrava
 | # | O quê | Destrava |
 | --- | --- | --- |
-| B1 | no Windows: `pip install -e .[dev,win32,llm]`, `python -m listener --selftest`, depois `python -m listener`: assistente (com a página de log), gravação, fila, revisão e Configurações › LLM; dizer o que está estranho | verifica F1.1, F1.2, a parte da F2 sem modelos e a F3 sem chave; a interface nunca foi vista num monitor |
+| B1 | no Windows (venv, selftest e as telas a 150 % feitos pela LLM em 25/10): `python -m listener` no perfil real: assistente (com a página de log), gravação, fila, revisão e Configurações › LLM; dizer o que está estranho | verifica F1.1, F1.2, a parte da F2 sem modelos e a F3 sem chave pelo uso de verdade |
 | B2 | gate G1: 3 reuniões reais com headset em 2 plataformas; `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
 | B4 | token do Hugging Face colado nas Configurações (provedor `huggingface`), com os termos do community-1 e do wespeaker aceitos; `pip install -e .[pipeline]` no venv do Windows | L5 da F2 (Whisper e pyannote reais), medição do pyannote, sonda Q8 e o G2 |
 | B5 | gravação real de ~1 h com headset (ou as do G1) | medições reais de Whisper e pyannote |
 | B13 | chave do Gemini (plano pago) colada em Configurações › LLM › Gemini e "testar conexão" ok | adaptadores reais, canário dos esquemas, latências e preços, G3 |
-| B15 | no Windows: `python scripts/live_probe.py all <gravação real>` (L0 da F4; com `HF_TOKEN` para o torch) e colar as linhas JSON; depois do B1, "Preparar modelos do ao vivo" nas Configurações e uma gravação com a legenda ligada | números do Whisper, do VAD e do torch no Windows; o filho real, o EcoQoS e a ordem de carga torch/CTranslate2; abre o G4 |
+| B15 | no Windows (sem token, a LLM mediu Whisper, VAD e `import torch` em 25/10 e baixou `small` e `base` na pasta do app): `python scripts/live_probe.py all <gravação real>` com `HF_TOKEN` (o embedding do wespeaker) e uma gravação com a legenda ligada | o filho real, o EcoQoS, a ordem de carga torch/CTranslate2 e os nomes ao vivo; abre o G4 |
 
 Fechados: B3 (F2 aprovada, D-036) · B6 (primeiro commit) · B7 (MIT, D-034) · B8 (F1.1 aprovada, D-035) · B9 (compactação,
 D-031) · B10 (F1.2 aprovada em bloco, D-039) · B11 (F2 reaprovada, D-041) · B12 (F3 aprovada, D-043) · B14 (F4 aprovada,
