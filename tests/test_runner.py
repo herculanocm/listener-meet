@@ -277,7 +277,8 @@ def test_app_modules_do_not_import_models():
 
     assert runner_mod.__name__ == "listener.pipeline.runner" and controller_mod.__name__ == "listener.ui.controller"
     heavy = {"torch", "faster_whisper", "pyannote", "pyannote.audio", "ctranslate2", "listener.pipeline.whisper",
-             "listener.pipeline.pyannote", "listener.pipeline.models"}
+             "listener.pipeline.pyannote", "listener.pipeline.models",
+             "onnxruntime", "tokenizers"}           # F5.1 (A-13); `docx` não: os testes de exportação o importam de propósito
     assert not (heavy & set(sys.modules)), sorted(heavy & set(sys.modules))
 
 
