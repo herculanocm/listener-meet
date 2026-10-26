@@ -36,7 +36,8 @@ Tudo no primeiro grupo das Configurações, "Chaves de acesso" (U-037), com o li
       "ok: <modelo> respondeu em N ms".
 - [ ] Salvar. No grupo "LLM", mais abaixo, confira "Ativo para texto" e "Ativo para embeddings" no Gemini (a Parte 6
       troca para o Local). No warm-up, o aviso laranja acima do "Gravar" some quando nada falta.
-- [ ] A gravação do primeiro teste (26/10) parou sem o token: Fila de processamento › selecione › "Tentar de novo".
+- [ ] Se a gravação do primeiro teste (26/10) ainda estiver no banco: Fila de processamento › selecione › "Tentar de
+      novo". Se o banco foi apagado, a Parte 3 grava outra.
 - Devolva: o texto do "Testar conexão".
 
 ## Parte 3 — Gravação curta de ponta a ponta (25 min; B1, F2, F3)

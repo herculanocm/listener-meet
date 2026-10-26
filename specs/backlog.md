@@ -8,8 +8,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   e situações de borda) e devolve o que cada parte pede; a LLM registra os números em `decisoes.md`, marca aqui e
   corrige o que aparecer (pedido do dono, 25/10: a LLM roda sozinha o que não depende dele e o acompanha no resto). Sem
   o dono, o próximo trabalho depende da pergunta 7 abaixo. **Em 26/10 o dono fez a Parte 1 e gravou a Parte 3 sem as
-  chaves (D-053):** segue pela Parte 2, agora no grupo "Chaves de acesso", com "Tentar de novo" na gravação daquele
-  teste, e refaz a Parte 3 numa chamada de verdade.
+  chaves (D-053):** segue pela Parte 2, agora no grupo "Chaves de acesso", e refaz a Parte 3 numa chamada de verdade. A
+  pasta do banco daquele teste (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 de 26/10, fora da Lixeira e sem
+  nenhum processo da LLM nela (os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`): perguntar ao dono.
 - **Concluído em 25 e 26/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
   - [x] F5: R7 e R8 e o fechamento (**F5 implementada**: `af2ea3d`, `6e0f235`, `b21d675`).
   - [x] "Verificar no Windows" sem o dono: itens 1 e 2 inteiros e a parte sem o dono dos itens 3, 5, 7, 8 e 9, com seis
