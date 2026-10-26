@@ -36,6 +36,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   - [x] D-055, do segundo teste do dono: o canal R do Teams (a captura soma a raiz do app com as sessões mais fundas;
         U-040), a revisão sem abrir sozinha quando não há voz a confirmar (U-039) e o Gemini 3 nos padrões (o 2.5 deu
         404 para conta nova). Falta a prova com uma chamada de verdade no Teams (roteiro, parte 3).
+  - [x] D-056, do terceiro teste do dono: as janelas pretas eram os workers (o lançador do venv com `DETACHED_PROCESS`
+        dava ao interpretador um console visível no Windows Terminal); o worker nasce sem janela e continua vivo depois
+        do app. Também: o custo do Gemini 3 pela família de preço (saía nulo) e o nome da pessoa e o texto falado fora
+        do log.
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -47,15 +51,16 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   7. Próximo passo sem o dono: detalhar a spec da F6 e passá-la pela revisão de arquitetura para ele aprovar (sim).
   8. Sem o token do Hugging Face, transcrever mesmo assim, sem saber quem fala no R (o L é você), em vez de o
      processamento não sair (sim; muda o comportamento da F2, vai para uma spec).
-  9. O worker morreu duas vezes no job da reunião 2 (26/10, 15:35 e 15:36) sem queda registrada, e o app fechou depois
-     sem o "app encerrado": algum python.exe foi fechado no Gerenciador de Tarefas? (se não, investigar o antivírus/EDR).
-  10. Quais janelas ainda sobem por cima de outras, além da revisão (resolvida no U-039)? (padrão: nenhuma outra muda).
+  9. As janelas pretas eram os workers (D-056), e fechar uma delas no X mata o worker sem rastro (medido). Foi isso nas
+     quedas do job da reunião 2 (26/10, 15:35 e 15:36) e na do terceiro teste (17:27:55)? E o app que fechou sem o "app
+     encerrado": foi o terminal dele que se fechou? (padrão: sim aos dois; se não, investigar o antivírus/EDR).
+  10. Além das janelas pretas (D-056) e da revisão (U-039), alguma outra janela ainda sobe por cima? (padrão: nenhuma).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 458 testes mais 7 pulados no Windows com
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 460 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
@@ -169,6 +174,9 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   processo novo do app que comece a tocar no meio da gravação, mais fundo que filho direto da raiz, fica de fora até a
   próxima abertura (reabrir a fonte no widget resolve); (c) o "Windows fatal exception: code 0x8001010d" no log é o
   faulthandler registrando uma exceção COM já tratada (o app segue): ruído, não queda.
+- D-056: dois workers leves podem nascer no mesmo segundo (o pesado, ao terminar, e o polling do app lançam cada um o
+  seu, e o intervalo de 60 s entre lançamentos vale por processo): o segundo não acha job e sai ocioso em 60 s.
+  Inofensivo (o claim é atômico); custa um processo a mais. Resolver com uma marca de lançamento no banco, se valer.
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · deriva por canal e

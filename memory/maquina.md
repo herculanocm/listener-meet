@@ -65,6 +65,10 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   os filhos diretos, não os netos (medido em 26/10 com um tom num neto). O Teams novo daqui: ms-teams.exe raiz, um
   ms-teams.exe filho com uma sessão de áudio e um msedgewebview2.exe filho cujo filho tem a outra; WhatsApp e Outlook
   novo também rodam em WebView2. A captura do app soma a raiz com as sessões mais fundas (D-055).
+- O terminal padrão é o Windows Terminal (26/10): um processo de console que nasce sem console para herdar (o
+  interpretador que o lançador do venv cria, quando o lançador veio com `DETACHED_PROCESS`) abre uma janela dele, preta
+  e vazia com a saída em DEVNULL; fechá-la no X encerra o processo com 0xC000013A, sem log. Só `CREATE_NO_WINDOW` dá ao
+  lançador um console sem janela, que o neto herda (D-056).
 - Word 16 (Office) instalado: dá para conferir um .docx sem o dono pelo COM do PowerShell (instância nova e oculta,
   `[ref]` nos parâmetros por referência no 5.1, fechar sem salvar e conferir que nenhum WINWORD novo sobrou). Arquivo
   aberto no Word: `os.replace` sobre ele dá WinError 5 (26/10).

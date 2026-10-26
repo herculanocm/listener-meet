@@ -58,7 +58,8 @@ falando, escolha "Sistema inteiro" e me avise.
       canais, a saúde "ok" e a legenda ao vivo (ligada por padrão nesta máquina).
 - [ ] Parar (`Ctrl+Alt+Shift+S`): o resumo da gravação abre; a Fila mostra o job andando. Esperado: transcrição, quem
       fala (o primeiro job baixa os modelos do pyannote uma vez) e depois a LLM (ata, título, resumo); um balão do
-      Windows avisa ao terminar. Anote quanto tempo levou.
+      Windows avisa ao terminar. Anote quanto tempo levou. Desde o D-056 nenhuma janela preta (terminal) aparece
+      enquanto a fila processa; se aparecer uma, não a feche (fechar mata o processamento): anote a hora e me avise.
 - [ ] "Revisar falantes…": confirme as vozes (o trecho toca). Depois, o nome certo nas falas.
 - Devolva: o tempo do job; o que a revisão errou; o `listener-worker.log` e o `listener-llm.log` (têm o tempo e a RAM de
   cada etapa, a sonda Q8 e o canário da LLM; se aparecer "OMP: Error #15", diga).

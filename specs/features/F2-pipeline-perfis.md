@@ -32,8 +32,8 @@ nesta fase (Q6) · fila pausa em gravação (Q7) · embeddings do pipeline se ex
    finished_at, timings_json). Criado em `Controller._on_stopped` com a reunião já `gravada`. O app lança o worker só se há
    `pendente`, nenhum `rodando` com heartbeat fresco e o `Popen` anterior terminou; comando único `worker_command()` →
    `[sys.executable, "-m", "listener", "--worker"]` (ou `[sys.executable, "--worker"]` congelado); flag `--worker [--db DIR]
-   [--once]` em `__main__.py`. `Platform.spawn_detached(argv, env)` (win32: `CREATE_NO_WINDOW | DETACHED_PROCESS |
-   BELOW_NORMAL_PRIORITY_CLASS`; posix: `start_new_session`) e `Platform.lower_own_priority()` (win32: `SetPriorityClass`;
+   [--once]` em `__main__.py`. `Platform.spawn_detached(argv, env)` (win32: `CREATE_NO_WINDOW |
+   BELOW_NORMAL_PRIORITY_CLASS`, sem `DETACHED_PROCESS` desde a D-056; posix: `start_new_session`) e `Platform.lower_own_priority()` (win32: `SetPriorityClass`;
    posix: `os.nice(10)`), implementação portável em `platform/common/process.py`; nunca `preexec_fn`. Claim atômico numa só
    transação: devolve a `pendente` (`attempts + 1`) todo `rodando` com `heartbeat_at` vencido há mais de 60 s; pega o
    primeiro `pendente` com `attempts < 3` se não houver `rodando` fresco; `UPDATE ... RETURNING id, meeting_id, kind` em
@@ -234,5 +234,5 @@ própria, para um banco já em v4 ganhá-las. Desvio de spec decidido pelo dono:
 áudio; suíte de 128 testes em 4,1 s (85 em 3,1 s antes), ruff e mypy limpos (Linux e `--platform win32`). Só o Windows
 com token (B4) verifica: carga e RTF do faster-whisper e do pyannote community-1, `speaker_embeddings` e o id do modelo
 de embedding (Q8, logado na primeira execução), wespeaker por turno, download com `HF_HOME` sem symlink, erros
-permanentes reais (termos não aceitos, token inválido, sem rede), `CREATE_NO_WINDOW | DETACHED_PROCESS |
-BELOW_NORMAL_PRIORITY_CLASS`, `SetPriorityClass`, `GetProcessMemoryInfo`, o worker vivo após fechar o app (P2) e o G2.
+permanentes reais (termos não aceitos, token inválido, sem rede), `CREATE_NO_WINDOW |
+BELOW_NORMAL_PRIORITY_CLASS` (sem `DETACHED_PROCESS`, D-056), `SetPriorityClass`, `GetProcessMemoryInfo`, o worker vivo após fechar o app (P2) e o G2.
