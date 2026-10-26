@@ -45,6 +45,7 @@ def test_worker_process_runs_one_job_with_own_log_and_low_priority():
     assert not app_log.exists() or "papel worker" not in app_log.read_text(encoding="utf-8")       # log próprio, não o do app
 
 
+@pytest.mark.skipif(conftest.pipeline_installed(), reason="com o extra pipeline o worker real processaria de verdade (baixaria modelos)")
 def test_worker_without_the_pipeline_extra_fails_permanently_with_a_clear_message():
     """R2-27: `--worker` sem LISTENER_PIPELINE=fake nesta máquina (sem torch): erro permanente, attempts 0, sem traceback."""
     run = conftest.WORKER_RUN.get("real")

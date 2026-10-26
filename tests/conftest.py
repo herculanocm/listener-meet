@@ -5,6 +5,7 @@ para o processo ao vivo (`--live`, `LISTENER_LIVE=fake`) quando `tests/test_live
 from __future__ import annotations
 
 import gc
+import importlib.util
 import logging
 import os
 import shutil
@@ -102,9 +103,15 @@ def recorder_factory(platform: FakePlatform, store: Store):
 WORKER_RUN: dict[str, Any] = {}      # preenchido por `start_worker_process`; lido por tests/test_worker.py
 
 
+def pipeline_installed() -> bool:
+    """O extra `pipeline` neste venv: o worker "real" (R2-27) processaria de verdade e baixaria modelos, então nem nasce."""
+    return any(importlib.util.find_spec(name) is not None for name in ("faster_whisper", "pyannote", "torch"))
+
+
 def start_worker_process(root: Path, fake: bool = True) -> dict[str, Any]:
     """Grava uma reunião de 3 s (dois tons no R), enfileira o job e lança `python -m listener --worker --db DIR --once`.
-    Com `fake=False` o worker tenta os adaptadores reais: sem o extra `pipeline` o job termina em erro permanente."""
+    Com `fake=False` o worker tenta os adaptadores reais: sem o extra `pipeline` o job termina em erro permanente. A pasta
+    de modelos fica dentro de `root`: o `HF_HOME` que o worker real cria antes de falhar não vai para a pasta do usuário."""
     from listener.capture.recorder import SourceSpec
 
     db = root / "db"
@@ -112,6 +119,7 @@ def start_worker_process(root: Path, fake: bool = True) -> dict[str, Any]:
     with Store(db) as store:
         store.upsert_me("Eu", role="Gerente")
         store.set_setting("log.path", str(root / "logs" / "listener.log"))
+        store.set_setting("pipeline.models_dir", str(root / "models"))
         mid = store.create_meeting("Reunião do worker", "meeting", None, "Ana")
         rec = Recorder(platform, store, mid, make_config(), clock=platform.clock, inline_worker=True)
         rec.start()
@@ -155,7 +163,8 @@ def start_live_process(root: Path) -> dict[str, Any]:
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     if any(item.path.name == "test_worker.py" for item in items) and not WORKER_RUN:
         WORKER_RUN.update(start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-test-"))))
-        WORKER_RUN["real"] = start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-real-")), fake=False)
+        if not pipeline_installed():
+            WORKER_RUN["real"] = start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-real-")), fake=False)
     if any(item.path.name == "test_live_child.py" and item.name.startswith("test_live_process") for item in items) and not LIVE_RUN:
         LIVE_RUN.update(start_live_process(Path(tempfile.mkdtemp(prefix="listener-live-test-"))))
 
