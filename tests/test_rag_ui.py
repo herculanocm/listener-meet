@@ -113,7 +113,8 @@ def test_meeting_window_opens_at_a_point_exports_and_stops_its_sound_on_close(qt
     qtbot.addWidget(win)
     cleanup(win)
     win.show()
-    assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == ["Ata", "Resumo", "Ações", "Transcrição", "Marcadores", "Chat"]
+    assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == ["Ata", "Resumo", "Ações", "Transcrição", "Marcadores",
+                                                                       "Linha do tempo", "Chat"]
     assert "5 min" in win.info.text() and "Participantes: Ana — CFO, Bia" in win.info.text()
     assert win.windowTitle().startswith("Orçamento 2027") and win.bar is not None and win.bar.btn_play.text() == "Tocar"
     # abrir num ponto (U-024): a fala de início mais perto, selecionada; toca do começo dela (sem palavras: início - 150 ms)

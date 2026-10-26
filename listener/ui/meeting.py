@@ -7,7 +7,11 @@ a reunião inteira); "Revisar falantes…" e o menu "Exportar" (copiar a ata ou 
 escrita atômica); a barra do player embaixo. Abre num ponto (`open_at`): vai para a transcrição, seleciona a fala de início
 mais perto, rola até ela e, pedido, toca do começo dela (sem fala, do ponto menos 150 ms). Fechar para o som desta reunião
 e guarda posição e tamanho (`ui.meeting_geometry`). Cabeçalho e avisos em texto puro: um título ou nome com "<b>" não vira
-HTML (R7-07)."""
+HTML (R7-07).
+
+F5.1: a aba "Linha do tempo" entre Marcadores e Chat (U-008, A-15; `ui/timeline.py`), o destaque da fala que toca na
+Transcrição e o cursor da linha do tempo pelo mesmo `PlaybackFollower` (U-025) e "Salvar .docx…" no Exportar (U-011,
+A-18; `ui/docx_save.py`)."""
 from __future__ import annotations
 
 from collections import deque
@@ -28,8 +32,10 @@ from ..pipeline import review
 from ..rag import export
 from .chat import ChatPanel
 from .common import clamp_to_screens, copy_rich, markdown_html
+from .docx_save import DocxSaver
 from .llm_tabs import LlmTabsGroup
 from .player import PlayerBar
+from .timeline import PlaybackFollower, TimelineTab
 from .transcript import TranscriptTab
 from .widget import _screen_rects
 
@@ -39,8 +45,8 @@ if TYPE_CHECKING:
 
 log = get_logger("ui.meeting")
 
-TAB_KEYS = ("ata", "resumo", "acoes", "transcricao", "marcadores", "chat")
-TAB_TITLES = ("Ata", "Resumo", "Ações", "Transcrição", "Marcadores", "Chat")
+TAB_KEYS = ("ata", "resumo", "acoes", "transcricao", "marcadores", "linha", "chat")
+TAB_TITLES = ("Ata", "Resumo", "Ações", "Transcrição", "Marcadores", "Linha do tempo", "Chat")
 DEFAULT_SIZE = (1040, 720)
 MIN_SIZE = (640, 420)
 SAVE_DELAY_MS = 600
@@ -116,14 +122,18 @@ class MeetingWindow(QWidget):
         self.act_copy_minutes.triggered.connect(self.copy_minutes)
         self.act_copy_transcript.triggered.connect(self.copy_transcript)
         self.act_save.triggered.connect(self._save_clicked)
+        self.docx = DocxSaver(self, meeting_id, gather=self._export_data, saved=self._saved, message=self.show_message,
+                              ask_path=lambda data: self._ask_path("Salvar em .docx", data, ".docx", "Documento do Word"))
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)                    # a dica do item .docx sem o extra (A-18)
         for act in (self.act_copy_minutes, self.act_copy_transcript):
             menu.addAction(act)
         menu.addSeparator()
         menu.addAction(self.act_save)
+        menu.addAction(self.docx.action)
         self.btn_export = QToolButton()
         self.btn_export.setText("Exportar")              # a seta do menu é do próprio Qt (com "▾" no texto saíam duas)
-        self.btn_export.setToolTip("Copiar para a área de transferência ou salvar um arquivo .md")
+        self.btn_export.setToolTip("Copiar para a área de transferência ou salvar um arquivo .md ou .docx")
         self.btn_export.setMenu(menu)
         self.btn_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.info = QLabel("")
@@ -146,6 +156,9 @@ class MeetingWindow(QWidget):
         # --- abas ---
         self.transcript = TranscriptTab(store, meeting_id, player=player, on_launch=on_launch, title=self.title_text)
         self.markers = MarkersTab(store, meeting_id, play=self._play_marker)
+        self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
+                                    play=self._play_point if player is not None else None)
+        self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (job, revisada/original)
         self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text)
         summary = QSplitter(Qt.Orientation.Vertical)
         for kind, label in ((SummaryKind.EXECUTIVE, "Resumo executivo"), (SummaryKind.PRE_SUMMARY, "Pré-resumo")):
@@ -156,9 +169,10 @@ class MeetingWindow(QWidget):
             summary.addWidget(box)
         self.tabs = QTabWidget()
         for widget, title in zip((self.llm.text_tabs[str(SummaryKind.MINUTES)], summary, self.llm.actions_tab, self.transcript,
-                                  self.markers, self.chat), TAB_TITLES, strict=True):
+                                  self.markers, self.timeline, self.chat), TAB_TITLES, strict=True):
             self.tabs.addTab(widget, title)
         self.bar = PlayerBar(player, meeting_id, title=self.title_text, start=self.transcript.current_play_from) if player else None
+        self.follower = self._follow(player)
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
@@ -179,6 +193,16 @@ class MeetingWindow(QWidget):
         self.llm.reload()
         self.reload_header()
         self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() else self.llm.text_tabs[str(SummaryKind.MINUTES)])
+
+    def _follow(self, player: Player | None) -> PlaybackFollower | None:
+        """U-025: o destaque da Transcrição e o cursor da linha do tempo seguem o som desta reunião (o mesmo sinal)."""
+        if player is None:
+            return None
+        follower = PlaybackFollower(player, self.meeting_id, self)
+        for slot in (self.transcript.show_playing, self.timeline.set_cursor):
+            follower.moved.connect(slot)
+            slot(follower.position)
+        return follower
 
     # ---------------------------------------------------------------- leitura
     def title_text(self) -> str:
@@ -202,6 +226,7 @@ class MeetingWindow(QWidget):
             self.llm.reload()
             self.transcript.reload()
             self.markers.reload()
+            self.timeline.reload()
             self.chat.reload()
             self.reload_header()
         except Exception as e:  # a reunião sumiu ou o banco fechou: a janela fica como está
@@ -235,6 +260,11 @@ class MeetingWindow(QWidget):
         if self.player is not None:
             self.player.play_from(self.meeting_id, max(0, t_ms - review.PLAY_LEAD_MS), title=self.title_text())
 
+    def _play_point(self, t_ms: int) -> None:
+        """O clique na linha do tempo: toca do ponto já calculado (o instante exato, ou o marcador menos 150 ms, A-19)."""
+        if self.player is not None:
+            self.player.play_from(self.meeting_id, t_ms, title=self.title_text())
+
     # ---------------------------------------------------------------- exportar (U-011, D-012)
     def _export_data(self) -> export.ExportMeeting | None:
         data = export.gather(self.store, self.meeting_id, prefer_llm=self.transcript.prefer_llm)
@@ -265,18 +295,21 @@ class MeetingWindow(QWidget):
     def _save_clicked(self) -> None:
         self.save_markdown()
 
+    def _ask_path(self, title: str, data: export.ExportMeeting, ext: str, kind: str) -> str | None:
+        """O destino escolhido pelo usuário (nome padrão "AAAA-MM-DD título" em Documentos), com a extensão garantida."""
+        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or str(Path.home())
+        path, _ = QFileDialog.getSaveFileName(self, title, str(Path(folder) / export.default_filename(data, ext)), f"{kind} (*{ext})")
+        return path or None
+
     def save_markdown(self, path: str | None = None) -> Path | None:
         """Salva a reunião inteira num .md (nome padrão "AAAA-MM-DD título.md"); escreve num temporário e troca no fim; erro
         de escrita vira aviso."""
         data = self._export_data()
         if data is None:
             return None
-        if path is None:
-            folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or str(Path.home())
-            path, _ = QFileDialog.getSaveFileName(self, "Salvar ata e transcrição", str(Path(folder) / export.default_filename(data)),
-                                                  "Markdown (*.md)")
-            if not path:
-                return None
+        path = path or self._ask_path("Salvar ata e transcrição", data, ".md", "Markdown")
+        if not path:
+            return None
         if not path.lower().endswith(".md"):
             path += ".md"
         try:
@@ -285,9 +318,12 @@ class MeetingWindow(QWidget):
             log.warning("reunião %s: exportar para %s falhou: %s", self.meeting_id, path, e)
             QMessageBox.warning(self, "Exportar", export.save_error_text(path, e))
             return None
+        self._saved(out)
+        return out
+
+    def _saved(self, out: Path) -> None:
         self.exported.append(str(out))
         self.show_message(f"Salvo em {out}.")
-        return out
 
     # ---------------------------------------------------------------- janela
     def _restore_geometry(self, cascade: int) -> None:
@@ -327,8 +363,9 @@ class MeetingWindow(QWidget):
             self._save_timer.start()
 
     def shutdown(self) -> None:
-        """Saída do app: o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32)."""
+        """Saída do app: o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32); o .docx em curso termina."""
         self.chat.shutdown()
+        self.docx.shutdown()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

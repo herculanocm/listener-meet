@@ -2,9 +2,13 @@
 banco): o Markdown determinístico da reunião (título, data, duração e participantes; a ata exibida, o resumo executivo e
 o pré-resumo, as ações com dono, prazo e estado, os marcadores e a transcrição "[mm:ss] Nome — Cargo: texto", revisada
 quando existe, como a leitura mostra); a ata e a transcrição separadas para a área de transferência; o nome padrão do
-arquivo ("AAAA-MM-DD título.md", sem caracteres que o Windows recusa) e a escrita atômica (temporário na mesma pasta e
-`os.replace` no fim: um erro no meio nunca deixa meio arquivo no lugar do anterior). Exportar só por ação do usuário
-(D-012: não fere a CP9). O .docx é da F5.1."""
+arquivo ("AAAA-MM-DD título.md" ou ".docx", sem caracteres que o Windows recusa) e a escrita atômica de texto ou bytes
+(temporário na mesma pasta e `os.replace` no fim: um erro no meio nunca deixa meio arquivo no lugar do anterior).
+Exportar só por ação do usuário (D-012: não fere a CP9).
+
+F5.1 (U-011, A-18): a ficha, a linha da ação e a do marcador saem de funções que o .md e o .docx dividem; o parser puro do
+Markdown da ata e dos resumos (`parse_markdown`, em `rag/markdown.py`) aparece aqui também; o escritor do .docx é o
+`rag/docx_export.py`."""
 from __future__ import annotations
 
 import contextlib
@@ -21,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from ..llm.prompts.common import stamp
 from ..model import ActionStatus, SummaryKind
 from . import citations
+from .markdown import MdBlock, MdRun, parse_inline, parse_markdown
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -131,12 +136,17 @@ def gather(store: Store, meeting_id: int, prefer_llm: bool = True) -> ExportMeet
 
 
 # ---------------------------------------------------------------- Markdown
+def header_facts(m: ExportMeeting) -> list[tuple[str, str]]:
+    """A ficha da reunião (data e hora, duração, participantes), só o que existe: a mesma no .md e no .docx."""
+    facts = [("Data", fmt_datetime(m.started_at)), ("Duração", fmt_duration(m.duration_ms)),
+             ("Participantes", ", ".join(m.participants))]
+    return [(label, value) for label, value in facts if value]
+
+
 def header_markdown(m: ExportMeeting) -> str:
     """Título e a ficha da reunião (data e hora, duração, participantes)."""
     out = [f"# {m.shown_title}", ""]
-    facts = [("Data", fmt_datetime(m.started_at)), ("Duração", fmt_duration(m.duration_ms)),
-             ("Participantes", ", ".join(m.participants))]
-    out += [f"- **{label}:** {value}" for label, value in facts if value]
+    out += [f"- **{label}:** {value}" for label, value in header_facts(m)]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -145,12 +155,18 @@ def _section(title: str, body: str) -> str:
     return f"## {title}\n\n{body}\n" if body else ""
 
 
+def action_text(a: ExportAction) -> str:
+    """"Mandar a planilha · dono: Bia · prazo: 2026-10-31 · aberta" (a linha da ação no .md e no .docx)."""
+    tail = "".join(f" · {label}: {value}" for label, value in (("dono", a.owner), ("prazo", a.due)) if value)
+    return f"{a.text}{tail} · {a.status}"
+
+
+def marker_text(t_ms: int, note: str) -> str:
+    return f"[{stamp(t_ms)}] {_clean(note) or '(sem nota)'}"
+
+
 def actions_markdown(actions: Sequence[ExportAction]) -> str:
-    out = []
-    for a in actions:
-        tail = "".join(f" · {label}: {value}" for label, value in (("dono", a.owner), ("prazo", a.due)) if value)
-        out.append(f"- {a.text}{tail} · {a.status}")
-    return "\n".join(out)
+    return "\n".join(f"- {action_text(a)}" for a in actions)
 
 
 def transcript_lines(lines: Sequence[ExportLine]) -> str:
@@ -178,7 +194,7 @@ def meeting_markdown(m: ExportMeeting) -> str:
              _section("Resumo executivo", shift_headings(m.executive)),
              _section("Pré-resumo", shift_headings(m.pre_summary)),
              _section("Ações", actions_markdown(m.actions)),
-             _section("Marcadores", "\n".join(f"- [{stamp(t)}] {_clean(note) or '(sem nota)'}" for t, note in m.markers)),
+             _section("Marcadores", "\n".join(f"- {marker_text(t, note)}" for t, note in m.markers)),
              _section("Transcrição", transcript_lines(m.transcript))]
     return "\n".join(p for p in parts if p)
 
@@ -195,30 +211,33 @@ def safe_filename(name: str, limit: int = NAME_MAX) -> str:
     return text
 
 
-def default_filename(m: ExportMeeting) -> str:
-    """"2026-10-24 Orçamento 2027.md"."""
+def default_filename(m: ExportMeeting, ext: str = ".md") -> str:
+    """"2026-10-24 Orçamento 2027.md" (ou ".docx": `ext` com ou sem o ponto)."""
     date = m.started_at[:10] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", m.started_at[:10]) else ""
-    return safe_filename(f"{date} {m.shown_title}".strip()) + ".md"
+    return safe_filename(f"{date} {m.shown_title}".strip()) + (ext if ext.startswith(".") else f".{ext}")
 
 
 def save_error_text(path: str | Path, error: OSError) -> str:
-    """O aviso de um .md que não salvou (U-030). `PermissionError` é, no Windows, o arquivo aberto em outro programa (o Word
-    e o Excel seguram o arquivo e a troca do temporário falha com "acesso negado", visto em 25/10) e, nos outros sistemas,
-    a pasta sem permissão de escrita: a frase cobre os dois, sem o erro cru (que vai para o log); o resto mostra o erro."""
+    """O aviso de um .md ou .docx que não salvou (U-030). `PermissionError` é, no Windows, o arquivo aberto em outro programa
+    (o Word e o Excel seguram o arquivo e a troca do temporário falha com "acesso negado", visto em 25/10) e, nos outros
+    sistemas, a pasta sem permissão de escrita: a frase cobre os dois, sem o erro cru (que vai para o log); o resto mostra o
+    erro."""
     if isinstance(error, PermissionError):
         return (f"Não consegui salvar o arquivo:\n{path}\n\nEle está aberto em outro programa (Word, Excel…) ou a pasta não "
                 "aceita gravação. Feche o arquivo e tente de novo, ou salve com outro nome.")
     return f"Não consegui salvar o arquivo:\n{path}\n\n{error}"
 
 
-def write_atomic(path: str | Path, text: str) -> Path:
-    """Escreve num temporário na mesma pasta (UTF-8, quebras `\\n`) e troca no fim com `os.replace`; em erro o temporário sai
-    e o arquivo anterior fica como estava. `OSError` sobe para quem chamou avisar."""
+def write_atomic(path: str | Path, data: str | bytes) -> Path:
+    """Escreve num temporário na mesma pasta (texto em UTF-8 com quebras `\\n`, ou os bytes como vieram, o .docx) e troca no
+    fim com `os.replace`; em erro o temporário sai e o arquivo anterior fica como estava. `OSError` sobe para quem chamou
+    avisar."""
     target = Path(path)
+    payload = data.encode("utf-8") if isinstance(data, str) else data
     fd, tmp = tempfile.mkstemp(prefix=f".{target.stem[:40]}-", suffix=".tmp", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as f:
-            f.write(text.encode("utf-8"))
+            f.write(payload)
             f.flush()
             os.fsync(f.fileno())
         Path(tmp).replace(target)
@@ -251,6 +270,7 @@ def quote_answer(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mappin
     return plain, html.escape(plain).replace("\n", "<br>")
 
 
-__all__ = ["ExportAction", "ExportLine", "ExportMeeting", "default_filename", "fmt_date", "fmt_datetime", "fmt_duration", "gather",
-           "header_markdown", "meeting_markdown", "minutes_markdown", "quote", "quote_answer", "safe_filename", "shift_headings",
+__all__ = ["ExportAction", "ExportLine", "ExportMeeting", "MdBlock", "MdRun", "action_text", "default_filename", "fmt_date",
+           "fmt_datetime", "fmt_duration", "gather", "header_facts", "header_markdown", "marker_text", "meeting_markdown",
+           "minutes_markdown", "parse_inline", "parse_markdown", "quote", "quote_answer", "safe_filename", "shift_headings",
            "transcript_markdown", "write_atomic"]
