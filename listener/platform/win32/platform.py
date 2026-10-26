@@ -34,7 +34,7 @@ MEETING_EXES = {"ms-teams.exe", "teams.exe", "zoom.exe", "cpthost.exe", "webex.e
                 "slack.exe", "discord.exe", "skype.exe", "googlemeet.exe"}
 MEETING_TITLE_HINTS = ("meet", "teams", "zoom", "webex", "reunião", "meeting", "chamada", "call")
 ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
-CREATE_NO_WINDOW, DETACHED_PROCESS, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00000008, 0x00004000   # worker da F2
+CREATE_NO_WINDOW, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00004000   # worker da F2 e ao vivo da F4
 PROCESS_SET_INFORMATION = 0x0200                       # F4: EcoQoS do filho ao vivo (SetProcessInformation)
 PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling (PROCESS_INFORMATION_CLASS)
 POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
@@ -682,18 +682,21 @@ class Win32Platform(Platform):
 
     @override
     def spawn_detached(self, argv: list[str], env: Mapping[str, str] | None = None) -> int:
-        """Sem console, solto do app e já em prioridade abaixo do normal (F2 item 2)."""
+        """Sem janela, solto do app e já em prioridade abaixo do normal (F2 item 2). Sem `DETACHED_PROCESS` (D-056): com
+        ele, o lançador do venv (`.venv\\Scripts\\python.exe`) nascia sem console e o interpretador que ele cria ganhava um
+        console novo e visível, uma janela preta por worker que, fechada, matava o worker sem rastro (0xC000013A). Só com
+        `CREATE_NO_WINDOW` o lançador ganha um console sem janela, o interpretador o herda e o worker sobrevive ao app."""
         if sys.platform != "win32":
             return process.spawn_detached(argv, env)
-        flags = CREATE_NO_WINDOW | DETACHED_PROCESS | BELOW_NORMAL_PRIORITY_CLASS
+        flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
         p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.DEVNULL,  # noqa: S603
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
         return int(p.pid)
 
     @override
     def spawn_child(self, argv: list[str], env: Mapping[str, str] | None = None) -> ChildProcess:
-        """F4: sem console (`CREATE_NO_WINDOW`), abaixo do normal e preso ao app (sem `DETACHED_PROCESS`), com stdin e stdout
-        binários e stderr descartado; EcoQoS desligado logo depois de nascer (falha só vai para o log)."""
+        """F4: sem janela e abaixo do normal (as flags do worker), com stdin e stdout binários e stderr descartado; EcoQoS
+        desligado logo depois de nascer (falha só vai para o log)."""
         if sys.platform != "win32":
             return process.spawn_child(argv, env)
         flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS

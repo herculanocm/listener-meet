@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -78,6 +79,26 @@ def test_worker_command_env_and_memory():
     from listener.__main__ import main
 
     assert main(["--worker", "--db", "/caminho/que/nao/existe"]) == 3                             # banco ausente: erro claro, sem traceback
+
+
+def test_win32_spawn_detached_opens_no_console_window(tmp_path):
+    """D-056: o worker nasce sem janela. Num venv, `python.exe` é um lançador que cria o interpretador como neto; com
+    `DETACHED_PROCESS` o neto ganhava um console visível (uma janela preta por worker). O próprio neto conta o que vê."""
+    if sys.platform != "win32":
+        pytest.skip("Win32Platform.spawn_detached só existe no Windows")
+    from listener.platform.win32.platform import Win32Platform
+
+    out = tmp_path / "console.json"
+    code = ("import ctypes, json, os, sys; k = ctypes.WinDLL('kernel32'); u = ctypes.WinDLL('user32'); "
+            "k.GetConsoleWindow.restype = ctypes.c_void_p; u.IsWindowVisible.argtypes = [ctypes.c_void_p]; "
+            "h = k.GetConsoleWindow(); p = sys.argv[1]; "
+            "open(p + '.tmp', 'w').write(json.dumps(bool(h) and bool(u.IsWindowVisible(h)))); os.replace(p + '.tmp', p)")
+    Win32Platform().spawn_detached([sys.executable, "-c", code, str(out)])
+    deadline = time.monotonic() + 30
+    while not out.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert out.exists(), "o filho não respondeu em 30 s"
+    assert json.loads(out.read_text()) is False                                                 # nenhum console visível
 
 
 def test_models_helpers_without_network(tmp_path, monkeypatch):
