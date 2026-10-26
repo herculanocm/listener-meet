@@ -57,7 +57,8 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - Saída padrão no MME: "Altofalantes (Realtek(R) Audio)" a 44,1 kHz (o player reamostra de 16 kHz). Dois monitores:
   LU28R55 (4K a 150 %, o principal) e LF24T35 (1080p a 100 %) (25/10).
 - Interface no Windows (25/10): a plataforma Qt `offscreen` não tem as fontes do sistema (cai num "Sans Serif" largo),
-  então medir layout só com a plataforma real; para capturar no DPI real sem aparecer na tela do dono, janela em
+  então medir layout só com a plataforma real; para capturar no DPI real sem aparecer na tela do dono
+  (`scripts/win_probe.py shots`; também `app`, `player` e `export`), janela em
   (-10000, -10000) com `WA_ShowWithoutActivating` e `grab()` (com `WA_DontShowOnScreen` o diálogo sai em DPR 1). A área de
   transferência sobrevive à saída quando o app sai pelo laço de eventos (`app.exec`); um `sys.exit` sem o laço a perde.
 - Selftest da F1 (mic + loopback do sistema): L e R contínuos, desvio de 19 ms na duração, sem buracos; cinco atalhos

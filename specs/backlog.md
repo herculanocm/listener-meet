@@ -13,20 +13,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   checkout (B4: itens 5 e 7); (4) três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a
   G5. Em cada item, "Com o dono" diz o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
   e o acompanha no resto (lê o log, corrige o que aparecer, mede e anota).
-- **Perguntas em aberto ao dono (26/10; padrão entre parênteses):** (1) começar a F5.1 (D-047: embeddings locais, linha do
-  tempo U-008, destaque contínuo U-025, .docx) em paralelo à lista dele, com a metade Windows do L0 (e5 int8 contra fp32)
-  aqui e a do Linux depois; dependências novas (`onnxruntime` e `tokenizers` no extra `local`, `python-docx` no `docx`) e
-  o e5-small baixado (sim); (2) as sondas do Windows de 25 e 26/10 (o app real num perfil isolado, as telas no DPI real
-  fora da área visível, o player no dispositivo real tocando silêncio, o `.md` travado e copiar e sair) em `scripts/`:
-  hoje estão fora do git, na pasta temporária da sessão, e somem; resultados em `decisoes.md`, método em
-  `memory/maquina.md` (sim); (3) no item 5, o `[pipeline]` no `.venv` do checkout, o large-v3-turbo do F0 (1,6 GB)
-  copiado para a pasta de modelos do app (sem baixar de novo) e o venv do F0 apagado depois (sim); (4) a suíte em rápida
-  e lenta (subprocesso, tempo real e telas marcados; local roda a rápida, o CI roda tudo), muda o CI (sim); (5) um
-  lockfile da stack com o `uv` (por pip no venv, sem admin) antes do item 5 (sim); (6) o canal R avisar antes dos 10 s
-  quando nunca recebeu som (não: silêncio no começo é normal e o loopback não entrega nada em silêncio; rever depois do
-  G1); (7) repositório já público: a varredura de 26/10 não achou nome, e-mail nem usuário da máquina; "SRM" aparece na
-  CP1, no handoff e num teste ("SRM; FIDC") e "Windows corporativo com EDR" no `maquina.md`: manter e tirar a dívida
-  (manter). P22 (deriva) segue no padrão até o G1.
+- **Respostas do dono (26/10, D-050): tudo nos padrões.** Feito: as sondas do Windows em `scripts/win_probe.py` (app,
+  shots, player, export). Em andamento, nesta ordem: a suíte em rápida e lenta; o lockfile com o `uv`, o `[pipeline]` no
+  `.venv` e o large-v3-turbo copiado (o venv do F0 sai depois que o processamento real funcionar, com o token do dono);
+  a F5.1 pelo fluxo D-040, com a metade Windows do L0. O canal R segue sem aviso antecipado (rever depois do G1); o
+  conteúdo do repositório público fica como está (a varredura de 26/10 não achou nome, e-mail nem usuário).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
@@ -117,7 +108,8 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
    Notas; a saída no logoff; `python -m listener --check` e o G5 com 5 ou mais reuniões reais.
 
 ## Dívidas técnicas
-- Saúde dos canais começa "ok" por até 10 s sem sinal; decidir se R avisa antes quando nunca recebeu sinal.
+- Saúde dos canais começa "ok" por até 10 s sem sinal; R não avisa antes (D-050: silêncio no começo é normal); rever
+  depois do G1.
 - Deriva de relógio: só instrumentada (A7); corrigir em spec própria se o G1 mostrar mais de 100 ms por hora (P22).
 - Textos da interface fixos em pt-BR; prever i18n (`tr()` do Qt ou gettext) antes da F6 (CP15).
 - Pasta de modelos ainda não está nas Configurações (entra na F2).
@@ -137,7 +129,6 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
   (Welford não é reversível sem guardar as amostras); aceito até o G2 mostrar impacto.
 - F2: durante um reprocessamento a revisão mostra o job concluído; a abertura antecipada (P1) vale para o primeiro
   processamento. `embed_range` (trecho livre) e separar perfis ficam para a F6, como a spec prevê.
-- Antes de publicar o repositório: conferir que nada pessoal sobrou em `memory/` e `decisoes.md` (caminhos usam `<usuário>`; CP15).
 - CP17: subir o piso e o teto do `requires-python` assim que WhisperX e torch aceitarem Python 3.14 (hoje `<3.14`; 3.13 já
   está no CI); conferir a cada atualização da stack.
 - Sem lockfile (`uv` não instalado nesta máquina); gerar `uv lock` quando houver `uv`, para reprodutibilidade da stack de ML.
