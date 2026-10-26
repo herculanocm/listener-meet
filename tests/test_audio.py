@@ -4,6 +4,7 @@ import pytest
 from listener.capture.audio import StreamResampler, decode_flac, encode_flac, resample, rms, silent_flac, to_int16, to_mono
 
 
+@pytest.mark.lento                                           # D-050: conta pesada (~1,7 s no Windows)
 def test_resample_48k_stereo_to_16k_mono_keeps_tone():
     sr = 48000
     t = np.arange(sr * 2) / sr

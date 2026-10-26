@@ -103,6 +103,7 @@ def test_adapter_modules_are_not_imported_by_app_modules_statically():
     assert offenders == []
 
 
+@pytest.mark.lento                                           # D-050: importa o app inteiro (1 a 3 s)
 def test_llm_sdks_are_not_imported_at_module_level_outside_the_adapters():
     """Regra dura da F3 (F3A-24): `llm/registry.py`, `types.py`, `schema.py`, `base.py`, `fake.py`, `prompts/*`, `ui/*`, o
     runner e o worker nunca importam `google`, `openai`, `anthropic`, `httpx`, `httpx2`, `truststore` nem `pydantic` no

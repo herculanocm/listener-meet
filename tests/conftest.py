@@ -1,7 +1,10 @@
 """Fixtures comuns (F1.2 M-27): banco temporário, plataforma simulada com relógio manual e logging restaurado.
 F2: o worker em subprocesso real (`--worker --once`, `LISTENER_PIPELINE=fake`) é lançado já na coleta, quando
 `tests/test_worker.py` está na sessão, para o seu tempo de execução correr em paralelo ao resto da suíte. F4: o mesmo
-para o processo ao vivo (`--live`, `LISTENER_LIVE=fake`) quando `tests/test_live_child.py` está na sessão."""
+para o processo ao vivo (`--live`, `LISTENER_LIVE=fake`) quando `tests/test_live_child.py` está na sessão.
+D-050: suíte rápida e lenta. Todo teste com `qtbot` ou `qapp` ganha a marca `lento` (telas); subprocesso, tempo real e
+contas pesadas são marcados nos arquivos. O padrão local pula os lentos (`addopts` no pyproject); `--tudo` roda todos (o
+CI e antes de commitar). Os subprocessos da coleta só nascem quando os testes deles ficaram na seleção."""
 from __future__ import annotations
 
 import gc
@@ -160,6 +163,32 @@ def start_live_process(root: Path) -> dict[str, Any]:
     return {"proc": proc, "db": db, "root": root, "meeting_id": mid, "argv": argv}
 
 
+UI_FIXTURES = frozenset({"qtbot", "qapp"})
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--tudo", action="store_true", help="roda também os testes marcados `lento` (D-050: o CI e antes de commitar)")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption("--tudo"):
+        config.option.markexpr = ""                          # sem filtro de marca: a suíte inteira
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Telas (pytest-qt) são lentas por natureza: a marca vem da fixture, também para os testes de tela que vierem."""
+    if UI_FIXTURES & set(getattr(item, "fixturenames", ())):
+        item.add_marker(pytest.mark.lento)
+
+
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
+    skipped_slow = len(terminalreporter.stats.get("deselected", []))
+    if skipped_slow and config.option.markexpr == "not lento":
+        terminalreporter.write_line(f"{skipped_slow} teste(s) lento(s) fora desta rodada: antes de commitar, "
+                                    "`python -m pytest -q --tudo` (D-050)")
+
+
+@pytest.hookimpl(trylast=True)                               # depois da seleção por marca: só lança o que vai rodar
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     if any(item.path.name == "test_worker.py" for item in items) and not WORKER_RUN:
         WORKER_RUN.update(start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-test-"))))

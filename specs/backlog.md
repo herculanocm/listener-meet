@@ -43,9 +43,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
    da tarefa.
-2. Testes: `python -m pytest -q` e `ruff check .` (qualquer sistema; no Windows, pelo venv do checkout:
-   `.venv\Scripts\python.exe -m pytest -q`, `.venv\Scripts\ruff.exe check .` e `.venv\Scripts\mypy.exe`, também com
-   `--platform linux`). No Windows nativo, antes: "Verificar no Windows".
+2. Testes (D-050): `python -m pytest -q` roda a parte rápida; **antes de commitar, a inteira: `python -m pytest -q
+   --tudo`** (o CI sempre roda tudo); mais `ruff check .` e `mypy` (também com `--platform linux`). No Windows, pelo venv
+   do checkout: `.venv\Scripts\python.exe -m pytest -q --tudo`, `.venv\Scripts\ruff.exe check .`,
+   `.venv\Scripts\mypy.exe`. No Windows nativo, antes: "Verificar no Windows".
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Bloqueios que só o dono destrava
@@ -118,10 +119,11 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
 - F5: `_fail` de um job cuja reunião foi apagada levanta IntegrityError e derruba o worker (F5A-17, para a F6, junto
   com apagar reunião); o filtro de pessoa varre `rag_chunks` (~35 ms a cada 20 mil trechos) e `vector_version` conta o
   índice a cada busca: medir com o banco real.
-- Suíte acima da meta de 8 s: ~22 s no Linux de desenvolvimento no L5 da F5 (348 testes; ~17,5 s com 270 na F4; o Xeon
-  de 2,1 GHz pesa) e ~45 s no Windows (366 testes depois do R8, 25/10; os de tempo real do player e os dois scripts de
-  saída somam ~8 s). Separar os testes de subprocesso e os de interface em jobs próprios e ver o custo do `gc.collect()`
-  por teste de interface.
+- Suíte acima da meta de 8 s. Dividida em 26/10 (D-050): 84 testes `lento` (telas por fixture, subprocesso, tempo real,
+  contas pesadas) ficam fora do padrão local; neste notebook a rápida leva 34 a 40 s e a inteira 52 a 58 s (no Linux de
+  desenvolvimento a inteira era ~22 s). O resto é trabalho de lógica espalhado (o `test_store` sozinho dá 5 s; criar
+  arquivo custa 1,7 ms e abrir um SQLite em WAL 7 ms aqui, então não é o EDR). A meta pede execução paralela
+  (`pytest-xdist`, dependência nova: propor ao dono; os subprocessos da coleta precisam nascer uma vez só).
 - F2 no Windows (B1/B4): o worker pesado carrega o CTranslate2 (Whisper) antes do torch (pyannote), a ordem inversa à do
   F0; se aparecer "OMP: Error #15" (dois `libiomp5md.dll`), importar o torch antes, como o processo ao vivo já faz.
 - F4: o eco do ao vivo usa o limiar do aviso (`capture.echo_corr_min`, 0,25); calibrar no G4 sem headset.

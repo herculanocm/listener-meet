@@ -38,6 +38,7 @@ from tests.test_rag_search import _other_meeting
 
 pytest.importorskip("PySide6")
 pytestqt = pytest.importorskip("pytestqt")
+pytestmark = pytest.mark.lento                              # D-050: telas e os scripts de saída em subprocesso
 
 
 @pytest.fixture(autouse=True)

@@ -122,6 +122,7 @@ def test_live_command_env_and_models_dir(tmp_path, monkeypatch):
     assert client.models_ready(tmp_path / "nada", "small")                                          # fake: sempre pronto
 
 
+@pytest.mark.lento                                           # D-050: subprocesso
 def test_spawn_child_has_binary_pipes_and_lower_priority():
     """F4: stdin e stdout binários (nada de tradução de fim de linha), stderr descartado; no posix, nice +10 pelo pai."""
     from listener.platform.common import process
@@ -137,6 +138,7 @@ def test_spawn_child_has_binary_pipes_and_lower_priority():
         assert process.disable_own_power_throttling() is False and process.sync_stdout_handle() is None
 
 
+@pytest.mark.lento                                           # D-050: subprocesso
 def test_win32_spawn_child_is_below_normal_without_window():
     """Só no Windows (o CI tem um): prioridade abaixo do normal pelas flags de criação, pipes binários; o EcoQoS que o filho
     desliga em si mesmo."""

@@ -38,6 +38,8 @@ version = {attr = "listener.__version__"}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"
+addopts = ["-m", "not lento"]          # D-050: o padrão local é a parte rápida; `--tudo` (o CI e antes de commitar) roda todos
+markers = ["lento: telas (qtbot e qapp, marcadas sozinhas no conftest), subprocesso, tempo real e contas pesadas (D-050)"]
 
 [tool.ruff]
 line-length = 140

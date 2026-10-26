@@ -18,6 +18,8 @@ from listener.platform.common import process
 from listener.store import Store
 from tests import conftest
 
+pytestmark = pytest.mark.lento                              # D-050: dois workers reais nascem na coleta (subprocesso)
+
 
 def test_worker_process_runs_one_job_with_own_log_and_low_priority():
     run = conftest.WORKER_RUN

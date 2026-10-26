@@ -231,6 +231,7 @@ def test_player_signals_guard_and_bar(qtbot, store):
     assert player.shutdown() is True
 
 
+@pytest.mark.lento                                           # D-050: tempo real
 def test_slow_decoding_never_starves_a_small_realtime_device_and_underflows_are_logged(store, monkeypatch, caplog):
     """R7-02: um dispositivo de 0,18 s de buffer tocando em tempo real e cada janela (0,5 s pelo `decode_s`) decodificada
     300 ms mais devagar: nenhum buraco no som, porque a alimentadora decodifica à frente numa fila limitada e o `write` nunca
@@ -291,6 +292,7 @@ def test_a_command_left_when_the_writer_fails_starts_a_new_writer(store, monkeyp
     assert outs.opened[0].calls[-1] == "close" and eng.shutdown() is True
 
 
+@pytest.mark.lento                                           # D-050: tempo real
 def test_shutdown_waits_for_a_feeder_slower_than_the_writer_join(store, monkeypatch):
     """R8-03: uma janela da alimentadora mais lenta que a espera da escritora por ela (`FEED_JOIN_S`): o `shutdown` não
     devolve True com a alimentadora viva (o banco fecharia embaixo dela); vencido o prazo diz False, e com prazo bastante

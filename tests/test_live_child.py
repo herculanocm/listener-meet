@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from listener.live import proc
 from listener.live import protocol as pr
@@ -358,6 +359,7 @@ def test_session_refuses_without_hello_or_meeting(store):
     assert "reinicie o app" in _lines(out)[0]["message"] and _lines(out)[0]["retry"] is False
 
 
+@pytest.mark.lento                                           # D-050: o subprocesso real `--live`
 def test_live_process_end_to_end_in_fake_mode():
     """O único subprocesso real do ao vivo: `python -m listener --live` com LISTENER_LIVE=fake, stdin e stdout de verdade
     (lançado na coleta por `conftest.py`, para correr em paralelo ao resto da suíte)."""
