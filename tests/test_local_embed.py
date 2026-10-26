@@ -1,30 +1,25 @@
 """F5.1 L6, o embedder local sem o ONNX nem o tokenizer reais (A-13): pooling médio com a máscara e L2, prefixos, corte em
-512 tokens contado, lotes, sessão única por processo (threads, reabertura, soltura por ociosidade), erros sem jargão (nunca
-"sem rede", A-10), o estado pelo extra e pela marca `.ready` desta revisão, o preparo (arquivo presente só conferido,
-sha256 diferente apaga, `.ready` atômico, download falso, o fake do `--prepare --what rag` não escreve), o registro sem
-chave nem SSL (A-02), a linha `local` só no caminho de escrita (A-01) e os `index` adiados pela gravação (A-07)."""
+512 tokens contado, lotes, sessão única por processo (threads, reabertura, soltura por ociosidade, o lock entre o cálculo, a
+soltura e a pré-carga: R10-06), erros sem jargão (nunca "sem rede", A-10), o estado pelo extra e pela marca `.ready` desta
+revisão, o registro sem chave nem SSL (A-02), a linha `local` só no caminho de escrita (A-01) e os `index` adiados pela
+gravação ou com o local falho (A-07, R10-04). O preparo está em `tests/test_local_prepare.py`."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import io
 import json
-import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from listener.live import protocol as pr
-from listener.llm import local_embed
+from listener.llm import local_embed, local_prepare
 from listener.llm.base import ProviderUnavailableError
 from listener.llm.types import Capability, EmbedTask, ProviderKind
 from listener.model import JobKind, JobStatus
-from listener.platform.common import process
-from listener.store import Store
 from tests.fake_local import Factories, expected_vectors, ready_folder
 
 
@@ -118,6 +113,51 @@ def test_session_loads_once_reopens_on_threads_or_folder_and_releases_when_idle(
     assert session.release_if_idle(600) is False and session.release() is False
 
 
+def test_the_lock_covers_the_calculation_against_release_and_a_concurrent_preload(tmp_path):
+    """R10-06: com um cálculo em curso (o `run` preso), a soltura não acontece; e uma pré-carga lenta numa thread com um
+    `embed` na outra abrem uma sessão só (sem o lock no `embed`, as duas carregariam)."""
+    folder = ready_folder(tmp_path / "modelos")
+    f = Factories()
+    session = f.local_session()
+    session.embed(folder, ["aquece"], EmbedTask.QUERY)
+    assert f.session is not None
+    real_run, running, release = f.session.run, threading.Event(), threading.Event()
+
+    def stuck_run(names: Any, feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+        running.set()
+        release.wait(5)
+        return real_run(names, feed)
+
+    f.session.run = stuck_run                                                          # type: ignore[method-assign]
+    worker = threading.Thread(target=session.embed, args=(folder, ["preso"], EmbedTask.QUERY))
+    worker.start()
+    assert running.wait(5)
+    try:
+        assert session.release_if_idle(0) is False and session.loaded                                    # em uso: fica
+    finally:
+        release.set()
+        worker.join(5)
+    assert session.release_if_idle(0) is True
+    g, loading, gate = Factories(), threading.Event(), threading.Event()
+
+    def slow_session(path: Path, threads: int) -> Any:
+        loading.set()
+        gate.wait(5)
+        return g.make_session(path, threads)
+
+    lazy = local_embed.LocalSession(slow_session, g.make_tokenizer)
+    pre = threading.Thread(target=lazy.preload, args=(folder,))
+    pre.start()
+    assert loading.wait(5)
+    user = threading.Thread(target=lazy.embed, args=(folder, ["consulta"], EmbedTask.QUERY))
+    user.start()
+    time.sleep(0.2)                                                                    # o `embed` chega ao lock (ou à carga)
+    gate.set()
+    pre.join(5)
+    user.join(5)
+    assert lazy.loads == 1 and len(g.sessions) == 1 and g.session is not None and len(g.session.feeds) == 1
+
+
 def test_errors_become_unavailable_without_network_jargon(tmp_path, monkeypatch):
     from listener.rag.index import _reason
 
@@ -184,7 +224,7 @@ def test_status_needs_the_extra_and_the_mark_of_this_revision(tmp_path, monkeypa
     assert mark["checked_at"] and not (folder / ".ready.tmp").exists()
     (folder / ".ready").write_text(json.dumps(mark | {"revision": "0" * 40}), encoding="utf-8")
     assert local_embed.status(str(models))[0] is False                                                   # outra revisão: de novo
-    local_embed.write_ready(folder)
+    local_prepare.write_ready(folder)
     (folder / local_embed.TOKENIZER_FILE).unlink()
     assert local_embed.status(str(models)) == (False, local_embed.NOT_DOWNLOADED)                       # arquivo sumiu
     (folder / ".ready").write_text("{lixo", encoding="utf-8")
@@ -192,108 +232,6 @@ def test_status_needs_the_extra_and_the_mark_of_this_revision(tmp_path, monkeypa
     monkeypatch.setattr(local_embed, "extra_installed", lambda: False)
     assert local_embed.status(str(models)) == (False, local_embed.NO_EXTRA)
     assert "onnxruntime" not in sys.modules and "tokenizers" not in sys.modules                         # A-13
-
-
-def _fake_files(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
-    """Dois arquivos pequenos no lugar dos do e5, com o sha256 deles fixado (o preparo confere de verdade)."""
-    content = {"onnx/model.onnx": b"pesos do modelo" * 100, "onnx/tokenizer.json": b'{"vocab": []}'}
-    monkeypatch.setattr(local_embed, "FILES", {k: hashlib.sha256(v).hexdigest() for k, v in content.items()})
-    monkeypatch.setattr(local_embed, "LABELS", {"onnx/model.onnx": "modelo", "onnx/tokenizer.json": "vocabulário"})
-    return content
-
-
-def test_prepare_checks_present_files_downloads_the_rest_and_marks_ready(tmp_path, monkeypatch):
-    content = _fake_files(monkeypatch)
-    folder = tmp_path / "modelos" / "multilingual-e5-small"
-    (folder / "onnx").mkdir(parents=True)
-    (folder / "onnx" / "model.onnx").write_bytes(content["onnx/model.onnx"])                           # já presente e certo
-    downloads: list[str] = []
-    payload = dict(content)
-
-    def download(name: str, where: Path) -> Path:
-        downloads.append(name)
-        path = where / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(payload[name])
-        return path
-
-    lines: list[dict[str, Any]] = []
-    assert local_embed.prepare(folder, lines.append, download=download) == 0
-    assert downloads == ["onnx/tokenizer.json"]                                                           # o presente só é conferido
-    assert [(m["model"], m["status"]) for m in lines] == [("modelo", "conferindo"), ("modelo", "pronto"), ("vocabulário", "baixando"),
-                                                          ("vocabulário", "pronto")]
-    assert lines[-1]["fraction"] == 1.0 and local_embed.is_ready(folder) and not (folder / ".ready.tmp").exists()
-    # presente e diferente: sai e vem de novo
-    (folder / "onnx" / "model.onnx").write_bytes(b"corrompido")
-    lines.clear()
-    assert local_embed.prepare(folder, lines.append, download=download) == 0 and downloads[-1] == "onnx/model.onnx"
-    assert ("modelo", "baixando") in [(m["model"], m["status"]) for m in lines]
-    # baixado e diferente: apaga, sem marca, com o motivo
-    payload["onnx/tokenizer.json"] = b"outra coisa"
-    (folder / "onnx" / "tokenizer.json").unlink()
-    lines.clear()
-    assert local_embed.prepare(folder, lines.append, download=download) == 1
-    assert lines[-1]["type"] == "error" and "sha256" in lines[-1]["message"] and not (folder / "onnx" / "tokenizer.json").exists()
-    assert not (folder / ".ready").exists()
-
-
-@pytest.mark.parametrize(("exc", "text"), [
-    (ConnectionError("Max retries exceeded with url"), "sem rede para baixar a busca local"),
-    (ImportError("No module named 'huggingface_hub'"), "extra local"),
-    (OSError(28, "No space left on device"), "sem espaço em disco"),
-    (RuntimeError("SSL: CERTIFICATE_VERIFY_FAILED"), "certificado"),
-    (type("OfflineModeIsEnabled", (Exception,), {})("offline"), "HF_HUB_OFFLINE"),
-    (ValueError("estranho"), "o download falhou (ValueError)"),
-])
-def test_prepare_failure_keeps_no_mark_and_says_why(tmp_path, monkeypatch, exc, text):
-    _fake_files(monkeypatch)
-    folder = tmp_path / "multilingual-e5-small"
-    folder.mkdir()
-    (folder / ".ready").write_text("{}", encoding="utf-8")                                              # a marca velha sai
-
-    def download(_name: str, _where: Path) -> Path:
-        raise exc
-
-    lines: list[dict[str, Any]] = []
-    assert local_embed.prepare(folder, lines.append, download=download) == 1
-    assert lines[-1]["type"] == "error" and text in lines[-1]["message"] and not (folder / ".ready").exists()
-
-
-def _lines(out: io.BytesIO) -> list[dict[str, Any]]:
-    return [pr.decode_line(line) for line in out.getvalue().splitlines()]
-
-
-def test_live_prepare_what_rag_fake_writes_nothing_and_real_marks_ready(tmp_path, monkeypatch):
-    from listener.live import proc
-
-    db, models = tmp_path / "db", tmp_path / "modelos"
-    with Store(db) as s:
-        s.set_setting("pipeline.models_dir", str(models))
-    monkeypatch.setenv("LISTENER_LIVE", "fake")
-    out = io.BytesIO()
-    assert proc.prepare(db, out, "rag") == 0
-    lines = _lines(out)
-    assert [(m["model"], m["status"]) for m in lines if m["type"] == "progress"] == [("modelo", "pronto"), ("vocabulário", "pronto")]
-    assert lines[-1] == {"type": "done", "models_dir": str(models / "multilingual-e5-small")} and not models.exists()   # A-09
-    monkeypatch.delenv("LISTENER_LIVE")
-    content = _fake_files(monkeypatch)
-    for var in ("HF_HOME", "HF_HUB_DISABLE_TELEMETRY", "HF_HUB_DISABLE_SYMLINKS_WARNING"):
-        monkeypatch.setenv(var, "antes")                                                                 # restauradas ao fim
-
-    def download(name: str, where: Path) -> Path:
-        path = where / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content[name])
-        return path
-
-    monkeypatch.setattr(local_embed, "hub_download", download)
-    out = io.BytesIO()
-    assert proc.prepare(db, out, "rag") == 0
-    lines = _lines(out)
-    assert lines[-1]["type"] == "done" and local_embed.is_ready(models / "multilingual-e5-small")
-    assert os.environ["HF_HOME"] == str(models / "hf") and os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
-    argv = process.live_prepare_command(db, "rag")
-    assert argv[-5:] == ["--prepare", "--what", "rag", "--db", str(db)] and "--what" not in process.live_prepare_command(db)
 
 
 def test_registry_loads_local_without_key_nor_ssl(store, tmp_path, monkeypatch):

@@ -198,41 +198,7 @@ class SettingsDialog(QDialog):
         livef.addRow("Modelos", self.prepare_status)
         lay.addWidget(live)
 
-        busca = QGroupBox("Busca (vale já; índice por palavra grátis; vetores com custo só nos pagos)")
-        buscaf = QFormLayout(busca)
-        for key in RAG_KEYS:
-            buscaf.addRow(SPECS[key].label, self._row(key))
-        self.local_btn = QPushButton(f"Preparar busca local ({local_embed.SIZE_MB} MB)")
-        self.local_btn.setToolTip("Baixa para a pasta de modelos o e5-small, a busca por sentido sem custo e sem rede (escolha "
-                                  "Local em \"Ativo para embeddings\", no grupo LLM); fora da gravação.")
-        self.local_btn.clicked.connect(self.prepare_local)
-        self.local_bar = QProgressBar()
-        self.local_bar.setRange(0, 100)
-        self.local_bar.setTextVisible(True)
-        self.local_status = QLabel("")
-        self.local_status.setStyleSheet("color: #888; font-size: 11px;")
-        self.local_status.setWordWrap(True)
-        lrow = QHBoxLayout()
-        lrow.addWidget(self.local_btn)
-        lrow.addWidget(self.local_bar, 1)
-        buscaf.addRow(lrow)
-        buscaf.addRow("Busca local", self.local_status)
-        self.index_status = QLabel("")
-        self.index_status.setWordWrap(True)
-        self.index_status.setStyleSheet("color: #888; font-size: 11px;")
-        self.complete_btn = QPushButton("Completar índice")
-        self.complete_btn.setToolTip("Põe na fila as reuniões com trecho sem vetor do modelo ativo (e as ainda sem índice)")
-        self.complete_btn.clicked.connect(self.complete_index)
-        self.reindex_btn = QPushButton("Reindexar tudo…")
-        self.reindex_btn.setToolTip("Refaz o índice de todas as reuniões processadas e pede os vetores que faltam (mostra o custo antes)")
-        self.reindex_btn.clicked.connect(self.reindex_all)
-        brow = QHBoxLayout()
-        brow.addWidget(self.complete_btn)
-        brow.addWidget(self.reindex_btn)
-        brow.addStretch(1)
-        buscaf.addRow("Índice", self.index_status)
-        buscaf.addRow(brow)
-        lay.addWidget(busca)
+        lay.addWidget(self._search_group())
         self.refresh_index_status()
         self.preparer.changed.connect(self._on_prepare_changed)
         self._preparer_connected = True
@@ -286,6 +252,49 @@ class SettingsDialog(QDialog):
         outer.addWidget(buttons)
 
     # ---------------------------------------------------------------- busca (F5 L5)
+    def _search_group(self) -> QGroupBox:
+        """O grupo "Busca": as `rag.*`, a busca local (F5.1) e o estado do índice com "Completar" e "Reindexar tudo…"."""
+        busca = QGroupBox("Busca (vale já; índice por palavra grátis; vetores com custo só nos pagos)")
+        form = QFormLayout(busca)
+        for key in RAG_KEYS:
+            form.addRow(SPECS[key].label, self._row(key))
+        self._add_local_search(form)
+        self.index_status = QLabel("")
+        self.index_status.setWordWrap(True)
+        self.index_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.complete_btn = QPushButton("Completar índice")
+        self.complete_btn.setToolTip("Põe na fila as reuniões com trecho sem vetor do modelo ativo (e as ainda sem índice)")
+        self.complete_btn.clicked.connect(self.complete_index)
+        self.reindex_btn = QPushButton("Reindexar tudo…")
+        self.reindex_btn.setToolTip("Refaz o índice de todas as reuniões processadas e pede os vetores que faltam (mostra a estimativa "
+                                    "antes)")
+        self.reindex_btn.clicked.connect(self.reindex_all)
+        brow = QHBoxLayout()
+        brow.addWidget(self.complete_btn)
+        brow.addWidget(self.reindex_btn)
+        brow.addStretch(1)
+        form.addRow("Índice", self.index_status)
+        form.addRow(brow)
+        return busca
+
+    def _add_local_search(self, form: QFormLayout) -> None:
+        """F5.1 item 3: "Preparar busca local (135 MB)" com o progresso e o estado da pasta (o mesmo preparador do ao vivo)."""
+        self.local_btn = QPushButton(f"Preparar busca local ({local_embed.SIZE_MB} MB)")
+        self.local_btn.setToolTip("Baixa para a pasta de modelos o e5-small, a busca por sentido sem custo e sem rede (escolha "
+                                  "Local em \"Ativo para embeddings\", no grupo LLM); fora da gravação.")
+        self.local_btn.clicked.connect(self.prepare_local)
+        self.local_bar = QProgressBar()
+        self.local_bar.setRange(0, 100)
+        self.local_bar.setTextVisible(True)
+        self.local_status = QLabel("")
+        self.local_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.local_status.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self.local_btn)
+        row.addWidget(self.local_bar, 1)
+        form.addRow(row)
+        form.addRow("Busca local", self.local_status)
+
     def refresh_index_status(self) -> None:
         """O estado do índice e a estimativa do que falta (o botão "Completar" só com algo a completar)."""
         from ..rag.index import reindex_estimate

@@ -9,7 +9,9 @@ fora do laço (R5-04). Não grava `job_start`, `job_step` nem `job_done` em `eve
 o índice roda a cada edição e encheria a história da reunião; erro e cancelamento continuam lá.
 F5.1 (A-06): com o embedder local, a lease da gravação (`pipeline.paused_until`, que só existe com `pause_on_record` ou com
 o ao vivo) adia os vetores antes de cada lote: o job conclui com trechos e FTS, a nota "vetores adiados: gravando" e
-`timings_json.index.deferred`, e a varredura ao parar ou cancelar a gravação completa (A-07). Os pagos não esperam."""
+`timings_json.index.deferred`, e a varredura ao parar ou cancelar a gravação completa (A-07); se a gravação parou antes de
+o `concluído` ser gravado, o próprio job se põe de volta na fila (R10-05). O local que falha de passagem marca
+`timings_json.index.retry` para a varredura (R10-04). Os pagos não esperam."""
 from __future__ import annotations
 
 import json
@@ -81,7 +83,8 @@ class IndexJobRunner(BaseJobRunner):
         timing = self._timing(JobStep.INDEX_VECTORS, filled.model_key or "")
         timing.wall_s += time.perf_counter() - t0
         self.info.update(model=filled.model_key, wanted=filled.wanted, vectors=filled.written, missing=filled.missing,
-                         calls=filled.calls, cost_usd=round(filled.cost_usd, 6), note=filled.note, deferred=filled.deferred)
+                         calls=filled.calls, cost_usd=round(filled.cost_usd, 6), note=filled.note, deferred=filled.deferred,
+                         retry=filled.retry)
         if filled.note:
             log.info("job index %s (reunião %s): %s", self.job_id, self.meeting_id, filled.note)
         return self._finish_ok()
@@ -122,7 +125,24 @@ class IndexJobRunner(BaseJobRunner):
         self.store.jobs.finish(self.job_id, JobStatus.DONE, timings=self._timings_dict())
         log.info("job index %s concluído (reunião %s): %s", self.job_id, self.meeting_id, self.info)
         self.status = JobStatus.DONE
+        if self.info.get("deferred"):
+            self._requeue_if_stopped()
         return JobStatus.DONE
+
+    def _requeue_if_stopped(self) -> None:
+        """R10-05: a gravação pode ter parado entre a leitura da lease (antes do lote) e o `concluído` gravado: a varredura da
+        parada rodou com este job ainda `rodando` e não o achou entre os adiados. Gravado o `concluído`, a lease é relida e,
+        já sem gravação, o `index` volta à fila agora (gravar primeiro e conferir depois fecha a janela; uma varredura que
+        também o ache não duplica: um pendente por reunião)."""
+        if self._recording():
+            return
+        from ..rag.index import enqueue_index
+
+        try:
+            if enqueue_index(self.store, self.meeting_id, "sweep") is not None:
+                log.info("reunião %s: a gravação acabou durante o índice; os vetores adiados voltaram à fila", self.meeting_id)
+        except Exception as e:  # banco ocupado: a varredura da próxima parada ou abertura completa
+            log.warning("reunião %s: não pus de volta na fila os vetores adiados: %s", self.meeting_id, e)
 
     @override
     def _timings_dict(self) -> dict[str, Any]:

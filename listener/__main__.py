@@ -12,7 +12,8 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
                                                     o worker leve da F3 (só jobs de LLM, sem torch; LISTENER_LLM=fake)
   --live --db DIR --meeting ID                      processo ao vivo (F4): o app o lança ao gravar e conversa por stdin e
                                                     stdout (LISTENER_LIVE=fake nos testes)
-  --live --prepare [--db DIR]                       baixa os modelos do ao vivo (small e base), progresso em linhas JSON
+  --live --prepare [--what live|rag] [--db DIR]     baixa os modelos do ao vivo (small e base, `live`, o padrão) ou o e5-small
+                                                    da busca local (`rag`, F5.1), progresso em linhas JSON
 """
 from __future__ import annotations
 

@@ -30,8 +30,9 @@ vazando no microfone: sai antes da transcrição (a legenda de R já cobre); mis
 
 `--prepare` baixa `small` e `base` para `<pasta de modelos>/faster-whisper-<modelo>` (a mesma pasta da F2) com progresso
 em linhas JSON e sai com 0 ou 1. F5.1 (A-08, A-09): `--prepare --what rag` baixa o e5-small da busca local
-(`llm/local_embed.py`) para `<pasta de modelos>/multilingual-e5-small/`, com o `HF_HOME` na pasta de modelos e a telemetria
-do Hugging Face desligada antes de importar o hub; confere o sha256 e grava a marca `.ready`.
+(`llm/local_prepare.py`) para `<pasta de modelos>/multilingual-e5-small/`, com o `HF_HOME` na pasta de modelos e a
+telemetria e o Xet do Hugging Face desligados antes de importar o hub (pelo HTTP, o download interrompido retoma); confere o
+sha256 e grava a marca `.ready`.
 """
 from __future__ import annotations
 
@@ -1060,10 +1061,14 @@ def prepare(db_dir: Path | None, out: BinaryIO, what: str = "live") -> int:
     return 0
 
 
+HUB_ENV = {"HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+           "HF_HUB_DISABLE_XET": "1"}     # R10-02: pelo Xet, o `.incomplete` não retoma (recomeçaria do zero); pelo HTTP, retoma
+
+
 def prepare_rag(models_dir_setting: str, out: BinaryIO) -> int:
     """`--what rag` (F5.1, A-09): o e5-small na revisão fixada, conferido pelo sha256, e a marca `.ready` no fim
-    (`local_embed.prepare`); arquivo presente só é conferido. O fake (`LISTENER_LIVE=fake`) não baixa nem escreve nada."""
-    from ..llm import local_embed
+    (`local_prepare.prepare`); arquivo presente só é conferido. O fake (`LISTENER_LIVE=fake`) não baixa nem escreve nada."""
+    from ..llm import local_embed, local_prepare
 
     folder = local_embed.model_dir(models_dir_setting)
     if is_fake():
@@ -1073,9 +1078,10 @@ def prepare_rag(models_dir_setting: str, out: BinaryIO) -> int:
                         "fraction": round((i + 1) / len(names), 3)})
         _emit(out, {"type": "done", "models_dir": str(folder)})
         return 0
-    # antes de importar o hub (lido na importação): o cache e o token dele ficam na pasta de modelos, sem telemetria
-    os.environ.update({"HF_HOME": str(folder.parent / "hf"), "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1"})
-    code = local_embed.prepare(folder, lambda msg: _emit(out, msg))
+    # antes de importar o hub (as constantes são lidas na importação): o cache e o token dele ficam na pasta de modelos, sem
+    # telemetria e sem o Xet
+    os.environ.update({"HF_HOME": str(folder.parent / "hf"), **HUB_ENV})
+    code = local_prepare.prepare(folder, lambda msg: _emit(out, msg))
     if code == 0:
         _emit(out, {"type": "done", "models_dir": str(folder)})
     return code

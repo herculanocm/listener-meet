@@ -114,7 +114,8 @@ def friendly_reason(reason: str) -> str:
              ("nenhum provedor ativo", "escolha um provedor para a busca por sentido (Configurações, LLM)"),
              ("busca local não baixada", "a busca local ainda não foi baixada: prepare em Configurações (Busca)"),     # F5.1 (A-02)
              ("extra local", "a busca local precisa do extra local instalado (pip install -e .[local])"),
-             ("busca local", "a busca local falhou: prepare de novo em Configurações (Busca)"),
+             ("falhou ao calcular", "a busca local falhou nesta busca (memória?): tente de novo; se repetir, veja o log"),
+             ("busca local", "a busca local não abriu o modelo: prepare de novo em Configurações (Busca)"),
              ("anthropic", "o provedor escolhido não faz busca por sentido: escolha Gemini, OpenAI ou Local (Configurações, LLM)"),
              ("não tem modelo", "falta o modelo da busca por sentido no provedor (Configurações, LLM)"),
              ("sem chave", "falta a chave do provedor da busca por sentido (Configurações, LLM)"),

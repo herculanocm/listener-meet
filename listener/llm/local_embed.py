@@ -1,7 +1,7 @@
 """Embedder local da F5.1 (D-021, D-051; A-02 a A-04, A-09, A-10): `intfloat/multilingual-e5-small` int8 em ONNX, na CPU,
 sem chave, sem rede e sem custo (CP2, CP14). Repositório, revisão, arquivos e sha256 fixados aqui; os arquivos ficam em
 `<pasta de modelos>/multilingual-e5-small/` (a do `rag_probe e5`) com a marca `.ready` (JSON com repositório, revisão e
-sha256), gravada pelo preparo (`--live --prepare --what rag`, `prepare`) depois de conferir cada arquivo.
+sha256), gravada pelo preparo (`--live --prepare --what rag`, `llm/local_prepare.py`) depois de conferir cada arquivo.
 
 Pronto = o extra `local` instalado (`find_spec`, sem importar; uma vez por processo) e a marca desta revisão com os arquivos
 no lugar. Prefixos `query:` e `passage:`, corte em 512 tokens (os cortes vão para o log), pooling médio com a máscara e L2
@@ -11,22 +11,20 @@ no Windows), `input_tokens` pela máscara.
 A sessão do ONNX e o tokenizer são um objeto só por processo (`LocalSession`, A-03), sob um lock: o cálculo roda na thread
 de quem chama (sem `to_thread`); intra-op = `configure(threads)` (2 no worker leve, 1 no app), inter-op = 1, sem spinning,
 só `CPUExecutionProvider`, `TOKENIZERS_PARALLELISM=false`. Fechar o provedor não solta a sessão; `release_if_idle` solta
-(o Histórico, depois de 10 min sem uso, A-11). Erro de carga ou de execução vira `ProviderUnavailableError` com texto sem
-jargão (nunca "sem rede", A-10); o detalhe técnico fica no log.
+(o Histórico, depois de 10 min sem uso, A-11). Erro de carga ou de execução vira `LocalEmbedError` (um
+`ProviderUnavailableError`) com texto sem jargão (nunca "sem rede", A-10); o detalhe técnico fica no log, e o índice marca a
+reunião para a varredura tentar de novo (R10-04).
 
-`onnxruntime`, `tokenizers` e `huggingface_hub` só dentro de função (A-13): os testes trocam as fábricas da sessão e do
-tokenizer (`LocalSession(session_factory=..., tokenizer_factory=...)`) e o download (`prepare(..., download=...)`)."""
+`onnxruntime` e `tokenizers` só dentro de função (A-13): os testes trocam as fábricas da sessão e do tokenizer
+(`LocalSession(session_factory=..., tokenizer_factory=...)`)."""
 from __future__ import annotations
 
-import errno
-import hashlib
 import json
 import os
 import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from functools import cache
 from importlib.util import find_spec
 from pathlib import Path
@@ -70,8 +68,11 @@ MODEL_INFO = ModelInfo(MODEL, "e5-small (local, sem custo)", MAX_TOKENS, 0, froz
 
 type SessionFactory = Callable[[Path, int], Any]
 type TokenizerFactory = Callable[[Path], Any]
-type Emit = Callable[[dict[str, Any]], None]
-type Download = Callable[[str, Path], Path]
+
+
+class LocalEmbedError(ProviderUnavailableError):
+    """A sessão não abriu (`LOAD_FAILED`) ou o cálculo falhou (`RUN_FAILED`, como memória): sem retentativa na hora (é
+    permanente para o `RetryingProvider`), mas o índice marca a reunião e a varredura tenta de novo uma vez (R10-04)."""
 
 
 # ---------------------------------------------------------------- pasta e estado
@@ -245,7 +246,7 @@ class LocalSession:
                     cuts += n_cut
             except Exception as e:  # ONNX, tokenizer, memória: o detalhe técnico fica no log, o texto é sem jargão (A-10)
                 log.warning("busca local: falhou ao calcular %d vetor(es): %s: %s", len(prefixed), type(e).__name__, e)
-                raise ProviderUnavailableError(RUN_FAILED) from e
+                raise LocalEmbedError(RUN_FAILED) from e
             state.last_used = self.clock()
             self.cuts += cuts
         if cuts:
@@ -273,7 +274,7 @@ class LocalSession:
             raise ProviderUnavailableError(NO_EXTRA) from e
         except Exception as e:  # arquivo corrompido, DLL do ONNX, memória: o texto para o usuário não tem jargão (A-10)
             log.warning("busca local: não abri o modelo em %s: %s: %s", folder, type(e).__name__, e)
-            raise ProviderUnavailableError(LOAD_FAILED) from e
+            raise LocalEmbedError(LOAD_FAILED) from e
         self.last_load_ms = round((time.perf_counter() - t0) * 1000, 1)
         self.loads += 1
         state = self._state = _Loaded(folder, self.threads, session, tokenizer, inputs, OUTPUT if OUTPUT in outputs else None,
@@ -357,97 +358,6 @@ class LocalEmbedProvider:
         """A sessão é do processo: fechar o provedor não a solta (A-03)."""
 
 
-# ---------------------------------------------------------------- preparo (A-09)
-def hub_download(filename: str, folder: Path) -> Path:
-    """Um arquivo do repositório na revisão fixada, direto na pasta (`local_dir`: cópia real, sem links simbólicos); um
-    download interrompido continua do `.incomplete` na próxima vez."""
-    from huggingface_hub import hf_hub_download
-
-    return Path(hf_hub_download(REPO, filename, revision=REVISION, local_dir=str(folder)))
-
-
-def sha256_of(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
-def write_ready(folder: Path) -> Path:
-    """`.ready` em JSON (repositório, revisão e sha256), atômico: escrito ao lado e trocado."""
-    mark = folder / READY_MARK
-    tmp = folder / f"{READY_MARK}.tmp"
-    payload = ready_payload() | {"checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(mark)
-    return mark
-
-
-NET_HINTS = ("max retries", "getaddrinfo", "name or service not known", "timed out", "connection", "11001")
-
-
-def download_error(e: BaseException) -> str:
-    """A falha do download em texto para o usuário (o técnico vai para o log)."""
-    name, low = type(e).__name__, str(e).lower()
-    if isinstance(e, ImportError):
-        return NO_EXTRA
-    if name in ("LocalEntryNotFoundError", "OfflineModeIsEnabled") or "offline" in low:
-        return "o modo offline do Hugging Face está ligado (HF_HUB_OFFLINE): desligue e tente de novo"
-    if isinstance(e, OSError) and e.errno == errno.ENOSPC:
-        return "sem espaço em disco na pasta de modelos"
-    if "certificate" in low or "ssl" in low:
-        return "o certificado do download não foi aceito (inspeção TLS da empresa?): tente em outra rede"
-    if any(h in low for h in NET_HINTS) or name in ("ConnectionError", "ConnectTimeout", "ReadTimeout"):
-        return "sem rede para baixar a busca local: tente de novo com conexão (continua de onde parou)"
-    return f"o download falhou ({name}): tente de novo (continua de onde parou)"
-
-
-def _progress(label: str, state: str, fraction: float) -> dict[str, Any]:
-    return {"type": "progress", "model": label, "status": state, "fraction": round(min(1.0, fraction), 3)}
-
-
-def prepare(folder: Path, emit: Emit, *, download: Download | None = None) -> int:
-    """Os dois arquivos na revisão fixada, conferidos pelo sha256, e a marca `.ready` no fim (0); 1 com a linha de erro.
-    Arquivo presente só é conferido; com o sha256 diferente sai e é baixado de novo; baixado e diferente, sai e o preparo
-    falha sem a marca (comportamento 2). A marca antiga sai antes: um preparo que falha deixa "não baixada"."""
-    get = download or hub_download
-    files = dict(FILES)
-    weights = {name: float(SIZES.get(name, 1)) for name in files}
-    total = sum(weights.values()) or 1.0
-    done = 0.0
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / READY_MARK).unlink(missing_ok=True)
-    for name, digest in files.items():
-        label, path = LABELS.get(name, name), folder / name
-        if path.is_file():
-            emit(_progress(label, "conferindo", done / total))
-            if sha256_of(path) == digest:
-                done += weights[name]
-                emit(_progress(label, "pronto", done / total))
-                continue
-            log.warning("busca local: %s com sha256 diferente do fixado: apagado e baixado de novo", path)
-            path.unlink(missing_ok=True)
-        emit(_progress(label, "baixando", done / total))
-        try:
-            got = get(name, folder)
-        except Exception as e:  # rede, proxy, disco, extra ausente: a linha de erro é para o usuário
-            log.warning("busca local: download de %s falhou: %s: %s", name, type(e).__name__, e)
-            emit({"type": "error", "model": label, "message": download_error(e)})
-            return 1
-        if sha256_of(got) != digest:
-            got.unlink(missing_ok=True)
-            log.warning("busca local: %s baixado com sha256 diferente do fixado (%s): apagado", name, digest[:12])
-            emit({"type": "error", "model": label, "message": "o arquivo baixado não confere com o esperado (sha256): foi apagado; "
-                                                               "tente de novo"})
-            return 1
-        done += weights[name]
-        emit(_progress(label, "pronto", done / total))
-    write_ready(folder)
-    log.info("busca local pronta em %s (revisão %s)", folder, REVISION[:8])
-    return 0
-
-
-__all__ = ["BATCH", "DIM", "FILES", "MODEL", "NOT_DOWNLOADED", "NO_EXTRA", "REPO", "REVISION", "SIZE_MB", "LocalEmbedProvider",
-           "LocalSession", "configure", "extra_installed", "is_ready", "loaded", "mean_pool", "model_dir", "preload", "prepare",
-           "release_if_idle", "shared", "status", "write_ready"]
+__all__ = ["BATCH", "DIM", "FILES", "MODEL", "NOT_DOWNLOADED", "NO_EXTRA", "REPO", "REVISION", "SIZE_MB", "LocalEmbedError",
+           "LocalEmbedProvider", "LocalSession", "configure", "extra_installed", "is_ready", "loaded", "mean_pool", "model_dir", "preload",
+           "ready_payload", "release_if_idle", "shared", "status"]

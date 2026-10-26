@@ -234,6 +234,7 @@ class FillResult:
     batches: int = 0
     pauses: int = 0                      # quantas vezes a fila foi pausada no meio (os lotes no ar terminaram antes)
     deferred: bool = False               # F5.1 (A-06): o local parou porque a gravação começou; a varredura completa depois
+    retry: bool = False                  # R10-04: o local não abriu ou falhou no cálculo; a varredura tenta de novo, uma vez
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -410,6 +411,8 @@ class _Plan:
                 if not self.stop:
                     self.stop = True
                     self.result.reason = _reason(err)
+                if self.local and isinstance(err, local_embed.LocalEmbedError):
+                    self.result.retry = True                       # R10-04: passageira (memória, carga): a varredura refaz
                 self.result.errors.append(message)
                 log.warning("reunião %s: lote %d de embeddings falhou: %s", self.meeting_id, idx + 1, message)
                 try:
@@ -513,16 +516,17 @@ def sweep(store: Store, should_stop: Callable[[], bool] | None = None) -> int:
     """Varredura da abertura (F5A-12): reuniões com pipeline concluído e nenhum trecho (todo índice grava ao menos o trecho
     `reuniao`, logo a reunião sem fala não volta a cada abertura), reuniões cujo último `index` terminou em erro (uma vez
     por abertura, R5-07), as que adiaram os vetores do local durante uma gravação (F5.1 A-07: também ao parar ou cancelar a
-    gravação, sem exigir modelo confirmado) e, só com os vetores automáticos ligados, o embedder pronto e o modelo
-    confirmado (`model_confirmed`), as que têm trecho sem vetor dele (as anteriores à F5, as que ficaram sem rede).
-    `should_stop` (a saída do app) interrompe entre as consultas e entre as reuniões (R5-02). Devolve quantos `index`
-    entraram na fila."""
+    gravação, sem exigir modelo confirmado), as em que o local falhou de passagem (R10-04: memória, carga; uma tentativa por
+    varredura, sem laço) e, só com os vetores automáticos ligados, o embedder pronto e o modelo confirmado
+    (`model_confirmed`), as que têm trecho sem vetor dele (as anteriores à F5, as que ficaram sem rede). `should_stop` (a
+    saída do app) interrompe entre as consultas e entre as reuniões (R5-02). Devolve quantos `index` entraram na fila."""
     stop = should_stop or (lambda: False)
     meetings = set(store.rag.meetings_without_chunks())
     if stop():
         return 0
     meetings |= set(store.jobs.failed_index_meetings())
     meetings |= set(store.jobs.deferred_index_meetings())
+    meetings |= set(store.jobs.retry_index_meetings())
     if stop():
         return 0
     status = embedder_status(store)
@@ -584,8 +588,9 @@ class ReindexEstimate:
                     f"{'reunião' if self.meetings == 1 else 'reuniões'} · ≈ {_n(self.tokens)} tokens · {cost} · ≈ {minutes} min"
                     + ("" if self.measured else " (pela estimativa de 2 s por lote)"))
         if self.without_chunks and self.ready:          # completar e reindexar pedem os vetores delas também (`force`, R8-05)
-            base += (f"; mais {self.without_chunks} reunião(ões) ainda sem trechos, que também recebem vetores (o custo delas só "
-                     "se sabe depois do corte em trechos)")
+            base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos, que também recebem vetores"
+            if not self.local:                          # R10-07: o local não tem custo a saber
+                base += " (o custo delas só se sabe depois do corte em trechos)"
         elif self.without_chunks:
             base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos (entram com o índice por palavra)"
         return base

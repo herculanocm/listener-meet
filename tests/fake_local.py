@@ -1,5 +1,6 @@
 """Sessão do ONNX e tokenizer falsos do embedder local da F5.1 (A-13: nenhum teste importa o onnxruntime nem o tokenizers
-reais no processo da suíte) e a pasta de modelos de mentira com a marca `.ready`.
+reais no processo da suíte), a pasta de modelos de mentira com a marca `.ready`, o local ativo e pronto (`use_local`) e uma
+reunião processada com muitas falas (`long_meeting`).
 
 `FakeTokenizer` faz o que o tokenizer real faz para o projeto: um id por palavra (pelo hash), os tokens especiais, corte em
 `max_tokens` com `overflowing` e enchimento até o maior texto do lote com a máscara em zero. `FakeSession` devolve, para
@@ -13,10 +14,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 
-from listener.llm import local_embed
+from listener.llm import local_embed, local_prepare
+from listener.store import Store
+from listener.store.segments import SegmentInsert
 
 PAD, BOS, EOS = 1, 0, 2
+KEY = "local/multilingual-e5-small@384"
 
 
 @dataclass
@@ -109,8 +114,51 @@ def ready_folder(models_dir: Path) -> Path:
     for name in local_embed.FILES:
         (folder / name).parent.mkdir(parents=True, exist_ok=True)
         (folder / name).write_bytes(b"")
-    local_embed.write_ready(folder)
+    local_prepare.write_ready(folder)
     return folder
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 5000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+@dataclass
+class Local:
+    f: Factories
+    clock: Clock
+    folder: Path
+
+
+def use_local(store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Local:
+    """O local ativo e pronto: a pasta de modelos no tmp (a real já tem o e5, A-13), a sessão falsa no lugar da do processo,
+    o extra contando como instalado (o CI instala só o `[dev]`) e sem o `LISTENER_LLM=fake` (o provedor sai do registro)."""
+    monkeypatch.setattr(local_embed, "extra_installed", lambda: True)
+    monkeypatch.delenv("LISTENER_LLM", raising=False)
+    models = tmp_path / "modelos"
+    store.set_setting("pipeline.models_dir", str(models))
+    folder = ready_folder(models)
+    factories, clock = Factories(), Clock()
+    monkeypatch.setattr(local_embed, "_SESSION", factories.local_session(clock=clock))
+    store.providers.ensure_local()
+    store.providers.set_role("embed", "local")
+    return Local(factories, clock, folder)
+
+
+def long_meeting(store: Store, n: int, title: str = "Comitê do fundo") -> int:
+    """Reunião processada com `n` falas de 90 s alternando duas pessoas: `n` trechos de transcrição mais o da reunião."""
+    from tests.test_rag_index import _people, _pipeline_job
+
+    who = _people(store)
+    mid = store.create_meeting(title, None, None, None)
+    store.finish_meeting(mid, n * 90_000)
+    job = _pipeline_job(store, mid)
+    store.segments.insert_segments([SegmentInsert(mid, job, "R", i * 90_000, (i + 1) * 90_000, f"Fala {i}: o orçamento {i} e o prazo {i}.",
+                                                  "pyannote", "final", person_id=who["ana" if i % 2 else "bia"]) for i in range(n)])
+    return mid
 
 
 def expected_vectors(session: FakeSession, tokenizer: FakeTokenizer, texts: list[str]) -> np.ndarray:

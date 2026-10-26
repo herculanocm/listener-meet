@@ -233,8 +233,9 @@ def test_controller_enqueues_job_launches_worker_and_renews_lease(qtbot, qapp, s
         rec2 = c.recorder
         c.stop_recording()
         qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
-        heavy = [argv for argv, _env in platform.spawned if argv == worker_command()]   # F5.1 (A-07): parar roda a varredura do
-        assert store.jobs.for_meeting(rec2.meeting_id) == [] and len(heavy) == 1          # índice, que pode lançar o leve
+        spawned = [argv for argv, _env in platform.spawned]     # F5.1 (A-07): parar roda a varredura do índice, que pode lançar
+        assert store.jobs.for_meeting(rec2.meeting_id) == [] and spawned.count(worker_command()) == 1    # o leve; o pesado, uma vez
+        assert all(argv in (worker_command(), worker_command(light=True)) for argv in spawned)
     finally:
         c.emergency_stop()
 

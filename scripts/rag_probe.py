@@ -452,11 +452,9 @@ def cmd_gemini(args) -> None:
 
 
 # ----------------------------------------------------------------------------- e5 (F5.1 L0, D-050)
-E5_REPO = "intfloat/multilingual-e5-small"
-E5_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"                 # fixada (a F5.1 baixa sempre esta)
-E5_FILES = {"int8": ("onnx/model_qint8_avx512_vnni.onnx", "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"),
-            "fp32": ("onnx/model.onnx", "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"),
-            "tokenizer": ("onnx/tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39")}
+# repositório, revisão e o int8 e o tokenizer vêm do produto (`listener/llm/local_embed.py`, a fonte única); o fp32 fica aqui,
+# só para comparar (o app usa o int8, D-051)
+E5_FP32 = ("onnx/model.onnx", "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665")
 E5_MAX_TOKENS = 512
 E5_SENTENCES = (
     "O comitê aprovou o orçamento de 2027 com corte de dez por cento nas despesas de viagem.",
@@ -501,13 +499,23 @@ E5_GOLD = (                                                              # pergu
 E5_QUERIES = tuple(q for q, _ in E5_GOLD)
 
 
-def e5_fetch(filename: str, sha256: str, local_dir: Path) -> Path:
+def e5_spec() -> tuple[str, str, dict[str, tuple[str, str]]]:
+    """(repositório, revisão, {variante: (arquivo, sha256)}) do e5: o int8 e o tokenizer do produto, o fp32 daqui."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from listener.llm import local_embed
+
+    files = {"int8": (local_embed.ONNX_FILE, local_embed.FILES[local_embed.ONNX_FILE]), "fp32": E5_FP32,
+             "tokenizer": (local_embed.TOKENIZER_FILE, local_embed.FILES[local_embed.TOKENIZER_FILE])}
+    return local_embed.REPO, local_embed.REVISION, files
+
+
+def e5_fetch(repo: str, revision: str, filename: str, sha256: str, local_dir: Path) -> Path:
     """Um arquivo do e5 na revisão fixada, conferido pelo sha256 (o download pula o que já está certo)."""
     import hashlib
 
     from huggingface_hub import hf_hub_download
 
-    path = Path(hf_hub_download(E5_REPO, filename, revision=E5_REVISION, local_dir=str(local_dir)))
+    path = Path(hf_hub_download(repo, filename, revision=revision, local_dir=str(local_dir)))
     h = hashlib.sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
@@ -561,9 +569,10 @@ def cmd_e5(args) -> None:
     int8_dir = models / "multilingual-e5-small"                       # a mesma pasta que a F5.1 usa
     fp32_dir = Path(args.fp32_dir) if args.fp32_dir else Path(tempfile.mkdtemp(prefix="e5-fp32-"))
     t0 = time.perf_counter()
-    tok_path = e5_fetch(*E5_FILES["tokenizer"], int8_dir)
-    paths = {"int8": e5_fetch(*E5_FILES["int8"], int8_dir), "fp32": e5_fetch(*E5_FILES["fp32"], fp32_dir)}
-    out("e5_files", revision=E5_REVISION, int8=str(paths["int8"]), fp32=str(paths["fp32"]), seconds=round(time.perf_counter() - t0, 1),
+    repo, revision, files = e5_spec()
+    tok_path = e5_fetch(repo, revision, *files["tokenizer"], int8_dir)
+    paths = {"int8": e5_fetch(repo, revision, *files["int8"], int8_dir), "fp32": e5_fetch(repo, revision, *files["fp32"], fp32_dir)}
+    out("e5_files", revision=revision, int8=str(paths["int8"]), fp32=str(paths["fp32"]), seconds=round(time.perf_counter() - t0, 1),
         device=ort.get_device(), ort=ort.__version__)
     tok = Tokenizer.from_file(str(tok_path))
     tok.enable_truncation(max_length=E5_MAX_TOKENS)
