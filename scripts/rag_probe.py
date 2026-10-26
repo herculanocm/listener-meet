@@ -7,6 +7,7 @@ os gatilhos e a assinatura que a migração v8 e `listener/rag/vectors.py` usam.
   python scripts/rag_probe.py fts [N] [--repeat 20]            FTS5 com N trechos sintéticos (padrão 60 mil)
   python scripts/rag_probe.py sig [N] [DIM] [--queries 200]    assinatura binária com N vetores (padrão 200 mil; DIM 384 e 768)
   python scripts/rag_probe.py gemini [--batches 3] [--text ARQ]  embeddings reais (só com GEMINI_API_KEY no ambiente; B13)
+  python scripts/rag_probe.py e5 [--passages 192] [--batch 32]  e5-small int8 contra fp32 (F5.1 L0; revisão fixada, sha256)
 
 Cada medida imprime uma linha JSON; os números vão para specs/decisoes.md (Medições) e para a D-048.
 
@@ -30,6 +31,12 @@ gemini  lotes de 64 trechos de ~1.400 caracteres no `gemini-embedding-001` em 76
         dimensão, norma, tokens estimados e o cosseno médio entre os textos (confere a premissa de anisotropia). Sem
         `GEMINI_API_KEY`, imprime "pulado: sem chave". --text ARQ usa um texto real (transcrição exportada) cortado em
         trechos; sem ele, os trechos sintéticos do `fts`.
+e5      F5.1 L0 (D-050): `intfloat/multilingual-e5-small` na revisão fixada, conferido pelo sha256; o int8
+        (`model_qint8_avx512_vnni.onnx`, 118 MB) vai para a pasta de modelos do app (`multilingual-e5-small/`, a mesma da
+        F5.1) e o fp32 (470 MB) para uma pasta temporária, só para comparar. Trechos de ~1.400 caracteres com frases de
+        reunião em português e perguntas curtas, prefixos `passage:` e `query:`, corte em 512 tokens, pooling médio com a
+        máscara e L2: carga, ms por trecho com 1 e 2 threads, cortes, cosseno int8 contra fp32 (meta >= 0,99, o risco do
+        int8 quantizado para AVX-512 numa CPU sem ele) e recall@10 do int8 com o fp32 como verdade.
 """
 from __future__ import annotations
 
@@ -444,6 +451,172 @@ def cmd_gemini(args) -> None:
         mean_norm=round(float(np.linalg.norm(vn.mean(axis=0))), 3), source="texto real" if args.text else "sintético (Zipf)")
 
 
+# ----------------------------------------------------------------------------- e5 (F5.1 L0, D-050)
+E5_REPO = "intfloat/multilingual-e5-small"
+E5_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"                 # fixada (a F5.1 baixa sempre esta)
+E5_FILES = {"int8": ("onnx/model_qint8_avx512_vnni.onnx", "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"),
+            "fp32": ("onnx/model.onnx", "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"),
+            "tokenizer": ("onnx/tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39")}
+E5_MAX_TOKENS = 512
+E5_SENTENCES = (
+    "O comitê aprovou o orçamento de 2027 com corte de dez por cento nas despesas de viagem.",
+    "A Ana ficou de mandar a planilha revisada do fluxo de caixa até sexta-feira.",
+    "O Rodrigo explicou que a auditoria externa começa na segunda quinzena de novembro.",
+    "Decidimos adiar a migração do servidor para depois do fechamento contábil.",
+    "A cota sênior do FIDC teve rentabilidade acima do CDI no trimestre.",
+    "Ficou combinado que o jurídico revisa o contrato de cessão antes da assinatura.",
+    "O time de dados vai entregar o painel de inadimplência na próxima reunião.",
+    "Houve discussão sobre o risco de concentração nos dez maiores cedentes.",
+    "A Beatriz pediu um levantamento dos custos de licenças de software por área.",
+    "O prazo do relatório para a CVM foi confirmado para o dia quinze.",
+    "Precisamos alinhar com o banco custodiante a nova régua de cobrança.",
+    "A taxa de subordinação mínima continua em vinte e cinco por cento.",
+    "O Carlos sugeriu automatizar a conciliação diária das carteiras.",
+    "A reunião de alinhamento do fundo foi marcada para quinta às dez horas.",
+    "Os indicadores de atraso acima de noventa dias subiram levemente em setembro.",
+    "A diretoria quer ver um plano de contingência para queda da plataforma.",
+    "O fornecedor de nuvem propôs um desconto se o contrato for de três anos.",
+    "Ficou pendente a definição do responsável pelo projeto de segurança da informação.",
+    "O comitê de crédito recusou a operação por falta de garantias suficientes.",
+    "A Mariana vai apresentar a análise de sensibilidade com juros mais altos.",
+    "Combinamos revisar a política de investimentos no primeiro trimestre.",
+    "A integração com o sistema do administrador fiduciário ainda tem erros de arredondamento.",
+    "O treinamento sobre LGPD será obrigatório para todos os analistas.",
+    "A equipe comercial pediu material novo para os investidores qualificados.",
+    "O backup dos bancos de dados passou a rodar toda madrugada às duas horas.",
+    "A área de riscos recomendou reduzir a exposição ao setor de varejo.",
+    "O próximo passo é validar os números com a controladoria antes de publicar.",
+    "Os atrasos na entrega do relatório mensal foram causados pela troca de sistema.",
+    "O Paulo lembrou que a assembleia de cotistas precisa de quórum qualificado.",
+    "Ficou decidido contratar uma consultoria para revisar os processos de cobrança.",
+)
+E5_GOLD = (                                                              # pergunta e o índice da frase que a responde
+    ("quem ficou responsável pela planilha de fluxo de caixa", 1), ("quando começa a auditoria externa", 2),
+    ("o que foi decidido sobre o orçamento", 0), ("qual a rentabilidade da cota sênior", 4), ("prazo do relatório da CVM", 9),
+    ("por que o comitê recusou a operação de crédito", 18), ("qual é a subordinação mínima", 11),
+    ("plano de contingência da plataforma", 15), ("desconto do fornecedor de nuvem", 16), ("treinamento de LGPD", 22),
+    ("exposição ao varejo", 25), ("assembleia de cotistas e quórum", 28), ("consultoria para cobrança", 29),
+    ("migração do servidor", 3), ("conciliação diária automatizada", 12), ("painel de inadimplência", 6),
+)
+E5_QUERIES = tuple(q for q, _ in E5_GOLD)
+
+
+def e5_fetch(filename: str, sha256: str, local_dir: Path) -> Path:
+    """Um arquivo do e5 na revisão fixada, conferido pelo sha256 (o download pula o que já está certo)."""
+    import hashlib
+
+    from huggingface_hub import hf_hub_download
+
+    path = Path(hf_hub_download(E5_REPO, filename, revision=E5_REVISION, local_dir=str(local_dir)))
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    if h.hexdigest() != sha256:
+        raise SystemExit(f"sha256 diferente em {path}")
+    return path
+
+
+def e5_texts(n: int, seed: int = 7) -> list[str]:
+    """Trechos de ~1.400 caracteres com frases de reunião em português, em ordens diferentes."""
+    import random
+
+    rnd = random.Random(seed)  # noqa: S311 (amostra reprodutível, não é segredo)
+    texts = []
+    for _ in range(n):
+        parts: list[str] = []
+        while sum(len(p) + 1 for p in parts) < CHUNK_CHARS:
+            parts.append(rnd.choice(E5_SENTENCES))
+        texts.append(" ".join(parts))
+    return texts
+
+
+def e5_embed(sess, tok, texts: list[str], prefix: str, batch: int):
+    """Pooling médio com a máscara e L2, como a F5.1 faz: devolve (vetores, quantos passaram de 512 tokens)."""
+    import numpy as np
+
+    names = {i.name for i in sess.get_inputs()}
+    out_vecs, cut = [], 0
+    for i in range(0, len(texts), batch):
+        encs = tok.encode_batch([prefix + t for t in texts[i:i + batch]])
+        cut += sum(1 for e in encs if e.overflowing)
+        ids = np.array([e.ids for e in encs], dtype=np.int64)
+        mask = np.array([e.attention_mask for e in encs], dtype=np.int64)
+        feed = {"input_ids": ids, "attention_mask": mask}
+        if "token_type_ids" in names:
+            feed["token_type_ids"] = np.zeros_like(ids)
+        hidden = sess.run(None, feed)[0]
+        vec = (hidden * mask[..., None]).sum(axis=1) / mask.sum(axis=1, keepdims=True)
+        out_vecs.append(vec / np.linalg.norm(vec, axis=1, keepdims=True))
+    return np.concatenate(out_vecs).astype(np.float32), cut
+
+
+def cmd_e5(args) -> None:
+    import numpy as np
+    import onnxruntime as ort
+    from tokenizers import Tokenizer
+
+    models = Path(args.models_dir or os.environ.get("LISTENER_MODELS_DIR") or
+                  (Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share") / "listener-meet" / "models"))
+    int8_dir = models / "multilingual-e5-small"                       # a mesma pasta que a F5.1 usa
+    fp32_dir = Path(args.fp32_dir) if args.fp32_dir else Path(tempfile.mkdtemp(prefix="e5-fp32-"))
+    t0 = time.perf_counter()
+    tok_path = e5_fetch(*E5_FILES["tokenizer"], int8_dir)
+    paths = {"int8": e5_fetch(*E5_FILES["int8"], int8_dir), "fp32": e5_fetch(*E5_FILES["fp32"], fp32_dir)}
+    out("e5_files", revision=E5_REVISION, int8=str(paths["int8"]), fp32=str(paths["fp32"]), seconds=round(time.perf_counter() - t0, 1),
+        device=ort.get_device(), ort=ort.__version__)
+    tok = Tokenizer.from_file(str(tok_path))
+    tok.enable_truncation(max_length=E5_MAX_TOKENS)
+    pad = tok.token_to_id("<pad>")
+    tok.enable_padding(pad_id=1 if pad is None else pad, pad_token="<pad>")  # noqa: S106 (o token de enchimento, não senha)
+    texts = e5_texts(args.passages)
+    sentences = list(E5_SENTENCES)
+    vecs: dict[str, tuple] = {}
+    for variant, path in paths.items():
+        for threads in (1, 2):
+            so = ort.SessionOptions()
+            so.intra_op_num_threads, so.inter_op_num_threads = threads, 1
+            t = time.perf_counter()
+            sess = ort.InferenceSession(str(path), so, providers=["CPUExecutionProvider"])
+            load_s = time.perf_counter() - t
+            sample = texts if threads == 2 else texts[:args.batch]       # 1 thread: só a velocidade, numa amostra
+            t = time.perf_counter()
+            pv, cut = e5_embed(sess, tok, sample, "passage: ", args.batch)
+            embed_s = time.perf_counter() - t
+            t = time.perf_counter()
+            qv, _ = e5_embed(sess, tok, list(E5_QUERIES), "query: ", args.batch)
+            query_ms = 1000 * (time.perf_counter() - t) / len(E5_QUERIES)
+            out("e5_variant", variant=variant, threads=threads, load_s=round(load_s, 2), passages=len(sample), batch=args.batch,
+                ms_per_passage=round(1000 * embed_s / len(sample), 1), ms_per_query=round(query_ms, 1), truncated=cut,
+                dim=int(pv.shape[1]))
+            if threads == 2:
+                sv, _ = e5_embed(sess, tok, sentences, "passage: ", args.batch)
+                vecs[variant] = (pv, qv, sv)
+            del sess
+    (p8, q8, s8), (p32, q32, s32) = vecs["int8"], vecs["fp32"]
+    cos = (p8 * p32).sum(axis=1)
+
+    def recall(q_a, d_a, q_b, d_b, top: int) -> float:
+        a = np.argsort(-(q_a @ d_a.T), axis=1)[:, :top]
+        b = np.argsort(-(q_b @ d_b.T), axis=1)[:, :top]
+        return float(np.mean([len(set(x) & set(y)) / top for x, y in zip(a, b, strict=True)]))
+
+    gold = np.array([i for _, i in E5_GOLD])
+
+    def hits(q, s, top: int) -> float:
+        ranked = np.argsort(-(q @ s.T), axis=1)[:, :top]
+        return float(np.mean([g in r for g, r in zip(gold, ranked, strict=True)]))
+
+    out("e5_gold", queries=len(gold), int8_top1=round(hits(q8, s8, 1), 3), int8_top3=round(hits(q8, s8, 3), 3),
+        fp32_top1=round(hits(q32, s32, 1), 3), fp32_top3=round(hits(q32, s32, 3), 3))
+    off = p32 @ p32.T
+    out("e5_int8_vs_fp32", cos_mean=round(float(cos.mean()), 4), cos_min=round(float(cos.min()), 4),
+        cos_p5=round(float(np.quantile(cos, 0.05)), 4), meta_cos=">= 0,99 (risco da spec)",
+        recall_at_5_frases_distintas=round(recall(q32, s32, q8, s8, 5), 3),
+        recall_at_10_trechos_quase_iguais=round(recall(q32, p32, q8, p8, 10), 3),
+        fp32_mean_cos_between_passages=round(float(off[~np.eye(len(p32), dtype=bool)].mean()), 3))
+
+
 def main() -> None:
     for s in (sys.stdout, sys.stderr):
         with contextlib.suppress(Exception):
@@ -463,12 +636,17 @@ def main() -> None:
     p = sub.add_parser("gemini")
     p.add_argument("--batches", type=int, default=3)
     p.add_argument("--text", default=None)
+    p = sub.add_parser("e5")
+    p.add_argument("--passages", type=int, default=192)
+    p.add_argument("--batch", type=int, default=32)
+    p.add_argument("--models-dir", default=None, help="pasta de modelos do app (o int8 fica em multilingual-e5-small/)")
+    p.add_argument("--fp32-dir", default=None, help="onde baixar o fp32 só para comparar (padrão: pasta temporária)")
     args = ap.parse_args()
     threads = str(getattr(args, "threads", 1))
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(var, threads)                # antes do primeiro `import numpy`
     out("env", python=sys.version.split()[0], platform=sys.platform, cores=os.cpu_count(), sqlite=sqlite3.sqlite_version, threads=threads)
-    {"fts": cmd_fts, "sig": cmd_sig, "gemini": cmd_gemini}[args.cmd](args)
+    {"fts": cmd_fts, "sig": cmd_sig, "gemini": cmd_gemini, "e5": cmd_e5}[args.cmd](args)
 
 
 if __name__ == "__main__":
