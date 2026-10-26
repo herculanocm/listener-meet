@@ -34,7 +34,7 @@ CORE_PROPERTY_MAX = 255          # o python-docx recusa propriedade do arquivo m
 BULLET_STYLES = ("List Bullet", "List Bullet 2", "List Bullet 3")
 NUMBER_INDENT_PT = 18            # recuo por nível da lista numerada (o número vai escrito: o Word continuaria a contagem)
 SECTION_LEVEL = 1                # "Ata", "Ações", "Transcrição"…; os títulos de dentro da ata começam no 2
-XML_FORBIDDEN = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")   # o que o XML 1.0 (e o lxml) recusa
+XML_FORBIDDEN = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")   # o que o XML 1.0 (e o lxml) recusa
 
 
 def docx_available() -> bool:

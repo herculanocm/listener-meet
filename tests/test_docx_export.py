@@ -68,7 +68,7 @@ def test_parse_inline_keeps_private_characters_and_pairs_the_shortest_emphasis()
     também com escapes no mesmo texto; e o par de ênfase é o mais curto: "**a** e **b**" são dois negritos (antes, um só
     "a** e **b")."""
     assert export.parse_inline("a ** b ** c") == (MdRun("a ** b ** c"),) and export.parse_inline("a __ b __ c") == (MdRun("a __ b __ c"),)
-    assert export.parse_inline("texto com  privado") == (MdRun("texto com  privado"),)
+    assert export.parse_inline("texto com \ue02a privado") == (MdRun("texto com \ue02a privado"),)
     assert export.parse_inline("\U000f002a e \\*x\\* \U000f0080") == (MdRun("\U000f002a e *x* \U000f0080"),)
     assert export.parse_inline("**a** e **b**") == (MdRun("a", True), MdRun(" e "), MdRun("b", True))
     assert export.parse_inline("*i* e *x*") == (MdRun("i", False, True), MdRun(" e "), MdRun("x", False, True))
@@ -148,9 +148,9 @@ def test_text_the_xml_refuses_never_breaks_the_docx(case, shown):
 def test_xml_text_keeps_what_the_xml_accepts():
     from listener.rag.docx_export import _xml_text
 
-    kept = "tab\tquebra\nretorno\r acentos ção, emoji 😀, <b>&amp;</b>, \x7f\x85 ﷐ \U0001ffff"
+    kept = "tab\tquebra\nretorno\r acentos ção, emoji 😀, <b>&amp;</b>, \x7f\x85 \ufdd0 \U0001ffff"
     assert _xml_text(kept) == kept
-    assert _xml_text("a\x00b\x08c\x0bd\x0ce\x0ef\x1fg\ud800h\udfffi￾j￿k") == "abcdefghijk"
+    assert _xml_text("a\x00b\x08c\x0bd\x0ce\x0ef\x1fg\ud800h\udfffi\ufffej\uffffk") == "abcdefghijk"
 
 
 def _meeting_window(qtbot, store):
