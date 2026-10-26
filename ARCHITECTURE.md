@@ -58,16 +58,17 @@ no job); no app, a busca roda numa `Task` com contador de geração e um cache d
 global numa `StreamTask`, a varredura da abertura numa `Task` interrompível e o player em duas threads (a alimentadora
 decodifica numa fila de até 3 s; a escritora só escreve no `OutputStream`); o gravador chama um gancho antes de abrir o
 loopback do sistema inteiro, que pausa o player (Q9); a saída cancela e espera todas antes de fechar o banco. F5.1: o
-embedder local é uma sessão do ONNX por processo, sob lock, que calcula na thread de quem chama (2 threads no worker leve,
-1 no app, pré-carregada numa `Task` ao abrir o Histórico e solta 10 min depois do último uso); com a lease da gravação o
-`index` adia os vetores e parar ou cancelar a gravação roda a varredura; `--live --prepare --what rag` baixa o e5 (pelo
-HTTP, que retoma) e grava a marca `.ready`; o .docx sai numa `Task`.
+embedder local é uma sessão do ONNX por processo, sob lock, que calcula na thread de quem chama (2 threads no worker
+leve, 1 no app, pré-carregada numa `Task` ao abrir o Histórico e solta 10 min depois do último uso); com a lease da
+gravação o `index` adia os vetores e parar ou cancelar a gravação roda a varredura; `--live --prepare --what rag` baixa
+o e5 (pelo HTTP, que retoma) e grava a marca `.ready`; o .docx sai numa `Task`.
 
 ## Stack
 Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6
 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy · faster-whisper ou WhisperX
 (CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 (vetores em numpy, D-048) ·
-google-genai, openai, anthropic · onnxruntime e tokenizers (busca local) · python-docx · pynput · empacotamento: venv e atalho; PyInstaller só se necessário. Versões medidas:
+google-genai, openai, anthropic · onnxruntime e tokenizers (busca local) · python-docx · pynput · empacotamento: venv
+e atalho; PyInstaller só se necessário. Versões medidas:
 `memory/maquina.md`.
 
 ## Riscos de desenho

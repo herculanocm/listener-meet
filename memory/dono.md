@@ -16,5 +16,8 @@
   deixa para o fim o que depende dele (chaves, reuniões reais, usar a interface); defeito achado assim vira correção
   pequena com teste e commit; melhoria de UX vira pergunta (25/10). Antes de zerar a sessão, ele pede o estado salvo no
   backlog (26/10).
+- O que depende dele fica num roteiro passo a passo (`specs/roteiro-teste-windows.md`: o que fazer, o que esperar, o que
+  devolver), atualizado quando surge item novo; no backlog, o concluído é marcado `[x]` com a data e o lixo que não
+  serve mais é apagado com o OK dele (26/10, D-052).
 - Python moderno e rápido: piso 3.12, sem retrocompatibilidade, recursos novos e performance primeiro (CP17); quando a
   stack liberar uma versão mais nova, ele quer migrar, não esperar.
