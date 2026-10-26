@@ -19,8 +19,11 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
 
 ## Parte 1 — Primeiro uso no perfil real (15 min; B1)
-- [ ] Abra o app. O assistente pede seus dados, a pasta do banco e testa o microfone. Use uma pasta fora do OneDrive
-      (a chave fica no banco em texto aberto, CP10), por exemplo `C:\dados\listener-meet`.
+- [ ] Abra o app. O assistente pede seus dados, a pasta do banco, as chaves e testa o microfone. Use uma pasta fora do
+      OneDrive (a chave fica no banco em texto aberto, CP10), por exemplo `C:\dados\listener-meet`.
+- [ ] Página "Chaves de acesso" do assistente (U-038): escolha a LLM (Gemini recomendado), cole a chave e "Testar
+      conexão" (esperado: "ok: <modelo> respondeu em N ms"); cole o token do Hugging Face (antes, pelos links, aceite os
+      termos dos dois repositórios do pyannote). Pode pular e fazer na Parte 2.
 - [ ] O ícone aparece na bandeja (no Windows 11 pode cair no menu oculto, a seta ^: arraste para a barra). Clique
       direito: Gravar…, Pausar / retomar, Marcador, Mudo, Parar, Ao vivo…, Histórico…, Fila de processamento…,
       Configurações… e Sair.
@@ -29,7 +32,8 @@ dono não está aqui. Tamanho-alvo: 11 KB.
 - Devolva: o que estranhou, com print.
 
 ## Parte 2 — Chaves (10 min; B4 e B13)
-Tudo no primeiro grupo das Configurações, "Chaves de acesso" (U-037), com o link de onde conseguir cada uma.
+Se você já pôs as duas no assistente, confira só o terceiro passo (os ativos e o aviso do warm-up). Senão, ou para
+trocar: o primeiro grupo das Configurações, "Chaves de acesso" (U-037), com o link de onde conseguir cada uma.
 - [ ] Hugging Face: pelos links do grupo, logado, aceite as condições dos dois repositórios do pyannote e crie um token
       de leitura (Settings › Access Tokens); cole em "Hugging Face".
 - [ ] Gemini (Google): pelo link, crie a chave (plano pago); cole › "Testar conexão". Esperado, logo abaixo da chave:

@@ -31,6 +31,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         entradas vazias de 24/10 no cache do Hugging Face: saem juntos depois da Parte 3 do roteiro (D-050).
   - [x] D-053, do primeiro teste do dono: U-037 ("Chaves de acesso" em primeiro nas Configurações e o aviso no
         warm-up) e o log da gravação sem o título da janela da fonte (nome de terceiro, LGPD).
+  - [x] D-054: U-038, o assistente pede a chave da LLM escolhida (Gemini, GPT ou Claude) e o token do Hugging Face,
+        logo depois da pasta do banco (opcionais; a escolhida vira a ativa).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -47,7 +49,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 450 testes mais 7 pulados no Windows com
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 453 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.

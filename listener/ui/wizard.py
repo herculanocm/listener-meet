@@ -1,5 +1,6 @@
-"""Assistente de primeira inicialização (D-026, D-029): dados do usuário, pasta do banco, arquivo e nível de log
-(D-033), teste do microfone; dica para fixar o ícone da bandeja (U-017)."""
+"""Assistente de primeira inicialização (D-026, D-029): dados do usuário, pasta do banco, chaves de acesso (U-038, D-054:
+a LLM escolhida com a chave e o token do Hugging Face, opcionais; `ui/keys.py`), arquivo e nível de log (D-033), teste do
+microfone; dica para fixar o ícone da bandeja (U-017)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,6 +16,7 @@ from ..config import bootstrap
 from ..config.defaults import LOG_LEVELS
 from ..log import attach_file, get_logger
 from ..store import Store
+from .keys import KeysPage, save_wizard_keys
 from .meters import LevelMeter
 
 if TYPE_CHECKING:
@@ -30,7 +32,8 @@ class IntroPage(QWizardPage):
         lab = QLabel("Este app grava suas reuniões (qualquer plataforma) em dois canais, identifica quem fala por "
                      "perfil de voz e gera legenda, resumo e ata. Tudo fica no seu computador, num banco SQLite "
                      "que você escolhe onde guardar. Nada é apagado automaticamente.\n\n"
-                     "Em quatro passos: seus dados, a pasta do banco, o arquivo de log e um teste do microfone.\n\n"
+                     "Em cinco passos: seus dados, a pasta do banco, as chaves de acesso (opcional), o arquivo de log e "
+                     "um teste do microfone.\n\n"
                      "Depois, o app vive no ícone da bandeja. No Windows 11 o ícone nasce no menu oculto (seta ao lado "
                      "do relógio): arraste-o para a barra para ver o estado da gravação.")
         lab.setWordWrap(True)
@@ -251,6 +254,8 @@ class FirstRunWizard(QWizard):
         self.addPage(self.user_page)
         self.db_page = DbPage(platform, initial_dir)
         self.addPage(self.db_page)
+        self.keys_page = KeysPage()
+        self.addPage(self.keys_page)
         self.log_page = LogPage()
         self.addPage(self.log_page)
         self.mic_page = MicPage(platform)
@@ -268,6 +273,8 @@ class FirstRunWizard(QWizard):
         store.upsert_me(self.field("name").strip(), self.field("email").strip(), self.field("role").strip(),
                         self.field("company").strip())
         store.seed_default_presets()
+        keys = self.keys_page
+        save_wizard_keys(store, keys.chosen(), keys.key.text(), keys.hf_token.text(), keys.last_test)
         dev = self.mic_page.selected_device()
         if dev:
             store.set_setting("warmup.last_mic_device_id", dev.id)
