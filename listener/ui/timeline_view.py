@@ -1,105 +1,51 @@
-"""O desenho da linha do tempo da reunião (F5.1 item 5, U-008; A-19): o eixo em mm:ss em cima, os rótulos das faixas à
-esquerda e as faixas com as falas como barras, os marcadores como traços (com a bandeira no eixo) e as pausas da gravação
-hachuradas; o cursor do som que toca por cima de tudo. Ocupa a largura; `Ctrl`+roda amplia até 20 vezes ancorado no mouse
-(Q1), com rolagem horizontal; com muitas pessoas, rolagem vertical. O clique toca do instante exato; num marcador, do
-marcador menos 150 ms. A dica é texto puro (nome ou fala com "<b>" não vira HTML, R7-07). A pintura cobre só o
-retângulo do evento, com `searchsorted` nas faixas, e a barra tem 2 px lógicos no mínimo: as mais finas que se tocam
-viram uma (milhares de falas sem travar). Ampliada, a vista vira a página atrás do cursor, salvo nos 5 s depois de o
-usuário rolar ou ampliar. A montagem das faixas e a aba ficam em `ui/timeline.py`."""
+"""A linha do tempo da reunião aberta na tela (F5.1 item 5, U-008; A-15, A-19): `TimelineTab` é a aba "Linha do tempo",
+entre Marcadores e Chat, e `TimelineView` o desenho. O eixo em mm:ss em cima, os rótulos das faixas à esquerda e as faixas
+com as falas como barras, os marcadores como traços (com a bandeira no eixo) e as pausas da gravação hachuradas; o cursor
+do som que toca por cima de tudo. Ocupa a largura; `Ctrl`+roda amplia até 20 vezes ancorado no mouse (Q1), com rolagem
+horizontal; com muitas pessoas, rolagem vertical. O clique toca do instante exato; num marcador, do marcador menos 150 ms.
+A dica é texto puro (nome ou fala com "<b>" não vira HTML, R7-07). A pintura cobre só o retângulo do evento, com
+`searchsorted` nas faixas, e a barra tem 2 px lógicos no mínimo: as mais finas que se tocam viram uma (milhares de falas
+sem travar). Ampliada, a vista vira a página atrás do cursor, salvo nos 5 s depois de o usuário rolar ou ampliar. Sem
+duração ainda (gravando, sem falas), o cursor só é guardado. A aba lê as falas da aba Transcrição (`transcript.model.rows`,
+as mesmas na mesma ordem), os marcadores e as pausas da gravação (`pause_intervals`) a cada recarga (A-15); sem falas, o
+aviso "sem falas"; sem player, o clique avisa. As faixas e as contas puras ficam em `ui/timeline.py`."""
 from __future__ import annotations
 
 import math
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, override
 
-import numpy as np
 from PySide6 import QtGui
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QHelpEvent, QMouseEvent, QPainter, QPaintEvent, QPalette, QPen, QPolygonF, QResizeEvent,
                            QWheelEvent)
-from PySide6.QtWidgets import QAbstractScrollArea, QToolTip, QWidget
+from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QToolTip, QVBoxLayout, QWidget
 
 from ..llm.prompts.common import stamp
 from ..pipeline.review import PLAY_LEAD_MS
 from ..rag.export import fmt_duration
+from .player import pause_intervals
+from .timeline import BAR_MIN_PX, Lane, bar_at, build_lanes, merge_spans, opening, tick_step_ms, visible_slice
 
 if TYPE_CHECKING:
     from ..pipeline.review import TranscriptRow
+    from ..store import Store
 
 AXIS_H, LANE_GAP = 24, 6         # px lógicos: régua em cima, faixas embaixo
 LANE_H_MIN, LANE_H_MAX = 22, 34    # a faixa cresce até isto com poucas pessoas (alvo maior para o clique)
 LABEL_PAD, LABEL_MIN_W, LABEL_MAX_W = 8, 64, 180
-BAR_MIN_PX = 2.0                 # A-19: a barra mais fina; as vizinhas que se tocam viram uma só
 ZOOM_MAX, ZOOM_STEP = 20.0, 1.25     # Q1: até 20 vezes, 1,25 vez por dente da roda
-TICK_MIN_PX = 90                 # rótulos do eixo a pelo menos isto um do outro
-TICK_STEPS_S = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200)
 MARKER_HIT_PX, BAR_HIT_PX = 4, 3     # folga do clique no marcador e da dica na barra
 FOLLOW_PAUSE_S = 5.0             # A-19 e Q2: depois de o usuário rolar ou ampliar, 5 s sem seguir o cursor
 FOLLOW_MARGIN_PX, FOLLOW_LEAD = 24, 0.1      # vira a página perto da borda; o cursor volta a 10 % da largura
+CURSOR_HALO = 7                  # a faixa repintada em volta do cursor (a cabeça tem 5 px para cada lado)
 WHEEL_PX = 60                    # rolagem horizontal por dente da roda
-TIP_CHARS = 140
 LANE_COLORS = ("#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac")
 CURSOR_COLOR, MARKER_COLOR = "#e74c3c", "#e67e22"
 EMPTY_TEXT = "Sem falas nesta reunião."
-
-
-# ---------------------------------------------------------------- funções puras
-@dataclass(frozen=True, slots=True, eq=False)
-class Lane:
-    """Uma faixa: as falas de uma pessoa (ou de uma voz sem pessoa) em ordem de início."""
-    label: str                   # "Você", o nome ou o rótulo da voz
-    title: str                   # a dica: "Nome — Cargo"
-    rows: tuple[int, ...]        # índices nas falas da transcrição
-    starts: np.ndarray           # ms, crescente
-    ends: np.ndarray
-    reach: np.ndarray            # o maior fim até cada fala (crescente): a primeira barra visível sai por `searchsorted`
-    speech_ms: int
-    mine: bool = False
-
-
-def visible_slice(lane: Lane, t0: float, t1: float) -> tuple[int, int]:
-    """[lo, hi) das falas da faixa que cruzam [t0, t1)."""
-    lo = int(np.searchsorted(lane.reach, t0, side="right"))
-    return lo, max(lo, int(np.searchsorted(lane.starts, t1, side="left")))
-
-
-def bar_at(lane: Lane, t: float, tol: float) -> int | None:
-    """A fala da faixa sob `t`, com folga `tol` (ms: barra fina também acha); a de início mais tarde."""
-    j = int(np.searchsorted(lane.starts, t + tol, side="right")) - 1
-    while j >= 0 and lane.reach[j] >= t - tol:
-        if lane.ends[j] >= t - tol:
-            return j
-        j -= 1
-    return None
-
-
-def merge_spans(x0: Sequence[float], x1: Sequence[float], min_w: float = BAR_MIN_PX) -> list[tuple[float, float]]:
-    """As barras em px, cada uma com `min_w` no mínimo, e as que se tocam juntas (milhares de falas viram poucos retângulos)."""
-    out: list[tuple[float, float]] = []
-    for a, end in zip(x0, x1, strict=True):
-        b = max(end, a + min_w)
-        if out and a <= out[-1][1]:
-            out[-1] = (out[-1][0], max(out[-1][1], b))
-        else:
-            out.append((a, b))
-    return out
-
-
-def tick_step_ms(ms_per_px: float, min_px: float = TICK_MIN_PX) -> int:
-    """O passo do eixo: o menor da lista com os rótulos a pelo menos `min_px` um do outro."""
-    for s in TICK_STEPS_S:
-        if s * 1000 / max(ms_per_px, 1e-9) >= min_px:
-            return s * 1000
-    return TICK_STEPS_S[-1] * 1000
-
-
-def opening(text: str, limit: int = TIP_CHARS) -> str:
-    """O começo da fala para a dica, cortado numa palavra."""
-    clean = " ".join(text.split())
-    return clean if len(clean) <= limit else clean[:limit].rsplit(" ", 1)[0] + "…"
+NO_PLAYER_TEXT = "Reprodução indisponível nesta janela."
 
 
 # ---------------------------------------------------------------- a vista
@@ -214,17 +160,21 @@ class TimelineView(QAbstractScrollArea):
         self.viewport().update()
 
     def set_cursor(self, t_ms: int | None) -> None:
+        """Move o cursor do som. Sem duração ainda (gravando, sem falas nem marcadores) só guarda: a escala não existe e o x
+        passaria do limite de um `int` (R9-02). Só a faixa em volta do cursor é repintada, e só quando está na vista."""
         old, self.cursor_ms = self.cursor_ms, t_ms
-        if old == t_ms:
+        if old == t_ms or self.duration_ms <= 0:
             return
         bar = self.horizontalScrollBar()
         if t_ms is not None and bar.maximum() > 0 and self.clock() - self._user_scroll_at >= FOLLOW_PAUSE_S:
             x = self.x_of(t_ms)
             if not self._label_w <= x <= self.viewport().width() - FOLLOW_MARGIN_PX:      # vira a página atrás do cursor
                 self._set_offset(t_ms * self._scale() - FOLLOW_LEAD * self._track())
+        width = self.viewport().width()
         for t in (old, t_ms):
-            if t is not None:
-                self.viewport().update(QRect(int(self.x_of(t)) - 7, 0, 15, self.viewport().height()))
+            x = self.x_of(t) if t is not None else -math.inf
+            if -CURSOR_HALO <= x <= width + CURSOR_HALO:
+                self.viewport().update(QRect(int(x) - CURSOR_HALO, 0, 2 * CURSOR_HALO + 1, self.viewport().height()))
 
     @override
     def wheelEvent(self, event: QWheelEvent) -> None:
@@ -395,4 +345,50 @@ class TimelineView(QAbstractScrollArea):
         p.drawLine(self._label_w - 1, 0, self._label_w - 1, self.viewport().height())
 
 
-__all__ = ["EMPTY_TEXT", "Lane", "TimelineView", "bar_at", "merge_spans", "opening", "tick_step_ms", "visible_slice"]
+# ---------------------------------------------------------------- a aba
+class TimelineTab(QWidget):
+    """A aba "Linha do tempo" (A-15): a vista e a linha de aviso; `reload()` relê falas, marcadores, pausas e quem é você."""
+
+    def __init__(self, store: Store, meeting_id: int, *, rows: Callable[[], Sequence[TranscriptRow]],
+                 play: Callable[[int], Any] | None = None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.store = store
+        self.meeting_id = meeting_id
+        self.rows_fn = rows
+        self.play_fn = play
+        self.reloads = 0                                  # instrumentação dos testes: recargas (uma por mudança, R9-06)
+        self.view = TimelineView(self._play)
+        self.note = QLabel("")
+        self.note.setTextFormat(Qt.TextFormat.PlainText)
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet("color: #888; font-size: 11px;")
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.view, 1)
+        lay.addWidget(self.note)
+        self.reload()
+
+    def reload(self) -> None:
+        self.reloads += 1
+        rows = list(self.rows_fn())
+        m = self.store.get_meeting(self.meeting_id) or {}
+        me = self.store.get_me()
+        markers = [(int(k["t_ms"]), str(k.get("note") or "")) for k in self.store.list_markers(self.meeting_id)]
+        spans = pause_intervals(self.store.list_events(self.meeting_id))
+        duration = max([int(m.get("duration_ms") or 0), *(r.t_end_ms for r in rows), *(t for t, _ in markers),
+                        *(a if b is None else b for a, b in spans)])
+        lanes = build_lanes(rows, int(me["id"]) if me else None)
+        self.view.set_data(rows, lanes, markers, [(a, duration if b is None else b) for a, b in spans], duration)
+        self.note.setText(f"{len(lanes)} falante(s), {len(rows)} fala(s). Clique para ouvir daquele ponto; Ctrl + roda do mouse "
+                          f"amplia até {ZOOM_MAX:.0f} vezes." if rows else EMPTY_TEXT)
+
+    def set_cursor(self, t_ms: int | None) -> None:
+        self.view.set_cursor(t_ms)
+
+    def _play(self, t_ms: int) -> None:
+        if self.play_fn is None:
+            self.note.setText(NO_PLAYER_TEXT)
+            return
+        self.play_fn(t_ms)
+
+
+__all__ = ["EMPTY_TEXT", "NO_PLAYER_TEXT", "TimelineTab", "TimelineView"]

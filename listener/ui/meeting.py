@@ -35,7 +35,8 @@ from .common import clamp_to_screens, copy_rich, markdown_html
 from .docx_save import DocxSaver
 from .llm_tabs import LlmTabsGroup
 from .player import PlayerBar
-from .timeline import PlaybackFollower, TimelineTab
+from .timeline import PlaybackFollower
+from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
 from .widget import _screen_rects
 
@@ -158,7 +159,7 @@ class MeetingWindow(QWidget):
         self.markers = MarkersTab(store, meeting_id, play=self._play_marker)
         self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
                                     play=self._play_point if player is not None else None)
-        self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (job, revisada/original)
+        self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)
         self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text)
         summary = QSplitter(Qt.Orientation.Vertical)
         for kind, label in ((SummaryKind.EXECUTIVE, "Resumo executivo"), (SummaryKind.PRE_SUMMARY, "Pré-resumo")):
@@ -224,9 +225,9 @@ class MeetingWindow(QWidget):
         """Um job da reunião terminou (LLM ou índice): recarrega sem roubar o foco nem mexer na rolagem da transcrição."""
         try:
             self.llm.reload()
-            self.transcript.reload()
+            if not self.transcript.reload():             # refez a lista: a linha do tempo já releu tudo pelo `modelReset`
+                self.timeline.reload()                   # falas iguais: marcadores e pausas podem ter mudado (uma vez só)
             self.markers.reload()
-            self.timeline.reload()
             self.chat.reload()
             self.reload_header()
         except Exception as e:  # a reunião sumiu ou o banco fechou: a janela fica como está

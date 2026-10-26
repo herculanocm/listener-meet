@@ -3,10 +3,15 @@ aninhamento, parágrafos, negrito, itálico, código e link como texto, `snake_c
 a escrita atômica de bytes e o nome "AAAA-MM-DD título.docx", sem o python-docx; com ele (`importorskip`), o documento com
 as seções do .md relido pelo próprio python-docx (título, ficha, ata com os títulos no nível 2, resumos, ações, marcadores
 e a transcrição com o falante em negrito; texto do usuário sem virar Markdown; idioma pt-BR) e, na reunião aberta, o
-"Salvar .docx…" numa `Task`, o aviso do U-030 com o anterior intacto, o erro inesperado e o item desabilitado sem o extra."""
+"Salvar .docx…" numa `Task`, o aviso do U-030 com o anterior intacto, o erro inesperado e o item desabilitado sem o extra.
+Revisão R9: título longo e caracteres de controle não quebram o .docx (R9-01); a falha vai para o log mesmo com a janela
+fechada no meio (R9-03); o parser não troca caracteres da área privada do texto e casa o par de ênfase mais curto (R9-05)."""
 from __future__ import annotations
 
 import io
+import logging
+import threading
+from dataclasses import replace
 
 import pytest
 
@@ -58,6 +63,19 @@ def test_parse_inline_handles_nesting_escapes_and_unpaired_delimiters():
     assert export.parse_inline("__forte__ e _leve_") == (MdRun("forte", True), MdRun(" e "), MdRun("leve", False, True))
 
 
+def test_parse_inline_keeps_private_characters_and_pairs_the_shortest_emphasis():
+    """R9-05: "a ** b ** c" não vira itálico; um caractere da área privada (U+E000 a U+E07F, ou fora do BMP) fica como está,
+    também com escapes no mesmo texto; e o par de ênfase é o mais curto: "**a** e **b**" são dois negritos (antes, um só
+    "a** e **b")."""
+    assert export.parse_inline("a ** b ** c") == (MdRun("a ** b ** c"),) and export.parse_inline("a __ b __ c") == (MdRun("a __ b __ c"),)
+    assert export.parse_inline("texto com  privado") == (MdRun("texto com  privado"),)
+    assert export.parse_inline("\U000f002a e \\*x\\* \U000f0080") == (MdRun("\U000f002a e *x* \U000f0080"),)
+    assert export.parse_inline("**a** e **b**") == (MdRun("a", True), MdRun(" e "), MdRun("b", True))
+    assert export.parse_inline("*i* e *x*") == (MdRun("i", False, True), MdRun(" e "), MdRun("x", False, True))
+    assert export.parse_inline("*a **b** c*") == (MdRun("a ", False, True), MdRun("b", True, True), MdRun(" c", False, True))
+    assert export.parse_markdown("Título\n===\n\ntexto")[0] == MdBlock("paragraph", (MdRun("Título ==="),))   # setext: não lido
+
+
 def test_write_atomic_takes_bytes_and_the_name_takes_the_extension(tmp_path):
     assert export.default_filename(_data(), ".docx") == "2026-10-24 Orçamento 2027.docx"
     assert export.default_filename(_data(), "docx") == "2026-10-24 Orçamento 2027.docx" and export.default_filename(_data()).endswith(".md")
@@ -106,6 +124,35 @@ def test_the_docx_has_the_sections_of_the_md_with_titles_lists_and_speakers():
     assert [p.text for p in empty.paragraphs] == ["Reunião 3"]
 
 
+@pytest.mark.parametrize(("case", "shown"), [
+    ("titulo-256", "x" * 256), ("titulo-x0b", "Atafinal"), ("falante-x01", "[00:00] Ana: oi"), ("ata-x02", "textomais"),
+    ("dono-x0b", "Mandar · dono: Bia · aberta")])
+def test_text_the_xml_refuses_never_breaks_the_docx(case, shown):
+    """R9-01: o título da reunião não tem limite e o texto do usuário pode trazer um caractere de controle (colado de outro
+    programa); antes o .docx inteiro falhava ("exceeded 255 char limit", "All strings must be XML compatible"). Agora o
+    documento sai, reabre no python-docx, sem o caractere proibido, e a propriedade de título do arquivo fica em 255."""
+    docx = pytest.importorskip("docx")
+    from listener.rag import docx_export
+
+    base = _data()
+    m = {"titulo-256": replace(base, title="x" * 256), "titulo-x0b": replace(base, title="Ata\x0bfinal"),
+         "falante-x01": replace(base, transcript=(ExportLine(0, "Ana\x01", "oi"),)),
+         "ata-x02": replace(base, minutes_md="## A\n\ntexto\x02mais"),
+         "dono-x0b": replace(base, actions=(ExportAction("Mandar", "Bia\x0b", "", "aberta"),))}[case]
+    doc = docx.Document(io.BytesIO(docx_export.meeting_docx(m)))
+    texts = [p.text for p in doc.paragraphs]
+    assert shown in texts and not any(c in t for t in texts for c in "\x01\x02\x0b")
+    assert doc.core_properties.title == (m.shown_title.replace("\x0b", ""))[:255]
+
+
+def test_xml_text_keeps_what_the_xml_accepts():
+    from listener.rag.docx_export import _xml_text
+
+    kept = "tab\tquebra\nretorno\r acentos ção, emoji 😀, <b>&amp;</b>, \x7f\x85 ﷐ \U0001ffff"
+    assert _xml_text(kept) == kept
+    assert _xml_text("a\x00b\x08c\x0bd\x0ce\x0ef\x1fg\ud800h\udfffi￾j￿k") == "abcdefghijk"
+
+
 def _meeting_window(qtbot, store):
     from listener.ui.meeting import MeetingWindow
 
@@ -147,6 +194,7 @@ def test_save_docx_runs_in_a_task_and_warns_like_the_md(qtbot, store, tmp_path, 
     win.docx.save(str(out))
     qtbot.waitUntil(lambda: win.docx.task is None, timeout=10000)
     assert "aberto em outro programa" in warned[-1] and "WinError" not in warned[-1] and out.read_bytes() == before
+
     def broken(_m: ExportMeeting) -> bytes:                  # um defeito do python-docx: o motivo aparece, nada trava
         raise ValueError("quebrou")
 
@@ -169,3 +217,35 @@ def test_the_app_exit_waits_for_the_docx_and_the_item_is_disabled_without_the_ex
     bare, _ = _meeting_window(qtbot, store)
     assert not bare.docx.action.isEnabled() and bare.docx.action.toolTip() == DOCX_MISSING
     assert bare.btn_export.menu().toolTipsVisible()
+
+
+def test_a_failed_docx_is_logged_even_when_the_window_closed_meanwhile(qtbot, tmp_path, monkeypatch, caplog):
+    """R9-03: o usuário fecha a reunião durante a geração e a gravação falha (o Word segura o arquivo): sem janela não há
+    aviso, mas a linha vai para o log (a reunião, o caminho e o erro, nada do conteúdo). Antes, nem aviso nem log."""
+    pytest.importorskip("docx")
+    import shiboken6
+    from PySide6.QtWidgets import QWidget
+
+    from listener.ui.docx_save import DocxSaver
+
+    gate = threading.Event()
+
+    def locked(_path: object, _data: object) -> None:
+        gate.wait(5)                                         # a janela fecha antes de a gravação falhar
+        raise PermissionError(13, "Acesso negado")
+
+    monkeypatch.setattr(export, "write_atomic", locked)
+    window = QWidget()
+    saver = DocxSaver(window, 7, gather=lambda: ExportMeeting(7, "Comitê sigiloso", "", None), ask_path=lambda _d: None,
+                      saved=lambda _p: None, message=lambda _t: None)
+    with caplog.at_level(logging.WARNING, logger="listener.ui.docx"):
+        task = saver.save(str(tmp_path / "fechada.docx"))
+        assert task is not None
+        shiboken6.delete(window)                             # fechou: o `DocxSaver` some junto
+        assert not shiboken6.isValid(saver)
+        gate.set()
+        assert task.wait(5000)
+        qtbot.wait(50)                                       # o fim da tarefa não acha mais ninguém
+    lines = [r.getMessage() for r in caplog.records if r.name == "listener.ui.docx"]
+    assert len(lines) == 1 and "reunião 7" in lines[0] and "fechada.docx" in lines[0] and "Acesso negado" in lines[0]
+    assert "Comitê" not in lines[0]

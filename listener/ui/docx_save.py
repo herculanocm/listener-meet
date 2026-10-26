@@ -57,12 +57,19 @@ class DocxSaver(QObject):
         if not path:
             return None
         target = path if path.lower().endswith(".docx") else path + ".docx"
+        meeting_id = self.meeting_id
 
         def build() -> Path | OSError:
+            """Na `Task`. A falha vai para o log aqui mesmo: fechada a janela no meio, o `_done` não roda mais (R9-03); no
+            log, a reunião, o caminho e o erro, nada do conteúdo."""
             try:
                 return export.write_atomic(target, docx_export.meeting_docx(data))
             except OSError as e:                         # o arquivo aberto no Word: o aviso do U-030, o anterior fica
+                log.warning("reunião %s: gravar o .docx em %s falhou: %s", meeting_id, target, e)
                 return e
+            except Exception as e:
+                log.warning("reunião %s: gerar o .docx para %s falhou: %s", meeting_id, target, type(e).__name__)
+                raise                                    # a `Task` registra o rastro e entrega a exceção ao `_done`
 
         self.action.setEnabled(False)
         self.message("Gerando o .docx…")
@@ -71,6 +78,7 @@ class DocxSaver(QObject):
         return self.task
 
     def _done(self, result: object) -> None:
+        """O fim da `Task` com a janela aberta: "Salvo em …" ou o aviso (o log já foi escrito no `build`)."""
         with suppress(RuntimeError):                     # a janela já foi destruída: o arquivo foi gravado mesmo assim
             self.task = None
             self.action.setEnabled(self.ready)
@@ -78,7 +86,6 @@ class DocxSaver(QObject):
                 self.saved(result)
                 return
             self.message("")
-            log.warning("reunião %s: exportar o .docx para %s falhou: %s", self.meeting_id, self.target, result)
             text = (export.save_error_text(self.target, result) if isinstance(result, OSError)
                     else f"Não consegui gerar o .docx:\n{self.target}\n\n{result}")
             QMessageBox.warning(self.window, "Exportar", text)

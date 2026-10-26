@@ -5,7 +5,9 @@ mouse, barras de 2 px que se juntam, passo do eixo, a fala que toca por `bisect`
 quando o som anda, pausado fica, parado ou outra reunião some), o clique que toca do instante exato e o marcador de
 150 ms antes, `Ctrl`+roda ancorado no mouse até 20 vezes, a rolagem que segue o cursor salvo nos 5 s depois do usuário, as
 dicas em texto puro, a reunião sem falas e, na Transcrição, o destaque sem mexer na seleção, sem `dataChanged`, reaplicado
-na recarga e que só rola quando o usuário não rolou nos últimos 5 s."""
+na recarga e que só rola quando o usuário não rolou nos últimos 5 s. Revisão R9: o cursor sem duração não estoura o `int`
+(R9-02); o destaque chega à tela e a dica chega escapada, conferidos pelo que a plataforma mostra (R9-04, os dois falham
+com o método mutado); a recarga da reunião relê a linha do tempo uma vez só (R9-06)."""
 from __future__ import annotations
 
 import threading
@@ -61,8 +63,7 @@ def test_lanes_put_you_first_then_by_speech_time_and_keep_voices_apart():
 
 
 def test_visible_slice_bar_under_the_mouse_spans_and_axis_steps():
-    from listener.ui.timeline import build_lanes
-    from listener.ui.timeline_view import bar_at, merge_spans, opening, tick_step_ms, visible_slice
+    from listener.ui.timeline import bar_at, build_lanes, merge_spans, opening, tick_step_ms, visible_slice
 
     lane = build_lanes([_row(1, 0, 100_000, "Ana", 1), _row(2, 10_000, 12_000, "Ana", 1), _row(3, 120_000, 130_000, "Ana", 1)], None)[0]
     assert visible_slice(lane, 50_000, 60_000) == (0, 2)       # a fala longa cruza a vista; a curta acabou antes, mas vem junto
@@ -138,7 +139,7 @@ def _window(qtbot, store, *, audio: bool = False, player: Any = "fake", markers:
     who = _people(store)
     mid, _job = _meeting(store, who)
     if markers:
-        store.add_marker(mid, 70_000, "auditoria <b>sexta</b>")
+        store.add_marker(mid, 70_000, "auditoria <b>sexta</b> & cia")
         store.add_event(mid, 262_000, EventType.PAUSE)
         store.add_event(mid, 280_000, EventType.RESUME)
     if audio:
@@ -160,7 +161,8 @@ def test_timeline_tab_lanes_click_plays_the_exact_point_and_markers_150_ms_befor
     try:
         tab, view = win.timeline, win.timeline.view
         assert win.tabs.currentWidget() is tab and [ln.label for ln in view.lanes] == ["Bia", "Ana"]     # Bia fala mais
-        assert view.duration_ms == 300_000 and view.pauses == [(262_000, 280_000)] and view.markers == [(70_000, "auditoria <b>sexta</b>")]
+        assert view.duration_ms == 300_000 and view.pauses == [(262_000, 280_000)]
+        assert view.markers == [(70_000, "auditoria <b>sexta</b> & cia")]
         assert tab.note.text().startswith("2 falante(s), 6 fala(s)")
         y = view._lane_top(1) + 5                                                   # a faixa da Ana
         x = view.x_of(45_000)
@@ -176,7 +178,7 @@ def test_timeline_tab_lanes_click_plays_the_exact_point_and_markers_150_ms_befor
         # dicas em texto puro: falante, tempo e começo; marcador com a nota como está; pausa; o instante
         tip = view.tooltip_at(view.x_of(15_000), y)
         assert tip == "Ana — CFO · 00:00 a 00:30\nBom dia, vamos falar do orçamento de 2027."
-        assert view.tooltip_at(view.x_of(70_000), y) == "Marcador [01:10]: auditoria <b>sexta</b>\nclique para ouvir deste ponto"
+        assert view.tooltip_at(view.x_of(70_000), y) == "Marcador [01:10]: auditoria <b>sexta</b> & cia\nclique para ouvir deste ponto"
         assert view.tooltip_at(view.x_of(270_000), y).startswith("Gravação pausada de 04:22 a 04:40")
         assert view.tooltip_at(10, y) == "Ana — CFO · 2 min de fala"
         assert view.tooltip_at(view.x_of(280_500), y).endswith("clique para ouvir daqui")
@@ -234,8 +236,7 @@ def test_a_meeting_without_speech_shows_the_notice_and_still_plays_a_point(qtbot
 
     from listener.ui.meeting import MeetingWindow
     from listener.ui.player import Player
-    from listener.ui.timeline import NO_PLAYER_TEXT, TimelineTab
-    from listener.ui.timeline_view import EMPTY_TEXT
+    from listener.ui.timeline_view import EMPTY_TEXT, NO_PLAYER_TEXT, TimelineTab
 
     mid = store.create_meeting("Sem falas", None, None, None)
     store.finish_meeting(mid, 120_000)
@@ -360,4 +361,103 @@ def test_a_click_on_the_timeline_plays_there_and_the_highlight_follows_the_real_
         assert win.transcript.model.highlight == 1 and win.timeline.view.cursor_ms is not None   # a fala de 30 a 70 s
     finally:
         permits.release(1000)
+        player.shutdown()
+
+
+# ---------------------------------------------------------------- revisão R9
+def test_the_cursor_without_a_duration_is_only_kept_and_never_overflows(qtbot):
+    """R9-02: sem duração (gravando, sem falas nem marcadores) a escala era trilha·zoom px/ms e, passados ~40 min de som, o
+    `QRect` em volta do cursor passava do limite de um `int` a cada 50 ms. Agora o cursor só é guardado; com duração, um
+    cursor longe da vista não é repintado."""
+    from listener.ui.timeline_view import TimelineView
+
+    view = TimelineView(lambda _t: None)
+    qtbot.addWidget(view)
+    view.resize(1000, 300)
+    view.show()
+    view.set_data([], [], [], [], 0)
+    for t in (60_000, 30 * 60_000, 45 * 60_000):
+        view.set_cursor(t)
+        assert view.cursor_ms == t
+    view.set_data([], [], [], [], 1)                                                # 1 ms de duração: escala enorme
+    view.set_cursor(None)
+    view.set_cursor(45 * 60_000)
+    assert view.cursor_ms == 45 * 60_000
+    view.viewport().repaint()                                                      # a pintura também não estoura
+
+
+def test_the_highlight_reaches_the_screen_and_leaves_it(qtbot, store):
+    """R9-04: o destaque chega à tela sem `dataChanged` porque as duas linhas são repintadas. A cor é lida da imagem que a
+    plataforma mostra (`QScreen.grabWindow`), não de um `grab()` do widget, que repinta tudo e esconderia a falta do
+    `update` (conferido: com o `_highlight` mutado sem o `update`, este teste falha e um `grab()` passaria)."""
+    from PySide6.QtCore import QPoint
+
+    from listener.ui.player import PLAYING, STOPPED, PlayerState
+
+    win, mid, player, _who = _window(qtbot, store)
+    try:
+        win.show_tab("transcricao")
+        tab = win.transcript
+        qtbot.waitExposed(tab.view)
+
+        def on_screen(row: int) -> str:
+            rect = tab.view.visualRect(tab.model.index(row))
+            point = tab._viewport.mapTo(win, QPoint(rect.right() - 12, rect.center().y()))     # fundo, longe do texto
+            image = win.screen().grabWindow(win.winId()).toImage()          # vazia até a primeira pintura chegar à tela
+            x, y = round(point.x() * image.devicePixelRatio()), round(point.y() * image.devicePixelRatio())
+            return image.pixelColor(x, y).name() if image.valid(x, y) else ""
+
+        qtbot.waitUntil(lambda: on_screen(2) != "" and on_screen(2) == on_screen(0), timeout=3000)   # o mesmo fundo nas duas
+        before = on_screen(2)
+        player.state_changed.emit(PlayerState(PLAYING, mid, 75_000, 300_000))      # a fala 2 (70 a 100 s) toca
+        qtbot.waitUntil(lambda: on_screen(2) != before, timeout=3000)
+        assert on_screen(0) == before
+        player.state_changed.emit(PlayerState(STOPPED, mid, 300_000, 300_000))
+        qtbot.waitUntil(lambda: on_screen(2) == before, timeout=3000)               # parado: o destaque sai da tela
+    finally:
+        player.shutdown()
+
+
+def test_the_timeline_tooltip_reaches_the_screen_as_plain_text(qtbot, store):
+    """R9-04: a dica mostrada leva a nota do marcador com "<b>" e "&" como texto (`convertFromPlainText`): `QToolTip.text()`
+    sai escapado e, lido como HTML, é o texto como está (conferido: sem o escape, o HTML cru chegava à dica e o teste
+    falha)."""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent, QTextDocument
+    from PySide6.QtWidgets import QApplication, QToolTip
+
+    win, _mid, player, _who = _window(qtbot, store)
+    try:
+        view = win.timeline.view
+        pos = QPoint(round(view.x_of(70_000)), view._lane_top(0) + 5)
+        QApplication.sendEvent(view.viewport(), QHelpEvent(QEvent.Type.ToolTip, pos, view.viewport().mapToGlobal(pos)))
+        shown = QToolTip.text()
+        assert "auditoria &lt;b&gt;sexta&lt;/b&gt; &amp; cia" in shown and "<b>sexta" not in shown
+        doc = QTextDocument()
+        doc.setHtml(shown)
+        assert doc.toPlainText() == view.tooltip_at(pos.x(), pos.y()) == ("Marcador [01:10]: auditoria <b>sexta</b> & cia\n"
+                                                                            "clique para ouvir deste ponto")
+        QToolTip.hideText()
+    finally:
+        player.shutdown()
+
+
+def test_the_meeting_reload_reloads_the_timeline_once(qtbot, store):
+    """R9-06: a recarga da reunião relê a linha do tempo uma vez só: pelo `modelReset` quando as falas mudaram, pela chamada
+    direta quando só os marcadores ou as pausas podem ter mudado."""
+    win, mid, player, who = _window(qtbot, store)
+    try:
+        timeline = win.timeline
+        n = timeline.reloads
+        win.reload()                                                               # nada mudou
+        assert timeline.reloads == n + 1
+        store.add_marker(mid, 200_000, "novo")
+        win.reload()                                                               # um marcador novo, as falas iguais
+        assert timeline.reloads == n + 2 and (200_000, "novo") in timeline.view.markers
+        job = store.segments.current_job_id(mid)
+        store.segments.insert_segments([SegmentInsert(mid, job, "R", 280_000, 290_000, "Fala nova.", "pyannote", "final",
+                                                      person_id=who["bia"])])
+        win.reload()                                                               # as falas mudaram: só o `modelReset`
+        assert timeline.reloads == n + 3 and len(timeline.view.rows) == 7
+    finally:
         player.shutdown()

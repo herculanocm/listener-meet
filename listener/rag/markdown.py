@@ -1,6 +1,10 @@
 """O subconjunto do Markdown que a ata e os resumos usam, em blocos para o .docx (F5.1 item 7, U-011, A-18), puro e sem
-dependência: títulos, listas com marcador e numeradas (o aninhamento pelo recuo), parágrafos e, dentro deles, negrito e
-itálico; o resto fica como texto. O escritor do .docx (`rag/docx_export.py`) só monta o documento a partir dos blocos."""
+dependência: títulos com "#", listas com marcador e numeradas (o aninhamento pelo recuo), parágrafos e, dentro deles,
+negrito e itálico; o resto fica como texto. O escritor do .docx (`rag/docx_export.py`) só monta o documento a partir dos
+blocos.
+
+Não lido (as nossas LLMs não usam): o título sublinhado (setext, "Título" com "===" ou "---" na linha de baixo) fica como
+parágrafo, com o "===" no texto e o "---" como régua, que some; tabela, imagem e HTML ficam como texto."""
 from __future__ import annotations
 
 import re
@@ -29,21 +33,35 @@ MD_RULE = re.compile(r"^ {0,3}([-*_])(?:\s*\1){2,}\s*$")
 MD_FENCE = re.compile(r"^ {0,3}(?:```|~~~)")
 MD_QUOTE = re.compile(r"^ {0,3}>\s?")
 MD_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~])")
-ESCAPED_BASE = 0xE000            # um caractere escapado ("\*") vira um da área privada até o fim: não abre ênfase
+ESCAPABLE = "\\`*_{}[]()#+-.!|>~"
+ESCAPE_FIRST, ESCAPE_SLOTS, ESCAPE_SPAN = 0xF0000, 1024, 128    # as áreas privadas suplementares (planos 15 e 16) em faixas
 MD_INLINE = re.compile(
     r"(?P<tick>`+)(?P<code>.+?)(?P=tick)"                     # código: o texto como está
     r"|\[(?P<link>[^\]\n]+)\]\([^)\s]*\)"                     # link: só o texto
-    r"|\*\*\*(?P<bi>\S(?:.*?\S)?)\*\*\*"                      # negrito e itálico
-    r"|\*\*(?P<b1>\S(?:.*?\S)?)\*\*|(?<!\w)__(?P<b2>\S(?:.*?\S)?)__(?!\w)"
-    r"|\*(?P<i1>\S(?:.*?\S)?)\*|(?<!\w)_(?P<i2>\S(?:.*?\S)?)_(?!\w)")    # "_" dentro de palavra (snake_case) não é ênfase
+    r"|\*\*\*(?P<bi>\S(?:.*?\S)??)\*\*\*"                     # negrito e itálico; "??": o par mais curto, "**a** e **b**"
+    r"|\*\*(?P<b1>\S(?:.*?\S)??)\*\*|(?<!\w)__(?P<b2>\S(?:.*?\S)??)__(?!\w)"       # são dois negritos, não um
+    r"|\*(?P<i1>[^\s*](?:.*?[^\s*])??)\*(?!\*)"               # itálico não abre nem fecha colado num "*" ("a ** b ** c")
+    r"|(?<!\w)_(?P<i2>[^\s_](?:.*?[^\s_])??)_(?!\w)")         # nem "a __ b __ c"; "_" dentro de palavra (snake_case) também não
 
 
-def _protect(text: str) -> str:
-    return MD_ESCAPE.sub(lambda m: chr(ESCAPED_BASE + ord(m.group(1))), text)
+def _escape_base(text: str) -> int | None:
+    """O começo de uma faixa privada de 128 caracteres que o texto não usa (R9-05): o caractere escapado ("\\*") vira o da
+    posição dele nessa faixa, não abre ênfase e volta no fim sem trocar nenhum caractere do próprio texto. None se o texto
+    ocupar todas as faixas (aí o escape fica como está)."""
+    taken = {(ord(c) - ESCAPE_FIRST) // ESCAPE_SPAN for c in text if ord(c) >= ESCAPE_FIRST}
+    slot = next((s for s in range(ESCAPE_SLOTS) if s not in taken), None)
+    return None if slot is None else ESCAPE_FIRST + slot * ESCAPE_SPAN
 
 
-def _restore(text: str) -> str:
-    return "".join(chr(ord(c) - ESCAPED_BASE) if ESCAPED_BASE <= ord(c) < ESCAPED_BASE + 128 else c for c in text)
+def _protect(text: str, base: int | None) -> str:
+    if base is None:
+        return text
+    start = base
+    return MD_ESCAPE.sub(lambda m: chr(start + ord(m.group(1))), text)
+
+
+def _restore(text: str, base: int | None) -> str:
+    return text if base is None else text.translate({base + ord(c): c for c in ESCAPABLE})
 
 
 def _inline(text: str, bold: bool, italic: bool) -> list[MdRun]:
@@ -71,14 +89,15 @@ def parse_inline(text: str) -> tuple[MdRun, ...]:
     """Negrito (`**`, `__`), itálico (`*`, `_`), os dois (`***`), código e links como texto; os trechos vizinhos com a mesma
     marca se juntam; delimitador sem par fica como está; `\\*` é um asterisco."""
     merged: list[MdRun] = []
-    for run in _inline(_protect(text), False, False):
+    base = _escape_base(text)
+    for run in _inline(_protect(text, base), False, False):
         if not run.text:
             continue
         if merged and (merged[-1].bold, merged[-1].italic) == (run.bold, run.italic):
             merged[-1] = MdRun(merged[-1].text + run.text, run.bold, run.italic)
         else:
             merged.append(run)
-    return tuple(MdRun(_restore(r.text), r.bold, r.italic) for r in merged)
+    return tuple(MdRun(_restore(r.text, base), r.bold, r.italic) for r in merged)
 
 
 def _list_level(indents: list[int], indent: int) -> int:

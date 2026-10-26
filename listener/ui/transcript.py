@@ -176,10 +176,12 @@ class TranscriptTab(QWidget):
         self.prefer_llm = bool(on)
         self.reload(force=True)
 
-    def reload(self, force: bool = False) -> None:
-        """Relê as falas; sem mudança, a lista fica como está (seleção e rolagem); com mudança, refaz e devolve as duas."""
+    def reload(self, force: bool = False) -> bool:
+        """Relê as falas; sem mudança, a lista fica como está (seleção e rolagem); com mudança, refaz e devolve as duas. True
+        quando refez (o `modelReset` já avisou quem segue as falas, como a linha do tempo)."""
         rows = review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
-        if force or rows != self.model.rows:
+        changed = force or rows != self.model.rows
+        if changed:
             current = self.current_row()
             bar = self.view.verticalScrollBar()
             scroll = bar.value()
@@ -192,6 +194,7 @@ class TranscriptTab(QWidget):
                 QTimer.singleShot(0, self, lambda: bar.setValue(min(scroll, bar.maximum())))   # depois do layout das linhas
             self._highlight(self._row_at(self.playing_ms), follow=False)                     # o destaque volta (A-17)
         self._update_status()
+        return changed
 
     def _update_status(self) -> None:
         revised = sum(1 for r in self.model.rows if r.text_llm)
