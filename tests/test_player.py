@@ -1,10 +1,13 @@
 """F5 L4, player único (item 10, F5A-25): funções puras (pausas da gravação, mistura com ganho ½, posição pelas âncoras), o
 motor com um fluxo de saída falso (L e R misturados, pausa pulada, fim da reunião, reamostragem para a taxa do dispositivo,
 um canal num intervalo), posição pelos quadros escritos menos a latência, troca de ponto, pausar, ±10 s, parar, e os
-avisos (sem dispositivo, sem o arquivo de áudio do mês sem criá-lo, reunião sem áudio); a barra do player. Nada de áudio
-real: a fábrica do fluxo é injetada (`tests/fake_player.py`)."""
+avisos (sem dispositivo, sem o arquivo de áudio do mês sem criá-lo, reunião sem áudio); a barra do player. R7-02: um
+dispositivo em tempo real de 0,18 s de buffer com a decodificação atrasada não fica sem som, o `underflowed` é contado e
+vai para o log, e o comando que sobra numa queda relança a thread. R7-04: ±10 s em tempo de áudio através das pausas da
+gravação. Nada de áudio real: a fábrica do fluxo é injetada (`tests/fake_player.py`)."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -15,7 +18,7 @@ from listener.capture.audio import encode_flac
 from listener.model import EventType
 from listener.ui import player as pl
 from listener.ui.player import PAUSED, PLAYING, STOPPED, PlaybackEngine, PlayRequest
-from tests.fake_player import FakeOutput, FakeOutputs
+from tests.fake_player import FakeOutput, FakeOutputs, RealtimeOutput
 
 pytest.importorskip("PySide6")
 SR = 16000
@@ -97,6 +100,7 @@ def test_position_switch_point_pause_seek_and_stop(store):
     _wait(lambda: bool(outs.opened) and len(outs.opened[0].chunks) == 4)
     _wait(lambda: eng.snapshot().t_ms > 1000)
     assert eng.snapshot().t_ms == 1000 + (4 * SR // 4 - 0.05 * SR) * 1000 // SR       # 1 s escrito menos 50 ms de latência
+    _wait(lambda: outs.opened[0].entered == 5)                         # o 5º bloco já veio da alimentadora: write em voo
     eng.play(PlayRequest(mid, 6000))                                   # outro ponto: troca o som, no mesmo fluxo
     permits.release(1)                                                 # o write em voo termina; o comando vem em seguida
     _wait(lambda: "abort" in outs.opened[0].calls and eng.snapshot().t_ms == 6000)
@@ -104,6 +108,7 @@ def test_position_switch_point_pause_seek_and_stop(store):
     _wait(lambda: len(outs.opened[0].chunks) == 9)
     _wait(lambda: eng.snapshot().t_ms > 6000)
     assert len(outs.opened) == 1 and eng.snapshot().t_ms == 6950
+    _wait(lambda: outs.opened[0].entered == 10)
     eng.pause()
     permits.release(1)
     _wait(lambda: outs.opened[0].calls.count("abort") == 2)
@@ -184,7 +189,7 @@ def test_player_signals_guard_and_bar(qtbot, store):
         return False
 
     player.guard = refuse
-    assert player.play_from(mid, 0) is False and player.requests == [] and len(asked) == 1
+    assert player.play_from(mid, 0) is False and not player.requests and len(asked) == 1
     player.guard = None
     bar = PlayerBar(player, mid, title=lambda: "Sintética", start=lambda: 1000)
     qtbot.addWidget(bar)
@@ -207,3 +212,131 @@ def test_player_signals_guard_and_bar(qtbot, store):
     qtbot.waitUntil(lambda: player.state().state == STOPPED and not player.engine.alive, timeout=3000)
     assert states[-1] == STOPPED and bar.btn_play.text() == "Tocar"
     assert player.shutdown() is True
+
+
+def test_slow_decoding_never_starves_a_small_realtime_device_and_underflows_are_logged(store, monkeypatch, caplog):
+    """R7-02: um dispositivo de 0,18 s de buffer tocando em tempo real e cada janela (0,5 s pelo `decode_s`) decodificada
+    300 ms mais devagar: nenhum buraco no som, porque a alimentadora decodifica à frente numa fila limitada e o `write` nunca
+    espera decodificação (ela nem roda na thread que escreve). O `underflowed` que o dispositivo devolve é contado e vai
+    para o log quando o som para."""
+    mid = _meeting(store, seconds=2, pause=None)
+    real = PlaybackEngine._decode
+    threads: list[str] = []
+
+    def slow(self, *args, **kwargs):
+        threads.append(threading.current_thread().name)
+        time.sleep(0.3)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PlaybackEngine, "_decode", slow)
+    out = RealtimeOutput(rate=SR, buffer_s=0.18)
+    eng = PlaybackEngine(store, lambda: out, decode_s=0.5)
+    with caplog.at_level(logging.INFO, logger="listener.ui.player"):
+        eng.play(PlayRequest(mid, 0))
+        _wait(lambda: not eng.alive, timeout=10.0)
+        assert len(out.frames) == 2 * SR and np.allclose(out.frames, 0.4, atol=1e-3)
+        assert out.gaps == [] and (eng.underflows, eng.snapshot().state) == (0, STOPPED)
+        assert threads == ["player-feed"] * 4                         # 2 s em janelas de 0,5 s, todas fora da escritora
+        assert "2.0 s tocados, 0 buraco(s) na saída (underflow)" in caplog.text
+
+        class Holes(FakeOutput):                                       # um dispositivo que diz ter ficado sem som
+            def write(self, data: np.ndarray) -> object:
+                super().write(data)
+                return len(self.chunks) % 2 == 0
+
+        holes = Holes()
+        counted = PlaybackEngine(store, lambda: holes)
+        counted.play(PlayRequest(mid, 0))
+        _wait(lambda: not counted.alive)
+    assert len(holes.chunks) == 8 and counted.underflows == 4 and "4 buraco(s) na saída (underflow)" in caplog.text
+
+
+def test_a_command_left_when_the_writer_fails_starts_a_new_writer(store, monkeypatch):
+    """R7-02: um comando que chega enquanto a escritora cai não se perde: o `finally` dela relança a thread, que o trata."""
+    mid = _meeting(store, seconds=2, pause=None)
+    outs = FakeOutputs(rate=SR)
+    eng = PlaybackEngine(store, outs)
+    real = PlaybackEngine._step
+    failed = threading.Event()
+
+    def failing(self, sess):
+        if not failed.is_set():
+            failed.set()
+            self.play(PlayRequest(mid, 1000))                          # o clique em outro ponto chega durante a queda
+            raise RuntimeError("falha simulada")
+        return real(self, sess)
+
+    monkeypatch.setattr(PlaybackEngine, "_step", failing)
+    eng.play(PlayRequest(mid, 0))
+    _wait(lambda: failed.is_set() and not eng.alive)
+    st = eng.snapshot()
+    assert (st.state, st.t_ms) == (STOPPED, 2000) and len(outs.opened) == 2 and len(outs.opened[1].frames) == SR
+    assert outs.opened[0].calls[-1] == "close" and eng.shutdown() is True
+
+
+def test_the_pause_notice_survives_commands_handled_late(store):
+    """R7-01: a pausa com aviso (o warm-up, a gravação do sistema inteiro) leva o aviso no comando: a thread, que trata os
+    comandos depois do bloco em voo, reescreve estado e aviso ao tratar um "retomar" antigo, e a pausa seguinte os devolve."""
+    mid = _meeting(store, seconds=4, pause=None)
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(rate=SR, permits=permits)
+    eng = PlaybackEngine(store, outs)
+    eng.play(PlayRequest(mid, 0))
+    _wait(lambda: bool(outs.opened) and outs.opened[0].entered == 1)                 # um bloco em voo: os comandos esperam
+    eng.pause("pausado para o warm-up")
+    eng.resume()
+    eng.pause("pausado: sistema inteiro")
+    assert (eng.snapshot().state, eng.snapshot().message) == (PAUSED, "pausado: sistema inteiro")
+    permits.release(1)                                                               # pausa, retoma (reescreve) e pausa
+    _wait(lambda: not eng._cmds and eng._feed is None)                               # os três tratados: nada a produzir
+    assert outs.opened[0].calls.count("abort") == 1
+    assert (eng.snapshot().state, eng.snapshot().message) == (PAUSED, "pausado: sistema inteiro")
+    eng.resume()
+    assert (eng.snapshot().state, eng.snapshot().message) == (PLAYING, "")           # retomar tira o aviso
+    permits.release(1000)
+    assert eng.shutdown() is True
+
+
+def test_seek_target_moves_in_audio_time_across_recording_pauses():
+    """R7-04: ±10 s em tempo de áudio. Para trás, alvo em [a, b) vira a - (b - alvo), repetindo, piso 0; para frente,
+    b + (alvo - a); teto no fim do áudio; uma pausa que vai até o fim não tem áudio depois."""
+    pauses = [(10_000, 70_000)]
+    assert (pl.audio_ms(73_000, pauses), pl.audio_ms(40_000, pauses), pl.audio_ms(5_000, pauses)) == (13_000, 10_000, 5_000)
+    assert (pl.meeting_ms(13_000, pauses), pl.meeting_ms(10_000, pauses), pl.meeting_ms(3_000, pauses)) == (73_000, 70_000, 3_000)
+    assert pl.seek_target(73_000, -10_000, pauses, 90_000) == 3_000           # 10 - (70 - 63): antes, preso nos 70 s
+    assert pl.seek_target(3_000, -10_000, pauses, 90_000) == 0                 # piso 0
+    assert pl.seek_target(3_000, 10_000, pauses, 90_000) == 73_000             # 70 + (13 - 10)
+    assert pl.seek_target(0, 10_000, pauses, 90_000) == 70_000                 # o começo da pausa: o fim dela
+    assert pl.seek_target(85_000, 10_000, pauses, 90_000) == 89_999            # teto no fim do áudio
+    two = [(10_000, 20_000), (25_000, 40_000)]
+    assert pl.seek_target(45_000, -15_000, two, 60_000) == 5_000               # 30 s cai na 2ª, 15 s na 1ª: 10 - (20 - 15)
+    assert pl.seek_target(5_000, 15_000, two, 60_000) == 45_000                # 5 s até a 1ª, 5 s entre as duas, 5 s depois
+    assert pl.seek_target(45_000, 10_000, [(50_000, None)], 60_000) == 50_000  # pausa até o fim: o player para ali
+    assert pl.seek_target(8_000, -10_000, [(0, 5_000)], 60_000) == 5_000       # pausa no começo: o primeiro áudio
+
+
+def test_minus_ten_seconds_crosses_a_recording_pause_while_playing_and_paused(store):
+    """R7-04, o caso do revisor: pausa da gravação de 10 a 70 s, tocando de 73 s, três vezes -10 s: 3,25 s (o bloco em voo
+    andou 0,25 s), 0 e 0, sem ficar preso nos 70 s; pausado, a posição segue a mesma regra (0 -> 70 -> 80 -> 70 -> 0 s)."""
+    mid = _meeting(store, seconds=90, pause=(10_000, 70_000))
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(rate=SR, permits=permits)
+    eng = PlaybackEngine(store, outs)
+    eng.play(PlayRequest(mid, 73_000))
+    try:
+        for n, expected in enumerate((3_250, 0, 0), start=1):
+            _wait(lambda n=n: bool(outs.opened) and outs.opened[0].entered == n)     # um bloco em voo
+            eng.seek(-pl.SEEK_MS)
+            permits.release(1)                                                     # o bloco sai; o -10 s vem em seguida
+            _wait(lambda n=n, t=expected: outs.opened[0].calls.count("abort") == n and eng.snapshot().t_ms == t)
+        _wait(lambda: outs.opened[0].entered == 4)
+        eng.pause()
+        permits.release(1)
+        _wait(lambda: outs.opened[0].calls.count("abort") == 4)
+        assert (eng.snapshot().state, eng.snapshot().t_ms) == (PAUSED, 0)
+        for delta, expected in ((pl.SEEK_MS, 70_000), (pl.SEEK_MS, 80_000), (-pl.SEEK_MS, 70_000), (-pl.SEEK_MS, 0)):
+            eng.seek(delta)
+            _wait(lambda t=expected: eng.snapshot().t_ms == t)
+    finally:
+        permits.release(1000)
+        assert eng.shutdown() is True

@@ -4,10 +4,19 @@ com texto e HTML e escrita atômica, fechar para o som), o Histórico (lista car
 período, busca com os trechos agrupados e o destaque escapado contra `<script>`, clique que abre e toca, resultado velho
 descartado, Esc, selo "busca por palavras" sem jargão; ações abertas com "Marcar feita" e a evidência; chat global com o
 fake, avaliação U-027, citação que abre a reunião, U-029 e os avisos) e o controlador (atalho U-028, "Histórico…" na
-bandeja, clique no balão, recarga da reunião aberta quando o índice termina, Q9 e a saída esperando player e tarefas)."""
+bandeja, clique no balão, recarga da reunião aberta quando o índice termina, Q9 e a saída esperando player e tarefas).
+Revisão do L4 e do L5: o warm-up e a fonte "sistema inteiro" pausam o player (R7-01); a saída com a rede presa cancela de
+verdade, dentro do processo e num processo à parte com código 0 (R7-03); a recarga do chat da reunião (R7-05); o balão sem
+reunião (R7-06); títulos e nomes com HTML ficam texto (R7-07)."""
 from __future__ import annotations
 
+import html
+import os
+import subprocess
+import sys
 import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,13 +24,13 @@ import pytest
 
 from listener.capture.audio import encode_flac
 from listener.capture.recorder import SourceSpec
-from listener.model import ActionStatus, AppState, JobKind, JobStatus, SummaryKind
+from listener.model import ActionStatus, AppState, ChatRole, JobKind, JobStatus, SummaryKind
 from listener.rag import chat_global, citations, export, index, search
 from listener.store.actions import ActionInsert
 from listener.store.segments import SegmentInsert
 from listener.store.summaries import SummaryInsert
 from tests.fake_player import FakeOutputs
-from tests.test_rag_chat import QUESTION, _llm_ready
+from tests.test_rag_chat import QUESTION, _llm_ready, _slow_network
 from tests.test_rag_index import _meeting, _people, _pipeline_job
 from tests.test_rag_search import _other_meeting
 
@@ -304,10 +313,12 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
         tray = TrayIcon(c)
         names = [a.text() for a in tray.menu.actions()]
         assert names.index("Histórico…") == names.index("Fila de processamento…") - 1
-        # o clique no balão abre a reunião da última notificação que tinha reunião (Q6)
+        # o clique no balão abre a reunião do balão que está na tela (Q6); um balão sem reunião zera a guardada (R7-06)
         assert c.open_last_notified() is None
         c._notify_meeting("Orçamento 2027: ata pronta", mid)
         c.notify("Atalhos que não registraram: …")
+        assert c.open_last_notified() is None and c._meetings == {}                  # não abre a reunião do balão anterior
+        c._notify_meeting("Orçamento 2027: ata pronta", mid)
         win = c.open_last_notified()
         assert win is not None and c._meetings[mid] is win and win.isVisible()
         tray.messageClicked.emit()
@@ -346,3 +357,187 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
     finally:
         c.emergency_stop()
     assert not c.player.engine.alive and c._history is not None and c._history.page._closed
+
+
+def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp, platform, store, monkeypatch):
+    """R7-01: o som que já toca não entra na gravação do sistema inteiro. Abrir o warm-up, começar a gravar com a fonte
+    "sistema inteiro" e trocar a fonte para ela pausam o player, com o aviso na barra (e no log), sem balão; retomar passa
+    pela confirmação do Q9 (recusada: segue pausado). Com a fonte do app o som segue; fora da gravação, retoma direto."""
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from listener.capture.recorder import RecordConfig
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+    from listener.ui.player import PAUSED, PLAYING
+    from listener.ui.sources import SourceTable
+
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _audio(store, mid, 0)
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(permits=permits)
+    c.player.engine.factory = outs
+    balloons: list[str] = []
+    asked: list[str] = []
+
+    def question(*a: object, **_k: object) -> object:
+        asked.append(str(a[2]))
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(c, "notify", balloons.append)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: SimpleNamespace(exec=lambda: None))
+    monkeypatch.setattr(ctl, "WarmupDialog", lambda *a, **k: SimpleNamespace(exec=lambda: QDialog.DialogCode.Rejected,
+                                                                            deleteLater=lambda: None))
+    fast = {"chunk_seconds": 0.5, "stop_timeout_s": 1.0, "retry_base_s": 0.001}
+    try:
+        win = c.open_meeting(mid)
+        assert c.player.play_from(mid, 0) and c.player.state().state == PLAYING              # sem gravação: toca direto
+        qtbot.waitUntil(lambda: bool(outs.opened) and outs.opened[0].entered == 1, timeout=3000)   # o som saindo (um bloco em voo)
+        c.open_warmup()                                                                      # o warm-up abriu (e fechou)
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_WARMUP)
+        assert win.bar.note.text() == ctl.PLAYER_PAUSED_WARMUP and asked == []
+        assert c.player.toggle() and c.player.state().state == PLAYING and win.bar.note.text() == ""   # sem gravação: direto
+        assert c.start_recording(RecordConfig(source=SourceSpec("system", label="Sistema"), **fast), {"title": "q9"})
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_SYSTEM)
+        assert win.bar.note.text() == ctl.PLAYER_PAUSED_SYSTEM
+        assert c.player.toggle() is False and "som do sistema inteiro" in asked[-1] and c.player.state().state == PAUSED
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert c.player.toggle() and c.player.state().state == PLAYING                       # parou de gravar: direto
+        app_source = SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião")
+        assert c.start_recording(RecordConfig(source=app_source, **fast), {"title": "app"})
+        assert c.player.state().state == PLAYING                                            # fonte do app: o som segue
+        monkeypatch.setattr(QDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+        monkeypatch.setattr(SourceTable, "selected_spec", lambda _self: SourceSpec("system", label="Sistema"))
+        c.switch_source()                                                                    # trocou para o sistema inteiro
+        assert c.recorder is not None and str(c.recorder.source.kind) == "system"
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_SYSTEM)
+        assert not any("player" in b or "pausad" in b for b in balloons)                     # sem balão
+    finally:
+        permits.release(1000)
+        c.emergency_stop()
+
+
+def test_exit_cancels_the_search_vector_and_both_chats_stuck_on_the_network(qtbot, store, monkeypatch):
+    """R7-03: com a rede presa (o fake demora 30 s), o Enter da busca (o vetor da consulta), uma pergunta do chat global e
+    uma do chat da reunião antes do primeiro pedaço: o `shutdown` cancela de verdade e nenhuma thread fica viva, em ~1 s
+    (antes as esperas de 3 e 2,5 s venciam e o banco fechava com as QThreads rodando); as chamadas canceladas ficam em
+    `llm_calls` e nenhuma resposta vazia é gravada. Passado o prazo, a espera da saída avisa e espera o fim."""
+    from listener.ui.chat import ChatPanel
+    from listener.ui.history import HistoryPage
+    from listener.ui.tasks import run_task, wait_before_close
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    a, _b, _who = _indexed(store)
+    _slow_network(monkeypatch)
+    page = HistoryPage(store)
+    qtbot.addWidget(page)
+    page.search.setText("auditoria")
+    page._search_now()                                       # Enter: o vetor da consulta preso no fake
+    page.question.setText(QUESTION)
+    page.ask()                                               # o chat global, preso no vetor da consulta dele
+    panel = ChatPanel(store, a)
+    qtbot.addWidget(panel)
+    panel.question.setText("qual é o prazo?")
+    panel.ask()                                              # o chat da reunião, sem o primeiro pedaço
+    tasks = [*page._tasks, panel.task]
+    qtbot.wait(500)                                          # as três chamadas entram no fake
+    assert len(tasks) == 3 and all(t.isRunning() for t in tasks)
+    t0 = time.monotonic()
+    page.shutdown()
+    panel.shutdown()
+    assert time.monotonic() - t0 < 1.5 and not any(t.isRunning() for t in tasks)
+    cancelled = sorted(str(r[0]) for r in store._q("SELECT task FROM llm_calls WHERE error = 'cancelado'"))
+    assert cancelled == ["chat", "rag_embed", "rag_embed"] and store.chat.list_threads() == []
+    assert [str(m["role"]) for m in store.chat.list_for_meeting(a)] == [ChatRole.USER]
+    slow = run_task(lambda: time.sleep(0.4), None, lambda _r: None)
+    t0 = time.monotonic()
+    assert wait_before_close(slow, 50, "uma tarefa lenta") is False and time.monotonic() - t0 >= 0.3 and slow.isFinished()
+
+
+def test_app_exit_with_the_network_stuck_exits_with_code_0():
+    """R7-03: o script de saída (`tests/exit_scenario.py`) num processo à parte, com a busca por sentido e os dois chats
+    presos na rede e a saída pelo caminho do app (`aboutToQuit` -> `emergency_stop`): código 0, sem "QThread: Destroyed
+    while thread is still running" (antes: 134 no Linux e 0xC0000409 no Windows, depois de ~20 s de esperas)."""
+    root = Path(__file__).resolve().parent.parent
+    env = {k: v for k, v in os.environ.items() if k != "LISTENER_LLM"} | {"PYTHONUTF8": "1", "QT_QPA_PLATFORM": "offscreen"}
+    t0 = time.monotonic()
+    proc = subprocess.run([sys.executable, str(root / "tests" / "exit_scenario.py")], cwd=str(root), env=env,  # noqa: S603
+                          capture_output=True, text=True, encoding="utf-8", timeout=120, check=False)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    assert "QThread: Destroyed" not in proc.stderr and time.monotonic() - t0 < 60
+
+
+def test_meeting_chat_reload_keeps_the_question_in_flight_and_the_scroll(qtbot, store, monkeypatch):
+    """R7-05: a recarga da reunião aberta (um job `llm` ou `index` terminou) com uma pergunta em voo não apaga a pergunta
+    nem a parcial; sem pergunta em voo, a rolagem volta para onde estava, salvo se estava no fim (aí segue no fim)."""
+    from listener.ui.chat import ChatPanel
+
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _llm_ready(store)
+    for i in range(24):
+        store.chat.add(mid, ChatRole.USER if i % 2 == 0 else ChatRole.ASSISTANT, f"mensagem {i}: " + "texto comprido " * 30)
+    panel = ChatPanel(store, mid)
+    qtbot.addWidget(panel)
+    panel.resize(480, 320)
+    panel.show()
+    qtbot.waitExposed(panel)
+    bar = panel.view.verticalScrollBar()
+    assert bar.maximum() > 0
+    bar.setValue(bar.maximum() // 3)
+    kept = bar.value()
+    panel.reload()
+    assert bar.value() == kept and "mensagem 0:" in panel.view.toPlainText()          # a leitura fica onde estava
+    bar.setValue(bar.maximum())
+    panel.reload()
+    assert bar.value() == bar.maximum()                                               # estava no fim: segue no fim
+    _slow_network(monkeypatch)
+    panel.question.setText("e o prazo?")
+    panel.ask()
+    panel._on_chunk("Resposta parcial")                                               # um pedaço já chegou
+    panel.reload()                                                                    # um job terminou com a pergunta em voo
+    shown = panel.view.toPlainText()
+    assert "Você: e o prazo?" in shown and "Resposta parcial" in shown and panel.task is not None
+    panel.shutdown()
+
+
+def test_titles_and_names_stay_plain_text_in_labels_and_tooltips(qtbot, store, cleanup):
+    """R7-07: um título e um nome "<b>Comitê</b> <img>" aparecem como texto (não viram HTML) na barra do player, no
+    cabeçalho da reunião e nas notas do Histórico, e escapados nas dicas da lista de reuniões."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui.history import HistoryPage
+    from listener.ui.meeting import MeetingWindow
+    from listener.ui.player import Player
+
+    evil = "<b>Comitê</b> <img>"
+    who = {"ana": store.people.create_person(evil), "bia": store.people.create_person("Bia")}
+    mid, _job = _meeting(store, who, title=evil)
+    _audio(store, mid, 0)
+    permits = threading.Semaphore(0)
+    player = Player(store, FakeOutputs(permits=permits))
+    cleanup(player)
+    win = MeetingWindow(store, mid, player=player)
+    qtbot.addWidget(win)
+    cleanup(win)
+    plain = Qt.TextFormat.PlainText
+    assert win.info.textFormat() == plain and evil in win.info.text() and win.message.textFormat() == plain
+    assert player.play_from(mid, 0, title=win.title_text()) and win.bar is not None
+    assert (win.bar.what.textFormat(), win.bar.note.textFormat()) == (plain, plain) and win.bar.what.text().endswith(evil)
+    page = HistoryPage(store)
+    qtbot.addWidget(page)
+    cleanup(page)
+    page.show()
+    qtbot.waitUntil(lambda: page.model.rowCount() == 1, timeout=5000)
+    assert page.model.data(page.model.index(0, 1), Qt.ItemDataRole.ToolTipRole) == html.escape(evil)
+    people = page.model.data(page.model.index(0, 3), Qt.ItemDataRole.ToolTipRole)
+    assert html.escape(evil) in people and "<b>" not in people
+    page.person.setCurrentIndex(page.person.findData(who["ana"]))
+    qtbot.waitUntil(lambda: evil in page.list_note.text(), timeout=5000)
+    assert all(label.textFormat() == plain for label in (page.list_note, page.actions_note, page.chat_note, page.coverage))
+    assert evil in page.actions_note.text() and evil in page.chat_note.text()
+    permits.release(1000)

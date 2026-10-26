@@ -14,10 +14,12 @@ revisão tiram a espera.
 F5 L4: um player só no app (`self.player`), passado às janelas; a reunião aberta (`open_meeting`, uma janela por reunião)
 substitui a janela "Transcrição" (`open_transcript` vira apelido de `open_meeting(mid, "transcricao")`), abre num ponto e
 toca; o Histórico (`open_history`) pela bandeja e pelo atalho U-028 (`hotkeys.history`, com o cursor na busca e a janela
-trazida à frente pela plataforma); o clique no balão abre a reunião da última notificação que tinha reunião (Q6); os jobs
-`llm` e `index` concluídos recarregam a reunião aberta sem roubar o foco. Q9: gravando com a fonte "sistema inteiro", o
-player pede confirmação antes de o som começar. A saída para o player e espera a thread dele, cancela o chat global em
-voo e espera as `Task`s do Histórico e das reuniões antes de fechar o banco (F5A-32).
+trazida à frente pela plataforma); o clique no balão abre a reunião do balão da tela (Q6: um balão sem reunião zera a
+guardada, R7-06); os jobs `llm` e `index` concluídos recarregam a reunião aberta sem roubar o foco. Q9: gravando com a fonte
+"sistema inteiro", o player pede confirmação antes de o som começar; abrir o warm-up, começar a gravar com essa fonte e trocar
+a fonte para ela pausam o som que já toca, com o aviso na barra do player e no log, sem balão; retomar passa pela
+confirmação (R7-01). A saída para o player e espera a thread dele, cancela o chat global e os das reuniões e o vetor da
+consulta, mesmo presos na rede, e espera as `Task`s do Histórico e das reuniões antes de fechar o banco (F5A-32, R7-03).
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -67,7 +69,7 @@ from .review import ReviewDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
-from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task
+from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task, wait_before_close
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -79,6 +81,8 @@ if TYPE_CHECKING:
 log = get_logger("ui")
 HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history")
 SYSTEM_PLAY_TEXT = ("Você está gravando o som do sistema inteiro: o áudio do player entra na gravação. Tocar mesmo assim?")
+PLAYER_PAUSED_WARMUP = "pausado para o warm-up da gravação"                                    # R7-01, na barra do player
+PLAYER_PAUSED_SYSTEM = "pausado: a gravação capta o som do sistema inteiro (tocar pede confirmação)"
 TRAY_TIP = ("No Windows 11 o ícone da bandeja nasce no menu oculto (seta ao lado do relógio). Arraste-o para a barra "
             "para ver o estado da gravação.")
 EMERGENCY_STOP_BUDGET_S = 10.0
@@ -267,16 +271,18 @@ class Controller(QObject):
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
 
     def notify(self, message: str) -> None:
+        """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06)."""
+        self._notified_meeting = None
         if self.tray is not None:
             self.tray.showMessage("listener-meet", message)
 
     def _notify_meeting(self, message: str, meeting_id: int) -> None:
-        """Balão sobre uma reunião: o clique nele abre a reunião (a da última notificação que tinha reunião, Q6)."""
-        self._notified_meeting = int(meeting_id)
+        """Balão sobre uma reunião: o clique nele abre a reunião (Q6)."""
         self.notify(message)
+        self._notified_meeting = int(meeting_id)
 
     def open_last_notified(self) -> MeetingWindow | None:
-        """`messageClicked`: abre a reunião da última notificação que tinha reunião (Q6)."""
+        """`messageClicked`: abre a reunião do último balão, quando ele era sobre uma reunião (Q6, R7-06)."""
         mid = self._notified_meeting
         if mid is None or self._quitting or self.store.get_meeting(mid) is None:
             return None
@@ -377,6 +383,7 @@ class Controller(QObject):
             self.show_widget()
             return
         self._warmup_open = True
+        self._pause_player(PLAYER_PAUSED_WARMUP)          # o teste e os medidores do warm-up não ouvem o player (R7-01)
         try:
             link = LateGlossaryLink(self.store)
             dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add)
@@ -404,6 +411,8 @@ class Controller(QObject):
                  cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.label or cfg.source.kind)
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
+        if str(cfg.source.kind) == SourceKind.SYSTEM:     # por qualquer caminho: o som do player entraria no R (Q9, R7-01)
+            self._pause_player(PLAYER_PAUSED_SYSTEM)
         rec = Recorder(self.platform, self.store, meeting_id, cfg, clock=self.clock_factory() if self.clock_factory else None)
         try:
             rec.start()
@@ -508,7 +517,10 @@ class Controller(QObject):
         lay.addWidget(buttons)
         dlg.resize(560, 320)
         if dlg.exec() == QDialog.DialogCode.Accepted and self.recorder is not None:
-            self.recorder.switch_source(table.selected_spec())
+            spec = table.selected_spec()
+            if str(spec.kind) == SourceKind.SYSTEM:       # o som do player entraria no R a partir daqui (Q9, R7-01)
+                self._pause_player(PLAYER_PAUSED_SYSTEM)
+            self.recorder.switch_source(spec)
         table.stop()
         dlg.deleteLater()
 
@@ -597,8 +609,10 @@ class Controller(QObject):
         self.store.close()
 
     def _stop_windows(self) -> None:
-        """Saída (F5A-32): para o player e espera a thread dele, cancela o chat global e o das reuniões e espera as `Task`s do
-        Histórico; as janelas guardam a posição antes de o banco fechar. Idempotente (o `quit` e o `emergency_stop`)."""
+        """Saída (F5A-32): para o player e espera a thread dele, cancela o chat global e o das reuniões e o vetor da consulta
+        (presos na rede também, R7-03) e espera as `Task`s do Histórico e das perguntas, passado o prazo sem teto: fechar o
+        banco com uma QThread viva derruba o processo; as janelas guardam a posição antes de o banco fechar. Idempotente (o
+        `quit` e o `emergency_stop`)."""
         if self._windows_stopped:
             return
         self._windows_stopped = True
@@ -613,10 +627,9 @@ class Controller(QObject):
                 win.shutdown()
                 win.save_geometry()
         for task in [t for t in list(live_threads) if isinstance(t, StreamTask)]:   # o chat de uma reunião já fechada
-            task.cancel()
             with suppress(RuntimeError):                 # já destruída pelo `release`
-                if not task.wait(PARTIAL_QUIT_WAIT_MS):
-                    log.warning("uma pergunta em voo não terminou em %d ms", PARTIAL_QUIT_WAIT_MS)
+                task.cancel()
+            wait_before_close(task, PARTIAL_QUIT_WAIT_MS, "uma pergunta em voo")
 
     def _finish(self, rec: Recorder) -> None:
         self.platform.keep_awake(False)
@@ -957,6 +970,15 @@ class Controller(QObject):
             self.notify("Esta reunião não existe mais.")
             return
         self.open_meeting(meeting_id, tab, t_ms, play)
+
+    def _pause_player(self, notice: str) -> None:
+        """R7-01: o som que o player toca não entra no warm-up nem na gravação do sistema inteiro: pausa, com o aviso na barra
+        do player e no log (sem balão); retomar passa pela confirmação do Q9 (`_confirm_play`)."""
+        try:
+            if self.player.pause(notice):
+                log.info("player pausado: %s", notice)
+        except Exception as e:  # o player nunca impede o warm-up nem a gravação
+            log.warning("não consegui pausar o player: %s", e)
 
     def _confirm_play(self, _req: PlayRequest) -> bool:
         """Q9: gravando com a fonte "sistema inteiro", o som do player entraria no canal R: pede confirmação antes de tocar;

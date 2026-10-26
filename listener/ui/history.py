@@ -17,14 +17,17 @@ selo ("busca híbrida" ou "busca por palavras: motivo") e a cobertura do índice
   redesenha; custo e citações com link na linha de estado.
 
 Menu de contexto "Copiar com citação" (U-029) nos trechos achados e nas respostas. Textos para o usuário sem jargão: "busca
-por sentido", nunca "embedding" nem "FTS". A saída do app cancela o chat em voo e espera as `Task`s antes de fechar o banco
-(`shutdown`, F5A-32)."""
+por sentido", nunca "embedding" nem "FTS". Notas em texto puro e dicas escapadas: um título ou nome com "<b>" não vira HTML
+(R7-07). A saída do app cancela o chat em voo e o vetor da consulta presos na rede (um `threading.Event` ligado ao
+`shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (`shutdown`, F5A-32)."""
 from __future__ import annotations
 
 import functools
 import html
 import json
 import re
+import threading
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -46,7 +49,7 @@ from ..rag import search as rag_search
 from ..store.rag import SearchFilters
 from ..store.segments import ClusterRow, resolve_person
 from .common import clamp_to_screens, copy_rich
-from .tasks import StreamTask, run_stream, run_task
+from .tasks import StreamTask, run_stream, run_task, wait_before_close
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -72,6 +75,7 @@ HIT_SCHEME, MEETING_SCHEME = "listener://hit?c=", "listener://meeting?m="
 CHAT_EMPTY = ("<p style='color:#888'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
               "numa citação abre a reunião naquele ponto e toca. Os filtros de pessoa e período valem aqui também.</p>")
 OVERDUE_COLOR = "#c0392b"
+KEPT = 100                       # instrumentação dos testes: as últimas respostas e cópias
 
 type OpenMeeting = Callable[..., Any]          # on_open(meeting_id, tab=None, t_ms=None, play=False)
 type ContextActions = Callable[[QPoint, str], list[tuple[str, Callable[[], Any]]]]
@@ -273,8 +277,8 @@ class MeetingsModel(QAbstractTableModel):
         line = self.lines[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return line.texts()[index.column()]
-        if role == Qt.ItemDataRole.ToolTipRole:
-            return ", ".join(line.participants) if index.column() == 3 else line.title
+        if role == Qt.ItemDataRole.ToolTipRole:                 # a dica do Qt detecta HTML: título e nomes escapados (R7-07)
+            return html.escape(", ".join(line.participants) if index.column() == 3 else line.title)
         if role == Qt.ItemDataRole.UserRole:
             return line.meeting_id
         return None
@@ -338,14 +342,15 @@ class HistoryPage(QWidget):
         self.on_edited = on_edited
         self.today = today or (lambda: datetime.now().astimezone().date())
         self.result: SearchResult | None = None
-        self.answers: list[chat_global.GlobalChatAnswer] = []     # instrumentação dos testes
-        self.copied: list[str] = []                               # instrumentação dos testes: o texto copiado com citação
+        self.answers: deque[chat_global.GlobalChatAnswer] = deque(maxlen=KEPT)   # instrumentação dos testes
+        self.copied: deque[str] = deque(maxlen=KEPT)              # instrumentação dos testes: o texto copiado com citação
         self.thread_id: int | None = None
         self.chat_task: StreamTask | None = None
         self._gen = 0                                             # contador de geração das buscas (resultado velho sai)
         self._list_gen = 0
         self._hits: dict[int, SearchHit] = {}
         self._tasks: set[QThread] = set()
+        self._stop = threading.Event()                            # a saída do app: o vetor da consulta preso na rede para (R7-03)
         self._closed = False
         self._partial = ""
         self._base_html = ""
@@ -363,6 +368,7 @@ class HistoryPage(QWidget):
             self.period.addItem(label, key)
         self.badge = QLabel("")
         self.coverage = QLabel("")
+        self.coverage.setTextFormat(Qt.TextFormat.PlainText)
         self.coverage.setStyleSheet("color: #888; font-size: 11px;")
         top = QHBoxLayout()
         top.addWidget(self.search, 1)
@@ -395,6 +401,7 @@ class HistoryPage(QWidget):
         self.stack.addWidget(self.table)
         self.stack.addWidget(self.results)
         self.list_note = QLabel("")
+        self.list_note.setTextFormat(Qt.TextFormat.PlainText)          # o filtro leva o nome da pessoa (R7-07)
         self.list_note.setStyleSheet("color: #888; font-size: 11px;")
         meetings = QWidget()
         ml = QVBoxLayout(meetings)
@@ -419,6 +426,7 @@ class HistoryPage(QWidget):
         self.btn_open_action = QPushButton("Abrir reunião")
         self.btn_open_action.clicked.connect(self.open_action)
         self.actions_note = QLabel("")
+        self.actions_note.setTextFormat(Qt.TextFormat.PlainText)
         self.actions_note.setStyleSheet("color: #888; font-size: 11px;")
         arow = QHBoxLayout()
         arow.addWidget(self.actions_note, 1)
@@ -438,6 +446,7 @@ class HistoryPage(QWidget):
         self.chat_view = LinkBrowser(self._answer_actions)
         self.chat_view.anchorClicked.connect(self._chat_link)
         self.chat_note = QLabel("")
+        self.chat_note.setTextFormat(Qt.TextFormat.PlainText)
         self.chat_note.setStyleSheet("color: #888; font-size: 11px;")
         self.question = QLineEdit()
         self.question.setPlaceholderText("Pergunte sobre todas as reuniões (as citações abrem a reunião no ponto)")
@@ -627,10 +636,10 @@ class HistoryPage(QWidget):
             self._words_timer.stop()
         self._gen += 1
         gen = self._gen
-        store, filters = self.store, self.filters()
+        store, filters, stop = self.store, self.filters(), self._stop.is_set
         if with_vector:
             def fn() -> SearchResult:
-                return rag_search.search(store, query, filters, query_vector=rag_search.embed_query(store, query))
+                return rag_search.search(store, query, filters, query_vector=rag_search.embed_query(store, query, should_stop=stop))
         else:
             def fn() -> SearchResult:
                 return rag_search.search(store, query, filters)
@@ -928,16 +937,16 @@ class HistoryPage(QWidget):
 
     # ---------------------------------------------------------------- saída
     def shutdown(self, wait_ms: int = TASK_WAIT_MS) -> None:
-        """Saída do app (F5A-32): cancela o chat em voo e espera as buscas e a pergunta antes de o banco fechar."""
+        """Saída do app (F5A-32): cancela a pergunta em voo e o vetor da consulta presos na rede (R7-03) e espera as buscas e
+        a pergunta antes de o banco fechar; passado o prazo, avisa no log e espera o fim."""
         self._closed = True
+        self._stop.set()
         self._words_timer.stop()
         self._vector_timer.stop()
         if self.chat_task is not None:
             self.chat_task.cancel()
         for task in list(self._tasks):
-            with suppress(RuntimeError):                 # já destruída pelo `release`
-                if not task.wait(wait_ms):
-                    log.warning("uma tarefa do Histórico não terminou em %d ms", wait_ms)
+            wait_before_close(task, wait_ms, "uma tarefa do Histórico")
 
 
 class HistoryWindow(QWidget):

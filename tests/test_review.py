@@ -163,7 +163,7 @@ def test_transcript_tab_lists_and_click_plays_from_first_word(qtbot, platform, s
     assert dlg.model.rowCount() == 3 and dlg.model.data(dlg.model.index(0), 0) == "[00:00] Ana — CFO: bom dia pessoal"
     assert "canal R" in dlg.model.data(dlg.model.index(0), 3)
     dlg.view.clicked.emit(dlg.model.index(2))
-    assert dlg.played == [(1450, 2890)] and player.requests[0].t_ms == 1450              # primeira palavra 1600 ms - 150 ms
+    assert list(dlg.played) == [(1450, 2890)] and player.requests[0].t_ms == 1450        # primeira palavra 1600 ms - 150 ms
     assert player.requests[0].end_ms is None and player.requests[0].channel is None        # F5: L e R até parar
     qtbot.waitUntil(lambda: not player.engine.alive and bool(outputs.opened), timeout=3000)
     assert len(outputs.opened[0].frames) == (3000 - 1450) * 16                            # do ponto até o fim da reunião

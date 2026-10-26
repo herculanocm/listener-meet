@@ -12,8 +12,9 @@ parte no log.
 O vetor da consulta (`embed_query`) vem do embedder ativo (`rag.index.embedder_status`) com `task = query`, normalizado, numa
 linha de `llm_calls` com reunião nula e `task = rag_embed`, e passa por um cache LRU por (modelo, texto) no processo. É
 síncrono (`run_async`, até `QUERY_TIMEOUT_S`): a tela chama numa `Task` (no Enter ou 600 ms depois de parar de digitar) e
-entrega o resultado a `search`, que só lê o banco e também roda numa `Task`. As assinaturas ficam num `SignatureCache` por
-banco e modelo, no processo do app (`signature_cache`)."""
+entrega o resultado a `search`, que só lê o banco e também roda numa `Task`; `should_stop` (a saída do app, o chat
+cancelado) cancela a chamada presa na rede em até `POLL_S` (R7-03). As assinaturas ficam num `SignatureCache` por banco e
+modelo, no processo do app (`signature_cache`)."""
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +23,8 @@ import sqlite3
 import threading
 import time
 from collections import Counter, OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -53,6 +55,8 @@ QUERY_CACHE_SIZE = 256
 QUERY_TIMEOUT_S = 15.0           # a busca não espera mais que isto pelo vetor da consulta: cai para "por palavras"
 QUERY_ATTEMPTS = 2
 QUERY_DELAYS = (0.5,)
+POLL_S = 0.2                     # `should_stop` conferido a cada 0,2 s enquanto espera a rede (R7-03)
+CANCELLED = "cancelado"
 NO_QUERY_VECTOR = "sem o vetor da consulta"
 NO_VECTORS = "índice ainda sem vetores do modelo {model}"
 FILTERED_NO_VECTORS = "trechos filtrados sem vetor do modelo (índice incompleto)"
@@ -279,13 +283,15 @@ _QUERY_CACHE: OrderedDict[tuple[str, str], np.ndarray] = OrderedDict()
 _QUERY_LOCK = threading.Lock()
 
 
-def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None) -> QueryVector:
+def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None,
+                should_stop: Callable[[], bool] | None = None) -> QueryVector:
     """O vetor da consulta pelo embedder ativo (`task = query`), normalizado, na dimensão do `model_key`; do cache LRU por
     (modelo, texto) quando já pedido neste processo (sem chamada nem custo). Sem embedder pronto ou com erro de rede ou do
     provedor, `vector` nulo com o motivo (a busca cai para "por palavras"); com o índice ainda sem nenhum vetor do modelo,
-    também nulo e sem chamar a rede (a busca cairia em "por palavras" do mesmo jeito, depois de pagar e esperar, R6-06). Uma
-    linha em `llm_calls` por chamada, com reunião e job nulos, `task = rag_embed` e `strategy = query`. Síncrono: chamar fora
-    da thread da interface."""
+    também nulo e sem chamar a rede (a busca cairia em "por palavras" do mesmo jeito, depois de pagar e esperar, R6-06).
+    `should_stop()` verdadeiro antes da chamada não chama a rede; durante, a chamada é cancelada em até `POLL_S` e o motivo
+    é "cancelado" (R7-03). Uma linha em `llm_calls` por chamada, com reunião e job nulos, `task = rag_embed` e
+    `strategy = query`. Síncrono: chamar fora da thread da interface."""
     from ..llm import redact
     from ..llm.aio import run_async
     from ..llm.costs import cost_usd, price_for
@@ -304,12 +310,18 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None)
         if hit is not None:
             _QUERY_CACHE.move_to_end(key)
             return QueryVector(hit, status.model_key, "", cached=True, cost_usd=0.0)
+    if should_stop is not None and should_stop():
+        return QueryVector(None, status.model_key, CANCELLED)
     kind, model, dim = index.parse_model_key(status.model_key)
     pid = status.provider_id or kind                          # a linha de `providers` (R5-10); o preço é pelo tipo
     redact.GLOBAL.add(store.providers.key(pid))               # CP10: a chave nunca vai para o motivo nem para `llm_calls`
     t0 = time.perf_counter()
     try:
-        emb = run_async(_embed(store, provider, pid, model, dim, text))
+        emb = run_async(_embed(store, provider, pid, model, dim, text, should_stop))
+        if emb is None:                                       # cancelada com a rede presa: a busca segue por palavras
+            _record(store, pid, model, 0, None, _ms(t0), LlmCallStatus.ERROR, CANCELLED)
+            log.info("vetor da consulta cancelado depois de %.0f ms", _ms(t0))
+            return QueryVector(None, status.model_key, CANCELLED)
         vec = vectors.normalize(index._checked(emb.vectors, 1, dim))[0]
     except Exception as e:  # rede, chave, SDK ausente, dimensão errada: a busca segue por palavras
         reason = f"tempo esgotado ({QUERY_TIMEOUT_S:g} s)" if isinstance(e, TimeoutError) else index._reason(e)
@@ -326,7 +338,10 @@ def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None)
     return QueryVector(vec, status.model_key, "", cost_usd=cost)
 
 
-async def _embed(store: Store, provider: LLMProvider | None, provider_id: str, model: str, dim: int, text: str) -> Embeddings:
+async def _embed(store: Store, provider: LLMProvider | None, provider_id: str, model: str, dim: int, text: str,
+                 should_stop: Callable[[], bool] | None = None) -> Embeddings | None:
+    """O vetor de uma consulta, até `QUERY_TIMEOUT_S`; None quando `should_stop()` pediu para parar (conferido a cada
+    `POLL_S`, no padrão do resumo parcial: a chamada presa na rede é cancelada, R7-03)."""
     from ..llm.registry import RetryingProvider, build_provider
     from ..llm.types import EmbedTask
 
@@ -334,10 +349,19 @@ async def _embed(store: Store, provider: LLMProvider | None, provider_id: str, m
     if provider is None:
         provider = RetryingProvider(build_provider(store, provider_id, role="embed", retrying=False)[0], attempts=QUERY_ATTEMPTS,
                                     delays=QUERY_DELAYS)
+    call = asyncio.ensure_future(provider.embed([text], model=model, dim=dim, task=EmbedTask.QUERY))
     try:
         async with asyncio.timeout(QUERY_TIMEOUT_S):
-            return await provider.embed([text], model=model, dim=dim, task=EmbedTask.QUERY)
+            while not call.done():
+                await asyncio.wait({call}, timeout=POLL_S)
+                if should_stop is not None and should_stop() and not call.done():
+                    return None
+        return call.result()
     finally:
+        if not call.done():
+            call.cancel()
+            with suppress(BaseException):
+                await call
         if own:
             await provider.aclose()
 

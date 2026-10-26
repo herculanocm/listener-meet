@@ -4,10 +4,13 @@ do histórico, R6-05), o prompt `rag_chat` (apelidos na ordem de relevância, fa
 trecho lidos só nessas janelas, R6-02, linhas de ata, ação, executivo e reunião), o teto por reunião que deixa as outras
 reuniões chegarem ao chat (R6-01), e o chat global ponta a ponta com o fake (streaming, cancelamento antes e durante,
 conversa criada, seguimento usa a pergunta anterior, mensagens e custo gravados, `llm_calls` com reunião nula, erro
-redigido, sem trechos, sem provedor, avaliação U-027 e o HTML da conversa)."""
+redigido, sem trechos, sem provedor, avaliação U-027 e o HTML da conversa). R7-03: o cancelamento com a rede presa antes do
+primeiro pedaço, nos dois chats, sem resposta vazia gravada."""
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections import Counter
 from typing import Any
 
@@ -42,6 +45,21 @@ def fresh_caches():
 def _llm_ready(store: Store) -> None:
     store.providers.update_provider("gemini", api_key=KEY, fast_model="fake-fast", strong_model="fake-strong")
     store.providers.set_price("gemini", "fake-fast", 0.30, 2.50, 0.075)
+
+
+def _slow_network(monkeypatch: pytest.MonkeyPatch, delay_s: float = 30.0) -> None:
+    """A rede presa (R7-03): toda chamada do fake de `LISTENER_LLM=fake` espera `delay_s` antes da resposta, do primeiro
+    pedaço ou do vetor. Chamar depois de montar o banco (o `fill_vectors` do preparo usa o fake direto)."""
+    from listener.llm import fake
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    real = fake.FakeProvider.__init__
+
+    def slow(self: fake.FakeProvider, *args: Any, **kwargs: Any) -> None:
+        real(self, *args, **kwargs)
+        self.delay_s = delay_s
+
+    monkeypatch.setattr(fake.FakeProvider, "__init__", slow)
 
 
 def _two_meetings(store: Store) -> tuple[int, int, dict[str, int]]:
@@ -238,6 +256,38 @@ def test_global_chat_cancel_before_and_during_streaming(store, monkeypatch):
     during = chat_global.run_global_chat(store, None, QUESTION, None, seen.append, lambda: bool(seen))
     assert during.cancelled and len(seen) == 1 and during.text == seen[0] and during.cost_usd is None and during.message_id is not None
     assert store.chat.get(during.message_id)["text"] == seen[0]                                   # a parte que chegou fica
+
+
+def test_both_chats_cancel_while_waiting_for_the_first_piece_without_an_empty_answer(store, monkeypatch):
+    """R7-03: com a rede presa antes do primeiro pedaço (o fake demora 30 s; sem vetores no índice, o vetor da consulta nem
+    chama a rede), o cancelamento vale em até 0,2 s nos dois chats: a pergunta fica, nenhuma resposta vazia é gravada e a
+    chamada vai para `llm_calls` como cancelada. Antes, o `cancelled()` só era lido depois de um pedaço."""
+    who = _people(store)
+    a, _job = _meeting(store, who)
+    _llm_ready(store)
+    index.sync_text(store, a)                                        # trechos sem vetor: a busca é por palavras, sem rede
+    _slow_network(monkeypatch)
+
+    def ask_and_cancel(run: Any) -> tuple[Any, float]:
+        stop = threading.Event()
+        timer = threading.Timer(0.3, stop.set)
+        timer.start()
+        t0 = time.monotonic()
+        try:
+            return run(stop.is_set), time.monotonic() - t0
+        finally:
+            timer.cancel()
+
+    ans, took = ask_and_cancel(lambda stop: chat_global.run_global_chat(store, None, QUESTION, None, lambda _p: None, stop))
+    assert took < 1.5 and ans.cancelled and (ans.message_id, ans.text, ans.error) == (None, "", None) and ans.thread_id is not None
+    assert [m["role"] for m in store.chat.list_for_thread(ans.thread_id)] == ["user"]
+    assert (store.llm_calls.get(ans.call_id)["task"], store.llm_calls.get(ans.call_id)["error"]) == ("rag_chat", "cancelado")
+    meeting, took = ask_and_cancel(lambda stop: chat_task.run_chat(store, a, "e o prazo?", lambda _p: None, stop))
+    assert took < 1.5 and meeting.cancelled and (meeting.text, meeting.error) == ("", None)
+    assert [m["role"] for m in store.chat.list_for_meeting(a)] == ["user"]
+    assert (store.llm_calls.get(meeting.call_id)["task"], store.llm_calls.get(meeting.call_id)["error"]) == ("chat", "cancelado")
+    quiet, took = ask_and_cancel(lambda stop: chat_task.run_chat(store, a, "e sem streaming?", None, stop))
+    assert took < 1.5 and quiet.cancelled                                                         # a chamada sem streaming também
 
 
 def test_global_chat_without_provider_without_excerpts_and_with_a_provider_error(store, monkeypatch):

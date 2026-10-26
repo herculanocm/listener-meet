@@ -7,7 +7,9 @@ vez no app inteiro, com progresso e o estado da pasta), desabilitado durante a g
 preparador ao fechar, e o download segue.
 F5 L5: grupo "Busca" gerado da tabela (`rag.*`) com o estado do índice (reuniões indexadas, trechos, vetores do modelo
 ativo, faltantes e o motivo quando os embeddings não estão prontos), "Completar índice" (as reuniões com trecho sem vetor do
-modelo ativo, na hora) e "Reindexar tudo…" (com a estimativa de trechos, tokens, US$ e minutos e a confirmação antes);
+modelo ativo e as ainda sem trechos; com vetores a pedir, a estimativa e a confirmação antes, como o "Reindexar tudo…": logo
+depois de trocar o modelo e escolher "Depois", completar seria reindexar tudo; só trechos, sem custo, na hora) e
+"Reindexar tudo…" (com a estimativa de trechos, tokens, US$ e minutos e a confirmação antes);
 trocar o "ativo para embeddings" ou o modelo de embeddings e salvar mostra a mesma estimativa com "Reindexar agora" e
 "Depois" (comportamento 4: os vetores do modelo anterior ficam).
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
@@ -245,9 +247,17 @@ class SettingsDialog(QDialog):
             self.on_launch(True)
 
     def complete_index(self) -> int:
-        """"Completar índice": as reuniões com trecho sem vetor do modelo ativo (e as sem trechos) entram na fila já."""
-        from ..rag.index import complete_index
+        """"Completar índice": as reuniões com trecho sem vetor do modelo ativo (e as sem trechos) entram na fila. Com os
+        embeddings prontos há vetores a pedir (com custo): a estimativa do "Reindexar tudo…" e a confirmação antes; sem eles,
+        só trechos e o índice por palavra (sem custo), na hora. Não confirma o modelo para a varredura (é do "reindexar")."""
+        from ..rag.index import complete_index, reindex_estimate
 
+        est = reindex_estimate(self.store)
+        if est.ready and (est.chunks or est.without_chunks):
+            text = (f"Completar o índice da busca?\n\n{est.text()}.\n\nOs vetores que já existem ficam; só os que faltam são pedidos ao "
+                    "provedor.")
+            if not ask_reindex(self, text, "Completar", "Cancelar"):
+                return 0
         n = complete_index(self.store)
         self.reindexed += n
         if n:

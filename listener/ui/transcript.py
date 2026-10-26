@@ -9,6 +9,7 @@ refaz a lista quando as falas mudaram e, refazendo, mantém a fala selecionada e
 leitura para o topo); o menu de contexto tem "Tocar daqui" e "Copiar com citação" (U-029: texto e HTML)."""
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
@@ -76,7 +77,7 @@ class TranscriptTab(QWidget):
         self.on_launch = on_launch
         self.title_fn = title
         self.requested: list[int] = []                    # jobs `llm` de revisão pedidos aqui: instrumentação dos testes
-        self.played: list[tuple[int, int]] = []           # (t0, fim da fala) pedidos: instrumentação dos testes
+        self.played: deque[tuple[int, int]] = deque(maxlen=100)   # (t0, fim da fala) pedidos: instrumentação dos testes
         self.prefer_llm = True
         self.model = SegmentsModel(review.transcript_rows(store, meeting_id, True), self)
         self.view = QListView()

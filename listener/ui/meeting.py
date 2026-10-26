@@ -6,9 +6,11 @@ reprocessamento e de alerta), "Transcrição" (revisada ou original), "Marcadore
 a reunião inteira); "Revisar falantes…" e "Exportar ▾" (copiar a ata ou a transcrição com texto e HTML, salvar o .md com
 escrita atômica); a barra do player embaixo. Abre num ponto (`open_at`): vai para a transcrição, seleciona a fala de início
 mais perto, rola até ela e, pedido, toca do começo dela (sem fala, do ponto menos 150 ms). Fechar para o som desta reunião
-e guarda posição e tamanho (`ui.meeting_geometry`)."""
+e guarda posição e tamanho (`ui.meeting_geometry`). Cabeçalho e avisos em texto puro: um título ou nome com "<b>" não vira
+HTML (R7-07)."""
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -97,7 +99,7 @@ class MeetingWindow(QWidget):
         self.player = player
         self.on_review = on_review
         self.on_edited = on_edited
-        self.exported: list[str] = []                        # instrumentação dos testes: o que foi copiado ou salvo
+        self.exported: deque[str] = deque(maxlen=100)        # instrumentação dos testes: o que foi copiado ou salvo
         self.setMinimumSize(*MIN_SIZE)
         self.setStyleSheet(STYLE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
@@ -126,9 +128,11 @@ class MeetingWindow(QWidget):
         self.btn_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.info = QLabel("")
         self.info.setObjectName("meetingInfo")
+        self.info.setTextFormat(Qt.TextFormat.PlainText)        # participantes: nomes do usuário (R7-07)
         self.info.setWordWrap(True)
         self.message = QLabel("")
         self.message.setObjectName("meetingMessage")
+        self.message.setTextFormat(Qt.TextFormat.PlainText)     # o caminho salvo leva o título
         self.message.setWordWrap(True)
         self.message.setVisible(False)
         top = QHBoxLayout()

@@ -191,9 +191,11 @@ def _language(store: Store, cfg: LlmJobConfig, blocks: Sequence[MeetingBlock]) -
 # ---------------------------------------------------------------- pergunta
 def run_global_chat(store: Store, thread_id: int | None, question: str, filters: SearchFilters | None = None,
                     emit: Callable[[str], None] | None = None, cancelled: Callable[[], bool] | None = None) -> GlobalChatAnswer:
-    """Pergunta -> resposta sobre todas as reuniões (em streaming quando `emit` é dado; `cancelled()` para no próximo pedaço,
-    e antes de chamar a LLM não grava nada). `thread_id` None cria a conversa na primeira pergunta. Sem provedor de LLM com
-    chave, `ValueError` com o caminho nas Configurações; sem trecho relevante, a LLM ainda responde (diz que não achou)."""
+    """Pergunta -> resposta sobre todas as reuniões (em streaming quando `emit` é dado). `cancelled()` vale em todo o caminho
+    (R7-03): no vetor da consulta e na espera da LLM, também antes do primeiro pedaço, a cada `POLL_S`; antes de chamar a
+    LLM não grava nada; antes do primeiro pedaço, a pergunta fica e nenhuma resposta vazia é gravada; no meio, a parte que
+    chegou fica. `thread_id` None cria a conversa na primeira pergunta. Sem provedor de LLM com chave, `ValueError` com o
+    caminho nas Configurações; sem trecho relevante, a LLM ainda responde (diz que não achou)."""
     from ..config.defaults import SPECS
 
     question = (question or "").strip()
@@ -209,7 +211,7 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     previous = store.chat.list_for_thread(thread_id) if thread_id is not None else []
     last = next((str(m["text"]) for m in reversed(previous) if str(m["role"]) == ChatRole.USER), "")
     query = f"{last}\n{question}" if last else question               # seguimento: "e o prazo?" depois de "o que decidimos..."
-    qv = embed_query(store, query)
+    qv = embed_query(store, query, should_stop=cancelled)
     found = search(store, query, filters, query_vector=qv, k=int(store.get(SPECS["rag.top_k"])),
                    per_meeting=int(store.get(SPECS["rag.max_per_meeting"])), snippets=False)
     picked = list(found.hits)
@@ -241,6 +243,12 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
         log.warning("chat global: %s", message)
         return GlobalChatAnswer(text, html.escape(text).replace("\n", "<br>"), (), None, thread_id, None, question_id, call_id, message,
                                 stopped, *common)
+    if stopped and not text:                     # cancelada antes do primeiro pedaço (R7-03): sem resposta vazia na conversa
+        call_id = store.llm_calls.insert(LlmCallInsert(None, None, task, cfg.provider_id, cfg.fast_model, version, None, 0, 0, 0, 0, None,
+                                                       int(_ms(t1)), LlmCallStatus.ERROR, chat_task.CANCELLED,
+                                                       "stream" if emit else "direct"), store_payloads=False)
+        log.info("chat global: pergunta cancelada antes da resposta, em %.1f ms", _ms(t1))
+        return GlobalChatAnswer("", "", (), None, thread_id, None, question_id, call_id, None, True, *common)
     text = text or (comp.text if comp else "")
     model = comp.model if comp else cfg.fast_model
     usage = comp.usage if comp else None

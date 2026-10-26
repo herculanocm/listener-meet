@@ -89,10 +89,6 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     status = dlg.index_status.text()
     assert "2 de 2 reuniões processadas no índice" in status and f"vetores de {MODEL}" in status and "faltam" in status
     assert "embeddings prontos" in status and "completar:" in status and dlg.complete_btn.isEnabled()
-    dlg.complete_btn.click()                                                              # só a reunião com trecho sem vetor
-    pending = {int(j["meeting_id"]): json.loads(j["params_json"]) for j in store.jobs.active(kinds=("index",))}
-    assert set(pending) == {b} and pending[b]["force"] is True and pending[b]["reason"] == "reindex" and launched == [True]
-    assert "1 reunião(ões) na fila do índice" in dlg.index_status.text()
     asked: list[str] = []
     answer = {"value": False}
 
@@ -101,11 +97,25 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
         return answer["value"]
 
     monkeypatch.setattr(settings_min, "ask_reindex", ask)
+    dlg.complete_btn.click()                       # há vetores a pedir (com custo): a estimativa e a confirmação antes
+    assert len(asked) == 1 and asked[0].startswith("Completar o índice da busca?") and "sem vetor em 1 reunião" in asked[0]
+    assert asked[0].endswith("|Completar|Cancelar") and store.jobs.active(kinds=("index",)) == [] and launched == []   # Cancelar
+    answer["value"] = True
+    dlg.complete_btn.click()                                                              # só a reunião com trecho sem vetor
+    pending = {int(j["meeting_id"]): json.loads(j["params_json"]) for j in store.jobs.active(kinds=("index",))}
+    assert set(pending) == {b} and pending[b]["force"] is True and pending[b]["reason"] == "reindex" and launched == [True]
+    assert "1 reunião(ões) na fila do índice" in dlg.index_status.text() and store.rag.get_model(MODEL)["backfill"] == 0
+    answer["value"] = False
     assert dlg.reindex_all() == 0 and len(store.jobs.active(kinds=("index",))) == 1                 # Cancelar: nada
-    assert "Refazer o índice de todas as reuniões processadas" in asked[0] and "|Reindexar|Cancelar" in asked[0]
+    assert "Refazer o índice de todas as reuniões processadas" in asked[2] and "|Reindexar|Cancelar" in asked[2]
     answer["value"] = True
     assert dlg.reindex_all() == 1 and {int(j["meeting_id"]) for j in store.jobs.active(kinds=("index",))} == {a, b}
     assert store.rag.get_model(MODEL)["backfill"] == 1 and launched == [True, True]           # o modelo fica confirmado
+    store.providers.update_provider("gemini", api_key="")       # sem embeddings, completar é só trecho e FTS: sem custo, direto
+    empty = store.create_meeting("sem trechos", None, None, None)
+    store.finish_meeting(empty, 1000)
+    _pipeline_job(store, empty)
+    assert dlg.complete_index() == 1 and len(asked) == 4 and launched == [True, True, True]
     dlg._edits["rag.top_k"].setText("3")
     assert "Trechos por pergunta" in (dlg.validation_error() or "")
 

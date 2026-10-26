@@ -1,12 +1,13 @@
 """Trabalho fora da thread da interface (M-26): `Task` roda uma função numa QThread e devolve o resultado (ou a exceção)
 por sinal; a referência fica viva até `finished` (QThread sem parent é destruída pelo Qt se for coletada antes).
 F3 (item 10, F3A-19): `StreamTask` acrescenta um sinal por pedaço de texto e `cancel()` (um `threading.Event` lido entre
-pedaços) para o chat em streaming."""
+pedaços) para o chat em streaming. F5 R7-03: `wait_before_close` é a espera da saída do app antes de fechar o banco."""
 from __future__ import annotations
 
 import functools
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QThread, Signal
@@ -23,6 +24,19 @@ live_threads: set[QThread] = set()
 def release(thread: QThread) -> None:
     live_threads.discard(thread)
     thread.deleteLater()
+
+
+def wait_before_close(thread: QThread, wait_ms: int, what: str) -> bool:
+    """Saída do app (R7-03): espera a thread (já cancelada) até `wait_ms`; se ainda roda (a rede presa além do cancelamento),
+    avisa no log e espera o fim, como a varredura do índice: fechar o banco com a QThread viva, ou destruí-la rodando,
+    derruba o processo na saída. True quando terminou dentro do prazo (ou já tinha sido destruída)."""
+    with suppress(RuntimeError):                     # já destruída pelo `release`
+        if thread.wait(wait_ms):
+            return True
+        log.warning("%s não terminou em %d ms: esperando o fim antes de fechar o banco", what, wait_ms)
+        thread.wait()
+        return False
+    return True
 
 
 class Task(QThread):

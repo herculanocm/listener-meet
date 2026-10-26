@@ -1,12 +1,16 @@
 """Chat sobre uma reunião (F3 item 10, U-019): a transcrição vai como prefixo estável do prompt (cache dos provedores),
 depois o histórico curto e a pergunta; resposta em streaming (`StreamTask`); cada `[mm:ss]` da resposta é reescrito para o
 segmento mais próximo (até 5 s) como link `listener://play?seg=<id>` ou fica como texto quando não há segmento; tudo em
-`chat_messages` (com `citations_json` e custo) e `llm_calls`. Roda fora da thread do Qt com `run_async` e cliente próprio."""
+`chat_messages` (com `citations_json` e custo) e `llm_calls`. Roda fora da thread do Qt com `run_async` e cliente próprio.
+F5 R7-03: o cancelamento vale também antes do primeiro pedaço (conferido a cada `POLL_S` enquanto espera a rede, no padrão
+do resumo parcial): a saída do app não espera a rede presa."""
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +34,8 @@ log = get_logger("llm.chat")
 STAMP_RE = re.compile(r"\[(\d{1,3}):(\d{2})\]")
 MAX_DISTANCE_MS = 5000
 HISTORY_TURNS = 8
+POLL_S = 0.2                     # o cancelamento é conferido a cada 0,2 s enquanto espera a rede (R7-03)
+CANCELLED = "cancelado"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +52,7 @@ class ChatAnswer:
     cost_usd: float | None
     call_id: int | None
     error: str | None = None
+    cancelled: bool = False      # cancelada antes do primeiro pedaço: nenhuma resposta foi gravada (R7-03)
 
 
 def nearest_segment(t_ms: int, lines: Sequence[Line], max_distance_ms: int = MAX_DISTANCE_MS) -> int | None:
@@ -76,25 +83,40 @@ def rewrite_citations(text: str, lines: Sequence[Line]) -> tuple[str, tuple[Cita
 
 async def ask(store: Store, provider_id: str, req: Request, emit: Callable[[str], None] | None = None,
               cancelled: Callable[[], bool] | None = None) -> tuple[Completion | None, str, LlmError | None]:
-    """Uma pergunta ao provedor (o chat de uma reunião e o chat global da F5): em streaming quando `emit` é dado, parando no
-    próximo pedaço quando `cancelled()` (o `Completion` fica nulo e o texto é o que chegou); erro do provedor classificado e
-    devolvido, nunca levantado. Provedor sem SDK ou sem chave levanta antes de chamar."""
+    """Uma pergunta ao provedor (o chat de uma reunião e o chat global da F5): em streaming quando `emit` é dado. `cancelled()`
+    é conferido depois de cada pedaço e a cada `POLL_S` enquanto espera a rede, também antes do primeiro pedaço e na chamada
+    sem streaming (a chamada é cancelada, R7-03); cancelada, o `Completion` fica nulo e o texto é o que chegou. Erro do
+    provedor classificado e devolvido, nunca levantado. Provedor sem SDK ou sem chave levanta antes de chamar."""
     provider, _row = build_provider(store, provider_id)
     collected: list[str] = []
-    try:
+    stop = cancelled or (lambda: False)
+
+    async def consume() -> Completion | None:
         if emit is None:
-            comp = await provider.complete(req)
-            return comp, comp.text, None
+            return await provider.complete(req)
         stream = provider.stream(req)
         async for piece in stream:
             collected.append(piece)
             emit(piece)
-            if cancelled is not None and cancelled():
+            if stop():
                 break
-        return stream.result, "".join(collected), None
+        return stream.result
+
+    call = asyncio.ensure_future(consume())
+    try:
+        while not call.done():
+            await asyncio.wait({call}, timeout=POLL_S)
+            if stop() and not call.done():
+                return None, "".join(collected), None          # o `finally` cancela a chamada presa na rede
+        comp = call.result()
+        return comp, comp.text if emit is None and comp is not None else "".join(collected), None
     except Exception as e:
         return None, "".join(collected), classify_exception(e)
     finally:
+        if not call.done():
+            call.cancel()
+            with suppress(BaseException):
+                await call
         await provider.aclose()
 
 
@@ -128,6 +150,12 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
         call_id = store.llm_calls.insert(row, store_payloads=False)
         log.warning("chat: %s", message)
         return ChatAnswer(text, html.escape(text), (), None, call_id, message)
+    if comp is None and not text and cancelled is not None and cancelled():
+        # cancelada antes do primeiro pedaço (R7-03): a pergunta fica, a chamada vai para `llm_calls` como cancelada e
+        # nenhuma resposta vazia é gravada
+        row = LlmCallInsert(meeting_id, parent, task, cfg.provider_id, cfg.fast_model, version, None, 0, 0, 0, 0, None, 0,
+                            LlmCallStatus.ERROR, CANCELLED, "stream" if emit else "direct")
+        return ChatAnswer("", "", (), None, store.llm_calls.insert(row, store_payloads=False), cancelled=True)
     text = text or (comp.text if comp else "")
     model = comp.model if comp else cfg.fast_model
     usage = comp.usage if comp else None

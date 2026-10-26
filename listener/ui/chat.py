@@ -2,7 +2,9 @@
 cancelamento ao fechar; a resposta parcial aparece a cada pedaço, F3.1 R3-06), citações `[mm:ss]` clicáveis que tocam o
 segmento (`listener://play?seg=<id>`), histórico de `chat_messages`. Chat sobre todas as reuniões é F5 (`ui/history.py`).
 F5 L4: a citação toca pelo player único do app, do começo da fala com L e R misturados até parar (item 10); a aba "Chat"
-da reunião aberta usa este painel sem outra mudança."""
+da reunião aberta usa este painel. R7-05: a recarga da reunião aberta (job `llm` ou `index` concluído) não apaga a pergunta
+em voo e não leva a rolagem ao fim (salvo se estava no fim). R7-03: a saída cancela a pergunta mesmo antes do primeiro
+pedaço e espera a thread antes de o banco fechar."""
 from __future__ import annotations
 
 import functools
@@ -15,7 +17,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QText
 from ..llm import chat_task
 from ..llm.costs import fmt_usd
 from ..log import get_logger
-from .tasks import StreamTask, run_stream
+from .tasks import StreamTask, run_stream, wait_before_close
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -64,9 +66,21 @@ class ChatPanel(QWidget):
         self.reload()
 
     def reload(self) -> None:
+        """Relê as linhas da transcrição e redesenha a conversa. Com uma pergunta em voo só os dados mudam: a pergunta e a
+        resposta parcial ficam na tela, e a resposta, ao chegar, redesenha tudo (R7-05). Fora disso a rolagem volta para onde
+        estava, salvo se estava no fim (aí segue no fim, onde chega a resposta)."""
         self.lines = chat_task.transcript_lines(self.store, self.meeting_id)
+        if self.task is not None:
+            return
+        bar = self.view.verticalScrollBar()
+        value = bar.value()
+        at_end = value >= bar.maximum() - max(4, bar.singleStep())      # a uma linha do fim conta como no fim
         self.view.setHtml(chat_task.history_html(self.store, self.meeting_id, self.lines))
-        self.view.moveCursor(self.view.textCursor().MoveOperation.End)
+        if at_end:
+            self.view.moveCursor(self.view.textCursor().MoveOperation.End)
+            bar.setValue(bar.maximum())
+        else:
+            bar.setValue(min(value, bar.maximum()))
 
     # ---------------------------------------------------------------- perguntar
     def ask(self) -> None:
@@ -107,6 +121,8 @@ class ChatPanel(QWidget):
         self.reload()
         if result.error:
             self.status.setText(f"falhou: {result.error}")
+        elif result.cancelled:
+            self.status.setText("pergunta cancelada antes da resposta")
         else:
             cites = sum(1 for c in result.citations if c.segment_id is not None)
             cost = f" · {fmt_usd(result.cost_usd)}" if result.cost_usd is not None else ""
@@ -122,12 +138,12 @@ class ChatPanel(QWidget):
         self.stop()
 
     def shutdown(self, wait_ms: int = 2500) -> None:
-        """Saída do app (F5A-32): cancela o streaming e espera a thread antes de o banco fechar."""
+        """Saída do app (F5A-32): cancela a pergunta (também antes do primeiro pedaço, R7-03) e espera a thread antes de o
+        banco fechar; passado o prazo, avisa no log e espera o fim."""
         task = self.task
         if task is not None:
             task.cancel()
-            if not task.wait(wait_ms):
-                log.warning("o chat da reunião %s não terminou em %d ms", self.meeting_id, wait_ms)
+            wait_before_close(task, wait_ms, f"o chat da reunião {self.meeting_id}")
 
     # ---------------------------------------------------------------- citações
     def _link_clicked(self, url: QUrl) -> None:

@@ -1,33 +1,38 @@
 """Player único do app (F5 item 10, F5A-25): toca uma reunião a partir de um ponto com L e R misturados (ganho ½ cada) até
 parar, ou um canal só num intervalo (os trechos de 5 s da revisão); um som por vez: tocar outro ponto troca o som.
 
-Uma thread alimentadora decodifica 60 s por vez dos canais (`store.playback.decode_range`, que posiciona cada pedaço pelo
-tempo e preenche buracos com silêncio; a primeira janela tem 5 s para o som começar logo), pula os intervalos de pausa da
-gravação (eventos `pause`/`resume`, D-011), reamostra com estado (`StreamResampler`) para a taxa padrão do dispositivo de
-saída e escreve blocos de ~0,25 s com `OutputStream.write` bloqueante, o que dá o ritmo. Posição = quadros escritos menos
-a latência de saída, convertida no tempo da reunião pelas âncoras (início de cada trecho contínuo, depois de cada pausa
-pulada); a interface lê num `QTimer` de 100 ms. Pausar, trocar o ponto, voltar ou avançar e parar descartam o que está no
-buffer do dispositivo (`abort`) e respondem em até um bloco. A thread nasce no primeiro "tocar", usa a própria conexão do
-`Store`, fecha o fluxo e a conexão (`close_thread`) quando o som para e termina; a saída do app a para e espera
-(`shutdown`).
+Duas threads por som (R7-02: o `write` nunca espera decodificação). A alimentadora (`player-feed`) decodifica cada pedaço
+FLAC uma vez (`AudioRepo.get_chunk`), corta dele janelas curtas (`decode_s`, 1 s) posicionadas pelo tempo (buraco entre
+pedaços vira silêncio), pula os intervalos de pausa da gravação (eventos `pause`/`resume`, D-011), mistura, reamostra com
+estado (`StreamResampler`) para a taxa padrão do dispositivo de saída e deixa o áudio numa fila limitada (`QUEUE_S`, 3 s à
+frente). A escritora (`player`) atende os comandos e só tira da fila e escreve blocos de ~0,25 s com `OutputStream.write`
+bloqueante, o que dá o ritmo; o fluxo começa no primeiro bloco pronto. Cada trecho contínuo (tocar, retomar, ±10 s) é uma
+geração da fila: pausar, trocar o ponto e ±10 s descartam o que estava pronto e o buffer do dispositivo (`abort`) e
+respondem em até um bloco. O `underflowed` de cada `write` e as esperas pela alimentadora são contados e vão para o log
+quando o som para. Posição = quadros escritos menos a latência de saída, convertida no tempo da reunião pelas âncoras
+(início de cada trecho contínuo, depois de cada pausa pulada); a interface lê num `QTimer` de 100 ms. ±10 s andam em tempo
+de áudio: as pausas da gravação não contam nos dois sentidos (R7-04). A escritora nasce no primeiro "tocar" com a sua
+alimentadora, cada uma com a própria conexão do `Store` (`close_thread` ao terminar), e as duas acabam quando o som para;
+comando que sobrar numa queda relança a escritora; a saída do app as para e espera (`shutdown`).
 
 Sem dispositivo de saída, sem o PortAudio do `sounddevice`, sem o arquivo de áudio do mês ou sem áudio gravado: estado
 `erro` com o motivo, que a barra mostra; nada quebra. A fábrica do fluxo de saída é injetável (os testes usam uma falsa
 que registra os quadros). Q9: o controlador põe um `guard` chamado antes de o som começar (a gravação em curso captura o
-sistema inteiro: o som do player entraria no canal R)."""
+sistema inteiro: o som do player entraria no canal R) e pausa o som com um aviso na barra (`pause(aviso)`, R7-01). Títulos
+e avisos em texto puro na barra (R7-07)."""
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import numpy as np
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
-from ..capture.audio import StreamResampler, resample
+from ..capture.audio import StreamResampler, decode_flac, resample
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..model import EventType
@@ -39,12 +44,15 @@ if TYPE_CHECKING:
 log = get_logger("ui.player")
 
 BLOCK_S = 0.25                   # cada `write` bloqueante: o ritmo e o tempo de resposta a um comando
-DECODE_S = 60.0                  # janela decodificada de cada vez (L e R)
-FIRST_DECODE_S = 5.0             # a primeira janela é curta: o som começa sem esperar 60 s de FLAC e reamostragem
+DECODE_S = 1.0                   # janela que a alimentadora corta dos pedaços já decodificados de cada vez (R7-02)
+QUEUE_S = 3.0                    # áudio pronto à frente do dispositivo, no máximo (fila limitada da alimentadora, R7-02)
 POLL_MS = 100                    # a interface lê a posição a cada 100 ms
 JOIN_S = 3.0                     # sair do app: espera a thread do player até isto
+FEED_JOIN_S = 2.0                # a escritora espera a alimentadora terminar a janela em curso até isto
 SEEK_MS = 10_000                 # -10 s e +10 s da barra
 GAIN = np.float32(0.5)           # L e R misturados com ganho ½ cada
+CHUNKS_KEPT = 3                  # pedaços decodificados guardados por canal (o da janela e os vizinhos)
+REQUESTS_KEPT = 100              # instrumentação dos testes: os últimos pedidos
 
 STOPPED, PLAYING, PAUSED, ERROR = "stopped", "playing", "paused", "error"
 STATE_TEXT = {STOPPED: "parado", PLAYING: "tocando", PAUSED: "pausado", ERROR: "erro"}
@@ -141,6 +149,40 @@ def next_pause(t_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int | 
     return min(starts) if starts else None
 
 
+def audio_ms(t_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int:
+    """Tempo de áudio no instante `t_ms` da reunião: ele menos o que as pausas da gravação tomaram antes dele (um instante
+    dentro de uma pausa vale o começo dela)."""
+    t = int(t_ms)
+    paused = 0
+    for a, b in sorted(intervals):
+        if a >= t:
+            break
+        paused += (t if b is None else min(b, t)) - a
+    return t - paused
+
+
+def meeting_ms(u_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int:
+    """O instante da reunião com `u_ms` de áudio (o inverso de `audio_ms`): sempre fora das pausas, salvo a que vai até o fim
+    (não há áudio depois dela: o começo dela)."""
+    t = int(u_ms)
+    for a, b in sorted(intervals):
+        if t < a:
+            break
+        if b is None:
+            return a
+        t += b - a
+    return t
+
+
+def seek_target(base_ms: int, delta_ms: int, intervals: Iterable[tuple[int, int | None]], end_ms: int) -> int:
+    """O ponto do -10 s ou +10 s em tempo de áudio (R7-04): as pausas da gravação não contam nos dois sentidos. Para trás, um
+    alvo dentro de [a, b) vira a - (b - alvo), e assim por diante a cada pausa atravessada; para frente, b + (alvo - a);
+    piso 0 e teto no fim do áudio. Antes, o alvo dentro da pausa ia para o fim dela e o -10 s ficava preso ali."""
+    spans = list(intervals)
+    u = max(0, audio_ms(base_ms, spans) + int(delta_ms))
+    return max(0, min(meeting_ms(u, spans), max(0, int(end_ms) - 1)))
+
+
 def mix(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """L e R com ganho ½ cada, no comprimento do maior (o menor completa com silêncio)."""
     n = max(len(left), len(right))
@@ -168,7 +210,11 @@ def audio_path_missing(store: Store, meeting: Mapping[str, Any]) -> str | None:
 
 
 # ---------------------------------------------------------------- motor (sem Qt)
-@dataclass(slots=True)
+_EMPTY = np.zeros(0, np.float32)
+_EMPTY.setflags(write=False)
+
+
+@dataclass(slots=True, eq=False)
 class _Session:
     req: PlayRequest
     stream: OutputStream
@@ -179,30 +225,109 @@ class _Session:
     end_t: int                   # fim do áudio a tocar (ms)
     duration_ms: int | None
     pauses: list[tuple[int, int | None]]
-    next_t: int = 0
     pos: int = 0                 # posição guardada na pausa
     playing: bool = False
-    first: bool = True
-    exhausted: bool = False
-    resampler: StreamResampler | None = None
-    buffer: np.ndarray = field(default_factory=lambda: np.zeros(0, np.float32))
+    started: bool = False        # o fluxo começou neste trecho (começa no primeiro bloco pronto, R7-02)
+    closed: bool = False
+    written: int = 0             # quadros escritos no som inteiro (o log ao parar)
+    underflows: int = 0          # `write` que voltou com `underflowed`: o dispositivo ficou sem som (R7-02)
+    starved: int = 0             # vezes em que a fila esvaziou com o som correndo (a alimentadora atrasou)
 
     @property
     def block(self) -> int:
         return max(1, int(self.rate * BLOCK_S))
 
 
-class PlaybackEngine:
-    """O lado sem Qt do player: comandos da interface numa fila, a thread alimentadora e o estado lido sob um lock."""
+@dataclass(slots=True, eq=False)
+class _Feed:
+    """Um trecho contínuo (uma geração da fila, R7-02): a alimentadora produz a partir de `start_t` e a escritora tira o áudio
+    na ordem. Trocar de trecho (pausar, outro ponto, ±10 s) troca o objeto, e o que estava pronto sai junto."""
+    sess: _Session
+    start_t: int
+    limit: int                   # quadros prontos à frente, no máximo (`QUEUE_S`)
+    parts: deque[np.ndarray] = field(default_factory=deque)
+    queued: int = 0              # quadros na fila
+    produced: int = 0            # quadros produzidos (as âncoras das pausas puladas contam por aqui)
+    done: bool = False           # fim do áudio: o que está na fila é o resto
+    error: str = ""
 
-    def __init__(self, store: Store, factory: OutputFactory, *, decode_s: float = DECODE_S, first_decode_s: float = FIRST_DECODE_S):
+
+class _Chunks:
+    """Os pedaços FLAC de um som para a alimentadora (R7-02): cada um decodificado uma vez (`AudioRepo.get_chunk`) e posto na
+    taxa gravada; as janelas saem deles pela posição no tempo, em amostras absolutas (sem deriva entre janelas), com
+    silêncio no buraco entre pedaços (como o `decode_range`, F1.1 A17). Guarda os `CHUNKS_KEPT` mais recentes de cada canal;
+    a lista dos pedaços é lida uma vez por som (uma gravação em curso ganha pedaços entre um som e outro)."""
+
+    def __init__(self, store: Store, meeting_id: int, in_rate: int):
+        self.store = store
+        self.meeting_id = meeting_id
+        self.in_rate = in_rate
+        self._meta: dict[str, list[tuple[int, int, int]]] = {}       # canal -> [(idx, primeira amostra, amostras)]
+        self._cache: OrderedDict[tuple[str, int], np.ndarray] = OrderedDict()
+
+    def window(self, channel: str, s0: int, s1: int) -> np.ndarray:
+        """As amostras [s0, s1) do canal, na taxa gravada."""
+        out = np.zeros(max(0, s1 - s0), np.float32)
+        for idx, c0, n in self._list(channel):
+            if c0 >= s1 or c0 + n <= s0:
+                continue
+            samples = self._samples(channel, idx)
+            a_out, a_in = max(0, c0 - s0), max(0, s0 - c0)
+            length = min(len(samples) - a_in, len(out) - a_out)
+            if length > 0:
+                out[a_out:a_out + length] = samples[a_in:a_in + length]
+        return out
+
+    def _list(self, channel: str) -> list[tuple[int, int, int]]:
+        meta = self._meta.get(channel)
+        if meta is None:
+            meta = []
+            for c in self.store.list_chunks(self.meeting_id, channel):
+                sr = int(c.get("sample_rate") or self.in_rate)
+                meta.append((int(c["idx"]), round(int(c["t_start_ms"]) * self.in_rate / 1000), round(int(c["frames"]) * self.in_rate / sr)))
+            self._meta[channel] = meta
+        return meta
+
+    def _samples(self, channel: str, idx: int) -> np.ndarray:
+        key = (channel, idx)
+        hit = self._cache.get(key)
+        if hit is not None:
+            self._cache.move_to_end(key)
+            return hit
+        row = self.store.audio.get_chunk(self.meeting_id, channel, idx)
+        samples = _EMPTY                                         # o pedaço sumiu (reunião apagada): silêncio
+        if row is not None:
+            samples, sr = decode_flac(row["flac"])
+            if sr != self.in_rate:
+                samples = resample(samples, sr, self.in_rate)
+        self._cache[key] = samples
+        while len(self._cache) > CHUNKS_KEPT * max(1, len(self._meta)):
+            self._cache.popitem(last=False)
+        return samples
+
+
+@dataclass(slots=True, eq=False)
+class _Cursor:
+    """Onde a alimentadora está no trecho atual (só a thread dela mexe)."""
+    feed: _Feed
+    chunks: _Chunks
+    next_t: int
+    resampler: StreamResampler | None
+
+
+class PlaybackEngine:
+    """O lado sem Qt do player: comandos da interface numa fila, a escritora, a alimentadora e o estado lido sob um lock."""
+
+    def __init__(self, store: Store, factory: OutputFactory, *, decode_s: float = DECODE_S, queue_s: float = QUEUE_S):
         self.store = store
         self.factory = factory
-        self.decode_ms = int(decode_s * 1000)
-        self.first_decode_ms = int(first_decode_s * 1000)
+        self.decode_ms = max(1, int(decode_s * 1000))
+        self.queue_s = max(BLOCK_S, float(queue_s))
         self._cv = threading.Condition()
         self._cmds: deque[tuple[str, Any]] = deque()
         self._thread: threading.Thread | None = None
+        self._feed: _Feed | None = None             # o trecho que a alimentadora prepara (sob `_cv`)
+        self._shut = False                          # a saída do app: nenhuma thread nasce depois dela
         # estado visto pela interface (sob `_cv`)
         self._state = STOPPED
         self._req: PlayRequest | None = None
@@ -215,6 +340,8 @@ class PlaybackEngine:
         self._end_t = 0
         self._paused_at = 0
         self.opened = 0                         # instrumentação: fluxos de saída abertos
+        self.underflows = 0                     # instrumentação: buracos que o dispositivo contou no último som (R7-02)
+        self.starved = 0                        # instrumentação: esperas pela alimentadora no último som
 
     # ---------------------------------------------------------------- interface (thread do Qt)
     def play(self, req: PlayRequest) -> None:
@@ -224,16 +351,21 @@ class PlaybackEngine:
             self._written, self._anchors, self._rate = 0, [(0, int(req.t_ms))], 0
         self._send("play", req)
 
-    def pause(self) -> None:
+    def pause(self, message: str = "") -> None:
+        """Pausa o que toca; `message` é o aviso da barra até retomar (R7-01). Já pausado, só troca o aviso. O aviso vai
+        também no comando: a thread, tratando antes um "retomar" mais antigo, reescreve o estado e o aviso, e a pausa os
+        devolve."""
         with self._cv:
             if self._state == PLAYING:
                 self._paused_at, self._state = self._position_locked(), PAUSED
-        self._send("pause")
+            if self._state == PAUSED:
+                self._message = message
+        self._send("pause", message)
 
     def resume(self) -> None:
         with self._cv:
             if self._state == PAUSED:
-                self._state = PLAYING
+                self._state, self._message = PLAYING, ""
                 self._written, self._anchors, self._rate = 0, [(0, self._paused_at)], 0
         self._send("resume")
 
@@ -247,7 +379,10 @@ class PlaybackEngine:
         self._send("stop", start=False)
 
     def shutdown(self, timeout_s: float = JOIN_S) -> bool:
-        """Para o som e espera a thread (a saída do app, antes de fechar o banco). False quando ela não terminou a tempo."""
+        """Para o som e espera a thread (a saída do app, antes de fechar o banco); depois disto nenhuma thread nasce. False
+        quando ela não terminou a tempo."""
+        with self._cv:
+            self._shut = True
         self._send("quit", start=False)
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
@@ -269,13 +404,18 @@ class PlaybackEngine:
     def _send(self, cmd: str, arg: Any = None, *, start: bool = True) -> None:
         with self._cv:
             alive = self._thread is not None and self._thread.is_alive()
-            if not alive and not start:
-                return                              # nada tocando: parar não precisa de thread
+            if not alive and (not start or self._shut):
+                return                              # nada tocando: parar não precisa de thread; depois da saída, nada nasce
             self._cmds.append((cmd, arg))
             if not alive:
-                self._thread = threading.Thread(target=self._run, name="player", daemon=True)
-                self._thread.start()
+                self._spawn_locked()
             self._cv.notify_all()
+
+    def _spawn_locked(self) -> None:
+        """(sob `_cv`) Uma escritora nova, já iniciada quando entra no lugar: o `alive`, lido sem o lock, nunca a vê parada."""
+        thread = threading.Thread(target=self._run, name="player", daemon=True)
+        thread.start()
+        self._thread = thread
 
     def _position_locked(self) -> int:
         if self._rate <= 0:
@@ -283,17 +423,23 @@ class PlaybackEngine:
         t = position_ms(self._anchors, max(0, self._written - self._latency), self._rate)
         return min(t, self._end_t) if self._end_t else t
 
-    # ---------------------------------------------------------------- thread alimentadora
+    # ---------------------------------------------------------------- escritora
     def _run(self) -> None:
         sess: _Session | None = None
         me = threading.current_thread()
+        quit_feed = threading.Event()
+        feeder = threading.Thread(target=self._feed_loop, args=(quit_feed,), name="player-feed", daemon=True)
+        feeder.start()
         try:
             while True:
                 with self._cv:
                     while not self._cmds and (sess is None or not sess.playing):
                         if sess is None:              # parado: a thread termina (nasce de novo no próximo "tocar")
+                            # ainda sob o lock: esta alimentadora não pega o trecho de uma escritora nova
+                            quit_feed.set()
                             if self._thread is me:
                                 self._thread = None
+                            self._cv.notify_all()
                             return
                         self._cv.wait()               # pausado: espera um comando
                     cmd = self._cmds.popleft() if self._cmds else None
@@ -311,21 +457,29 @@ class PlaybackEngine:
         finally:
             self._close(sess)
             with self._cv:
-                if self._thread is me:
-                    self._thread = None
+                quit_feed.set()
+                self._cv.notify_all()
+            feeder.join(FEED_JOIN_S)
             self.store.close_thread()
+            with self._cv:
+                if self._cmds and self._thread in (me, None) and not self._shut:
+                    self._spawn_locked()            # sobrou comando (chegou durante a queda): uma escritora nova o trata (R7-02)
+                elif self._thread is me:
+                    self._thread = None
 
     def _handle(self, sess: _Session | None, cmd: tuple[str, Any]) -> _Session | None:
         match cmd:
             case ("play", PlayRequest() as req):
                 return self._open(sess, req)
-            case ("pause", _):
+            case ("pause", message):
                 if sess is not None and sess.playing:
                     sess.pos = self.snapshot().t_ms
                     self._abort(sess)
                     sess.playing = False
                     with self._cv:
-                        self._paused_at, self._state = sess.pos, PAUSED
+                        if self._feed is not None and self._feed.sess is sess:
+                            self._feed = None             # o que estava pronto sai (R7-02)
+                        self._paused_at, self._state, self._message = sess.pos, PAUSED, str(message or "")
                 return sess
             case ("resume", _):
                 if sess is not None and not sess.playing:
@@ -335,7 +489,7 @@ class PlaybackEngine:
                 if sess is None:
                     return None
                 base = self.snapshot().t_ms if sess.playing else sess.pos
-                target = max(0, min(base + delta, max(0, sess.end_t - 1)))
+                target = seek_target(base, delta, sess.pauses, sess.end_t)     # em tempo de áudio (R7-04)
                 if sess.playing:
                     self._abort(sess)
                     self._start_run(sess, target)
@@ -361,9 +515,10 @@ class PlaybackEngine:
             self._close(sess)
             self._error(f"não consegui ler o áudio: {e}")
             return None
-        stream = sess.stream if sess is not None else None
-        if stream is not None:
+        if sess is not None:                          # o som anterior acaba aqui; o fluxo fica para este
             self._abort(sess)
+            self._report(sess)
+            stream = sess.stream
         else:
             try:
                 stream = self.factory()
@@ -381,13 +536,7 @@ class PlaybackEngine:
         start = int(req.t_ms)
         if start >= new.end_t:
             start = max(0, new.end_t - 1)
-        try:
-            self._start_run(new, start)
-        except Exception as e:  # o dispositivo recusou começar (sumiu entre abrir e tocar): o fluxo fecha e a barra avisa
-            log.warning("player: %s: %s", NO_DEVICE, e)
-            self._close(new)
-            self._error(f"{NO_DEVICE} ({e})")
-            return None
+        self._start_run(new, start)
         return new
 
     def _meeting(self, req: PlayRequest) -> tuple[int, tuple[str, ...], int, int | None, list[tuple[int, int | None]]]:
@@ -410,101 +559,191 @@ class PlaybackEngine:
                 pause_intervals(self.store.list_events(req.meeting_id)))
 
     def _start_run(self, sess: _Session, t_ms: int) -> None:
-        """Um trecho contínuo novo a partir de `t_ms` (o começo, a retomada ou o ponto do ±10 s): buffer e reamostragem
-        zerados, âncora no quadro 0 e o fluxo ligado."""
+        """Um trecho contínuo novo a partir de `t_ms` (o começo, a retomada ou o ponto do ±10 s): uma geração nova da fila (o
+        que estava pronto sai) e a âncora no quadro 0; o fluxo começa quando o primeiro bloco fica pronto (R7-02)."""
         start = skip_paused(t_ms, sess.pauses)
-        sess.next_t = sess.end_t if start is None else min(start, sess.end_t)
-        sess.buffer = np.zeros(0, np.float32)
-        sess.resampler = StreamResampler(sess.in_rate, sess.rate) if sess.in_rate != sess.rate else None
-        sess.first, sess.exhausted, sess.playing = True, False, True
+        start_t = sess.end_t if start is None else min(start, sess.end_t)
+        sess.playing = True
         with self._cv:
-            self._written, self._anchors, self._state, self._message = 0, [(0, sess.next_t)], PLAYING, ""
+            self._feed = _Feed(sess, start_t, max(sess.block, int(sess.rate * self.queue_s)))
+            self._written, self._anchors, self._state, self._message = 0, [(0, start_t)], PLAYING, ""
             self._rate, self._latency, self._duration, self._end_t = sess.rate, sess.latency, sess.duration_ms, sess.end_t
-        sess.stream.start()
+            self._cv.notify_all()
 
     def _step(self, sess: _Session) -> _Session | None:
-        """Completa o buffer até um bloco e escreve (bloqueante); no fim do áudio, espera o resto tocar e para."""
-        while len(sess.buffer) < sess.block and not sess.exhausted:
-            self._produce(sess)
-        if not len(sess.buffer):
-            try:
-                sess.stream.stop()                    # o que já está no dispositivo termina de tocar
-            except Exception as e:  # o fluxo pode ter caído: parar assim mesmo
-                log.debug("player: parar o fluxo: %s", e)
-            with self._cv:
-                self._paused_at, self._state, self._message = sess.end_t, STOPPED, ""
-            self._close(sess, abort=False)
+        """Escreve o próximo bloco pronto (bloqueante: dá o ritmo); com a fila vazia, espera a alimentadora sem deixar de
+        atender os comandos; no fim do áudio, espera o resto tocar e para. Nunca decodifica (R7-02)."""
+        with self._cv:
+            feed, waited = self._feed, False
+            while not self._cmds and feed is not None and feed.sess is sess and not feed.queued and not feed.done:
+                waited = True
+                self._cv.wait()
+                feed = self._feed
+            if self._cmds:
+                return sess                          # comando primeiro: o laço do `_run` trata
+            if feed is None or feed.sess is not sess:
+                block, error = _EMPTY, ""            # sem trecho (não acontece): o som acaba
+            else:
+                block, error = self._take(feed, sess.block), feed.error
+                if waited and sess.started:
+                    sess.starved += 1                # a fila esvaziou com o som correndo: a alimentadora atrasou
+                self._cv.notify_all()                # coube mais na fila: a alimentadora segue
+        if not len(block):
+            self._finish(sess, error)
             return None
-        block, sess.buffer = sess.buffer[:sess.block], sess.buffer[sess.block:]
+        if not sess.started:
+            try:
+                sess.stream.start()
+            except Exception as e:  # o dispositivo recusou começar (sumiu entre abrir e tocar): o fluxo fecha e a barra avisa
+                log.warning("player: %s: %s", NO_DEVICE, e)
+                self._close(sess)
+                self._error(f"{NO_DEVICE} ({e})")
+                return None
+            sess.started = True
         try:
-            sess.stream.write(block)
+            underflowed = sess.stream.write(block)
         except Exception as e:  # o dispositivo sumiu no meio (fone desconectado): aviso na barra, o som para
             log.warning("player: a saída de áudio falhou: %s", e)
             self._close(sess)
             self._error(f"a saída de áudio parou ({e})")
             return None
+        if underflowed:
+            sess.underflows += 1                     # o dispositivo ficou sem som antes deste bloco (R7-02)
+        sess.written += len(block)
         with self._cv:
             self._written += len(block)
         return sess
 
-    def _produce(self, sess: _Session) -> None:
-        t = sess.next_t
+    @staticmethod
+    def _take(feed: _Feed, n: int) -> np.ndarray:
+        """(sob `_cv`) Até `n` quadros do começo da fila, juntando as partes."""
+        parts: list[np.ndarray] = []
+        need = n
+        while need > 0 and feed.parts:
+            head = feed.parts[0]
+            if len(head) <= need:
+                parts.append(feed.parts.popleft())
+                need -= len(head)
+            else:
+                parts.append(head[:need])
+                feed.parts[0] = head[need:]
+                need = 0
+        out = parts[0] if len(parts) == 1 else (np.concatenate(parts) if parts else _EMPTY)
+        feed.queued -= len(out)
+        return out
+
+    def _finish(self, sess: _Session, error: str) -> None:
+        """Fim do áudio: o que já está no dispositivo termina de tocar e o som para (com o motivo, se a alimentadora falhou)."""
+        if error:
+            self._close(sess)
+            self._error(error)
+            return
+        if sess.started:
+            try:
+                sess.stream.stop()                    # o que já está no dispositivo termina de tocar
+            except Exception as e:  # o fluxo pode ter caído: parar assim mesmo
+                log.debug("player: parar o fluxo: %s", e)
+        with self._cv:
+            self._paused_at, self._state, self._message = sess.end_t, STOPPED, ""
+        self._close(sess, abort=False)
+
+    # ---------------------------------------------------------------- alimentadora (R7-02)
+    def _feed_loop(self, quit_: threading.Event) -> None:
+        """Prepara o trecho atual à frente da escritora, até `QUEUE_S`, uma janela curta por vez fora do lock; trecho trocado
+        no meio de uma janela, o que ela fez sai. Usa a própria conexão do `Store` e a fecha ao terminar."""
+        cur: _Cursor | None = None
+        try:
+            while True:
+                with self._cv:
+                    feed = self._next_feed(quit_)
+                if feed is None:
+                    return
+                y, anchor, done, error = _EMPTY, None, False, ""
+                try:
+                    if cur is None or cur.feed is not feed:              # outro trecho: começa do ponto dele
+                        cur = self._cursor(cur, feed)
+                    y, anchor, done = self._produce(cur)
+                except Exception as e:  # banco ou FLAC ilegível: o som para com o motivo na barra
+                    log.exception("player: a decodificação falhou")
+                    done, error = True, f"o player falhou: {e}"
+                with self._cv:
+                    if self._feed is not feed:
+                        continue                                          # o trecho mudou no meio: o que fiz sai
+                    if len(y):
+                        feed.parts.append(y)
+                        feed.queued += len(y)
+                        feed.produced += len(y)
+                    if anchor is not None:
+                        self._anchors.append((feed.produced, anchor))      # a pausa pulada: o tempo salta neste quadro
+                    feed.done, feed.error = done, error
+                    self._cv.notify_all()
+        finally:
+            self.store.close_thread()
+
+    def _next_feed(self, quit_: threading.Event) -> _Feed | None:
+        """(sob `_cv`) O trecho que precisa de mais áudio; espera enquanto a fila está cheia ou não há trecho. None = sair."""
+        while not quit_.is_set():
+            feed = self._feed
+            if feed is not None and not feed.done and feed.queued < feed.limit:
+                return feed
+            self._cv.wait()
+        return None
+
+    def _cursor(self, cur: _Cursor | None, feed: _Feed) -> _Cursor:
+        """O começo de um trecho: no mesmo som, os pedaços já decodificados ficam (servem ao ±10 s); outro som, outra lista."""
+        sess = feed.sess
+        chunks = cur.chunks if cur is not None and cur.feed.sess is sess else _Chunks(self.store, sess.req.meeting_id, sess.in_rate)
+        resampler = StreamResampler(sess.in_rate, sess.rate) if sess.in_rate != sess.rate else None
+        return _Cursor(feed, chunks, feed.start_t, resampler)
+
+    def _produce(self, cur: _Cursor) -> tuple[np.ndarray, int | None, bool]:
+        """Um passo da alimentadora: (áudio, âncora, fim). Uma janela curta de áudio; ou a pausa da gravação pulada (o resto da
+        reamostragem e o tempo de depois dela, a âncora); ou o fim do áudio (o resto da reamostragem)."""
+        sess, t = cur.feed.sess, cur.next_t
         if t >= sess.end_t:
-            self._flush(sess)
-            sess.exhausted = True
-            return
+            return self._flush(cur), None, True
         after = skip_paused(t, sess.pauses)
-        if after != t:                                # pausa da gravação: o resto do trecho sai e a âncora pula
-            self._flush(sess)
+        if after != t:
+            tail = self._flush(cur)
             if after is None or after >= sess.end_t:
-                sess.next_t, sess.exhausted = sess.end_t, True
-                return
-            sess.next_t = after
-            sess.resampler = StreamResampler(sess.in_rate, sess.rate) if sess.resampler is not None else None
-            with self._cv:
-                self._anchors.append((self._written + len(sess.buffer), after))
-            return
-        span = self.first_decode_ms if sess.first else self.decode_ms
-        stop = min(t + span, sess.end_t)
+                cur.next_t = sess.end_t
+                return tail, None, True
+            cur.next_t = after
+            cur.resampler = StreamResampler(sess.in_rate, sess.rate) if cur.resampler is not None else None
+            return tail, after, False
+        stop = min(t + self.decode_ms, sess.end_t)
         pause = next_pause(t, sess.pauses)
         if pause is not None:
             stop = min(stop, pause)
-        x = self._decode(sess, t, stop)
-        y = sess.resampler.process(x) if sess.resampler is not None else x
-        sess.buffer = np.concatenate([sess.buffer, y]) if len(sess.buffer) else y
-        sess.next_t, sess.first = stop, False
+        x = self._decode(cur.chunks, sess, t, stop)
+        cur.next_t = stop
+        return (cur.resampler.process(x) if cur.resampler is not None else x), None, False
 
-    def _decode(self, sess: _Session, t0: int, t1: int) -> np.ndarray:
-        from ..store.playback import decode_range
+    def _decode(self, chunks: _Chunks, sess: _Session, t0: int, t1: int) -> np.ndarray:
+        """[t0, t1) de L e R misturados (ou do canal pedido) na taxa gravada, cortado dos pedaços já decodificados."""
+        s0, s1 = round(t0 * sess.in_rate / 1000), round(t1 * sess.in_rate / 1000)
+        parts = [chunks.window(ch, s0, s1) for ch in sess.channels]
+        return mix(parts[0], parts[1]) if len(parts) == 2 else parts[0]
 
-        n = max(0, round((t1 - t0) * sess.in_rate / 1000))
-        parts: list[np.ndarray] = []
-        for ch in sess.channels:
-            samples, sr = decode_range(self.store, sess.req.meeting_id, ch, t0, t1)
-            if not len(samples):
-                samples, sr = np.zeros(n, np.float32), sess.in_rate       # sem pedaço aqui: silêncio no lugar
-            if sr != sess.in_rate:
-                samples = resample(samples, sr, sess.in_rate)
-            parts.append(samples[:n] if len(samples) > n else np.pad(samples, (0, n - len(samples))))
-        return mix(parts[0], parts[1]) if len(parts) == 2 else np.asarray(parts[0], np.float32)
+    @staticmethod
+    def _flush(cur: _Cursor) -> np.ndarray:
+        return cur.resampler.flush() if cur.resampler is not None else _EMPTY
 
-    def _flush(self, sess: _Session) -> None:
-        if sess.resampler is not None:
-            tail = sess.resampler.flush()
-            if len(tail):
-                sess.buffer = np.concatenate([sess.buffer, tail]) if len(sess.buffer) else tail
-
+    # ---------------------------------------------------------------- fim
     def _abort(self, sess: _Session | None) -> None:
-        if sess is None:
+        """Descarta o buffer do dispositivo; o fluxo para e começa de novo no próximo bloco escrito."""
+        if sess is None or not sess.started:
             return
+        sess.started = False
         try:
             sess.stream.abort()
         except Exception as e:  # fluxo já parado ou caído
             log.debug("player: abortar o fluxo: %s", e)
 
     def _close(self, sess: _Session | None, abort: bool = True) -> None:
-        if sess is None:
+        if sess is None or sess.closed:
             return
+        sess.closed = True
         if abort:
             self._abort(sess)
         try:
@@ -512,9 +751,20 @@ class PlaybackEngine:
         except Exception as e:
             log.debug("player: fechar o fluxo: %s", e)
         sess.playing = False
+        self._report(sess)
         with self._cv:
+            if self._feed is not None and self._feed.sess is sess:
+                self._feed = None                     # a alimentadora para; o que estava pronto sai
             if self._state in (PLAYING, PAUSED):
                 self._paused_at, self._state = self._position_locked(), STOPPED
+
+    def _report(self, sess: _Session) -> None:
+        """O som acabou (parou, trocou de ponto, caiu): os buracos que o dispositivo contou (`underflowed`) e as esperas pela
+        alimentadora vão para o log (R7-02; no Windows, a medida do MME)."""
+        self.underflows, self.starved = sess.underflows, sess.starved
+        seconds = sess.written / sess.rate if sess.rate else 0.0
+        log.info("player: reunião %s: %.1f s tocados, %d buraco(s) na saída (underflow), %d espera(s) pela decodificação",
+                 sess.req.meeting_id, seconds, sess.underflows, sess.starved)
 
     def _error(self, message: str) -> None:
         with self._cv:
@@ -532,7 +782,7 @@ class Player(QObject):
         super().__init__(parent)
         self.engine = PlaybackEngine(store, output_factory or sounddevice_output)
         self.guard: Callable[[PlayRequest], bool] | None = None
-        self.requests: list[PlayRequest] = []   # instrumentação dos testes
+        self.requests: deque[PlayRequest] = deque(maxlen=REQUESTS_KEPT)   # instrumentação dos testes
         self._last: PlayerState | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
@@ -565,6 +815,16 @@ class Player(QObject):
             return False
         self._kick()
         return True
+
+    def pause(self, notice: str = "") -> bool:
+        """Pausa o som que toca com o aviso `notice` na barra até retomar (R7-01: o warm-up abriu ou a gravação vai captar o
+        sistema inteiro); já pausado, só troca o aviso. Retomar passa pelo `guard` (Q9). True quando havia som tocando."""
+        st = self.state().state
+        if st not in (PLAYING, PAUSED):
+            return False
+        self.engine.pause(notice)
+        self._kick()
+        return st == PLAYING
 
     def seek(self, delta_ms: int) -> None:
         if self.state().active:
@@ -607,8 +867,9 @@ class Player(QObject):
 
 class PlayerBar(QWidget):
     """Barra do player na reunião aberta: Tocar/Pausar, -10 s, +10 s, "mm:ss / mm:ss" e o título do que toca; o aviso do
-    player (sem dispositivo, sem áudio) numa linha discreta. "Tocar" com outra reunião (ou nada) carregada começa esta reunião
-    em `start()` (a fala selecionada)."""
+    player (sem dispositivo, sem áudio, pausado para a gravação) numa linha discreta. "Tocar" com outra reunião (ou nada)
+    carregada começa esta reunião em `start()` (a fala selecionada). Título e aviso em texto puro: um título com "<b>" não
+    vira HTML (R7-07)."""
 
     def __init__(self, player: Player, meeting_id: int | None = None, *, title: Callable[[], str] | None = None,
                  start: Callable[[], int] | None = None, parent: QWidget | None = None):
@@ -629,9 +890,11 @@ class PlayerBar(QWidget):
         self.time = QLabel("00:00 / 00:00")
         self.time.setObjectName("playerTime")
         self.what = QLabel("")
+        self.what.setTextFormat(Qt.TextFormat.PlainText)
         self.what.setStyleSheet("color: palette(placeholder-text);")
         self.what.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.note = QLabel("")
+        self.note.setTextFormat(Qt.TextFormat.PlainText)
         self.note.setStyleSheet("color: #e67e22;")
         self.note.setWordWrap(True)
         self.btn_play.clicked.connect(self.toggle)
@@ -686,8 +949,10 @@ class PlayerBar(QWidget):
             self.what.setText(f"{prefix}{STATE_TEXT[st.state]} · {st.title}" if st.title else f"{prefix}{STATE_TEXT[st.state]}")
         else:
             self.what.setText("")
-        self.note.setText(st.message if st.state == ERROR and (mine or st.meeting_id is None) else "")
+        # o motivo do erro e o aviso da pausa pela gravação (R7-01) na barra da reunião que tocava
+        self.note.setText(st.message if st.state in (ERROR, PAUSED) and (mine or st.meeting_id is None) else "")
 
 
 __all__ = ["ERROR", "PAUSED", "PLAYING", "STOPPED", "OutputStream", "PlayRequest", "PlaybackEngine", "Player", "PlayerBar",
-           "PlayerState", "mix", "pause_intervals", "position_ms", "skip_paused", "sounddevice_output"]
+           "PlayerState", "audio_ms", "meeting_ms", "mix", "pause_intervals", "position_ms", "seek_target", "skip_paused",
+           "sounddevice_output"]
