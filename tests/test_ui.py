@@ -70,6 +70,45 @@ def test_settings_dialog_validates_with_platform_grammar(qtbot, store, platform)
     assert store.settings.provider_key("huggingface") == "hf_abc"
 
 
+def test_settings_database_path_wraps_instead_of_widening_the_form(qtbot, store, platform):
+    """Visto no Windows a 150 % (25/10): o caminho do banco numa linha só alargava o formulário além do diálogo, com
+    rolagem horizontal e as dicas da direita ("na próxima gravação", "aplica agora") cortadas. O grupo do banco não pode
+    ser o que define a largura (offscreen as fontes são outras: a comparação é entre os grupos, não com a tela)."""
+    from PySide6.QtWidgets import QGroupBox
+
+    from listener.ui.settings_min import SettingsDialog, breakable_path
+
+    dlg = SettingsDialog(store, platform, {})
+    qtbot.addWidget(dlg)
+    groups = {g.title(): g for g in dlg.findChildren(QGroupBox)}
+    assert len(str(store.base_dir)) > 20
+    assert groups["Banco de dados"].minimumSizeHint().width() < groups["Captura"].minimumSizeHint().width()
+    assert breakable_path("C:\\a\\b").replace("\u200b", "") == "C:\\a\\b" and breakable_path("/x/y").count("\u200b") == 2
+
+
+def test_qt_standard_buttons_come_in_portuguese(qtbot, qapp):
+    """Visto no Windows (25/10): sem a tradução do Qt, "Next", "Save" e "Yes" saíam em inglês num app em pt-BR."""
+    from PySide6.QtWidgets import QDialogButtonBox, QMessageBox, QWizard
+
+    from listener.ui.common import install_translations
+
+    translator = install_translations(qapp)
+    if translator is None:
+        pytest.skip("o PySide6 deste sistema não traz o qtbase_pt_BR.qm")
+    try:
+        box = QMessageBox(QMessageBox.Icon.Question, "Sair", "Parar?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        wizard = QWizard()
+        for w in (box, buttons, wizard):
+            qtbot.addWidget(w)
+        assert box.button(QMessageBox.StandardButton.Yes).text().replace("&", "") == "Sim"
+        assert buttons.button(QDialogButtonBox.StandardButton.Save).text().replace("&", "") == "Salvar"
+        assert buttons.button(QDialogButtonBox.StandardButton.Cancel).text().replace("&", "") == "Cancelar"
+        assert wizard.buttonText(QWizard.WizardButton.NextButton).replace("&", "").startswith("Próximo")
+    finally:
+        qapp.removeTranslator(translator)
+
+
 def test_warmup_opens_mic_once_and_builds_config(qtbot, store, platform):
     from listener.ui.warmup import WarmupDialog
 

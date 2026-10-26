@@ -56,6 +56,12 @@ def index_status_text(store: Store) -> str:
     return text
 
 
+def breakable_path(path: object) -> str:
+    """O caminho com um ponto de quebra invisível (U+200B) depois de cada separador: um caminho longo não tem espaço onde
+    quebrar e, numa linha só, alargava o formulário além do diálogo."""
+    return str(path).replace("\\", "\\\u200b").replace("/", "/\u200b")
+
+
 def _thousands(n: int | None) -> str:
     return f"{int(n or 0):,}".replace(",", ".")
 
@@ -209,14 +215,18 @@ class SettingsDialog(QDialog):
 
         db = QGroupBox("Banco de dados")
         dbl = QVBoxLayout(db)
-        dbl.addWidget(QLabel(f"Pasta: {store.base_dir} (esquema v{store.schema_version()}; "
-                             f"{len(store.audio_files())} arquivo(s) de áudio, um por mês)"))
+        # com quebra de linha: o caminho do banco numa linha só alargava o formulário além do diálogo (rolagem horizontal
+        # e as dicas da direita cortadas, visto no Windows a 150 % em 25/10)
+        notes = [QLabel(f"Pasta: {breakable_path(store.base_dir)} (esquema v{store.schema_version()}; "
+                        f"{len(store.audio_files())} arquivo(s) de áudio, um por mês)")]
         synced = platform.synced_folder_name(store.base_dir)
         if synced:
-            w = QLabel(f"Atenção: esta pasta está dentro do {synced}; o banco sairá da máquina pela sincronização.")
-            w.setStyleSheet("color: #e67e22;")
-            dbl.addWidget(w)
-        dbl.addWidget(QLabel("Mover o banco e o backup entram na fase das Configurações completas (F6)."))
+            notes.append(QLabel(f"Atenção: esta pasta está dentro do {synced}; o banco sairá da máquina pela sincronização."))
+            notes[-1].setStyleSheet("color: #e67e22;")
+        notes.append(QLabel("Mover o banco e o backup entram na fase das Configurações completas (F6)."))
+        for note in notes:
+            note.setWordWrap(True)
+            dbl.addWidget(note)
         lay.addWidget(db)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)

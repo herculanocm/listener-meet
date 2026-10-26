@@ -3,7 +3,7 @@ Cabeçalho com o título editável (Enter ou "Salvar" grava com `revisions` e re
 menu), data e hora, duração, participantes (quem fala, `review.participants`) e o selo de custo; abas "Ata", "Resumo"
 (executivo e pré-resumo), "Ações" (as três do `LlmTabsGroup`, o mesmo da revisão: editar, "gerar de novo", marcas de
 reprocessamento e de alerta), "Transcrição" (revisada ou original), "Marcadores" (o clique toca) e "Chat" (o da F3, sobre
-a reunião inteira); "Revisar falantes…" e "Exportar ▾" (copiar a ata ou a transcrição com texto e HTML, salvar o .md com
+a reunião inteira); "Revisar falantes…" e o menu "Exportar" (copiar a ata ou a transcrição com texto e HTML, salvar o .md com
 escrita atômica); a barra do player embaixo. Abre num ponto (`open_at`): vai para a transcrição, seleciona a fala de início
 mais perto, rola até ela e, pedido, toca do começo dela (sem fala, do ponto menos 150 ms). Fechar para o som desta reunião
 e guarda posição e tamanho (`ui.meeting_geometry`). Cabeçalho e avisos em texto puro: um título ou nome com "<b>" não vira
@@ -122,7 +122,7 @@ class MeetingWindow(QWidget):
         menu.addSeparator()
         menu.addAction(self.act_save)
         self.btn_export = QToolButton()
-        self.btn_export.setText("Exportar ▾")
+        self.btn_export.setText("Exportar")              # a seta do menu é do próprio Qt (com "▾" no texto saíam duas)
         self.btn_export.setToolTip("Copiar para a área de transferência ou salvar um arquivo .md")
         self.btn_export.setMenu(menu)
         self.btn_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)

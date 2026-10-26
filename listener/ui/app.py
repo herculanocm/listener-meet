@@ -38,6 +38,10 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
     app = QApplication(argv or sys.argv)
     app.setApplicationName("listener-meet")
     app.setQuitOnLastWindowClosed(False)
+    from .common import install_translations
+
+    if install_translations(app) is None:
+        log.info("tradução pt-BR do Qt indisponível: os botões padrão ficam em inglês")
     from .tray import STATE_COLORS, make_icon
 
     app.setWindowIcon(make_icon(STATE_COLORS["idle"]))

@@ -205,7 +205,7 @@ class TextTab(QWidget):
 
 class TitleTab(QWidget):
     """Título da reunião: o do usuário (editável, com `revisions`) e a sugestão da LLM à parte. `compact` (F5, cabeçalho da
-    reunião aberta): uma linha só, Enter salva, e "usar a sugestão" e "gerar de novo" num menu "LLM ▾"."""
+    reunião aberta): uma linha só, Enter salva, e "usar a sugestão" e "gerar de novo" num menu "LLM"."""
 
     def __init__(self, store: Store, meeting_id: int, on_regenerate: Callable[[JobStep], Any], parent: QWidget | None = None,
                  on_edited: Callable[[], Any] | None = None, *, compact: bool = False):
@@ -253,7 +253,7 @@ class TitleTab(QWidget):
         menu.addAction(self.act_use)
         menu.addAction(self.act_regen)
         self.btn_menu = QToolButton()
-        self.btn_menu.setText("LLM ▾")
+        self.btn_menu.setText("LLM")                      # a seta do menu é do próprio Qt (com "▾" no texto saíam duas)
         self.btn_menu.setToolTip("Sugestão de título da LLM")
         self.btn_menu.setMenu(menu)
         self.btn_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
