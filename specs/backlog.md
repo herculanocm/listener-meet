@@ -2,50 +2,59 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (26/10/2026, sessão encerrada no Windows nativo; tudo commitado; push do dono)
+## Onde paramos (26/10/2026, sessão no Windows nativo; F5.1 implementada; tudo commitado; push do dono)
 - **Feito em 25 e 26/10, no Windows:** o R7 e o R8 da F5 (`af2ea3d`, `6e0f235`) e o fechamento (**F5 implementada**,
   `b21d675`); a parte de "Verificar no Windows" que não depende do dono (itens 1 e 2 inteiros; 3, 7 e 8 no que não
   dependia dele), com seis defeitos corrigidos; U-030 a U-033 implementadas (D-049: "Ok pra tudo"); worktree do agente
   removido; o venv do F0 fica até o item 5 decidir onde fica o `[pipeline]`.
 - **Próximo passo, comece aqui:** a parte do dono em "Verificar no Windows", nesta ordem: (1) usar o app no perfil real
-  (item 3: assistente, gravação curta com o OK dele, fila, revisão, Configurações, o segundo monitor); (2) chave do
-  Gemini (B13: item 6 e o que pede rede no 8); (3) token do Hugging Face e `pip install -e .[pipeline]` no `.venv` do
-  checkout (B4: itens 5 e 7); (4) três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a
-  G5. Em cada item, "Com o dono" diz o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
+  (item 3: assistente, gravação curta com o OK dele, fila, revisão, Configurações, o segundo monitor; e a F5.1 no item
+  9: linha do tempo e destaque com som de verdade, preparar a busca local e escolher Local); (2) chave do Gemini (B13:
+  item 6 e o que pede rede no 8); (3) token do Hugging Face (B4: itens 5 e 7; o `[pipeline]` já está no `.venv`); (4)
+  três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a G5. Em cada item, "Com o dono" diz
+  o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
   e o acompanha no resto (lê o log, corrige o que aparecer, mede e anota).
 - **Respostas do dono (26/10, D-050): tudo nos padrões.** Feito: as sondas do Windows em `scripts/win_probe.py`; a suíte
   em rápida e lenta (`--tudo` antes de commitar); o lock `requirements/windows.txt` (versões provadas aqui), o
   `[pipeline]` no `.venv` por ele e o large-v3-turbo copiado para a pasta de modelos do app (o venv do F0 sai depois que
   o processamento real funcionar, com o token do dono). O canal R segue sem aviso antecipado (rever depois do G1); o
   repositório público fica como está.
-- **F5.1 em implementação (26/10):** L0 no Windows (`faa967b`, D-051: o e5-small int8), spec com a revisão de
-  arquitetura incorporada (`59c550e`, A-01 a A-19), extras `local` e `docx` e o lock (`d235950`); L6 (provedor local) e
-  L7 (linha do tempo, destaque contínuo, .docx) com dois implementadores em paralelo, cada um no seu worktree; depois,
-  revisor, verificação e fechamento. Se a sessão cair no meio, o trabalho deles está nos branches `worktree-agent-*`.
+- **F5.1 implementada (26/10):** L0 (`faa967b`, D-051), spec e revisão de arquitetura (`74b7ec8`, `59c550e`), extras e
+  lock (`d235950`); L7 (linha do tempo, destaque contínuo, .docx: `82772d1`, R9 `ccb0719`) e L6 (provedor local:
+  `8f28ad8`, R10 `910fe4b`) em paralelo, cada um revisado por um agente novo; escapes e a regra do código-fonte
+  (`5f1776a`). Conferido aqui sem o dono: a suíte, as telas a 150 %, o app real, o download do e5 interrompido e
+  retomado, o .docx aberto no Word e o aviso do U-030 com ele aberto. Desvios na seção Implementação da spec; P23 (RAM do
+  tokenizer, `decisoes.md`) e U-034 a U-036 (`ux-melhorias.md`) esperam o dono.
 - **Lixo a apagar com o OK do dono:** `~\.cache\huggingface\hub\models--Systran--faster-whisper-small` (464 MB, de um
-  teste que ia à rede antes da correção de 26/10) e `%TEMP%\e5-fp32-*` (448 MB, o fp32 só para comparar no L0).
+  teste que ia à rede antes da correção de 26/10); `%TEMP%\e5-fp32-*` (448 MB, o fp32 só para comparar no L0); os dois
+  worktrees da F5.1 em `.claude\worktrees\` e os branches `worktree-agent-a2dadb32031defded` e
+  `worktree-agent-af5f2331b9d89c15c` (o trabalho já está na main por cherry-pick); o scratchpad desta sessão,
+  `%TEMP%\claude\c--dev-listener-meet\10f854f2-229f-4618-a76e-f255aeef8748` (sondas, telas e uma cópia do e5 de 135 MB
+  do teste de retomada).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4 e **F5 implementadas**: 372 testes mais 4 pulados no Windows (~46 s; 348
-  mais 5 no Linux de desenvolvimento no L5, ~22 s); `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o
-  do truststore com clientes reais; ruff e mypy limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12
-  e 3.13 mais uma célula com o extra `llm`. Esquema v8. Nada do app importa torch, ML nem os SDKs de LLM (teste
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 445 testes mais 7 pulados no Windows com
+  `--tudo` (~55 s; a rápida, 342 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
+  `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
+  limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
+  Esquema v8. Nada do app importa torch, ML, os SDKs de LLM, onnxruntime, tokenizers nem docx no nível do módulo (teste
   estático).
   Whisper, pyannote (F2 L5), os três adaptadores de LLM e o processo ao vivo real foram escritos às cegas, contra
   transporte simulado ou num venv à parte sem torch: só rodam de verdade no Windows com o token do Hugging Face (B4) e a
   chave do Gemini (B13).
 - Git: commits de 24/10 a 26/10 (F1, F1.1, CP16, CP17, F1.2, D-040, F2 em onze, F3 em oito, F3.1 em três, F4 e F5 em
-  lotes, ajustes, revisões e a verificação no Windows); só o branch `main`; remoto `origin` público no GitHub (o dono faz
-  o push; em 26/10 o `main` do checkout do Windows, `C:\dev\listener-meet`, estava 11 commits à frente do `origin/main`,
-  de `3248e05` em diante); sem stash. Commit a cada grande alteração (CP16).
+  lotes, F5.1 em lotes paralelos, ajustes, revisões e a verificação no Windows); o branch `main` (mais os dois
+  `worktree-agent-*` da F5.1, a apagar com o OK do dono); remoto `origin` público no GitHub (o dono faz
+  o push; em 26/10 o `main` do checkout do Windows, `C:\dev\listener-meet`, estava 15 commits à frente do `origin/main`
+  (`2e81120`), de `2e6e098` em diante); sem stash. Commit a cada grande alteração (CP16).
 - Specs: F0 aprovada e medida (falta pyannote, B4) · F1 implementada, G1 pendente · F1.1, F1.2 e F2 implementadas (G2
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 implementada** (D-047; o item 8 e o G5
-  dependem do Windows com o dono) · **F5.1 em implementação** (`features/F5.1-busca-local-linha-do-tempo.md`) · F6
-  rascunho inicial · F7 futuro.
+  dependem do Windows com o dono) · **F5.1 implementada** (`features/F5.1-busca-local-linha-do-tempo.md`; o item 9 e o
+  G5 com o embedder local dependem do dono) · F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md`, este arquivo. Depois só a camada
@@ -117,6 +126,18 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
    gravação do sistema inteiro e com o loopback do app falhando; a saída com o glossário preso na rede real; o clique
    nos toasts do Windows 11 e na central; `.md` em Documentos no OneDrive; colar no Outlook, no Teams e no Bloco de
    Notas; a saída no logoff; `python -m listener --check` e o G5 com 5 ou mais reuniões reais.
+9. F5.1: **sem o dono, 26/10:** a suíte inteira na main (445 e 7 pulados), ruff e mypy; as telas a 150 % (Configurações
+   com "Preparar busca local" e "Local (e5-small, sem custo)", a aba "Linha do tempo" com e sem falas, o destaque na
+   Transcrição); o app real pronto em 1,43 s com 188,7 MB parado (o e5 só carrega com o Histórico); o e5 de verdade no
+   worker leve e no app (`decisoes.md`); o download do e5 morto no meio e retomado pelo HTTP; um .docx de 1 h aberto
+   pelo Word 16 (títulos como estilos do Word, pt-BR) e, com ele aberto no Word, o aviso do U-030 (o anterior fica,
+   nenhum temporário sobra). Com o dono: "Preparar busca local" em Configurações › Busca (e cancelar no meio e preparar
+   de novo: continua de onde parou); escolher "Local" no "Ativo para embeddings", "Reindexar agora", a busca híbrida e o
+   chat global com reuniões reais; a RAM no Gerenciador de Tarefas (~620 a 670 MB com o Histórico aberto, ~290 MB 10 min
+   depois; P23); gravar com o Local ativo e a fila pausada (ou a legenda ao vivo) e ver os vetores adiados completarem
+   ao parar; a linha do tempo de uma reunião real (o clique toca em até 1 s a ±0,5 s do ponto, `Ctrl`+roda e a roda do
+   touchpad, o destaque acompanhando o som); a aparência do .docx no Word; o G5 com o embedder local; a metade Linux do
+   L0 na próxima sessão no Linux.
 
 ## Dívidas técnicas
 - Saúde dos canais começa "ok" por até 10 s sem sinal; R não avisa antes (D-050: silêncio no começo é normal); rever
@@ -129,9 +150,9 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
 - F5: `_fail` de um job cuja reunião foi apagada levanta IntegrityError e derruba o worker (F5A-17, para a F6, junto
   com apagar reunião); o filtro de pessoa varre `rag_chunks` (~35 ms a cada 20 mil trechos) e `vector_version` conta o
   índice a cada busca: medir com o banco real.
-- Suíte acima da meta de 8 s. Dividida em 26/10 (D-050): 84 testes `lento` (telas por fixture, subprocesso, tempo real,
-  contas pesadas) ficam fora do padrão local; neste notebook a rápida leva 34 a 40 s e a inteira 52 a 58 s (no Linux de
-  desenvolvimento a inteira era ~22 s). O resto é trabalho de lógica espalhado (o `test_store` sozinho dá 5 s; criar
+- Suíte acima da meta de 8 s. Dividida em 26/10 (D-050): os testes `lento` (telas por fixture, subprocesso, tempo
+  real, contas pesadas; 104 com a F5.1) ficam fora do padrão local; neste notebook a rápida levava 34 a 40 s e a inteira
+  52 a 58 s, e com a F5.1, à tarde, 25 s (342 testes) e 55 s (445) (no Linux de desenvolvimento a inteira era ~22 s). O resto é trabalho de lógica espalhado (o `test_store` sozinho dá 5 s; criar
   arquivo custa 1,7 ms e abrir um SQLite em WAL 7 ms aqui, então não é o EDR). A meta pede execução paralela
   (`pytest-xdist`, dependência nova: propor ao dono; os subprocessos da coleta precisam nascer uma vez só).
 - F2 no Windows (B1/B4): o worker pesado carrega o CTranslate2 (Whisper) antes do torch (pyannote), a ordem inversa à do
@@ -153,4 +174,5 @@ RSS por etapa, sonda Q8 (`speaker_embeddings` e id do modelo), similaridade intr
 precisão dos perfis, desvio do clique e legibilidade (G2) · F4 no Windows (B15): embedding por janela (o resto do
 `live_probe` medido em 25/10); G4: atraso médio e p95, CPU, acerto do nome · F5 no Windows (item 8): `rag_probe gemini`
 (por lote), varredura da primeira abertura, híbrida com o vetor da consulta, `underflowed` do player com o worker pesado
-de verdade; G5: citações certas em 10 perguntas.
+de verdade; G5: citações certas em 10 perguntas · F5.1 com o dono (item 9): o G5 com o embedder local e a RAM real
+com o Histórico aberto (P23).

@@ -19,12 +19,14 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m listener
 ```
 
-Sem a stack de ML (só captura, fila e LLM): `pip install -e .[dev,win32,llm]`. Para atualizar o lock, o comando está no
+Sem a stack de ML (só captura, fila e LLM): `pip install -e .[dev,win32,llm]`; a busca local e o .docx (F5.1) pedem
+também `[local,docx]` (o lock já traz os dois), e a busca local se baixa em Configurações › Busca (135 MB). Para
+atualizar o lock, o comando está no
 cabeçalho de `requirements/windows.txt` (ele usa o próprio lock como restrição: versão nova só entra de propósito).
 
 Na primeira vez abre o assistente (seus dados, pasta do banco, teste do microfone). Depois: ícone na bandeja,
 `Ctrl+Alt+Shift+R` abre o warm-up e `Ctrl+Alt+Shift+H` o Histórico (busca, ações abertas e perguntas sobre todas
-as reuniões, F5), Gravar mostra o widget flutuante (pausar, marcador com nota, mudo global,
+as reuniões, F5; a reunião aberta tem a linha do tempo por falante e salva .docx, F5.1), Gravar mostra o widget flutuante (pausar, marcador com nota, mudo global,
 parar, cancelar). O log fica no arquivo escolhido na primeira inicialização (nível editável nas Configurações). Flags de desenvolvimento para o gate G1: `--selftest` (grava alguns segundos sem interface)
 e `--check <pasta do banco>` (relatório de continuidade de cada gravação; mais o ao vivo, F4, e o índice da busca, F5).
 

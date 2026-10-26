@@ -58,8 +58,12 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   Sempre `WinDLL` próprio com `restype` e `argtypes` em `HANDLE` (25/10).
 - Mic Intel Smart Sound pelo WASAPI: o primeiro pacote chega ~380 ms depois do start (selftest, 25/10). `os.replace`
   sobre um arquivo aberto por outro processo dá WinError 5, mesmo com FILE_SHARE_DELETE (25/10).
-- Saída padrão no MME: "Altofalantes (Realtek(R) Audio)" a 44,1 kHz (o player reamostra de 16 kHz). Dois monitores:
-  LU28R55 (4K a 150 %, o principal) e LF24T35 (1080p a 100 %) (25/10).
+- Saída padrão no MME: "Altofalantes (Realtek(R) Audio)" a 44,1 kHz (o player reamostra de 16 kHz). Monitores mudam
+  com o lugar: LU28R55 (4K a 150 %, o principal) e LF24T35 (1080p a 100 %) em 25/10; a tela do notebook (150 %, a
+  principal) e um Dell SE2225HM (1080p a 100 %) em 26/10 à tarde.
+- Word 16 (Office) instalado: dá para conferir um .docx sem o dono pelo COM do PowerShell (instância nova e oculta,
+  `[ref]` nos parâmetros por referência no 5.1, fechar sem salvar e conferir que nenhum WINWORD novo sobrou). Arquivo
+  aberto no Word: `os.replace` sobre ele dá WinError 5 (26/10).
 - Interface no Windows (25/10): a plataforma Qt `offscreen` não tem as fontes do sistema (cai num "Sans Serif" largo),
   então medir layout só com a plataforma real; para capturar no DPI real sem aparecer na tela do dono
   (`scripts/win_probe.py shots`; também `app`, `player` e `export`), janela em

@@ -1,8 +1,9 @@
 # Melhorias de UX (U-nnn), CP12
 
 Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/10 (D-017); U-016 e U-017 aprovadas e
-implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025 e U-008 na F5.1; U-030 a U-033,
-vistas no Windows, aprovadas e implementadas em 26/10 (D-049).
+implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025, U-008 e o .docx do U-011 na
+F5.1 (26/10); U-030 a U-033, vistas no Windows, aprovadas e implementadas em 26/10 (D-049); U-034 a U-036 propostas nas
+telas da F5.1 (26/10).
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -15,7 +16,7 @@ Tamanho-alvo: 3 KB.
 | U-005 | Fila de processamento visível: progresso por etapa, pausar, retomar; aviso ao gravar com fila cheia | Janela principal | aprovada (F2) |
 | U-006 | Revisão por teclado: card por falante com 5 s de áudio; Enter aceita; setas navegam; "é a mesma pessoa que" mescla | Revisão | aprovada (F2) |
 | U-007 | Caixa de "vozes desconhecidas": clusters sem nome de todas as reuniões, agrupados por similaridade | Perfis | aprovada (F6; parcial na F2) |
-| U-008 | Linha do tempo da reunião com faixas por falante e marcadores; clique toca | Histórico | aprovada (F5.1) |
+| U-008 | Linha do tempo da reunião com faixas por falante e marcadores; clique toca | Histórico | implementada (F5.1) |
 | U-009 | Custo e latência por provedor: testar conexão mostra latência; tokens e custo por reunião e por mês | Configurações | aprovada (F3) |
 | U-010 | Indicador de tamanho do banco com projeção; backup com progresso | Configurações | aprovada (F6) |
 | U-011 | Exportar ata e transcrição (.md, .docx, área de transferência) sob demanda (D-012) | Histórico | implementada (F5: .md e área de transferência; .docx na F5.1) |
@@ -29,7 +30,7 @@ Tamanho-alvo: 3 KB.
 | U-022 | Clique numa legenda cria um marcador naquele instante com o texto dela | Ao vivo | implementada (F4) |
 | U-023 | Possíveis decisões e ações do parcial com "marcar" (marcador que a ata lê) | Ao vivo | implementada (F4) |
 | U-024 | Trechos da busca agrupados por reunião, termo destacado e "abrir neste ponto" (abre, rola até a fala e toca) | Histórico | implementada (F5) |
-| U-025 | Destaque contínuo: a fala que toca acompanha o áudio na transcrição e na linha do tempo | Reunião aberta | aprovada (F5.1) |
+| U-025 | Destaque contínuo: a fala que toca acompanha o áudio na transcrição e na linha do tempo | Reunião aberta | implementada (F5.1) |
 | U-026 | "Ações abertas" de todas as reuniões: dono, prazo, origem, atrasadas em destaque, marcar feita | Histórico | implementada (F5) |
 | U-027 | "Citação certa?" sim/não em cada resposta do chat global (mede o G5) | Histórico | implementada (F5) |
 | U-028 | Atalho global para abrir o Histórico com o cursor na busca | Atalhos | implementada (F5) |
@@ -38,3 +39,6 @@ Tamanho-alvo: 3 KB.
 | U-031 | Áudio do player pré-aquecido 2 s depois da bandeja: o primeiro "Tocar" do processo cai de 2 a 5 s para ~0,5 s | Player | implementada (D-049) |
 | U-032 | Vírgula decimal nos números da interface ("446,4 KB", "atraso 1,5 s", "correlação 0,42") | Todas | implementada (D-049) |
 | U-033 | Warm-up: o combo do microfone não engole a largura (a coluna "Janela" das fontes cabe) e o grupo dele sem vazio | Warm-up | implementada (D-049) |
+| U-034 | Linha do tempo sem falas: o rodapé repete o "Sem falas nesta reunião." do meio da vista; com áudio, o rodapé ensina o clique ("clique para ouvir daquele ponto") | Reunião aberta | proposta |
+| U-035 | Voz sem pessoa como "Voz 1", "Voz 2"… por reunião, não pelo rótulo interno do pyannote ("Voz SPEAKER_03"), na linha do tempo, na transcrição e na revisão | Reunião aberta | proposta |
+| U-036 | Estado do índice nas Configurações com o nome legível do modelo ("e5-small, local"), não a chave interna (`local/multilingual-e5-small@384`), e sem mandar "preparar em Configurações (Busca)" quem já está nelas | Configurações | proposta |
