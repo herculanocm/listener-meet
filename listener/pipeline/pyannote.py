@@ -81,7 +81,7 @@ class PyannoteDiarizer:
         if self._pipeline is not None:
             return self._pipeline
         if not self.token:
-            raise PermanentError("token do Hugging Face ausente: informe nas Configurações (Processamento)")
+            raise PermanentError("token do Hugging Face ausente: informe em Configurações, Chaves de acesso")
         pipe = self._pretrained(self.repo, "Pipeline")
         if pipe is None:
             raise PermanentError(f"não consegui carregar {self.repo}: aceite os termos do modelo no Hugging Face e confira o token")
@@ -157,7 +157,7 @@ class PyannoteEmbedder:
         if self._inference is not None:
             return self._inference
         if not self.token:
-            raise PermanentError("token do Hugging Face ausente: informe nas Configurações (Processamento)")
+            raise PermanentError("token do Hugging Face ausente: informe em Configurações, Chaves de acesso")
         model = PyannoteDiarizer._pretrained(self, self.model, "Model")  # type: ignore[arg-type]
         if model is None:
             raise PermanentError(f"não consegui carregar {self.model}: aceite os termos do modelo no Hugging Face")

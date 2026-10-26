@@ -178,7 +178,8 @@ def test_index_job_without_embedder_or_network_concludes_with_the_fts_and_a_note
     mid, _job = _meeting(store, who)
     status, timings = _index_job(store, mid)
     assert status == JobStatus.DONE and store.rag.count_chunks(mid) == 5                         # o FTS foi gravado
-    assert timings["index"]["note"] == "5 trechos sem vetor: sem chave do provedor gemini para embeddings (Configurações, LLM)"
+    assert timings["index"]["note"] == ("5 trechos sem vetor: sem chave do provedor gemini para embeddings (Configurações, "
+                                        "Chaves de acesso)")
     assert timings["index"]["chunks"] == 5 and "index_text" in timings and store.llm_calls.list_for_meeting(mid) == []
     store.providers.update_provider("anthropic", api_key=KEY)
     store.providers.set_active("anthropic", embed=True)

@@ -117,7 +117,7 @@ def load_provider(kind: ProviderKind | str, api_key: str | None, net: NetworkCon
         local = getattr(importlib.import_module(module), cls_name)
         return local(provider_id=provider_id or str(kind), models_dir=models_dir)  # type: ignore[no-any-return]
     if not api_key:
-        raise ProviderUnavailableError(f"chave do provedor {provider_id or kind} ausente: informe nas Configurações (LLM)")
+        raise ProviderUnavailableError(f"chave do provedor {provider_id or kind} ausente: informe em Configurações, Chaves de acesso")
     register_proxy_secret(net.proxy_url)
     prepare_ssl(net)
     module, cls_name = ADAPTERS[kind]

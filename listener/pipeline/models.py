@@ -83,7 +83,7 @@ def classify_error(e: BaseException, repo: str = "") -> PermanentError | None:
     if name in ("GatedRepoError",) or "gated" in text.lower() or "403" in text:
         return PermanentError(f"aceite os termos de uso de {repo or 'cada repositório do pyannote'} no Hugging Face com a conta do token")
     if name in ("RepositoryNotFoundError", "HfHubHTTPError") and ("401" in text or "Unauthorized" in text or "Invalid" in text):
-        return PermanentError("token do Hugging Face inválido: confira nas Configurações (Processamento)")
+        return PermanentError("token do Hugging Face inválido: confira em Configurações, Chaves de acesso")
     if name in ("LocalEntryNotFoundError", "OfflineModeIsEnabled") or "offline" in text.lower():
         return PermanentError(f"modelo {repo} ainda não baixado e o modo offline está ativo: ligue a rede e tente de novo")
     if name in ("ConnectionError", "ConnectTimeout", "ReadTimeout", "MaxRetryError", "NewConnectionError", "URLError") \
@@ -125,7 +125,7 @@ def download_pyannote(config: JobConfig, token: str, progress: ProgressFn) -> No
     if mark.exists():
         return
     if not token:
-        raise PermanentError("token do Hugging Face ausente: informe nas Configurações (Processamento) e aceite os termos dos "
+        raise PermanentError("token do Hugging Face ausente: informe em Configurações, Chaves de acesso, e aceite os termos dos "
                              f"repositórios {', '.join(GATED_REPOS)}")
     try:
         from huggingface_hub import snapshot_download

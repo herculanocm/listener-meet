@@ -118,7 +118,7 @@ def friendly_reason(reason: str) -> str:
              ("busca local", "a busca local não abriu o modelo: prepare de novo em Configurações (Busca)"),
              ("anthropic", "o provedor escolhido não faz busca por sentido: escolha Gemini, OpenAI ou Local (Configurações, LLM)"),
              ("não tem modelo", "falta o modelo da busca por sentido no provedor (Configurações, LLM)"),
-             ("sem chave", "falta a chave do provedor da busca por sentido (Configurações, LLM)"),
+             ("sem chave", "falta a chave do provedor da busca por sentido (Configurações, Chaves de acesso)"),
              ("sem rede", "sem rede"), ("tempo esgotado", "o provedor não respondeu a tempo"), ("consulta vazia", "consulta vazia"),
              ("dimens", "o índice da busca por sentido é de outro modelo: reindexe nas Configurações"),
              ("assinatura", "o índice da busca por sentido é de outro modelo: reindexe nas Configurações"))
@@ -881,7 +881,7 @@ class HistoryPage(QWidget):
         if not text or self.chat_task is not None:
             return
         if self.store.providers.active_with_key("llm") is None:
-            self._chat_warning("Nenhum provedor de LLM ativo com chave: configure um nas Configurações (LLM).")
+            self._chat_warning("Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso.")
             return
         self.question.clear()
         self._partial = ""

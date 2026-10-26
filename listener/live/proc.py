@@ -204,7 +204,7 @@ class RealEngines:
         modelos, offline) antes de qualquer importação. Não importa torch: isso fica para `load()`."""
         token = store.settings.provider_key(HF_PROVIDER_ID)
         if not token:
-            raise NamesUnavailableError("token do Hugging Face ausente: informe nas Configurações (Processamento)")
+            raise NamesUnavailableError("token do Hugging Face ausente: informe em Configurações, Chaves de acesso")
         from ..pipeline.models import apply_environment, ready_mark
         from ..pipeline.types import JobConfig
 

@@ -202,7 +202,7 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     if not question:
         raise ValueError("escreva uma pergunta")
     if store.providers.active_with_key("llm") is None:
-        raise ValueError("nenhum provedor de LLM ativo com chave: configure um nas Configurações (LLM)")
+        raise ValueError("nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso")
     if thread_id is not None and store.chat.get_thread(thread_id) is None:
         raise ValueError("esta conversa não existe mais: comece uma nova")
     cfg = LlmJobConfig.from_store(store)

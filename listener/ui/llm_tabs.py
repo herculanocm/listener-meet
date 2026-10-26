@@ -53,7 +53,7 @@ def request_llm_step(store: Store, meeting_id: int, step: JobStep) -> tuple[int 
         return None, "Já há um job de LLM em andamento para esta reunião; espere terminar."
     job_id = enqueue_llm_job(store, meeting_id, [step])
     if job_id is None:
-        return None, "Nenhum provedor de LLM ativo com chave: configure um nas Configurações."
+        return None, "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso."
     return job_id, f"{step_label(step)}: gerando pela fila (3 a 5 s para começar)…"
 
 

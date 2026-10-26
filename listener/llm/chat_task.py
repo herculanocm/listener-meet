@@ -132,7 +132,7 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
     if parent is None:
         raise ValueError("a reunião ainda não foi processada")
     if store.providers.active_with_key("llm") is None:
-        raise ValueError("nenhum provedor de LLM ativo com chave: configure um nas Configurações")
+        raise ValueError("nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso")
     cfg = LlmJobConfig.from_store(store)
     ctx = build_context(store, meeting_id, parent, cfg.output_language)
     history = [(str(m["role"]), str(m["text"])) for m in store.chat.list_for_meeting(meeting_id, HISTORY_TURNS)]

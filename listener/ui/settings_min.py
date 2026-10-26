@@ -16,6 +16,8 @@ F5.1: o grupo "Busca" mostra o estado da busca local e "Preparar busca local (13
 do ao vivo, um download por vez; cada grupo mostra o seu, A-08); com o local ativo, os textos falam em minutos nesta máquina
 e sem custo (A-05); terminado o preparo com o local ativo, o controlador oferece "Reindexar agora/Depois"
 (`offer_local_reindex`, A-12).
+U-037 (D-053): o primeiro grupo é "Chaves de acesso" (`ui/keys.py`): a chave de cada provedor de LLM, com "Testar" e o
+estado, e o token do Hugging Face, que saiu do grupo "Processamento", cada um com onde conseguir.
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
@@ -34,6 +36,7 @@ from ..llm import local_embed
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
+from .keys import keys_group
 from .live_prepare import LIVE, RAG, ModelPreparer, local_status_text, models_status_text, preparer
 from .providers import ProviderTabs
 
@@ -149,6 +152,10 @@ class SettingsDialog(QDialog):
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
 
+        self.provider_tabs = ProviderTabs(store, on_launch)            # a chave de cada sub-aba vai para o primeiro grupo
+        self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
+        lay.addWidget(keys_group(self.provider_tabs, self.hf_token))     # U-037: o que se procura primeiro
+
         cap = QGroupBox("Captura")
         capf = QFormLayout(cap)
         for key in CAPTURE_KEYS:
@@ -165,16 +172,12 @@ class SettingsDialog(QDialog):
         procf = QFormLayout(proc)
         for key in PIPELINE_KEYS:
             procf.addRow(SPECS[key].label, self._row(key))
-        self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
-        self.hf_token.setPlaceholderText("hf_… (necessário para baixar os modelos do pyannote)")
-        procf.addRow("Token do Hugging Face", self.hf_token)
         lay.addWidget(proc)
 
         llm = QGroupBox("LLM (F3: vale para o próximo job de LLM e para o chat)")
         llmf = QFormLayout(llm)
         for key in LLM_KEYS:
             llmf.addRow(SPECS[key].label, self._row(key))
-        self.provider_tabs = ProviderTabs(store, on_launch)
         llmf.addRow(self.provider_tabs)
         lay.addWidget(llm)
 

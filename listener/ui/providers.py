@@ -4,7 +4,9 @@ numa `Task` (latência, modelo, erro traduzido), "testar pelo worker" (job `llm`
 (`llm_prices`) e o gasto do mês; acima das abas, o provedor ativo para texto e para embeddings (a Anthropic não oferece
 embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor escolhido (CP1). Nada aqui importa SDK.
 F5.1 (A-01): "Local (e5-small, sem custo)" sempre no "Ativo para embeddings" (sem sub-aba: não tem chave nem modelo a
-escolher); a linha `local` nasce ao salvar com ele escolhido (`ensure_local`), e cada papel é gravado num `UPDATE` só."""
+escolher); a linha `local` nasce ao salvar com ele escolhido (`ensure_local`), e cada papel é gravado num `UPDATE` só.
+U-037 (D-053): a chave, o "Testar conexão" e o estado da chave (`key_status`) de cada sub-aba ficam no grupo "Chaves de
+acesso", o primeiro das Configurações (`ui/keys.py`); a sub-aba diz onde e guarda o resto."""
 from __future__ import annotations
 
 import functools
@@ -38,6 +40,9 @@ LOCAL_TITLE = "Local (e5-small, sem custo)"
 LOCAL_TIP = ("Busca por sentido calculada nesta máquina, sem chave, sem rede e sem custo; prepare antes em Configurações, "
              "grupo Busca (135 MB)")
 PRICE_COLUMNS = ("Modelo (id ou prefixo)", "Entrada US$/M", "Saída US$/M", "Cache US$/M", "Áudio US$/M")
+KEY_ELSEWHERE = "no grupo Chaves de acesso, o primeiro das Configurações (com o Testar conexão)"
+NO_KEY = "falta a chave"
+KEY_EDITED = "chave nova: Testar confere antes de salvar"
 SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é enviado ao provedor escolhido. Áudio só sai com a opção ligada."
 
 
@@ -98,6 +103,13 @@ class ProviderTab(QWidget):
         self.btn_worker.clicked.connect(self.test_via_worker)
         self.status = QLabel(self._tested_text(row))
         self.status.setWordWrap(True)
+        self.saved_key = str(row.get("api_key") or "").strip()
+        self.saved_state = self._tested_text(row) if self.saved_key else NO_KEY
+        self.key_status = QLabel(self.saved_state)                                       # posto junto da chave (U-037)
+        self.key_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.key_status.setWordWrap(True)
+        self.key_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.key.textChanged.connect(self._key_edited)
         self.prices = QTableWidget(0, len(PRICE_COLUMNS))
         self.prices.setHorizontalHeaderLabels(list(PRICE_COLUMNS))
         self.prices.horizontalHeader().setStretchLastSection(True)
@@ -109,13 +121,15 @@ class ProviderTab(QWidget):
         warn.setWordWrap(True)
         warn.setStyleSheet("color: #e67e22;")
         form = QFormLayout()
-        form.addRow("Chave", self.key)
+        where = QLabel(KEY_ELSEWHERE)
+        where.setWordWrap(True)
+        form.addRow("Chave", where)                      # o campo e o Testar conexão estão nas Chaves de acesso (U-037)
         form.addRow("Modelo rápido", self.fast)
         form.addRow("Modelo forte", self.strong)
         form.addRow("Modelo de embeddings", self.embed_model)
         form.addRow("Parâmetros", self.params)
         buttons = QHBoxLayout()
-        for b in (self.btn_models, self.btn_test, self.btn_worker):
+        for b in (self.btn_models, self.btn_worker):
             buttons.addWidget(b)
         buttons.addStretch(1)
         lay = QVBoxLayout(self)
@@ -159,27 +173,36 @@ class ProviderTab(QWidget):
         return NetworkConfig.from_store(self.store)
 
     # ---------------------------------------------------------------- ações
+    def _say(self, text: str) -> None:
+        """O resultado do teste na sub-aba e junto da chave (U-037)."""
+        self.status.setText(text)
+        self.key_status.setText(text)
+
+    def _key_edited(self, text: str) -> None:
+        key = text.strip()
+        self.key_status.setText(NO_KEY if not key else self.saved_state if key == self.saved_key else KEY_EDITED)
+
     def run_test(self) -> None:
         key = self.key.text().strip()
         if not key:
-            self.status.setText("informe a chave antes de testar")
+            self._say("informe a chave antes de testar")
             return
         self.btn_test.setEnabled(False)
-        self.status.setText("testando…")
+        self._say("testando…")
         kind, model, net = str(self.kind), self.fast.currentText().strip(), self._net()
         run_task(functools.partial(test_connection, kind, key, model, net), self.store, self._on_test)
 
     def _on_test(self, result: Any) -> None:
         self.btn_test.setEnabled(True)
         if isinstance(result, BaseException):
-            self.status.setText(f"falhou: {friendly_error(str(result))}")
+            self._say(f"falhou: {friendly_error(str(result))}")
             return
         self.last_test = result
         if result.ok:
-            self.status.setText(f"ok: {result.model} respondeu em {result.latency_ms} ms")
+            self._say(f"ok: {result.model} respondeu em {result.latency_ms} ms")
             self.store.providers.update_provider(self.pid, tested_at=_now(), latency_ms=int(result.latency_ms))
         else:
-            self.status.setText(f"falhou: {friendly_error(result.error)}")
+            self._say(f"falhou: {friendly_error(result.error)}")
 
     def refresh_models(self) -> None:
         key = self.key.text().strip()

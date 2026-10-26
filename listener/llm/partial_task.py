@@ -50,7 +50,8 @@ MAX_CAPTION_CHARS = 600
 MAX_OUTPUT_TOKENS = 2048
 TIMEOUT_S = 60.0
 POLL_S = 0.2
-NO_PROVIDER = "sem provedor de LLM com chave: o resumo parcial fica de fora (Configurações, LLM); as legendas seguem"
+NO_PROVIDER = ("sem provedor de LLM com chave: o resumo parcial fica de fora (Configurações, Chaves de acesso); as legendas "
+               "seguem")
 HEADINGS = {"pt": ("Possíveis decisões", "Possíveis ações", "dono"), "en": ("Possible decisions", "Possible actions", "owner"),
             "es": ("Posibles decisiones", "Posibles acciones", "responsable")}
 

@@ -107,7 +107,7 @@ def embedder_status(store: Store) -> EmbedderStatus:
         return EmbedderStatus(False, f"o provedor {pid} não tem modelo de embeddings (Configurações, LLM)", None, pid)
     key = model_key(kind, model)
     if not str(row.get("api_key") or "").strip():
-        return EmbedderStatus(False, f"sem chave do provedor {pid} para embeddings (Configurações, LLM)", key, pid)
+        return EmbedderStatus(False, f"sem chave do provedor {pid} para embeddings (Configurações, Chaves de acesso)", key, pid)
     return EmbedderStatus(True, "", key, pid)
 
 

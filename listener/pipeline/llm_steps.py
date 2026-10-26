@@ -56,7 +56,7 @@ TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE) 
 SUMMARY_STEPS: dict[JobStep, SummaryKind] = {JobStep.MINUTES: SummaryKind.MINUTES, JobStep.EXECUTIVE: SummaryKind.EXECUTIVE,
                                              JobStep.PRE_SUMMARY: SummaryKind.PRE_SUMMARY}
 STALE_TRANSCRIPT = "a transcrição mudou ou está vazia: gere de novo pela revisão"
-NO_PROVIDER = "sem provedor de LLM com chave: ata não gerada (Configurações, aba LLM)"
+NO_PROVIDER = "sem provedor de LLM com chave: ata não gerada (Configurações, Chaves de acesso)"
 NO_SPEECH = "a reunião não tem falas: nada para a LLM"
 PENDING = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
 WINDOW_SHARE = 0.6

@@ -6,7 +6,9 @@ editável e vai para `meetings.glossary`; sem chave, aviso discreto com link par
 saem do casamento local mesmo sem a LLM, e uma resposta que chega depois do "Gravar" religa a chamada à reunião (F3.1 R3-11).
 F4 (CP6): caixas "Legenda ao vivo" e "Nomes ao vivo" (a segunda só com a primeira); valor inicial = o do preset quando não
 nulo, senão `live.enabled` e `live.names`; "Salvar como preset" grava as duas; modelos ausentes viram um aviso discreto ao
-lado, com link para as Configurações, sem bloquear a gravação (o controlador grava sem ao vivo)."""
+lado, com link para as Configurações, sem bloquear a gravação (o controlador grava sem ao vivo).
+U-037 (D-053): sem o token do Hugging Face ou sem a chave da LLM ativa, um aviso acima do "Gravar" diz o que não vai sair
+e leva às Chaves de acesso; some quando nada falta, sem bloquear a gravação."""
 from __future__ import annotations
 
 import functools
@@ -30,6 +32,7 @@ from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glos
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
+from .keys import missing_keys, missing_keys_text
 from .live_prepare import missing_models, preparer
 from .meters import LevelMeter
 from .sources import SourceTable
@@ -177,6 +180,11 @@ class WarmupDialog(QDialog):
         self.buttons.addButton("Cancelar", QDialogButtonBox.ButtonRole.RejectRole)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
+        self.keys_note = QLabel("")                       # U-037: falta chave ou token? diz antes de gravar, com o link
+        self.keys_note.setWordWrap(True)
+        self.keys_note.setTextFormat(Qt.TextFormat.RichText)
+        self.keys_note.setStyleSheet("color: #e67e22;")
+        self.keys_note.linkActivated.connect(lambda _link: self._open_settings_for_keys())
 
         top = QHBoxLayout()
         top.addWidget(mic_box, 1, Qt.AlignmentFlag.AlignTop)       # U-033: o grupo abraça o conteúdo, sem o vazio embaixo
@@ -184,6 +192,7 @@ class WarmupDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(meet_box)
+        lay.addWidget(self.keys_note)
         lay.addWidget(self.buttons)
 
         self._timer = QTimer(self)
@@ -191,6 +200,7 @@ class WarmupDialog(QDialog):
         self._timer.timeout.connect(self._tick)
         self._silent_ticks = 0
         self._set_live(None, None)                          # padrão das Configurações; um preset salvo sobrescreve
+        self._update_keys_note()
         self._restore_last_choice()
         self.mic_combo.currentIndexChanged.connect(lambda _: self._open_mic())   # só depois de restaurar: um open só
         self._update_src_status()
@@ -272,7 +282,7 @@ class WarmupDialog(QDialog):
         if result.error:
             text = result.error
             if text.startswith("sem chave"):
-                text = 'sem chave de LLM: <a href="settings">configurar provedor</a>'
+                text = 'sem chave de LLM: <a href="settings">configurar as chaves</a>'
             self.glossary_status.setText(text)
             return
         self.glossary_edit.setText(merge_glossary(result.terms, self.glossary_edit.text()))
@@ -427,6 +437,17 @@ class WarmupDialog(QDialog):
         if self.on_settings is not None:
             self.on_settings()
         self._update_live_note()
+
+    # ---------------------------------------------------------------- chaves (U-037)
+    def _update_keys_note(self) -> None:
+        text = missing_keys_text(missing_keys(self.store))
+        self.keys_note.setText(text)
+        self.keys_note.setVisible(bool(text))
+
+    def _open_settings_for_keys(self) -> None:
+        if self.on_settings is not None:
+            self.on_settings()
+        self._update_keys_note()
 
     # ---------------------------------------------------------------- presets e última escolha
     def _restore_last_choice(self) -> None:
