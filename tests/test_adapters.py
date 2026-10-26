@@ -1,6 +1,7 @@
 """Adaptadores reais (F2 L5) nesta máquina sem torch: os módulos importam, os construtores não carregam nada e o primeiro
 uso falha com a mensagem própria (extra `pipeline` ausente ou token ausente). O comportamento real só se verifica no
-Windows com o token (B4)."""
+Windows com o token (B4). Com o extra instalado (o `.venv` do Windows desde 26/10), os testes do "falha sem o extra" são
+pulados: o adaptador real baixaria o `small` do Hugging Face e tentaria a rede com um token falso (D-050)."""
 from __future__ import annotations
 
 import sys
@@ -11,6 +12,10 @@ import pytest
 
 from listener.pipeline.base import PermanentError
 from listener.pipeline.types import AudioWindow
+from tests import conftest
+
+without_pipeline = pytest.mark.skipif(conftest.pipeline_installed(),
+                                      reason="com o extra pipeline o adaptador real baixaria modelos e iria à rede")
 
 
 @pytest.fixture
@@ -21,6 +26,7 @@ def forget_adapters():
         sys.modules.pop(name, None)
 
 
+@without_pipeline
 def test_whisper_adapter_imports_without_torch_and_fails_clearly(tmp_path, forget_adapters):
     from listener.pipeline.whisper import FasterWhisperTranscriber
 
@@ -32,6 +38,7 @@ def test_whisper_adapter_imports_without_torch_and_fails_clearly(tmp_path, forge
     assert "torch" not in sys.modules and "faster_whisper" not in sys.modules
 
 
+@without_pipeline
 def test_pyannote_adapters_import_without_torch_and_fail_clearly(forget_adapters):
     from listener.pipeline import pyannote as pa
 
@@ -47,6 +54,13 @@ def test_pyannote_adapters_import_without_torch_and_fail_clearly(forget_adapters
     with pytest.raises(PermanentError, match="pip install"):
         e.embed(np.zeros(8000, np.float32), 16000)
     assert "torch" not in sys.modules and "pyannote" not in sys.modules
+
+
+def test_pyannote_turns_overlaps_and_probe_are_pure(forget_adapters):
+    """A parte pura do adaptador (turnos, sobreposições e a sonda Q8): roda com e sem o extra, sem carregar nada."""
+    from listener.pipeline import pyannote as pa
+
+    d = pa.PyannoteDiarizer("", torch_threads=2)
 
     class Seg:
         def __init__(self, s, e):

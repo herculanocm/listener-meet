@@ -7,10 +7,14 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 ## Ambiente
 - Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`; o `python` do
   PATH é o alias do instalador em WindowsApps e abre esse mesmo); checkout em `C:\dev\listener-meet` com o venv do projeto
-  em `.venv` dentro dele (`[dev,win32,llm]`, sem ML, 25/10); o venv do F0 em `C:\Users\<usuário>\dev\listener-meet\.venv`
+  em `.venv` dentro dele (26/10: tudo pelo lock `requirements/windows.txt`, com o `[pipeline]`: torch 2.8.0+cpu,
+  faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, onnxruntime 1.31.0; mais `uv` 0.13.5); o venv do F0 em
+  `C:\Users\<usuário>\dev\listener-meet\.venv`
   tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos do F0 (large-v3-turbo, wav2vec2 pt) em
   `C:\Users\<usuário>\listener-meet\models\`; a pasta padrão do app (`%LOCALAPPDATA%\listener-meet\models`) já tem `small`
-  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10);
+  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10) e o large-v3-turbo copiado do F0 (26/10); o cache
+  global do HF (`~\.cache\huggingface\hub`) ganhou `models--Systran--faster-whisper-small` (483 MB) de um teste que ia à
+  rede antes da correção de 26/10: lixo, apagar com o OK do dono;
   áudio sintético de calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em
   `C:\Users\<usuário>\listener-meet\f0\`. SQLite do Python do python.org: 3.49.1 com FTS5 (25/10).
 - CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch

@@ -13,11 +13,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   checkout (B4: itens 5 e 7); (4) três reuniões reais com headset em duas plataformas (G1, item 4), que alimentam G2 a
   G5. Em cada item, "Com o dono" diz o que falta. Pedido do dono (25/10): a LLM roda sozinha tudo o que não depende dele
   e o acompanha no resto (lê o log, corrige o que aparecer, mede e anota).
-- **Respostas do dono (26/10, D-050): tudo nos padrões.** Feito: as sondas do Windows em `scripts/win_probe.py` (app,
-  shots, player, export). Em andamento, nesta ordem: a suíte em rápida e lenta; o lockfile com o `uv`, o `[pipeline]` no
-  `.venv` e o large-v3-turbo copiado (o venv do F0 sai depois que o processamento real funcionar, com o token do dono);
-  a F5.1 pelo fluxo D-040, com a metade Windows do L0. O canal R segue sem aviso antecipado (rever depois do G1); o
-  conteúdo do repositório público fica como está (a varredura de 26/10 não achou nome, e-mail nem usuário).
+- **Respostas do dono (26/10, D-050): tudo nos padrões.** Feito: as sondas do Windows em `scripts/win_probe.py`; a suíte
+  em rápida e lenta (`--tudo` antes de commitar); o lock `requirements/windows.txt` (versões provadas aqui), o
+  `[pipeline]` no `.venv` por ele e o large-v3-turbo copiado para a pasta de modelos do app (o venv do F0 sai depois que
+  o processamento real funcionar, com o token do dono). Em andamento: a F5.1 pelo fluxo D-040, com a metade Windows do
+  L0. O canal R segue sem aviso antecipado (rever depois do G1); o repositório público fica como está.
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
@@ -86,7 +86,10 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
 4. G1 (B2): três reuniões reais com headset em duas plataformas; `python -m listener --check <pasta do banco>` (deriva,
    deslocamento L/R e tamanho do banco em `decisoes.md`).
 5. F2 real (B4): token do Hugging Face; o primeiro job mede RTF e RSS por etapa e a sonda Q8; "OMP: Error #15" pede o
-   torch antes do CTranslate2 (como no ao vivo); G2 nas gravações do G1.
+   torch antes do CTranslate2 (como no ao vivo); G2 nas gravações do G1. **Sem o dono, 26/10:** o `[pipeline]` no `.venv`
+   pelo lock (torch 2.8.0+cpu, faster-whisper 1.2.1, pyannote.audio 4.0.7) e o large-v3-turbo do F0 copiado para a pasta
+   de modelos do app (carrega e transcreve); a suíte inteira passa com ele (370 e 7 pulados). Com o dono: o token e o
+   primeiro job real; depois, apagar o venv do F0 (D-050).
 6. F3 real (B13): chave do Gemini, "testar conexão", primeiro job de LLM (canário, latência, preço contra a fatura); G3.
 7. F4 (B15): `python scripts/live_probe.py all <gravação real>` (com `HF_TOKEN`); a regra da janela muda se o Windows
    divergir do Linux; "Preparar modelos do ao vivo"; gravação com a legenda: atraso, CPU (o processo ao vivo sem "modo
@@ -133,7 +136,8 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Item conclu�
   processamento. `embed_range` (trecho livre) e separar perfis ficam para a F6, como a spec prevê.
 - CP17: subir o piso e o teto do `requires-python` assim que WhisperX e torch aceitarem Python 3.14 (hoje `<3.14`; 3.13 já
   está no CI); conferir a cada atualização da stack.
-- Sem lockfile (`uv` não instalado nesta máquina); gerar `uv lock` quando houver `uv`, para reprodutibilidade da stack de ML.
+- Lock só do Windows (`requirements/windows.txt`, 26/10, `uv pip compile` com as versões provadas aqui); o CI e o Linux
+  seguem com o `pyproject.toml` sem trava. Um lock do Linux pede o índice CPU do torch (o do PyPI traz CUDA, CP14).
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · deriva por canal e

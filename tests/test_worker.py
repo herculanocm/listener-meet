@@ -102,8 +102,9 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     with pytest.raises(PermanentError, match="token do Hugging Face ausente"):
         models.prepare_models(cfg, "", lambda m, f: None)
     (tmp_path / "m" / "faster-whisper-small" / "model.bin").unlink()
-    with pytest.raises(PermanentError, match="pip install"):                                        # sem faster-whisper aqui
-        models.prepare_models(cfg, "hf_x", lambda m, f: None)
+    if not conftest.pipeline_installed():                     # com o extra, isto baixaria o `small` de verdade (D-050)
+        with pytest.raises(PermanentError, match="pip install"):                                    # sem faster-whisper aqui
+            models.prepare_models(cfg, "hf_x", lambda m, f: None)
     assert isinstance(models.classify_error(ModuleNotFoundError("torch")), PermanentError)
     assert "termos" in str(models.classify_error(RuntimeError("403 Client Error: gated repo"), "pyannote/x"))
     assert "sem rede" in str(models.classify_error(OSError("Max retries exceeded"), "r"))
@@ -117,8 +118,9 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     assert transcriber.name == "faster-whisper:small:int8"
     from listener.pipeline.types import AudioWindow
 
-    with pytest.raises(PermanentError, match="pip install"):            # ...e o primeiro uso sem o extra tem mensagem própria
-        transcriber.transcribe(AudioWindow(0, "R", 0, 1000, np.zeros(16000, np.float32)), language=None, initial_prompt="")
+    if not conftest.pipeline_installed():                              # com o extra, carregaria e baixaria o modelo (D-050)
+        with pytest.raises(PermanentError, match="pip install"):        # ...e o primeiro uso sem o extra tem mensagem própria
+            transcriber.transcribe(AudioWindow(0, "R", 0, 1000, np.zeros(16000, np.float32)), language=None, initial_prompt="")
     assert models._adapter("whisper", "FasterWhisperTranscriber") is type(transcriber)
     with pytest.raises(PermanentError, match="pip install"):
         models._adapter("inexistente", "X")
