@@ -7,10 +7,11 @@ fake, avaliação U-027, citação que abre a reunião, U-029 e os avisos) e o c
 bandeja, clique no balão, recarga da reunião aberta quando o índice termina, Q9 e a saída esperando player e tarefas).
 Revisão do L4 e do L5: o warm-up e a fonte "sistema inteiro" pausam o player (R7-01); a saída com a rede presa cancela de
 verdade, dentro do processo e num processo à parte com código 0 (R7-03); a recarga do chat da reunião (R7-05); o balão sem
-reunião (R7-06); títulos e nomes com HTML ficam texto (R7-07)."""
+reunião (R7-06); títulos e nomes com HTML ficam texto (R7-07). Revisão do R7: o loopback do sistema nunca abre com o player
+tocando, também na troca automática (R8-01, com o estado confirmado pelo motor); a dica mostra o texto como está (R8-02); a
+saída com o glossário do warm-up em voo (R8-04)."""
 from __future__ import annotations
 
-import html
 import os
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -29,7 +31,7 @@ from listener.rag import chat_global, citations, export, index, search
 from listener.store.actions import ActionInsert
 from listener.store.segments import SegmentInsert
 from listener.store.summaries import SummaryInsert
-from tests.fake_player import FakeOutputs
+from tests.fake_player import FakeOutputs, RealtimeOutput
 from tests.test_rag_chat import QUESTION, _llm_ready, _slow_network
 from tests.test_rag_index import _meeting, _people, _pipeline_job
 from tests.test_rag_search import _other_meeting
@@ -60,6 +62,19 @@ def _audio(store, mid: int, t0_ms: int, seconds: int = 10) -> None:
     for ch, value in (("L", 0.2), ("R", 0.6)):
         x = np.full(16000 * seconds, value, np.float32)
         store.insert_chunk(mid, ch, 0, t0_ms, len(x), 16000, 0, encode_flac(x, 16000))
+
+
+def _realtime_player(controller: Any) -> list[RealtimeOutput]:
+    """O player do controlador com fluxos que tocam em tempo real: o `write` volta sozinho, então o motor trata cada comando
+    e confirma a pausa sem depender do prazo de um fake que prende o `write` (revisão R8)."""
+    outs: list[RealtimeOutput] = []
+
+    def factory() -> RealtimeOutput:
+        outs.append(RealtimeOutput())
+        return outs[-1]
+
+    controller.player.engine.factory = factory
+    return outs
 
 
 def _indexed(store) -> tuple[int, int, dict[str, int]]:
@@ -362,7 +377,9 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
 def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp, platform, store, monkeypatch):
     """R7-01: o som que já toca não entra na gravação do sistema inteiro. Abrir o warm-up, começar a gravar com a fonte
     "sistema inteiro" e trocar a fonte para ela pausam o player, com o aviso na barra (e no log), sem balão; retomar passa
-    pela confirmação do Q9 (recusada: segue pausado). Com a fonte do app o som segue; fora da gravação, retoma direto."""
+    pela confirmação do Q9 (recusada: segue pausado). Com a fonte do app o som segue; fora da gravação, retoma direto; o
+    aviso sai quando a gravação acaba. R8: o estado conferido é o que o motor confirmou (os fluxos tocam em tempo real e a
+    pausa descarta o buffer: um `abort` por pausa), sem depender do prazo de um fake que prende o `write`."""
     from PySide6.QtWidgets import QDialog, QMessageBox
 
     from listener.capture.recorder import RecordConfig
@@ -373,18 +390,24 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
 
     who = _people(store)
     mid, _job = _meeting(store, who)
-    _audio(store, mid, 0)
+    _audio(store, mid, 0, seconds=60)
     c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
     c.tray = None
-    permits = threading.Semaphore(0)
-    outs = FakeOutputs(permits=permits)
-    c.player.engine.factory = outs
+    outs = _realtime_player(c)
     balloons: list[str] = []
     asked: list[str] = []
 
     def question(*a: object, **_k: object) -> object:
         asked.append(str(a[2]))
         return QMessageBox.StandardButton.No
+
+    def sounding() -> None:                                  # o motor está escrevendo: mais dois blocos saíram
+        n = len(outs[-1].chunks) if outs else 0
+        qtbot.waitUntil(lambda: bool(outs) and len(outs[-1].chunks) >= n + 2, timeout=3000)
+
+    def paused(aborts: int, notice: str) -> None:            # o motor pausou: o buffer do dispositivo foi descartado
+        qtbot.waitUntil(lambda: outs[-1].calls.count("abort") == aborts, timeout=3000)
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, notice)
 
     monkeypatch.setattr(c, "notify", balloons.append)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
@@ -394,30 +417,153 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
     fast = {"chunk_seconds": 0.5, "stop_timeout_s": 1.0, "retry_base_s": 0.001}
     try:
         win = c.open_meeting(mid)
-        assert c.player.play_from(mid, 0) and c.player.state().state == PLAYING              # sem gravação: toca direto
-        qtbot.waitUntil(lambda: bool(outs.opened) and outs.opened[0].entered == 1, timeout=3000)   # o som saindo (um bloco em voo)
+        assert c.player.play_from(mid, 0)                                                    # sem gravação: toca direto
+        sounding()
         c.open_warmup()                                                                      # o warm-up abriu (e fechou)
-        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_WARMUP)
+        paused(1, ctl.PLAYER_PAUSED_WARMUP)
         assert win.bar.note.text() == ctl.PLAYER_PAUSED_WARMUP and asked == []
-        assert c.player.toggle() and c.player.state().state == PLAYING and win.bar.note.text() == ""   # sem gravação: direto
+        assert c.player.toggle()                                                             # sem gravação: retoma direto
+        sounding()
+        assert (c.player.state().state, win.bar.note.text()) == (PLAYING, "")
         assert c.start_recording(RecordConfig(source=SourceSpec("system", label="Sistema"), **fast), {"title": "q9"})
-        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_SYSTEM)
+        paused(2, ctl.PLAYER_PAUSED_SYSTEM)                                                  # o gancho já esperou a pausa
         assert win.bar.note.text() == ctl.PLAYER_PAUSED_SYSTEM
         assert c.player.toggle() is False and "som do sistema inteiro" in asked[-1] and c.player.state().state == PAUSED
         c.stop_recording()
         qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
-        assert c.player.toggle() and c.player.state().state == PLAYING                       # parou de gravar: direto
+        assert (c.player.state().state, c.player.state().message, win.bar.note.text()) == (PAUSED, "", "")   # o aviso saiu
+        assert c.player.toggle()                                                             # parou de gravar: direto
+        sounding()
         app_source = SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião")
         assert c.start_recording(RecordConfig(source=app_source, **fast), {"title": "app"})
-        assert c.player.state().state == PLAYING                                            # fonte do app: o som segue
+        sounding()                                                                           # fonte do app: o som segue
+        assert c.player.state().state == PLAYING
         monkeypatch.setattr(QDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
         monkeypatch.setattr(SourceTable, "selected_spec", lambda _self: SourceSpec("system", label="Sistema"))
         c.switch_source()                                                                    # trocou para o sistema inteiro
         assert c.recorder is not None and str(c.recorder.source.kind) == "system"
-        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_SYSTEM)
+        paused(3, ctl.PLAYER_PAUSED_SYSTEM)
         assert not any("player" in b or "pausad" in b for b in balloons)                     # sem balão
     finally:
-        permits.release(1000)
+        c.emergency_stop()
+
+
+def test_the_system_loopback_never_opens_with_the_player_playing(qtbot, qapp, tmp_path, store, clock, monkeypatch):
+    """R8-01: o gravador cai sozinho para o loopback do sistema quando o do app não abre, no começo e na troca de fonte, e o
+    reabre quando o dispositivo cai (o `check_devices` do `_tick`); antes de cada abertura o player pausa e o motor confirma:
+    na hora da abertura o fluxo do player já foi descartado (`abort` depois do último bloco) e nenhum bloco sai depois.
+    Retomar durante a gravação pergunta (aqui, aceito: toca de novo até a próxima abertura); o aviso sai quando a gravação
+    acaba."""
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from listener.capture.recorder import RecordConfig
+    from listener.model import Health
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+    from listener.ui.player import PAUSED
+    from listener.ui.sources import SourceTable
+    from tests.fake_platform import FakePlatform
+
+    platform = FakePlatform(tmp_path / "plat", clock=clock, app_fail=True)         # o loopback do app nunca abre
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _audio(store, mid, 0, seconds=60)
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    outs = _realtime_player(c)
+    opened: list[tuple[int, str, str]] = []                 # em cada abertura: (blocos já escritos, estado do motor, última chamada)
+    real_open = platform.open_system_loopback
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        opened.append((len(outs[-1].chunks), c.player.engine.snapshot().state, outs[-1].calls[-1]))
+        return real_open(*args, **kwargs)
+
+    def play_again() -> None:                               # retomar: gravando o sistema, pergunta (aceito); o som volta
+        n = len(outs[-1].chunks)
+        assert c.player.toggle()
+        qtbot.waitUntil(lambda: len(outs[-1].chunks) >= n + 2, timeout=3000)
+
+    def nothing_after_the_opening(count: int) -> None:
+        assert len(opened) == count
+        written, state, last_call = opened[-1]
+        assert (state, last_call) == (PAUSED, "abort")                               # parou antes: buffer descartado
+        qtbot.wait(400)                                                              # mais que um bloco
+        assert len(outs[-1].chunks) == written                                       # nenhum bloco depois da abertura
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, ctl.PLAYER_PAUSED_SYSTEM)
+
+    monkeypatch.setattr(platform, "open_system_loopback", spy)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: SimpleNamespace(exec=lambda: None))
+    fast = {"chunk_seconds": 0.5, "stop_timeout_s": 1.0, "retry_base_s": 0.001}
+    app_source = SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião")
+    try:
+        c.open_meeting(mid)
+        assert c.player.play_from(mid, 0)
+        qtbot.waitUntil(lambda: bool(outs) and len(outs[-1].chunks) >= 2, timeout=3000)
+        assert c.start_recording(RecordConfig(source=app_source, **fast), {"title": "fallback"})   # no começo
+        assert c.recorder is not None and str(c.recorder.source.kind) == "system"
+        nothing_after_the_opening(1)
+        play_again()
+        monkeypatch.setattr(QDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+        monkeypatch.setattr(SourceTable, "selected_spec", lambda _self: app_source)
+        c.switch_source()                                                                         # na troca de fonte
+        assert str(c.recorder.source.kind) == "system"
+        nothing_after_the_opening(2)
+        play_again()
+        loopback = next(s for s in reversed(platform.live_streams()) if s.freq == 330.0)          # o loopback do sistema
+        loopback.fail("dispositivo removido")
+        qtbot.waitUntil(lambda: len(opened) == 3, timeout=5000)      # na reabertura: o `_tick` chama o `check_devices`
+        assert c.recorder.health()["R"] != Health.LOST
+        nothing_after_the_opening(3)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert (c.player.state().state, c.player.state().message) == (PAUSED, "")                # o aviso sai com a gravação
+    finally:
+        c.emergency_stop()
+
+
+def test_the_pause_notice_goes_away_when_the_recording_does_not_start(qtbot, qapp, platform, store, monkeypatch):
+    """R8-01: o gravador pausou o player para abrir o loopback do sistema e a gravação não começou: o aviso sai da barra (o
+    som segue pausado) e retomar, sem gravação, não pergunta nada."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from listener.capture.recorder import RecordConfig
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+    from listener.ui.player import PAUSED, PLAYING
+
+    class FailingRecorder(ctl.Recorder):
+        def start(self) -> None:
+            assert self.before_system_loopback is not None
+            self.before_system_loopback()                    # o loopback do sistema ia abrir: o player pausou
+            raise RuntimeError("a captura não abriu")
+
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    _audio(store, mid, 0, seconds=60)
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    outs = _realtime_player(c)
+    asked: list[object] = []
+
+    def question(*a: object, **_k: object) -> object:
+        asked.append(a)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(ctl, "Recorder", FailingRecorder)
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    try:
+        win = c.open_meeting(mid)
+        assert c.player.play_from(mid, 0)
+        qtbot.waitUntil(lambda: bool(outs) and len(outs[-1].chunks) >= 2, timeout=3000)
+        cfg = RecordConfig(source=SourceSpec("system", label="Sistema"), chunk_seconds=0.5, stop_timeout_s=1.0, retry_base_s=0.001)
+        assert c.start_recording(cfg, {"title": "não começa"}) is False and c.recorder is None
+        assert outs[-1].calls.count("abort") == 1 and len(store.list_meetings()) == 1           # pausou; a reunião saiu
+        assert (c.player.state().state, c.player.state().message, win.bar.note.text()) == (PAUSED, "", "")
+        assert c.player.toggle() and asked == []                                                # sem gravação: direto
+        qtbot.waitUntil(lambda: c.player.state().state == PLAYING and outs[-1].calls[-1] == "start", timeout=3000)
+    finally:
         c.emergency_stop()
 
 
@@ -458,17 +604,21 @@ def test_exit_cancels_the_search_vector_and_both_chats_stuck_on_the_network(qtbo
     assert wait_before_close(slow, 50, "uma tarefa lenta") is False and time.monotonic() - t0 >= 0.3 and slow.isFinished()
 
 
-def test_app_exit_with_the_network_stuck_exits_with_code_0():
+@pytest.mark.parametrize("variant", [(), ("--glossary",)], ids=["busca-e-chats", "com-o-glossario"])
+def test_app_exit_with_the_network_stuck_exits_with_code_0(variant):
     """R7-03: o script de saída (`tests/exit_scenario.py`) num processo à parte, com a busca por sentido e os dois chats
     presos na rede e a saída pelo caminho do app (`aboutToQuit` -> `emergency_stop`): código 0, sem "QThread: Destroyed
-    while thread is still running" (antes: 134 no Linux e 0xC0000409 no Windows, depois de ~20 s de esperas)."""
+    while thread is still running" (antes: 134 no Linux e 0xC0000409 no Windows, depois de ~20 s de esperas). R8-04: a
+    variante com o glossário do warm-up em voo, uma `Task` comum que a saída não esperava (também 0xC0000409 antes)."""
     root = Path(__file__).resolve().parent.parent
     env = {k: v for k, v in os.environ.items() if k != "LISTENER_LLM"} | {"PYTHONUTF8": "1", "QT_QPA_PLATFORM": "offscreen"}
     t0 = time.monotonic()
-    proc = subprocess.run([sys.executable, str(root / "tests" / "exit_scenario.py")], cwd=str(root), env=env,  # noqa: S603
+    proc = subprocess.run([sys.executable, str(root / "tests" / "exit_scenario.py"), *variant], cwd=str(root), env=env,  # noqa: S603
                           capture_output=True, text=True, encoding="utf-8", timeout=120, check=False)
     assert proc.returncode == 0, proc.stderr[-3000:]
     assert "QThread: Destroyed" not in proc.stderr and time.monotonic() - t0 < 60
+    if variant:                                                                          # o glossário foi cancelado, não venceu
+        assert "glossário em llm_calls: ['cancelado']" in proc.stderr, proc.stderr[-3000:]
 
 
 def test_meeting_chat_reload_keeps_the_question_in_flight_and_the_scroll(qtbot, store, monkeypatch):
@@ -507,16 +657,28 @@ def test_meeting_chat_reload_keeps_the_question_in_flight_and_the_scroll(qtbot, 
 
 def test_titles_and_names_stay_plain_text_in_labels_and_tooltips(qtbot, store, cleanup):
     """R7-07: um título e um nome "<b>Comitê</b> <img>" aparecem como texto (não viram HTML) na barra do player, no
-    cabeçalho da reunião e nas notas do Histórico, e escapados nas dicas da lista de reuniões."""
+    cabeçalho da reunião e nas notas do Histórico. R8-02: a dica da lista de reuniões mostra o texto como está, também com
+    "&", aspas e apóstrofo (o `html.escape` deixava "S&amp;OP" na tela: a dica do Qt só lê HTML quando acha um "<")."""
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextDocument
+    from PySide6.QtGui import Qt as QtGuiQt
 
     from listener.ui.history import HistoryPage
     from listener.ui.meeting import MeetingWindow
     from listener.ui.player import Player
 
+    def shown(tip: str) -> str:                              # o que a dica mostra: AutoText, como o `QToolTip` decide
+        doc = QTextDocument()
+        if QtGuiQt.mightBeRichText(tip):
+            doc.setHtml(tip)
+        else:
+            doc.setPlainText(tip)
+        return doc.toPlainText()
+
     evil = "<b>Comitê</b> <img>"
-    who = {"ana": store.people.create_person(evil), "bia": store.people.create_person("Bia")}
-    mid, _job = _meeting(store, who, title=evil)
+    title = f'Revisão S&OP "Q4" {evil}'
+    who = {"ana": store.people.create_person(evil), "bia": store.people.create_person("Ana D'Ávila")}
+    mid, _job = _meeting(store, who, title=title)
     _audio(store, mid, 0)
     permits = threading.Semaphore(0)
     player = Player(store, FakeOutputs(permits=permits))
@@ -527,15 +689,14 @@ def test_titles_and_names_stay_plain_text_in_labels_and_tooltips(qtbot, store, c
     plain = Qt.TextFormat.PlainText
     assert win.info.textFormat() == plain and evil in win.info.text() and win.message.textFormat() == plain
     assert player.play_from(mid, 0, title=win.title_text()) and win.bar is not None
-    assert (win.bar.what.textFormat(), win.bar.note.textFormat()) == (plain, plain) and win.bar.what.text().endswith(evil)
+    assert (win.bar.what.textFormat(), win.bar.note.textFormat()) == (plain, plain) and win.bar.what.text().endswith(title)
     page = HistoryPage(store)
     qtbot.addWidget(page)
     cleanup(page)
     page.show()
     qtbot.waitUntil(lambda: page.model.rowCount() == 1, timeout=5000)
-    assert page.model.data(page.model.index(0, 1), Qt.ItemDataRole.ToolTipRole) == html.escape(evil)
-    people = page.model.data(page.model.index(0, 3), Qt.ItemDataRole.ToolTipRole)
-    assert html.escape(evil) in people and "<b>" not in people
+    assert shown(page.model.data(page.model.index(0, 1), Qt.ItemDataRole.ToolTipRole)) == title
+    assert shown(page.model.data(page.model.index(0, 3), Qt.ItemDataRole.ToolTipRole)) == f"{evil}, Ana D'Ávila"
     page.person.setCurrentIndex(page.person.findData(who["ana"]))
     qtbot.waitUntil(lambda: evil in page.list_note.text(), timeout=5000)
     assert all(label.textFormat() == plain for label in (page.list_note, page.actions_note, page.chat_note, page.coverage))

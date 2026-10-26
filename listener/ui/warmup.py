@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import json
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
@@ -234,8 +235,9 @@ class WarmupDialog(QDialog):
         self._glossary_inflight = True
         self.glossary_requests += 1
         self.glossary_status.setText("pedindo termos prováveis à LLM…")
-        run_task(functools.partial(request_glossary, self.store, title or None, participants or None), self.store,
-                 functools.partial(self._on_glossary, self._glossary_seq))
+        stop = threading.Event()                           # a saída do app cancela a chamada presa na rede (R8-04)
+        run_task(functools.partial(request_glossary, self.store, title or None, participants or None, should_stop=stop.is_set),
+                 self.store, functools.partial(self._on_glossary, self._glossary_seq), cancel=stop)
 
     def _on_glossary(self, seq: int, result: Any) -> None:
         self._glossary_inflight = False

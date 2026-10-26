@@ -1,7 +1,8 @@
 """Trabalho fora da thread da interface (M-26): `Task` roda uma função numa QThread e devolve o resultado (ou a exceção)
 por sinal; a referência fica viva até `finished` (QThread sem parent é destruída pelo Qt se for coletada antes).
 F3 (item 10, F3A-19): `StreamTask` acrescenta um sinal por pedaço de texto e `cancel()` (um `threading.Event` lido entre
-pedaços) para o chat em streaming. F5 R7-03: `wait_before_close` é a espera da saída do app antes de fechar o banco."""
+pedaços) para o chat em streaming. F5 R7-03: `wait_before_close` é a espera da saída do app antes de fechar o banco; R8-04:
+a `Task` comum também aceita um evento de cancelamento (`run_task(..., cancel=evento)`), que a saída acende."""
 from __future__ import annotations
 
 import functools
@@ -40,12 +41,18 @@ def wait_before_close(thread: QThread, wait_ms: int, what: str) -> bool:
 
 
 class Task(QThread):
+    """`fn()` numa QThread. `cancel()` acende o evento `cancel_event`: só para a função que o lê (quem criou a tarefa passa
+    `cancel_event.is_set` a ela, como o glossário do warm-up); a saída do app cancela todas antes de esperar (R8-04)."""
     done = Signal(object)
 
-    def __init__(self, fn: Callable[[], Any], store: Store | None):
+    def __init__(self, fn: Callable[[], Any], store: Store | None, cancel: threading.Event | None = None):
         super().__init__(None)
         self.fn = fn
         self.store = store
+        self.cancel_event = cancel or threading.Event()
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
 
     @override
     def run(self) -> None:
@@ -61,8 +68,9 @@ class Task(QThread):
         self.done.emit(result)
 
 
-def run_task(fn: Callable[[], Any], store: Store | None, on_done: Callable[[Any], None]) -> Task:
-    task = Task(fn, store)
+def run_task(fn: Callable[[], Any], store: Store | None, on_done: Callable[[Any], None], *,
+             cancel: threading.Event | None = None) -> Task:
+    task = Task(fn, store, cancel)
     live_threads.add(task)
     task.done.connect(on_done)
     task.finished.connect(functools.partial(release, task))

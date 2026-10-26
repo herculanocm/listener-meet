@@ -23,6 +23,7 @@ e avisos em texto puro na barra (R7-07)."""
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -252,6 +253,14 @@ class _Feed:
     error: str = ""
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _Pause:
+    """O comando de pausa: o aviso da barra (R7-01) e, quando alguém espera a confirmação, o evento que a escritora acende
+    depois de tratar a pausa: o bloco em voo saiu e o buffer do dispositivo foi descartado (R8-01)."""
+    message: str = ""
+    done: threading.Event | None = None
+
+
 class _Chunks:
     """Os pedaços FLAC de um som para a alimentadora (R7-02): cada um decodificado uma vez (`AudioRepo.get_chunk`) e posto na
     taxa gravada; as janelas saem deles pela posição no tempo, em amostras absolutas (sem deriva entre janelas), com
@@ -326,6 +335,7 @@ class PlaybackEngine:
         self._cv = threading.Condition()
         self._cmds: deque[tuple[str, Any]] = deque()
         self._thread: threading.Thread | None = None
+        self._feeders: set[threading.Thread] = set()   # alimentadoras vivas (cada uma sai do conjunto ao terminar, R8-03)
         self._feed: _Feed | None = None             # o trecho que a alimentadora prepara (sob `_cv`)
         self._shut = False                          # a saída do app: nenhuma thread nasce depois dela
         # estado visto pela interface (sob `_cv`)
@@ -360,7 +370,30 @@ class PlaybackEngine:
                 self._paused_at, self._state = self._position_locked(), PAUSED
             if self._state == PAUSED:
                 self._message = message
-        self._send("pause", message)
+        self._send("pause", _Pause(message))
+
+    def pause_and_wait(self, message: str, timeout_s: float) -> tuple[bool, bool]:
+        """`pause` mais a espera da confirmação da escritora: o bloco em voo saiu e o buffer do dispositivo foi descartado,
+        nenhum bloco do player sai depois (R8-01: logo antes de o gravador abrir o loopback do sistema). Seguro em qualquer
+        thread. Devolve (tocava, confirmado no prazo); sem escritora viva não há som a parar."""
+        done = threading.Event()
+        with self._cv:
+            playing = self._state == PLAYING
+            if playing:
+                self._paused_at, self._state = self._position_locked(), PAUSED
+            if self._state == PAUSED:
+                self._message = message
+            alive = self._thread is not None and self._thread.is_alive()
+        if not alive:
+            return playing, True
+        self._send("pause", _Pause(message, done))
+        return playing, done.wait(timeout_s)
+
+    def clear_notice(self) -> None:
+        """Tira o aviso da pausa (a gravação que o pediu não começou ou acabou); o som segue pausado (R8-01)."""
+        with self._cv:
+            if self._state == PAUSED:
+                self._message = ""
 
     def resume(self) -> None:
         with self._cv:
@@ -379,16 +412,21 @@ class PlaybackEngine:
         self._send("stop", start=False)
 
     def shutdown(self, timeout_s: float = JOIN_S) -> bool:
-        """Para o som e espera a thread (a saída do app, antes de fechar o banco); depois disto nenhuma thread nasce. False
-        quando ela não terminou a tempo."""
+        """Para o som e espera a escritora e as alimentadoras num prazo só (a saída do app, antes de fechar o banco); depois
+        disto nenhuma thread nasce. True só sem thread do player viva: uma janela lenta da alimentadora não passa mais do
+        `store.close()` como se tivesse acabado (R8-03)."""
         with self._cv:
             self._shut = True
         self._send("quit", start=False)
-        thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout_s)
-            return not thread.is_alive()
-        return True
+        deadline = time.monotonic() + timeout_s
+        me = threading.current_thread()
+        while True:
+            with self._cv:
+                alive = [t for t in (self._thread, *self._feeders) if t is not None and t is not me and t.is_alive()]
+            left = deadline - time.monotonic()
+            if not alive or left <= 0:
+                return not alive
+            alive[0].join(left)
 
     def snapshot(self) -> PlayerState:
         with self._cv:
@@ -425,20 +463,21 @@ class PlaybackEngine:
 
     # ---------------------------------------------------------------- escritora
     def _run(self) -> None:
+        """A escritora. Fica em `_thread` até o fim do `finally` (a alimentadora juntada, a conexão fechada): o `shutdown` só
+        a vê parada quando nada dela segue rodando (R8-03); comando que chegar no meio relança uma escritora nova."""
         sess: _Session | None = None
         me = threading.current_thread()
         quit_feed = threading.Event()
         feeder = threading.Thread(target=self._feed_loop, args=(quit_feed,), name="player-feed", daemon=True)
+        with self._cv:
+            self._feeders.add(feeder)
         feeder.start()
         try:
             while True:
                 with self._cv:
                     while not self._cmds and (sess is None or not sess.playing):
                         if sess is None:              # parado: a thread termina (nasce de novo no próximo "tocar")
-                            # ainda sob o lock: esta alimentadora não pega o trecho de uma escritora nova
-                            quit_feed.set()
-                            if self._thread is me:
-                                self._thread = None
+                            quit_feed.set()           # ainda sob o lock: esta alimentadora não pega o trecho de outra
                             self._cv.notify_all()
                             return
                         self._cv.wait()               # pausado: espera um comando
@@ -471,15 +510,19 @@ class PlaybackEngine:
         match cmd:
             case ("play", PlayRequest() as req):
                 return self._open(sess, req)
-            case ("pause", message):
-                if sess is not None and sess.playing:
-                    sess.pos = self.snapshot().t_ms
-                    self._abort(sess)
-                    sess.playing = False
-                    with self._cv:
-                        if self._feed is not None and self._feed.sess is sess:
-                            self._feed = None             # o que estava pronto sai (R7-02)
-                        self._paused_at, self._state, self._message = sess.pos, PAUSED, str(message or "")
+            case ("pause", _Pause() as pause):
+                try:
+                    if sess is not None and sess.playing:
+                        sess.pos = self.snapshot().t_ms
+                        self._abort(sess)
+                        sess.playing = False
+                        with self._cv:
+                            if self._feed is not None and self._feed.sess is sess:
+                                self._feed = None         # o que estava pronto sai (R7-02)
+                            self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
+                finally:
+                    if pause.done is not None:
+                        pause.done.set()                  # quem espera (o gancho do loopback, R8-01) segue
                 return sess
             case ("resume", _):
                 if sess is not None and not sess.playing:
@@ -679,6 +722,8 @@ class PlaybackEngine:
                     self._cv.notify_all()
         finally:
             self.store.close_thread()
+            with self._cv:
+                self._feeders.discard(threading.current_thread())      # o `shutdown` deixa de esperá-la (R8-03)
 
     def _next_feed(self, quit_: threading.Event) -> _Feed | None:
         """(sob `_cv`) O trecho que precisa de mais áudio; espera enquanto a fila está cheia ou não há trecho. None = sair."""
@@ -777,6 +822,7 @@ class Player(QObject):
     ou o aviso; `position_changed` a cada 100 ms enquanto toca. `guard(pedido)` é chamado antes de o som começar (Q9)."""
     state_changed = Signal(object)              # PlayerState
     position_changed = Signal(object)           # PlayerState
+    _kicked = Signal()                          # refaz a leitura na thread da interface (pedido vindo de outra thread)
 
     def __init__(self, store: Store, output_factory: OutputFactory | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -787,6 +833,7 @@ class Player(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
         self._timer.timeout.connect(self.poll)
+        self._kicked.connect(self._kick)        # direto na thread da interface; de outra thread, na fila dela
 
     def state(self) -> PlayerState:
         return self.engine.snapshot()
@@ -825,6 +872,19 @@ class Player(QObject):
         self.engine.pause(notice)
         self._kick()
         return st == PLAYING
+
+    def pause_and_wait(self, notice: str, timeout_s: float) -> tuple[bool, bool]:
+        """`pause` que espera o motor confirmar que o som parou de sair (R8-01, antes do loopback do sistema): (tocava,
+        confirmado no prazo). Seguro em qualquer thread: só o motor é tocado aqui, e a barra é refeita na thread da interface
+        pelo sinal `_kicked`."""
+        result = self.engine.pause_and_wait(notice, timeout_s)
+        self._kicked.emit()
+        return result
+
+    def clear_notice(self) -> None:
+        """Tira o aviso da pausa da barra; o som segue pausado (a gravação que pediu a pausa não começou ou acabou, R8-01)."""
+        self.engine.clear_notice()
+        self._kick()
 
     def seek(self, delta_ms: int) -> None:
         if self.state().active:

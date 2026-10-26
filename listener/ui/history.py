@@ -17,9 +17,9 @@ selo ("busca híbrida" ou "busca por palavras: motivo") e a cobertura do índice
   redesenha; custo e citações com link na linha de estado.
 
 Menu de contexto "Copiar com citação" (U-029) nos trechos achados e nas respostas. Textos para o usuário sem jargão: "busca
-por sentido", nunca "embedding" nem "FTS". Notas em texto puro e dicas escapadas: um título ou nome com "<b>" não vira HTML
-(R7-07). A saída do app cancela o chat em voo e o vetor da consulta presos na rede (um `threading.Event` ligado ao
-`shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (`shutdown`, F5A-32)."""
+por sentido", nunca "embedding" nem "FTS". Notas em texto puro e dicas convertidas de texto puro: um título ou nome com "<b>"
+não vira HTML (R7-07) e "S&OP" aparece como está (R8-02). A saída do app cancela o chat em voo e o vetor da consulta presos
+na rede (um `threading.Event` ligado ao `shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (F5A-32)."""
 from __future__ import annotations
 
 import functools
@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast, override
 
+from PySide6 import QtGui
 from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QContextMenuEvent, QFont, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, \
     QResizeEvent, QShortcut, QShowEvent
@@ -277,8 +278,11 @@ class MeetingsModel(QAbstractTableModel):
         line = self.lines[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return line.texts()[index.column()]
-        if role == Qt.ItemDataRole.ToolTipRole:                 # a dica do Qt detecta HTML: título e nomes escapados (R7-07)
-            return html.escape(", ".join(line.participants) if index.column() == 3 else line.title)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            # a dica do Qt é AutoText: o texto puro vira um parágrafo com o HTML escapado, e o que aparece é o título e os
+            # nomes como estão ("<b>" não vira negrito, R7-07, e "S&OP" não vira "S&amp;OP", R8-02)
+            text = ", ".join(line.participants) if index.column() == 3 else line.title
+            return QtGui.Qt.convertFromPlainText(text, Qt.WhiteSpaceMode.WhiteSpaceNormal)
         if role == Qt.ItemDataRole.UserRole:
             return line.meeting_id
         return None

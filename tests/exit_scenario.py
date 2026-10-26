@@ -1,10 +1,11 @@
 """F5 R7-03: a saída do app com a rede presa termina com código 0, sem "QThread: Destroyed while thread is still running".
 Roda num processo à parte (`tests/test_rag_ui.py` confere o código de saída; também roda sozinho:
-`python tests/exit_scenario.py`). Com o fake da LLM mais lento que qualquer espera da saída (`DELAY_S`), deixa em voo o
-vetor da consulta de uma busca do Histórico (Enter), uma pergunta do chat global e uma do chat da reunião aberta antes do
-primeiro pedaço, e sai pelo caminho do app (`aboutToQuit` -> `emergency_stop`, que fecha o banco). Sem o cancelamento de
-verdade, as `QThread`s seguiam vivas depois do `store.close()` e o processo abortava (134 no Linux). Nada de rede, áudio ou
-chave real: `LISTENER_LLM=fake` e a plataforma simulada dos testes."""
+`python tests/exit_scenario.py [--glossary]`). Com o fake da LLM mais lento que qualquer espera da saída (`DELAY_S`), deixa
+em voo o vetor da consulta de uma busca do Histórico (Enter), uma pergunta do chat global e uma do chat da reunião aberta
+antes do primeiro pedaço, e sai pelo caminho do app (`aboutToQuit` -> `emergency_stop`, que fecha o banco). Sem o
+cancelamento de verdade, as `QThread`s seguiam vivas depois do `store.close()` e o processo abortava (134 no Linux).
+`--glossary` (R8-04) deixa também o glossário do warm-up em voo, pedido pelo próprio diálogo numa `Task` comum. Nada de
+rede, áudio ou chave real: `LISTENER_LLM=fake` e a plataforma simulada dos testes."""
 from __future__ import annotations
 
 import os
@@ -60,9 +61,19 @@ def main() -> int:
         self.delay_s = DELAY_S          # a "rede" presa: nenhuma resposta, nenhum pedaço
 
     fake.FakeProvider.__init__ = slow_init  # type: ignore[method-assign]
-    c = Controller(app, FakePlatform(root), store)
+    platform = FakePlatform(root)
+    c = Controller(app, platform, store)
     c.tray = None
     app.aboutToQuit.connect(c.emergency_stop)
+    if "--glossary" in sys.argv:                             # R8-04: o glossário do warm-up preso na rede, numa `Task` comum
+        from listener.ui.warmup import WarmupDialog
+
+        warmup = WarmupDialog(platform, store)
+        warmup.title_edit.setText("Orçamento 2027")
+        warmup.participants_edit.setText("Ana, Bia")
+        warmup.request_glossary()                            # o pedido do próprio diálogo (com o cancelamento da `Task`)
+        warmup.reject()                                      # o diálogo fecha; a chamada segue em voo, como no app
+        warmup.deleteLater()
     page = c.open_history().page
     page.search.setText("auditoria")
     page._search_now()                                       # Enter: busca por sentido presa no vetor da consulta
@@ -75,6 +86,10 @@ def main() -> int:
     QTimer.singleShot(QUIT_AFTER_MS, app.quit)
     code = app.exec()
     sys.stderr.write(f"app.exec() voltou {code} em {time.monotonic() - t0:.1f} s; o processo sai agora\n")
+    if "--glossary" in sys.argv:                             # o desfecho do glossário ficou no banco (já fechado pela saída)
+        with Store(root / "db") as check:
+            errors = [str(r[0]) for r in check._q("SELECT error FROM llm_calls WHERE task = 'glossary'")]
+        sys.stderr.write(f"glossário em llm_calls: {errors}\n")
     shutil.rmtree(root, ignore_errors=True)                  # a pasta temporária deste script (o banco já fechou)
     return code
 

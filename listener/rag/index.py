@@ -518,7 +518,10 @@ class ReindexEstimate:
             base = (f"{_n(self.chunks)} {'trecho' if self.chunks == 1 else 'trechos'} sem vetor em {self.meetings} "
                     f"{'reunião' if self.meetings == 1 else 'reuniões'} · ≈ {_n(self.tokens)} tokens · {cost} · ≈ {minutes} min"
                     + ("" if self.measured else " (pela estimativa de 2 s por lote)"))
-        if self.without_chunks:
+        if self.without_chunks and self.ready:          # completar e reindexar pedem os vetores delas também (`force`, R8-05)
+            base += (f"; mais {self.without_chunks} reunião(ões) ainda sem trechos, que também recebem vetores (o custo delas só "
+                     "se sabe depois do corte em trechos)")
+        elif self.without_chunks:
             base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos (entram com o índice por palavra)"
         return base
 

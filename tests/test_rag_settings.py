@@ -120,6 +120,36 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     assert "Trechos por pergunta" in (dlg.validation_error() or "")
 
 
+def test_completing_says_that_meetings_without_chunks_also_get_vectors(qtbot, store, platform, monkeypatch):
+    """R8-05: com os embeddings prontos, as reuniões ainda sem trechos entram com `force` e também recebem vetores: a
+    confirmação do "Completar índice" diz isso (o custo delas só se sabe depois do corte em trechos) em vez de "entram com o
+    índice por palavra", que só vale sem embeddings."""
+    from listener.ui import settings_min
+    from listener.ui.settings_min import SettingsDialog
+
+    a, b = _two(store)
+    for mid in (a, b):
+        index.fill_vectors(store, mid, provider=FakeProvider())                           # nenhum trecho sem vetor
+    empty = store.create_meeting("sem trechos", None, None, None)
+    store.finish_meeting(empty, 1000)
+    _pipeline_job(store, empty)
+    asked: list[str] = []
+
+    def ask(_parent: object, text: str, _yes: str, _no: str) -> bool:
+        asked.append(text)
+        return True
+
+    monkeypatch.setattr(settings_min, "ask_reindex", ask)
+    dlg = SettingsDialog(store, platform, {}, on_launch=lambda _light: None)
+    qtbot.addWidget(dlg)
+    assert dlg.complete_index() == 1 and len(asked) == 1 and "nenhum trecho sem vetor do modelo ativo" in asked[0]
+    assert "1 reunião(ões) ainda sem trechos, que também recebem vetores" in asked[0] and "por palavra" not in asked[0]
+    job = store.jobs.active(kinds=("index",))[0]
+    assert int(job["meeting_id"]) == empty and json.loads(job["params_json"])["force"] is True   # os vetores dela vêm
+    store.providers.update_provider("gemini", api_key="")                                # sem embeddings: só o índice por palavra
+    assert "1 reunião(ões) ainda sem trechos (entram com o índice por palavra)" in index.reindex_estimate(store).text()
+
+
 def test_changing_the_embedder_offers_reindexing_now_or_later(qtbot, store, platform, monkeypatch):
     from listener.ui import settings_min
     from listener.ui.settings_min import SettingsDialog

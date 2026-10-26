@@ -9,6 +9,10 @@ quem chama (thread da interface), com a conexão dessa thread.
 F4: `set_live_tap(fn)` liga o desvio ao vivo; cada bloco escrito pelo chunker (depois do preenchimento de buracos, na
 thread de trabalho) vai para `fn` em O(1), com pausa e mudo marcados (`TapFlag.SILENCED`) em vez de zeros como fala; uma
 exceção do desvio nunca sobe para a gravação (contada e logada uma vez).
+F5 R8-01: `before_system_loopback` é chamado logo antes de abrir o loopback do sistema inteiro, por qualquer caminho (a
+fonte pedida, a troca automática quando o loopback do app não abre, no começo, na troca de fonte e na reabertura): quem
+cria o gravador cala ali o som que o próprio app toca (o player entraria no canal R). Uma falha do gancho nunca impede a
+gravação.
 """
 from __future__ import annotations
 
@@ -243,10 +247,12 @@ class _Pipeline:
 
 class Recorder:
     def __init__(self, platform: Platform, sink: RecorderSink, meeting_id: int, cfg: RecordConfig,
-                 clock: Clock | None = None, *, inline_worker: bool = False, extra_sinks: Sequence[ChunkSink] = ()):
+                 clock: Clock | None = None, *, inline_worker: bool = False, extra_sinks: Sequence[ChunkSink] = (),
+                 before_system_loopback: Callable[[], object] | None = None):
         self.platform = platform
         self.sink = sink
         self.extra_sinks = tuple(extra_sinks)
+        self.before_system_loopback = before_system_loopback     # R8-01: chamado antes de abrir o loopback do sistema
         self.meeting_id = meeting_id
         self.cfg = cfg
         self.clock: Clock = clock or SessionClock.start()
@@ -332,6 +338,7 @@ class Recorder:
                 handle = self.platform.open_app_loopback(spec.pid, cb, err)
                 self.R.detail = spec.label or spec.exe or f"pid {spec.pid}"
             elif spec.kind == SourceKind.SYSTEM:
+                self._before_system()
                 handle = self.platform.open_system_loopback(cb, err)
                 self.R.detail = "sistema inteiro"
             else:
@@ -344,6 +351,7 @@ class Recorder:
                 self._r_handle = None
                 return False
             try:
+                self._before_system()                     # a troca automática também capta o sistema inteiro (R8-01)
                 handle = self.platform.open_system_loopback(cb, err)
                 self.R.detail = "sistema inteiro (fallback)"
                 spec = SourceSpec(SourceKind.SYSTEM)
@@ -357,6 +365,16 @@ class Recorder:
         handle.start()
         self.R.active = True
         return True
+
+    def _before_system(self) -> None:
+        """R8-01: o loopback do sistema inteiro vai abrir; quem criou o gravador cala antes o que o app toca."""
+        hook = self.before_system_loopback
+        if hook is None:
+            return
+        try:
+            hook()
+        except Exception as e:  # o gancho nunca impede a gravação
+            log.warning("reunião %s: o aviso antes do loopback do sistema falhou: %s", self.meeting_id, e)
 
     def switch_source(self, spec: SourceSpec) -> None:
         """Troca a fonte do canal R sem parar; o buraco entre uma e outra é preenchido com silêncio."""

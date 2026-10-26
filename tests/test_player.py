@@ -274,6 +274,31 @@ def test_a_command_left_when_the_writer_fails_starts_a_new_writer(store, monkeyp
     assert outs.opened[0].calls[-1] == "close" and eng.shutdown() is True
 
 
+def test_shutdown_waits_for_a_feeder_slower_than_the_writer_join(store, monkeypatch):
+    """R8-03: uma janela da alimentadora mais lenta que a espera da escritora por ela (`FEED_JOIN_S`): o `shutdown` não
+    devolve True com a alimentadora viva (o banco fecharia embaixo dela); vencido o prazo diz False, e com prazo bastante
+    espera a escritora e a alimentadora e só então devolve True, sem thread do player viva."""
+    mid = _meeting(store, seconds=4, pause=None)
+    real = PlaybackEngine._decode
+    entered = threading.Event()
+    monkeypatch.setattr(pl, "FEED_JOIN_S", 0.3)                                          # a espera da escritora, encurtada
+
+    def slow(self, *args, **kwargs):
+        entered.set()
+        time.sleep(pl.FEED_JOIN_S + 0.5)                                                 # mais que a espera da escritora
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PlaybackEngine, "_decode", slow)
+    eng = PlaybackEngine(store, FakeOutputs(rate=SR))
+    eng.play(PlayRequest(mid, 0))
+    assert entered.wait(3.0)
+    threads = [eng._thread, *eng._feeders]                                               # a escritora e a alimentadora
+    t0 = time.monotonic()
+    assert eng.shutdown(timeout_s=0.2) is False and time.monotonic() - t0 >= 0.15        # o prazo venceu: ainda há thread
+    assert eng.shutdown(timeout_s=10.0) is True
+    assert len(threads) == 2 and not any(t is not None and t.is_alive() for t in threads) and not eng._feeders
+
+
 def test_the_pause_notice_survives_commands_handled_late(store):
     """R7-01: a pausa com aviso (o warm-up, a gravação do sistema inteiro) leva o aviso no comando: a thread, que trata os
     comandos depois do bloco em voo, reescreve estado e aviso ao tratar um "retomar" antigo, e a pausa seguinte os devolve."""

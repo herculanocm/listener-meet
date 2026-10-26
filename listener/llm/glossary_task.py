@@ -1,13 +1,14 @@
 """Glossário do warm-up (handoff §4, F3 item 4, U-018): o app casa os participantes digitados com `people` localmente
 (casefold, `difflib`, nome inteiro ou primeiro nome único) e pede à LLM os termos prováveis e o mapeamento do que sobrou,
 numa única chamada feita numa `Task` do app (`run_async` com cliente próprio). `llm_calls.meeting_id` fica nulo até a
-reunião existir (o controlador religa). Sem provedor com chave: `GlossaryResult.error` e o warm-up segue sem glossário."""
+reunião existir (o controlador religa). Sem provedor com chave: `GlossaryResult.error` e o warm-up segue sem glossário.
+F5 R8-04: `should_stop` (a saída do app, pelo cancelamento da `Task`) cancela a chamada presa na rede em até 0,2 s."""
 from __future__ import annotations
 
 import difflib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +16,7 @@ from ..log import get_logger
 from ..model import LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
 from . import prompts, redact
-from .aio import run_async
+from .aio import run_async, until_stopped
 from .base import LlmError, classify_exception
 from .costs import cost_usd, price_for
 from .jobconfig import LlmJobConfig
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 log = get_logger("llm.glossary")
 
 MATCH_RATIO = 0.85
+CANCELLED = "cancelado"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +101,10 @@ def merge_glossary(llm_terms: Sequence[str], user_text: str) -> str:
     return ", ".join(out)
 
 
-def request_glossary(store: Store, title: str | None, participants: str | None) -> GlossaryResult:
-    """Chamada síncrona (roda numa `Task`): casa localmente, pergunta à LLM o resto e grava em `llm_calls` (reunião nula)."""
+def request_glossary(store: Store, title: str | None, participants: str | None,
+                     should_stop: Callable[[], bool] | None = None) -> GlossaryResult:
+    """Chamada síncrona (roda numa `Task`): casa localmente, pergunta à LLM o resto e grava em `llm_calls` (reunião nula).
+    `should_stop()` verdadeiro durante a espera cancela a chamada (R8-04): erro "cancelado", sem termos."""
     from ..config.defaults import SPECS
 
     people: list[dict[str, Any]] = [dict(p) for p in store.people.list_people()]
@@ -119,7 +123,7 @@ def request_glossary(store: Store, title: str | None, participants: str | None) 
     async def go() -> tuple[Any, LlmError | None]:
         provider, _row = build_provider(store, cfg.provider_id)
         try:
-            return await provider.complete(req), None
+            return await until_stopped(provider.complete(req), should_stop), None     # None: cancelada (R8-04)
         except Exception as e:
             return None, classify_exception(e)
         finally:
@@ -129,10 +133,13 @@ def request_glossary(store: Store, title: str | None, participants: str | None) 
     prices = store.providers.list_prices(cfg.provider_kind or None)
     version, digest = prompts.prompt_version(LlmTask.GLOSSARY), schema_hash(prompts.glossary.SCHEMA)
     if err is not None or comp is None:
-        message = redact.GLOBAL.redact(str(err) if err else "sem resposta")
+        message = redact.GLOBAL.redact(str(err)) if err is not None else CANCELLED
         call_id = store.llm_calls.insert(LlmCallInsert(None, None, str(LlmTask.GLOSSARY), cfg.provider_id, cfg.fast_model, version, digest,
                                                        0, 0, 0, 0, None, 0, LlmCallStatus.ERROR, message, "direct"), store_payloads=False)
-        log.warning("glossário: %s", message)
+        if err is not None:
+            log.warning("glossário: %s", message)
+        else:
+            log.info("glossário cancelado (a saída do app)")
         return GlossaryResult((), tuple(resolved), call_id, message)
     cost = cost_usd(comp.usage, price_for(prices, cfg.provider_kind, comp.model))
     payload_req = [{"role": str(m.role), "text": m.text} for m in req.messages] if cfg.store_payloads else None
