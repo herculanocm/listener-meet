@@ -40,6 +40,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         dava ao interpretador um console visível no Windows Terminal); o worker nasce sem janela e continua vivo depois
         do app. Também: o custo do Gemini 3 pela família de preço (saía nulo) e o nome da pessoa e o texto falado fora
         do log.
+- **Em andamento (27/10): F5.2** (`features/F5.2-pessoas-ata-dispositivos.md`, aprovada em D-057): L1 U-043 (dispositivo
+  novo sem reiniciar), L2 U-041 (ficha da pessoa, editar e apagar) e L3 U-042 (a ata depois da identificação).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
