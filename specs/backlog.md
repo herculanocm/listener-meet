@@ -43,7 +43,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         do log.
   - [x] **F5.2 implementada** (27/10, `features/F5.2-pessoas-ata-dispositivos.md`, D-057): spec com a revisão de
         arquitetura (`379f6af`), L1 U-043 (`4bcc056` checkpoint do dono, `c969137`, `20cfe40`), L2 U-041 (`8b0834a`) e
-        L3 U-042 (`5bc4505`). Falta o dono verificar no Windows (Parte 10 do roteiro).
+        L3 U-042 (`5bc4505`) e a revisão do diff, R-01 a R-12 (`b54321a`). Falta o dono verificar no Windows (Parte
+        10 do roteiro).
   - [x] D-058, do terceiro teste: o worker leve preso 52 min na verificação de certificado do Windows parava a fila; o
         vigia do laço faz o worker sair e o app o relança (`4bcc056`).
   - [x] D-059, a pedido do dono: logs para acompanhar e validar cada execução, com a convenção em `ARCHITECTURE.md`
@@ -70,7 +71,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `AGENTS.md`).
 
 ## Estado em 27/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1 e **F5.2 implementadas**: 492 testes mais 7 pulados no Windows com
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1 e **F5.2 implementadas**: 498 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
