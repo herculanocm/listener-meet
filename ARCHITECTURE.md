@@ -63,6 +63,17 @@ leve, 1 no app, pré-carregada numa `Task` ao abrir o Histórico e solta 10 min 
 gravação o `index` adia os vetores e parar ou cancelar a gravação roda a varredura; `--live --prepare --what rag` baixa
 o e5 (pelo HTTP, que retoma) e grava a marca `.ready`; o .docx sai numa `Task`.
 
+## Logs (D-059: para a LLM achar qualquer cenário nos testes do dono)
+Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm` e
+`index`) e `listener-live.log` (ao vivo). A categoria é o logger `listener.<módulo>`. Níveis: DEBUG para o detalhe de cada
+chamada, lote ou decisão (começo de toda chamada à LLM e de todo lote de embeddings; configuração mudada; apps com som,
+só quando mudam); INFO para marcos e ações do usuário (gravação, pausa, mudo, marcador, fonte, warm-up e teste de 3 s,
+janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada com latência, tokens e motivo,
+provedor e chave definidos, exportação, avisos da bandeja); WARNING para o recuperável (job devolvido à fila, chamada
+que falhou de vez, terminal fechado com o app aberto); ERROR para falha (tentativas esgotadas, vigia do laço, D-058). O
+faulthandler grava crash nativo. Nunca no log: nome de pessoa, fala, título de reunião, e-mail, chave ou token, título de
+janela (D-053, D-056); vão ids, contagens, durações, modelos e estados. Para diagnosticar, o dono usa o nível DEBUG.
+
 ## Stack
 Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6
 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy · faster-whisper ou WhisperX
