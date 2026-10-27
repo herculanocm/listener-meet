@@ -548,7 +548,7 @@ class PlaybackEngine:
                                 self._feed = None         # o que estava pronto sai (R7-02)
                             self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
                     if pause.release and sess is not None and not sess.playing:
-                        self._close(sess)                 # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
+                        self._release(sess)               # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
                 finally:
                     if pause.done is not None:
                         pause.done.set()                  # quem espera (o gancho do loopback, R8-01) segue
@@ -816,18 +816,31 @@ class PlaybackEngine:
         except Exception as e:  # fluxo já parado ou caído
             log.debug("player: abortar o fluxo: %s", e)
 
-    def _close(self, sess: _Session | None, abort: bool = True) -> None:
-        if sess is None or sess.closed:
+    def _release(self, sess: _Session) -> None:
+        """A pausa que solta o dispositivo (U-043, A-04): o fluxo fecha e a sessão segue pausada no mesmo ponto; a retomada
+        abre outro pela fábrica (`_handle`, "resume")."""
+        if sess.closed:
             return
         sess.closed = True
-        if abort:
-            self._abort(sess)
         try:
             sess.stream.close()
         except Exception as e:
-            log.debug("player: fechar o fluxo: %s", e)
-        sess.playing = False
+            log.debug("player: soltar o fluxo: %s", e)
         self._report(sess)
+
+    def _close(self, sess: _Session | None, abort: bool = True) -> None:
+        if sess is None:
+            return
+        if not sess.closed:                            # a solta pela pausa do warm-up já fechou o fluxo: só o estado muda
+            sess.closed = True
+            if abort:
+                self._abort(sess)
+            try:
+                sess.stream.close()
+            except Exception as e:
+                log.debug("player: fechar o fluxo: %s", e)
+            sess.playing = False
+            self._report(sess)
         with self._cv:
             if self._feed is not None and self._feed.sess is sess:
                 self._feed = None                     # a alimentadora para; o que estava pronto sai

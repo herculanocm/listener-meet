@@ -423,12 +423,13 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
         sounding()
         c.open_warmup()                                                                      # o warm-up abriu (e fechou)
         paused(1, ctl.PLAYER_PAUSED_WARMUP)
+        qtbot.waitUntil(lambda: outs[0].calls[-1] == "close", timeout=3000)                 # U-043 (A-04): soltou o fluxo
         assert win.bar.note.text() == ctl.PLAYER_PAUSED_WARMUP and asked == []
         assert c.player.toggle()                                                             # sem gravação: retoma direto
         sounding()
-        assert (c.player.state().state, win.bar.note.text()) == (PLAYING, "")
+        assert (c.player.state().state, win.bar.note.text(), len(outs)) == (PLAYING, "", 2)   # a retomada abriu outro
         assert c.start_recording(RecordConfig(source=SourceSpec("system", label="Sistema"), **fast), {"title": "q9"})
-        paused(2, ctl.PLAYER_PAUSED_SYSTEM)                                                  # o gancho já esperou a pausa
+        paused(1, ctl.PLAYER_PAUSED_SYSTEM)                                                  # o gancho já esperou a pausa
         assert win.bar.note.text() == ctl.PLAYER_PAUSED_SYSTEM
         assert c.player.toggle() is False and "som do sistema inteiro" in asked[-1] and c.player.state().state == PAUSED
         c.stop_recording()
@@ -444,7 +445,7 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
         monkeypatch.setattr(SourceTable, "selected_spec", lambda _self: SourceSpec("system", label="Sistema"))
         c.switch_source()                                                                    # trocou para o sistema inteiro
         assert c.recorder is not None and str(c.recorder.source.kind) == "system"
-        paused(3, ctl.PLAYER_PAUSED_SYSTEM)
+        paused(2, ctl.PLAYER_PAUSED_SYSTEM)
         assert not any("player" in b or "pausad" in b for b in balloons)                     # sem balão
     finally:
         c.emergency_stop()
