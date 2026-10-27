@@ -401,6 +401,8 @@ class _Plan:
             if not self._gate():
                 return
             texts = [chunker.embed_input(str(r.get("title") or ""), self.date, str(r["text"])) for r in rows]
+            log.debug("reunião %s: lote %d de %d de embeddings começando (%d trecho(s), %s)", self.meeting_id, idx + 1,
+                      len(self.batches), len(rows), self.key)
             t0 = time.perf_counter()
             try:
                 emb = await provider.embed(texts, model=self.model, dim=self.dim, task=EmbedTask.DOCUMENT)
@@ -445,6 +447,8 @@ class _Plan:
             refresh_mu(self.store, self.key, self.dim)
         self.result.written += written
         self.result.batches += 1
+        log.debug("reunião %s: lote de embeddings gravado: %d vetor(es) em %d ms (%d de %d no total)", self.meeting_id, written,
+                  latency, self.result.written, self.result.wanted)
         if self.on_progress is not None:
             self.on_progress(self.result.written, self.result.wanted)
 

@@ -210,10 +210,11 @@ class Store:
         LLM (glossário, resumo parcial ao vivo) ficam sem a reunião e sem o conteúdo: o custo do mês continua certo (F4)."""
         self.core.audio_schema_for_meeting(meeting_id)     # anexa fora da transação
         with self.core.transaction():
-            self.audio.delete_chunks(meeting_id)
+            chunks = self.audio.delete_chunks(meeting_id)
             self.llm_calls.detach_meeting(meeting_id)
             self.meetings.delete_meeting_row(meeting_id)
         self.core.forget_meeting(meeting_id)
+        log.info("reunião %s apagada pelo usuário (%s pedaço(s) de áudio)", meeting_id, chunks)
 
     # ---------------------------------------------------------------- pedaços
     def insert_chunk(self, meeting_id: int, channel: str, idx: int, t_start_ms: int, frames: int,

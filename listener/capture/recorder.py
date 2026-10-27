@@ -398,9 +398,11 @@ class Recorder:
             old, self._r_handle = self._r_handle, None
             if old is not None:
                 old.stop()                                # um callback tardio da antiga é ignorado pelo id da fonte
-            self._open_source(spec)
+            ok = self._open_source(spec)
         self.sink.add_event(self.meeting_id, self._ms(), EventType.SOURCE_CHANGE,
                             {"kind": str(self.source.kind), "exe": self.source.exe, "pid": self.source.pid})
+        log.info("reunião %s: fonte do canal R trocada para %s em %d ms (%s)", self.meeting_id, self.source.log_text(), self._ms(),
+                 "aberta" if ok else "não abriu")
 
     def check_devices(self) -> None:
         """Chamada periódica da interface (M-09): registra `device_lost` e tenta reabrir a cada 5 s pelo id estável."""
@@ -436,18 +438,21 @@ class Recorder:
             self.paused = True
             self._post(_Flags(True, self.muted))
             self.sink.add_event(self.meeting_id, self._ms(), EventType.PAUSE, {})
+            log.info("reunião %s: gravação pausada em %d ms", self.meeting_id, self._ms())
 
     def resume(self) -> None:
         if self.paused:
             self.paused = False
             self._post(_Flags(False, self.muted))
             self.sink.add_event(self.meeting_id, self._ms(), EventType.RESUME, {})
+            log.info("reunião %s: gravação retomada em %d ms", self.meeting_id, self._ms())
 
     def set_muted(self, muted: bool, source: str = "app") -> None:
         if muted != self.muted:
             self.muted = muted
             self._post(_Flags(self.paused, muted))
             self.sink.add_event(self.meeting_id, self._ms(), EventType.MUTE if muted else EventType.UNMUTE, {"source": source})
+            log.info("reunião %s: microfone %s em %d ms (pelo %s)", self.meeting_id, "mudo" if muted else "de volta", self._ms(), source)
 
     def mark(self, note: str = "", t_ms: int | None = None, origin: str | None = None) -> int:
         """Marcador agora ou num instante já gravado (F4 U-022 e U-023: `t_ms` da legenda ou do item do resumo parcial, com a
@@ -459,6 +464,8 @@ class Recorder:
             data["origin"] = origin
         self.sink.add_event(self.meeting_id, t_ms, EventType.MARKER, data)
         self.markers += 1
+        log.info("reunião %s: marcador %s em %d ms (%s; nota com %d caractere(s))", self.meeting_id, marker_id, t_ms,
+                 origin or "atalho", len(note))                  # a nota é texto do usuário: só o tamanho
         return t_ms
 
     def stop(self) -> dict[str, Any]:

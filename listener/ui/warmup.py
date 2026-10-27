@@ -395,13 +395,19 @@ class WarmupDialog(QDialog):
 
     def _check_echo(self, mic: np.ndarray, r_rate: int | None) -> None:
         """U-016: o microfone está ouvindo a saída? Correlação cruzada entre os 3 s do mic e os 3 s da saída."""
+        spec = self.sources.selected_spec()
         if not self._r_buffer or not r_rate:
+            log.info("teste de 3 s: microfone %.1f s (nível %.4f); a saída (%s) não entregou áudio", len(mic) / 16000, rms(mic),
+                     spec.log_text())
             self.echo_label.setStyleSheet("color: #888;")
             self.echo_label.setText("Eco: a saída não entregou áudio durante o teste (nada tocando?).")
             return
         r = resample(to_mono(np.concatenate(self._r_buffer)), r_rate, 16000)
+        log.info("teste de 3 s: microfone %.1f s (nível %.4f); saída %s %.1f s (nível %.4f)", len(mic) / 16000, rms(mic),
+                 spec.log_text(), len(r) / 16000, rms(r))
         res = estimate_offset(mic, r, 16000)
         if res is None:
+            log.info("teste de eco: sinal insuficiente para correlacionar")
             self.echo_label.setStyleSheet("color: #888;")
             self.echo_label.setText("Eco: sinal insuficiente para testar (fale e deixe a saída tocando).")
             return

@@ -195,6 +195,8 @@ class Controller(QObject):
         self.lease_renew_s = LEASE_RENEW_S
         self._lease_at: float | None = None
         self._worker_spawned_at: dict[bool, float | None] = {False: None, True: None}     # por classe: pesado, leve (F3)
+        self._launch_reason: dict[bool, str | None] = {False: None, True: None}          # o último "não lançado" logado
+        self._notice_meeting: int | None = None              # o próximo balão é sobre esta reunião (o log tira o título)
         self._seen_done: set[int] = set()
         self._no_llm_warned = False
         self._review_offered: set[int] = set()
@@ -304,13 +306,20 @@ class Controller(QObject):
             prewarm_audio()
 
     def notify(self, message: str) -> None:
-        """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06)."""
+        """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06). O log diz o
+        que o usuário viu; o de uma reunião leva o id e o texto sem o título dela (o título pode ter nome de terceiro)."""
+        about, self._notice_meeting = self._notice_meeting, None
+        if about is None:
+            log.info("aviso na bandeja: %s", message)
+        else:
+            log.info("aviso na bandeja sobre a reunião %s: %s", about, message.split(": ", 1)[-1])
         self._notified_meeting = None
         if self.tray is not None:
             self.tray.showMessage("listener-meet", message)
 
     def _notify_meeting(self, message: str, meeting_id: int) -> None:
         """Balão sobre uma reunião: o clique nele abre a reunião (Q6)."""
+        self._notice_meeting = meeting_id
         self.notify(message)
         self._notified_meeting = int(meeting_id)
 
@@ -431,15 +440,18 @@ class Controller(QObject):
     # ---------------------------------------------------------------- gravação
     def open_warmup(self) -> None:
         if self.state != AppState.IDLE or self._warmup_open:
+            log.info("warm-up não abriu: %s", "já está aberto" if self._warmup_open else f"o app está em {self.state.name}")
             self.show_widget()
             return
         self._warmup_open = True
+        log.info("warm-up aberto")
         self._pause_player(PLAYER_PAUSED_WARMUP)          # o teste e os medidores do warm-up não ouvem o player (R7-01)
         try:
             link = LateGlossaryLink(self.store)
             dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add)
             accepted = dlg.exec() == QDialog.DialogCode.Accepted
             cfg, fields = dlg.result_config() if accepted else (None, {})
+            log.info("warm-up fechado: %s", "Gravar" if accepted else "cancelado")
             # destruído aqui, na thread da interface: se ficasse para o coletor de lixo, uma thread do gravador poderia
             # destruí-lo (segfault do Qt); a resposta tardia do glossário não toca em widgets (F3.1, revisão)
             dlg.deleteLater()
@@ -810,15 +822,21 @@ class Controller(QObject):
         morto à fila (R2-01). O leve (`light`, jobs `llm`) é lançado mesmo durante a gravação (F3A-13). Um `index` que ainda
         espera a edição assentar não conta: o polling da fila lança o leve quando ele vence (R5-07; um leve já vivo espera)."""
         kinds = LIGHT_JOB_KINDS if light else HEAVY_JOB_KINDS
+        active = self.store.jobs.active(kinds=kinds, due_only=True)
+        if not active:
+            self._launch_reason[light] = None                      # nada a fazer: não é motivo de log
+            return False
         if not light and self.recorder is not None:
-            return False                                           # o pesado espera o fim da gravação (Q7)
-        if not self.store.jobs.active(kinds=kinds, due_only=True) or self.store.jobs.held_fresh(kinds=kinds):
-            return False
+            return self._not_launching(light, active, "o pesado espera o fim da gravação")      # Q7
+        held = self.store.jobs.held_fresh(kinds=kinds)
+        if held:
+            return self._not_launching(light, active, f"o job {held[0]['id']} está com um worker vivo (pid {held[0].get('worker_pid')})")
         if self.store.get(SPECS["pipeline.paused_manual"]):
-            return False
+            return self._not_launching(light, active, "a fila está pausada pelo usuário")
         spawned_at = self._worker_spawned_at[light]
         if spawned_at is not None and time.monotonic() - spawned_at < WORKER_SPAWN_COOLDOWN_S:
-            return False
+            return self._not_launching(light, active, "outro foi lançado há pouco e ainda não deu o primeiro heartbeat")
+        self._launch_reason[light] = None
         argv = process.worker_command(light=light)
         env = process.worker_env(1 if light else self.store.get(SPECS["pipeline.torch_threads"]))
         try:
@@ -828,8 +846,18 @@ class Controller(QObject):
             self.notify(f"Não consegui iniciar o processamento: {e}")
             return False
         self._worker_spawned_at[light] = time.monotonic()
-        log.info("worker%s lançado (pid %s): %s", " leve" if light else "", pid, " ".join(argv))
+        log.info("worker%s lançado (pid %s) para %d job(s) ativo(s) (%s): %s", " leve" if light else "", pid, len(active),
+                 ", ".join(f"{j['id']}:{j.get('kind')}" for j in active[:6]), " ".join(argv))
         return True
+
+    def _not_launching(self, light: bool, active: list[Any], reason: str) -> bool:
+        """Por que a fila tem job e nenhum worker sai (a "fila parada" do teste de 27/10): uma linha só quando o motivo muda,
+        não a cada polling."""
+        if self._launch_reason[light] != reason:
+            self._launch_reason[light] = reason
+            log.info("worker%s não lançado: %s; %d job(s) ativo(s) (%s)", " leve" if light else "", reason, len(active),
+                     ", ".join(f"{j['id']}:{j.get('kind')}:{j.get('status')}" for j in active[:6]))
+        return False
 
     def _poll_queue(self) -> None:
         """Lê a fila (um SELECT): tooltip da bandeja, "pronta para revisão", "ata pronta" e relançamento dos workers. Os
@@ -956,6 +984,8 @@ class Controller(QObject):
             dlg.finished.connect(functools.partial(self._review_closed, meeting_id))
             self._reviews[meeting_id] = dlg
             self._review_sigs[meeting_id] = self._clusters_signature(meeting_id)
+            log.info("revisão da reunião %s aberta: %d voz(es), %d pendente(s)", meeting_id, len(dlg.items),
+                     len(review.pending(dlg.items)))
             if not review.pending(dlg.items):
                 log.info("reunião %s: nenhuma voz pendente (tudo confirmado)", meeting_id)
         else:
@@ -977,9 +1007,10 @@ class Controller(QObject):
             (meeting_id, meeting_id, meeting_id, meeting_id, meeting_id, meeting_id))[0]
         return tuple(int(v) for v in row)
 
-    def _review_closed(self, meeting_id: int, _result: int) -> None:
+    def _review_closed(self, meeting_id: int, result: int) -> None:
         dlg = self._reviews.pop(meeting_id, None)
         self._review_sigs.pop(meeting_id, None)
+        log.info("revisão da reunião %s fechada (%s)", meeting_id, "concluída" if result == QDialog.DialogCode.Accepted else "sem concluir")
         if dlg is not None:
             dlg.deleteLater()
         if meeting_id in self._index_edited:                     # fechar a revisão tira a espera das edições (R5-07)
@@ -1003,6 +1034,8 @@ class Controller(QObject):
         `play`, toca dela; senão mostra a aba `tab`. `focus` pede à plataforma para trazer a janela à frente (clique no
         balão: o app está em segundo plano)."""
         win = self._meetings.get(meeting_id)
+        log.info("reunião %s %s (aba %s%s%s)", meeting_id, "aberta" if win is None else "trazida à frente", tab or "padrão",
+                 f", em {t_ms} ms" if t_ms is not None else "", ", tocando" if play else "")
         if win is None:
             win = MeetingWindow(self.store, meeting_id, player=self.player, on_review=self.open_review, on_launch=self.launch_worker,
                                 on_edited=self.on_edited, cascade=len(self._meetings))
@@ -1023,6 +1056,7 @@ class Controller(QObject):
         return win
 
     def _meeting_closed(self, meeting_id: int) -> None:
+        log.info("reunião %s fechada", meeting_id)
         win = self._meetings.pop(meeting_id, None)
         self._meeting_index.pop(meeting_id, None)
         if win is not None:
@@ -1032,6 +1066,7 @@ class Controller(QObject):
         """O Histórico (uma janela só, fechar só esconde): pela bandeja e pelo atalho U-028, que põe o cursor na busca com o
         texto selecionado e traz a janela à frente pela plataforma (no Windows, um atalho global não dá o foco sozinho)."""
         win = self._history
+        log.info("histórico aberto%s", " pelo atalho da busca" if focus_search else "")
         if win is None:
             win = HistoryWindow(self.store, on_open=self._open_from_history, on_edited=self.on_edited)
             self._history = win
@@ -1083,6 +1118,7 @@ class Controller(QObject):
         return answer == QMessageBox.StandardButton.Yes
 
     def open_queue(self) -> None:
+        log.info("fila de processamento aberta")
         if self._queue_dialog is None:
             self._queue_dialog = QueueDialog(self.store, None, on_launch=self.launch_worker, on_open=self.open_transcript,
                                              on_review=self.open_review)
@@ -1494,11 +1530,14 @@ class Controller(QObject):
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
                              recording=self.recorder is not None)
         self._settings_dialog = dlg
+        log.info("configurações abertas%s", " (gravando)" if self.recorder is not None else "")
         try:
             accepted = dlg.exec() == QDialog.DialogCode.Accepted
         finally:
             self._settings_dialog = None
         dlg.deleteLater()
+        log.info("configurações fechadas (%s; as mudanças de valor estão no DEBUG de store.settings)",
+                 "salvas" if accepted else "canceladas")
         if accepted:
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
             from .app import attach_log

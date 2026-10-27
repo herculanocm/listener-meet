@@ -706,6 +706,7 @@ class HistoryPage(QWidget):
                 return rag_search.search(store, query, filters)
         if with_vector and self.result is not None and self.result.query == query:
             self.badge.setText(self.badge.text().split(" · ")[0] + " · buscando por sentido…")
+        log.debug("busca %d: %d caractere(s), %s", gen, len(query), "palavras e sentido" if with_vector else "palavras")
         self._start(fn, functools.partial(self._on_search, gen))
         if with_vector:
             self._watch_local()                          # o vetor da consulta pode reabrir a sessão do e5 solta antes
@@ -714,8 +715,10 @@ class HistoryPage(QWidget):
         if self._closed or gen != self._gen:
             return                                       # resultado velho: o usuário já digitou outra coisa
         if isinstance(result, BaseException):
+            log.warning("busca %d falhou: %s", gen, type(result).__name__)
             self.badge.setText(f"<span style='color:{OVERDUE_COLOR}'>a busca falhou: {html.escape(str(result))}</span>")
             return
+        log.info("busca %d: %d trecho(s) de %d reunião(ões)", gen, len(result.hits), len({h.meeting_id for h in result.hits}))
         self.show_result(result)
 
     def show_result(self, result: SearchResult) -> None:
@@ -893,6 +896,7 @@ class HistoryPage(QWidget):
         self.btn_new.setEnabled(False)
         self.threads.setEnabled(False)
         self.chat_status.setText("procurando nas reuniões…")
+        log.info("chat global: pergunta enviada (%d caracteres; conversa %s)", len(text), self.thread_id)   # o texto não (LGPD)
         fn = functools.partial(chat_global.run_global_chat, self.store, self.thread_id, text, self.filters())
         task = run_stream(fn, self.store, self._on_chunk, self._on_chat_done)
         self._watch_local()                              # o vetor da pergunta pode reabrir a sessão do e5 solta antes

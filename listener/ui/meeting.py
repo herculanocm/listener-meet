@@ -279,6 +279,7 @@ class MeetingWindow(QWidget):
             return ""
         md = export.minutes_markdown(data)
         copy_rich(md, markdown_html(md))
+        log.info("reunião %s: ata copiada para a área de transferência (%d caracteres)", self.meeting_id, len(md))
         self.exported.append("ata")
         self.show_message("Ata copiada (texto e formatação).")
         return md
@@ -289,6 +290,7 @@ class MeetingWindow(QWidget):
             return ""
         md = export.transcript_markdown(data)
         copy_rich(md, markdown_html(md))
+        log.info("reunião %s: transcrição copiada para a área de transferência (%d caracteres)", self.meeting_id, len(md))
         self.exported.append("transcricao")
         self.show_message("Transcrição copiada (texto e formatação).")
         return md
@@ -315,14 +317,16 @@ class MeetingWindow(QWidget):
             path += ".md"
         try:
             out = export.write_atomic(path, export.meeting_markdown(data))
-        except OSError as e:
-            log.warning("reunião %s: exportar para %s falhou: %s", self.meeting_id, path, e)
+        except OSError as e:                               # o nome do arquivo traz o título: só a pasta e a extensão no log
+            log.warning("reunião %s: exportar .md em %s falhou: %s", self.meeting_id, Path(path).parent, type(e).__name__)
             QMessageBox.warning(self, "Exportar", export.save_error_text(path, e))
             return None
         self._saved(out)
         return out
 
     def _saved(self, out: Path) -> None:
+        with suppress(OSError):
+            log.info("reunião %s: exportada em %s (%s, %d bytes)", self.meeting_id, out.parent, out.suffix, out.stat().st_size)
         self.exported.append(str(out))
         self.show_message(f"Salvo em {out}.")
 

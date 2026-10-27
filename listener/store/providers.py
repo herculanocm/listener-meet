@@ -9,9 +9,13 @@ from __future__ import annotations
 import json
 from typing import Any, TypedDict, cast
 
+from ..log import get_logger
 from .core import Core, _now
 
+log = get_logger("store.providers")
+
 LLM_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic")
+SHOWN_PROVIDER_FIELDS = frozenset({"model", "fast_model", "strong_model", "base_url", "latency_ms"})   # vão com o valor ao log
 LOCAL_ID = "local"                                    # F5.1: o id e o tipo da linha do embedder local
 PROVIDER_FIELDS = frozenset({"api_key", "model", "params", "fast_model", "strong_model", "models_json", "tested_at", "latency_ms",
                              "base_url"})
@@ -62,12 +66,17 @@ class ProvidersRepo:
         self.core.execute("INSERT OR IGNORE INTO providers(id, kind, updated_at) VALUES (?, ?, ?)", (provider_id, provider_id, _now()))
         if not fields:
             return
+        log.info("provedor %s atualizado: %s", provider_id, ", ".join(
+            (f"api_key {'definida' if fields[k] else 'apagada'}" if k == "api_key" else
+             f"{k} = {fields[k]!r}" if k in SHOWN_PROVIDER_FIELDS else k) for k in fields))      # a chave nunca vai para o log
         cols = ", ".join(f"{k} = ?" for k in fields)
         values = [json.dumps(v, ensure_ascii=False) if isinstance(v, dict | list) else v for v in fields.values()]
         self.core.execute(f"UPDATE providers SET {cols}, updated_at = ? WHERE id = ?", (*values, _now(), provider_id))  # noqa: S608
 
     def set_active(self, provider_id: str, *, llm: bool | None = None, embed: bool | None = None) -> None:
         """Um ativo por papel: `UPDATE providers SET is_active_llm = (id = ?)` (F3A-07); False desativa todos."""
+        log.info("provedor %s: ativo para texto %s, para embeddings %s", provider_id, "—" if llm is None else ("sim" if llm else "não"),
+                 "—" if embed is None else ("sim" if embed else "não"))
         with self.core.transaction():
             for flag, col in ((llm, "is_active_llm"), (embed, "is_active_embed")):
                 if flag is None:
@@ -80,6 +89,7 @@ class ProvidersRepo:
     def set_role(self, role: str, provider_id: str | None) -> None:
         """O ativo do papel numa instrução só (A-01): `provider_id` passa a ser o único ativo; None (ou vazio) zera o papel."""
         col = ROLES[role]
+        log.info("provedor ativo para %s: %s", "texto" if role == "llm" else "embeddings", provider_id or "nenhum")
         if provider_id:
             self.core.execute(f"UPDATE providers SET {col} = (id = ?)", (provider_id,))  # noqa: S608
         else:

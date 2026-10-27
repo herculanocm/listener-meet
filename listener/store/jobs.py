@@ -256,10 +256,17 @@ class JobsRepo:
         limit = _before(now, stale_s)
         clause, params = _kinds(kinds)
         with self.core.transaction() as c:
+            for r in c.execute("SELECT id, kind, worker_pid, heartbeat_at, attempts FROM processing_jobs WHERE status IN (?, ?) "
+                               "AND (heartbeat_at IS NULL OR julianday(heartbeat_at) < julianday(?))", (*HELD, limit)).fetchall():
+                log.warning("job %s (%s) devolvido à fila: o worker %s parou sem concluir (último heartbeat %s; tentativa %d de %d)",
+                            r["id"], r["kind"], r["worker_pid"], r["heartbeat_at"], int(r["attempts"]) + 1, int(max_attempts))
             c.execute("UPDATE processing_jobs SET status = ?, attempts = attempts + 1, worker_pid = NULL, "
                       "error = COALESCE(error, 'worker parou sem concluir') "
                       "WHERE status IN (?, ?) AND (heartbeat_at IS NULL OR julianday(heartbeat_at) < julianday(?))",
                       (JobStatus.PENDING, *HELD, limit))
+            for r in c.execute("SELECT id, kind, attempts FROM processing_jobs WHERE status = ? AND attempts >= ?",
+                               (JobStatus.PENDING, int(max_attempts))).fetchall():
+                log.error("job %s (%s): tentativas esgotadas (%d); fica com erro", r["id"], r["kind"], r["attempts"])
             c.execute("UPDATE processing_jobs SET status = ?, finished_at = ?, error = COALESCE(error, '') || ' (tentativas esgotadas)' "
                       "WHERE status = ? AND attempts >= ?", (JobStatus.ERROR, now, JobStatus.PENDING, int(max_attempts)))
             row = c.execute(
@@ -308,9 +315,11 @@ class JobsRepo:
                           (JobStatus.CANCELLED, _now(), job_id, JobStatus.PENDING)).rowcount
             if n:
                 c.execute("DELETE FROM job_artifacts WHERE job_id = ?", (job_id,))
+                log.info("job %s cancelado na fila (estava pendente)", job_id)
                 return JobStatus.CANCELLED
             c.execute("UPDATE processing_jobs SET cancel_requested = 1 WHERE id = ? AND status IN (?, ?)", (job_id, *HELD))
             row = c.execute("SELECT status FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
+        log.info("job %s: cancelamento pedido (%s; o worker atende entre as etapas)", job_id, row[0] if row is not None else "sumiu")
         return JobStatus(str(row[0])) if row is not None else None
 
     def cancel_requested(self, job_id: int) -> bool:
@@ -320,10 +329,13 @@ class JobsRepo:
     def retry(self, job_id: int, reset_config: bool = False) -> bool:
         """"Tentar de novo": erro ou cancelado volta a `pendente` com as tentativas zeradas; artefatos ficam (retomada).
         `reset_config` descarta o snapshot (`config_json`): o job `llm` passa a usar o provedor ativo (F3 item 15)."""
-        return self.core.execute("UPDATE processing_jobs SET status = ?, attempts = 0, error = NULL, cancel_requested = 0, "
-                                 "finished_at = NULL, worker_pid = NULL, config_json = CASE WHEN ? THEN NULL ELSE config_json END "
-                                 "WHERE id = ? AND status IN (?, ?)",
-                                 (JobStatus.PENDING, int(bool(reset_config)), job_id, JobStatus.ERROR, JobStatus.CANCELLED)) > 0
+        ok = self.core.execute("UPDATE processing_jobs SET status = ?, attempts = 0, error = NULL, cancel_requested = 0, "
+                               "finished_at = NULL, worker_pid = NULL, config_json = CASE WHEN ? THEN NULL ELSE config_json END "
+                               "WHERE id = ? AND status IN (?, ?)",
+                               (JobStatus.PENDING, int(bool(reset_config)), job_id, JobStatus.ERROR, JobStatus.CANCELLED)) > 0
+        log.info("job %s: tentar de novo %s%s", job_id, "aceito (volta pendente)" if ok else "ignorado (não estava com erro nem cancelado)",
+                 ", com a configuração atual" if ok and reset_config else "")
+        return ok
 
     # ---------------------------------------------------------------- artefatos (dado derivado; CP9: no SQLite)
     def put_artifact(self, job_id: int, step: JobStep | str, idx: int, data: bytes) -> None:

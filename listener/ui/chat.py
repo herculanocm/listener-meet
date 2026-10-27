@@ -95,6 +95,7 @@ class ChatPanel(QWidget):
         self.btn_ask.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.status.setText("perguntando…")
+        log.info("chat da reunião %s: pergunta enviada (%d caracteres)", self.meeting_id, len(text))   # o texto não (LGPD)
         fn = functools.partial(chat_task.run_chat, self.store, self.meeting_id, text)
         self.task = run_stream(fn, self.store, self._on_chunk, self._on_done)
 

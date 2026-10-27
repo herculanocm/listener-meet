@@ -894,6 +894,8 @@ class Player(QObject):
             except Exception as e:  # o player toca mesmo assim, na saída que já conhecia
                 log.debug("player: reler os dispositivos: %s", e)
         self.requests.append(req)
+        log.info("player: tocar a reunião %s de %s%s%s", req.meeting_id, fmt_mmss(req.t_ms / 1000),
+                 f" até {fmt_mmss(req.end_ms / 1000)}" if req.end_ms is not None else "", f" (canal {req.channel})" if req.channel else "")
         self.engine.play(req)
         self._kick()
         return True
@@ -902,11 +904,14 @@ class Player(QObject):
         """Pausa ou retoma o que estiver carregado; False quando não há nada (ou o `guard` recusou retomar)."""
         st = self.state()
         if st.state == PLAYING:
+            log.info("player: pausar a reunião %s em %s", st.meeting_id, fmt_mmss(st.t_ms / 1000))
             self.engine.pause()
         elif st.state == PAUSED and st.meeting_id is not None:
             req = PlayRequest(st.meeting_id, st.t_ms, title=st.title)
             if self.guard is not None and not self.guard(req):
+                log.info("player: retomar a reunião %s recusado (a gravação capta o sistema inteiro)", st.meeting_id)
                 return False
+            log.info("player: retomar a reunião %s de %s", st.meeting_id, fmt_mmss(st.t_ms / 1000))
             self.engine.resume()
         else:
             return False
@@ -920,6 +925,8 @@ class Player(QObject):
         st = self.state().state
         if st not in (PLAYING, PAUSED):
             return False
+        log.info("player: pausar a reunião %s (%s%s)", self.state().meeting_id, notice or "sem aviso",
+                 "; o fluxo de saída é solto" if release else "")
         self.engine.pause(notice, release)
         self._kick()
         return st == PLAYING
@@ -939,6 +946,7 @@ class Player(QObject):
 
     def seek(self, delta_ms: int) -> None:
         if self.state().active:
+            log.debug("player: %+d s na reunião %s", delta_ms // 1000, self.state().meeting_id)
             self.engine.seek(delta_ms)
             self._kick()
 
@@ -948,6 +956,7 @@ class Player(QObject):
         if meeting_id is not None and st.meeting_id != meeting_id:
             return
         if st.active or self.engine.alive:
+            log.info("player: parar a reunião %s em %s", st.meeting_id, fmt_mmss(st.t_ms / 1000))
             self.engine.stop()
             self._kick()
 

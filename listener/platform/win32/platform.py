@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, override
 
@@ -42,6 +43,11 @@ STD_OUTPUT_HANDLE = -11 & 0xFFFFFFFF                   # (DWORD)-11
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
 ROLE_CONSOLE, ROLE_COMMUNICATIONS = 0, 2               # ERole do Core Audio (U-043: os padrões entram na assinatura)
+SLOW_LIST_APPS_MS = 500.0      # a lista de apps com som acima disto vai para o log mesmo sem mudar
+# SetConsoleCtrlHandler: o que fechou o terminal do app (os demais encerram o processo em ~5 s sem passar pelo "Sair")
+CTRL_EVENTS = {0: "Ctrl+C no terminal do app", 1: "Ctrl+Break no terminal do app", 2: "o terminal do app foi fechado",
+               5: "o usuário saiu do Windows", 6: "o Windows está desligando"}
+_CONSOLE_HANDLERS: list[Any] = []                      # o callback precisa viver o processo inteiro (o ctypes não o segura)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
 MUTE_RETRY_S = 30.0            # após falhar a busca do endpoint do mudo, só tenta de novo depois disto
 
@@ -155,6 +161,38 @@ def _capture_endpoints() -> list[tuple[str, str, Any]]:
         except Exception as e:
             log.debug("endpoint ilegível: %s", e)
     return out
+
+
+def _log_console_events() -> None:
+    """Fechar o terminal que hospeda o app, sair do Windows ou desligá-lo encerra o processo em ~5 s sem passar pelo "Sair"
+    (o app sumia do log sem o "app encerrado", pergunta 9 da D-055): aqui o motivo vai para o log antes. O handler devolve
+    False: o tratamento padrão segue (encerrar; o Ctrl+C vira o KeyboardInterrupt do Python)."""
+    if sys.platform != "win32":
+        return
+    from ctypes import wintypes
+
+    from ...log import flush
+
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+    def handler(event: int) -> bool:
+        what = CTRL_EVENTS.get(int(event), f"evento de console {event}")
+        if int(event) in (0, 1):
+            log.info("%s", what)
+        else:
+            log.warning("app encerrando: %s (sem passar pelo Sair; uma gravação em curso fica interrompida e é preservada)", what)
+        with suppress(Exception):
+            flush()
+        return False
+
+    callback = proto(handler)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.SetConsoleCtrlHandler.argtypes = (proto, wintypes.BOOL)
+    k32.SetConsoleCtrlHandler.restype = wintypes.BOOL
+    if k32.SetConsoleCtrlHandler(callback, True):
+        _CONSOLE_HANDLERS.append(callback)
+    else:
+        log.debug("SetConsoleCtrlHandler: erro %s (sem console?)", ctypes.get_last_error())
 
 
 def _endpoint_signature() -> tuple[Any, ...] | None:
@@ -342,6 +380,7 @@ class Win32Platform(Platform):
         self._devices_cache: tuple[float, list[AudioDevice]] | None = None
         self._audio_signature: tuple[Any, ...] | None = None    # U-043: os endpoints na última leitura do PortAudio
         self._indices: dict[str, int] = {}                       # id -> índice nesta leitura do PortAudio (A-02)
+        self._apps_sig: tuple[tuple[int, str], ...] | None = None   # o último conjunto de apps com som que foi para o log
         self._procs_cache: tuple[float, dict[int, processes.ProcInfo], dict[int, str]] | None = None
 
     # ---------------------------------------------------------------- processo
@@ -355,6 +394,7 @@ class Win32Platform(Platform):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
         except Exception as e:
             log.debug("AppUserModelID: %s", e)
+        _log_console_events()
 
     @override
     def keep_awake(self, on: bool) -> bool:
@@ -539,7 +579,14 @@ class Win32Platform(Platform):
                 apps.append(PlayingApp(pid=root, exe=exe, title=title, peak=peak, is_meeting_app=meeting))
             apps.sort(key=lambda a: (not a.is_meeting_app, -a.peak, a.exe.lower()))
         self.last_list_apps_ms = (time.perf_counter() - t0) * 1000
-        log.debug("list_playing_apps: %d sessões, %d apps em %.0f ms", len(sessions), len(apps), self.last_list_apps_ms)
+        sig = tuple(sorted((a.pid, a.exe) for a in apps))
+        if sig != self._apps_sig:                          # uma linha quando a lista muda, não a cada 0,5 s do warm-up
+            self._apps_sig = sig
+            log.debug("apps com som mudaram: %s (%d sessões, %.0f ms)",
+                      ", ".join(f"{a.exe} (pid {a.pid}, pico {a.peak:.2f})" for a in apps) or "nenhum", len(sessions),
+                      self.last_list_apps_ms)
+        elif self.last_list_apps_ms > SLOW_LIST_APPS_MS:
+            log.debug("lista de apps com som lenta: %.0f ms (%d sessões)", self.last_list_apps_ms, len(sessions))
         return apps
 
     # ---------------------------------------------------------------- captura

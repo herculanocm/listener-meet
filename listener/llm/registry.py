@@ -9,6 +9,7 @@ import asyncio
 import importlib
 import os
 import random
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -226,9 +227,19 @@ class RetryingProvider:
         return req, replace(comp, usage=first.usage + comp.usage)
 
     async def _with_retries(self, req: Request) -> Completion:
-        return await self._retrying(lambda: self.inner.complete(req), req.timeout_s)
+        """Toda chamada de texto passa aqui: o começo vai para o DEBUG (a última linha antes de uma chamada presa, D-058) e o
+        fim para o INFO com latência, tokens e o motivo do fim; nunca o conteúdo (LGPD)."""
+        log.debug("%s: %s começando (%s; %d mensagem(ns), %d caracteres, teto de saída %d, prazo %.0f s)", self.id, req.task,
+                  req.model, len(req.messages), sum(len(m.text) for m in req.messages), req.max_output_tokens, req.timeout_s)
+        t0 = time.perf_counter()
+        comp = await self._retrying(lambda: self.inner.complete(req), req.timeout_s, str(req.task))
+        u = comp.usage
+        log.info("%s: %s respondeu em %d ms (%s; entrada %d, saída %d, cache %d tokens; fim %s)", self.id, req.task,
+                 int((time.perf_counter() - t0) * 1000), comp.model or req.model, u.input_tokens, u.output_tokens, u.cached_tokens,
+                 comp.finish)
+        return comp
 
-    async def _retrying[T](self, call: Callable[[], Awaitable[T]], timeout_s: float) -> T:
+    async def _retrying[T](self, call: Callable[[], Awaitable[T]], timeout_s: float, what: str = "chamada") -> T:
         for attempt in range(self.attempts):
             try:
                 async with asyncio.timeout(timeout_s):
@@ -236,6 +247,8 @@ class RetryingProvider:
             except Exception as e:  # o adaptador traduz os erros do SDK; o resto cai em `classify_exception`
                 err = classify_exception(e)
                 if not err.retryable or attempt == self.attempts - 1:
+                    log.warning("%s: %s falhou na tentativa %d de %d, sem nova tentativa (%s): %s", self.id, what, attempt + 1,
+                                self.attempts, type(err).__name__, redact.GLOBAL.redact(str(err)))
                     raise err from (e if e is not err else None)
                 self.retries += 1
                 delay = self._delay(attempt, err)
@@ -262,7 +275,13 @@ class RetryingProvider:
         return self.inner.stream(req)
 
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
-        return await self._retrying(lambda: self.inner.embed(texts, model=model, dim=dim, task=task), EMBED_TIMEOUT_S)
+        log.debug("%s: embeddings começando (%s, %s; %d texto(s), %d caracteres)", self.id, model, task, len(texts),
+                  sum(len(t) for t in texts))
+        t0 = time.perf_counter()
+        emb = await self._retrying(lambda: self.inner.embed(texts, model=model, dim=dim, task=task), EMBED_TIMEOUT_S,
+                                   f"embeddings ({task})")
+        log.debug("%s: embeddings em %d ms (%d vetor(es))", self.id, int((time.perf_counter() - t0) * 1000), len(texts))
+        return emb
 
     async def count_tokens(self, req: Request) -> int | None:
         try:
@@ -275,7 +294,11 @@ class RetryingProvider:
         return await self.inner.list_models()
 
     async def test_connection(self, model: str) -> ConnectionTest:
-        return await self.inner.test_connection(model)
+        log.debug("%s: teste de conexão começando (%s)", self.id, model)
+        result = await self.inner.test_connection(model)
+        log.info("%s: teste de conexão %s em %s ms (%s)%s", self.id, "ok" if result.ok else "falhou", result.latency_ms,
+                 result.model or model, "" if result.ok else f": {redact.GLOBAL.redact(result.error or '')}")
+        return result
 
     async def aclose(self) -> None:
         await self.inner.aclose()
