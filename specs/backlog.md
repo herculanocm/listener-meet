@@ -2,8 +2,9 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (26/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Próximo passo, comece aqui:** o dono testa pelo roteiro `specs/roteiro-teste-windows.md` (partes 1 a 9: primeiro
+## Onde paramos (27/10/2026, Windows nativo; tudo commitado; push do dono)
+- **Próximo passo, comece aqui:** o dono testa a F5.2 pela Parte 10 do roteiro (fone conectado com o app aberto, ficha
+  da pessoa, a ata depois da identificação, log em DEBUG) e segue as partes 1 a 9: primeiro
   uso, chaves, gravação curta de ponta a ponta, reunião aberta, busca com o Gemini, busca local, ao vivo, reuniões reais
   e situações de borda) e devolve o que cada parte pede; a LLM registra os números em `decisoes.md`, marca aqui e
   corrige o que aparecer (pedido do dono, 25/10: a LLM roda sozinha o que não depende dele e o acompanha no resto). Sem
@@ -40,8 +41,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         dava ao interpretador um console visível no Windows Terminal); o worker nasce sem janela e continua vivo depois
         do app. Também: o custo do Gemini 3 pela família de preço (saía nulo) e o nome da pessoa e o texto falado fora
         do log.
-- **Em andamento (27/10): F5.2** (`features/F5.2-pessoas-ata-dispositivos.md`, aprovada em D-057): L1 U-043 (dispositivo
-  novo sem reiniciar), L2 U-041 (ficha da pessoa, editar e apagar) e L3 U-042 (a ata depois da identificação).
+  - [x] **F5.2 implementada** (27/10, `features/F5.2-pessoas-ata-dispositivos.md`, D-057): spec com a revisão de
+        arquitetura (`379f6af`), L1 U-043 (`4bcc056` checkpoint do dono, `c969137`, `20cfe40`), L2 U-041 (`8b0834a`) e
+        L3 U-042 (`5bc4505`). Falta o dono verificar no Windows (Parte 10 do roteiro).
+  - [x] D-058, do terceiro teste: o worker leve preso 52 min na verificação de certificado do Windows parava a fila; o
+        vigia do laço faz o worker sair e o app o relança (`4bcc056`).
+  - [x] D-059, a pedido do dono: logs para acompanhar e validar cada execução, com a convenção em `ARCHITECTURE.md`
+        (`4d4102d`, `3f1cb65`); o terminal fechado com o app aberto passa a deixar a linha no log (conferido).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -57,12 +63,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
      quedas do job da reunião 2 (26/10, 15:35 e 15:36) e na do terceiro teste (17:27:55)? E o app que fechou sem o "app
      encerrado": foi o terminal dele que se fechou? (padrão: sim aos dois; se não, investigar o antivírus/EDR).
   10. Além das janelas pretas (D-056) e da revisão (U-039), alguma outra janela ainda sobe por cima? (padrão: nenhuma).
+  11. F5.2, pergunta 1: a transcrição revisada sai junto com a identidade, antes da ata (sim; adotado).
+  12. F5.2, pergunta 2: "Nova pessoa" com um nome que já existe pergunta "é ela?" (sim; adotado).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
-## Estado em 26/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5 e **F5.1 implementadas**: 460 testes mais 7 pulados no Windows com
+## Estado em 27/10/2026
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1 e **F5.2 implementadas**: 492 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.

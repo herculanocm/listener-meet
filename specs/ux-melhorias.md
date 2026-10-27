@@ -4,7 +4,7 @@ Quando ler: ao escrever a spec de uma fase (T2). U-001 a U-015 aprovadas em 24/1
 implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047), U-025, U-008 e o .docx do U-011 na
 F5.1 (26/10); U-030 a U-033, vistas no Windows, aprovadas e implementadas em 26/10 (D-049); U-034 a U-036 propostas nas
 telas da F5.1 (26/10); U-037 e U-038 pedidas pelo dono no primeiro teste e implementadas (D-053, D-054); U-039 e
-U-040 do segundo teste (D-055); U-041 a U-043 do brainstorm de 27/10, aprovadas para a F5.2 (D-057).
+U-040 do segundo teste (D-055); U-041 a U-043 do brainstorm de 27/10, aprovadas (D-057) e implementadas na F5.2.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -47,6 +47,6 @@ Tamanho-alvo: 3 KB.
 | U-038 | O assistente da primeira inicialização pede, logo depois da pasta do banco, a LLM (Gemini, GPT ou Claude) com a chave e o "Testar conexão", e o token do Hugging Face, tudo opcional; a escolhida vira a LLM ativa (com o Claude, a busca por sentido fica na local) | Assistente | implementada (D-054) |
 | U-039 | A revisão de falantes só abre sozinha com voz a confirmar; sem nenhuma, o aviso diz "processada, sem voz a confirmar" e nenhuma janela sobe por cima | Bandeja, Revisão | implementada (D-055) |
 | U-040 | "Apps tocando agora" com uma linha por app (o Teams novo aparecia dividido e a linha marcada não tinha o som da chamada) | Warm-up | implementada (D-055) |
-| U-041 | Ficha da pessoa ao nomear a voz: nome, cargo, empresa e e-mail; editar e apagar pessoa; a LLM e a busca com o cargo de quem fala (o e-mail fica local) | Revisão | aprovada (F5.2, D-057) |
-| U-042 | A ata, o executivo, o pré-resumo e o título só depois de as vozes serem identificadas (a identidade por contexto e a transcrição revisada saem antes), com "Gerar ata mesmo assim"; "Atualizar a ata com os nomes" quando eles mudam depois | Revisão, Reunião aberta | aprovada (F5.2, D-057) |
-| U-043 | Dispositivo de áudio conectado com o app aberto (fone Bluetooth) aparece sem reiniciar; o "Antes de gravar" atualiza a lista sozinho | Warm-up, Assistente | aprovada (F5.2, D-057) |
+| U-041 | Ficha da pessoa ao nomear a voz: nome, cargo, empresa e e-mail; editar e apagar pessoa; a LLM e a busca com o cargo de quem fala (o e-mail fica local) | Revisão | implementada (F5.2) |
+| U-042 | A ata, o executivo, o pré-resumo e o título só depois de as vozes serem identificadas (a identidade por contexto e a transcrição revisada saem antes), com "Gerar ata mesmo assim"; "Atualizar a ata com os nomes" quando eles mudam depois | Revisão, Reunião aberta | implementada (F5.2) |
+| U-043 | Dispositivo de áudio conectado com o app aberto (fone Bluetooth) aparece sem reiniciar; o "Antes de gravar" atualiza a lista sozinho | Warm-up, Assistente | implementada (F5.2) |

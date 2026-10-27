@@ -150,6 +150,23 @@ Precisa da Parte 2 e de ao menos uma reunião processada.
       `listener.log` tem "encerramento durante a gravação … parando sem diálogo".
 - Devolva: o que não se comportou assim.
 
+## Parte 10 — F5.2: fone novo, ficha da pessoa e a ata depois das vozes (20 min)
+Antes: Configurações › Log no nível DEBUG (D-059: cada execução fica no log, sem nome, fala, e-mail nem chave).
+- [ ] Com o "Antes de gravar" aberto, ligue o fone Bluetooth: em até 3 s ele aparece no combo do microfone com o aviso
+      "novo: …", sem fechar o warm-up; desligue: o combo volta e, se ele estava escolhido, cai no padrão com aviso.
+- [ ] Grave uma reunião curta com alguém do outro lado. No fim, o balão diz "pronta para revisão de falantes; a ata sai
+      depois que as vozes forem identificadas" e a aba da ata diz que ela espera N voz(es).
+- [ ] Na revisão, N (nova pessoa) abre a ficha: nome, cargo, empresa e e-mail. Repita um nome que já existe: o app
+      pergunta "é ela?". Ao confirmar a última voz, a ata sai sozinha pela fila.
+- [ ] Na reunião aberta, a ata e a transcrição mostram "Nome — Cargo". Edite a ficha (E) e mude o cargo: a aba da ata
+      diz "Os nomes mudaram depois desta ata" e "Atualizar a ata com os nomes" refaz pela fila.
+- [ ] "Gerar ata mesmo assim", numa reunião com voz sem nome, gera a ata sem esperar.
+- [ ] Apagar pessoa (E › Apagar pessoa…) avisa o que sai e o que fica; depois, as vozes dela voltam a "sem nome".
+- [ ] Feche o terminal do app com ele aberto: o `listener.log` termina com "app encerrando: o terminal do app foi
+      fechado".
+- Devolva: os quatro logs (`listener.log`, `listener-worker.log`, `listener-llm.log`, `listener-live.log`) e o que não se
+  comportou assim.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.

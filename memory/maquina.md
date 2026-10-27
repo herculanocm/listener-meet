@@ -68,7 +68,13 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - O terminal padrão é o Windows Terminal (26/10): um processo de console que nasce sem console para herdar (o
   interpretador que o lançador do venv cria, quando o lançador veio com `DETACHED_PROCESS`) abre uma janela dele, preta
   e vazia com a saída em DEVNULL; fechá-la no X encerra o processo com 0xC000013A, sem log. Só `CREATE_NO_WINDOW` dá ao
-  lançador um console sem janela, que o neto herda (D-056).
+  lançador um console sem janela, que o neto herda (D-056). Desde a D-059 o app registra o fechamento do terminal com um
+  handler de console (`SetConsoleCtrlHandler`): conferido fechando um terminal de verdade (27/10).
+- PortAudio (sounddevice 0.5.6) lê os dispositivos só ao iniciar: reiniciá-lo (`_terminate` e `_initialize`, sem stream
+  aberto) leva ~61 ms; a assinatura dos endpoints pelo Core Audio (pycaw) ~19 ms, com 3 de captura e 2 de saída (27/10).
+- Em 27/10 o worker leve ficou preso 52 min dentro do `CertGetCertificateChain` (truststore, aperto de mão TLS com o
+  Gemini), com 0xc000070a e um access violation no log do faulthandler; o mesmo aperto de mão leva 0,3 s em outro processo
+  (pontual: CryptoAPI ou EDR). O vigia do laço (D-058) corta em 120 s.
 - Word 16 (Office) instalado: dá para conferir um .docx sem o dono pelo COM do PowerShell (instância nova e oculta,
   `[ref]` nos parâmetros por referência no 5.1, fechar sem salvar e conferir que nenhum WINWORD novo sobrou). Arquivo
   aberto no Word: `os.replace` sobre ele dá WinError 5 (26/10).
