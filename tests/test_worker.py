@@ -169,11 +169,14 @@ def test_estimate_uses_seeds_then_measurements():
     assert estimate.rtf_for("diarize", {"diarize:a": 0.9}, "b") == 0.9 and estimate.rtf_for("embed", {}, None) == 0.05
 
 
-def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store):
+def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store, monkeypatch):
     """F3 item 2: `_serve(light=True)` em processo pega só jobs `llm`, escreve `listener-llm.log` e deixa o pesado na fila."""
+    from listener.llm import aio
     from listener.model import JobKind
     from listener.pipeline import worker
     from listener.ui.queue import job_row_texts
+
+    monkeypatch.setattr(aio._Stall, "on_stall", None)              # D-058: o `_serve` liga o vigia; volta desligado no fim
 
     store.set_setting("log.path", str(tmp_path / "logs" / "listener.log"))
     mid = store.create_meeting("Reunião", None, None, None)
@@ -194,3 +197,4 @@ def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store):
     text = (tmp_path / "logs" / "listener-llm.log").read_text(encoding="utf-8")
     assert "papel worker-llm" in text and f"job {llm}" in text
     assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0           # nada a fazer: sai
+    assert aio._Stall.on_stall is worker.exit_stalled                                               # D-058: o vigia ligado

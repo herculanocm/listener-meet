@@ -202,6 +202,7 @@ def test_device_lost_and_back(platform, store, recorder_factory):
     platform.pump(0.3)
     assert rec.health()["L"] == Health.LOST
     rec.check_devices()                                        # registra device_lost e tenta reabrir na hora
+    assert mic.stop_calls == 1                                 # U-043: a stream morta é fechada antes da reabertura
     platform.pump(0.5)
     assert rec.health()["L"] == Health.OK
     rec.stop()

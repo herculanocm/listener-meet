@@ -10,6 +10,8 @@ F5: o leve também roda o `index` (despacho por `kind`); com `--once` nenhum wor
 não deixam um worker solto, F5A-16). O leve não sai ocioso enquanto houver `index` esperando o "não antes de" das edições
 (R5-07): a espera é do job, não do app.
 F5.1: no leve, o embedder local calcula com 2 threads (A-03) e o log de abertura traz as versões de onnxruntime e tokenizers.
+D-058: o vigia dos laços do asyncio (`aio.watched`) fica ligado no worker: uma chamada presa em código nativo por
+`aio.STALL_S` faz o worker gravar o motivo e o traceback e sair; o heartbeat vence, o app relança e o job é retomado.
 """
 from __future__ import annotations
 
@@ -25,7 +27,8 @@ from typing import Any
 
 from ..config import bootstrap
 from ..config.defaults import HF_PROVIDER_ID
-from ..log import attach_file, get_logger, log_versions, setup
+from ..llm import aio
+from ..log import attach_file, dump_all_threads, get_logger, log_versions, setup, shutdown
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..platform.common import paths, process
 from ..store import Store
@@ -43,6 +46,17 @@ LLM_WORKER_LOG = "listener-llm.log"
 ML_DISTS = ("torch", "ctranslate2", "faster-whisper", "pyannote.audio", "huggingface-hub")
 LLM_DISTS = ("google-genai", "openai", "anthropic", "truststore", "httpx", "onnxruntime", "tokenizers")   # F5.1: o embedder local
 LOCAL_EMBED_THREADS = 2              # F5.1 (A-03): o e5 local no worker leve (prioridade baixa); o app usa 1
+EXIT_STALLED = 70                    # D-058: saída pelo vigia do laço (o app relança e o job volta à fila)
+
+
+def exit_stalled(reason: str) -> None:
+    """D-058, o `on_stall` do vigia: o motivo e o traceback de todas as threads vão para o log e o processo sai na hora (a
+    chamada presa não volta; nenhum `finally` a destrava). O heartbeat vence em `STALE_S`, o app relança o worker e o job
+    é retomado (até `MAX_ATTEMPTS`)."""
+    log.error("worker: %s; saindo para o app relançar (o job volta à fila)", reason)
+    dump_all_threads()
+    shutdown()
+    os._exit(EXIT_STALLED)
 
 
 def worker_log_path(store: Store, light: bool = False) -> Path:
@@ -166,6 +180,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
     log_versions({"papel": "worker-llm" if light else "worker", "pid": str(os.getpid()), "banco": str(store.base_dir), **versions})
     lower, memory, spawn = _platform_hooks()
     log.info("prioridade baixa: %s", "ok" if lower() else "não aplicada")
+    aio.configure_stall(exit_stalled)                              # D-058: chamada nativa presa não trava a fila
     if light:                                                      # a sessão só abre no primeiro lote do embedder local
         from ..llm import local_embed
 

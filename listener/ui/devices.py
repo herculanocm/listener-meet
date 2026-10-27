@@ -1,0 +1,76 @@
+"""U-043 (F5.2): o combo do microfone acompanha os dispositivos do sistema sem reiniciar o app. O "Antes de gravar" e a
+página do microfone do assistente chamam `refresh_mics` a cada `REFRESH_MS`: se o Windows ganhou ou perdeu um dispositivo,
+o medidor é fechado (o PortAudio só reinicia sem stream aberto), a lista é relida e o combo é refeito mantendo a escolha
+pelo id (ou o padrão, com aviso); quem chama reabre o medidor."""
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING, NamedTuple
+
+from ..log import get_logger
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QComboBox
+
+    from ..platform.base import AudioDevice, Platform
+
+log = get_logger("ui.devices")
+
+REFRESH_MS = 2000
+
+
+class MicRefresh(NamedTuple):
+    devices: list[AudioDevice]
+    note: str                       # "novo: Fone XYZ", "o microfone escolhido saiu; usando o padrão" ou vazio
+    reopen: bool                    # o medidor foi fechado: quem chama o reabre
+
+
+def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice], *, meter_open: bool,
+                 close_meter: Callable[[], None]) -> MicRefresh | None:
+    """None quando nada mudou (o medidor fica como estava); senão a lista nova, o aviso e se o medidor precisa reabrir."""
+    released = False
+
+    def release() -> None:
+        nonlocal released
+        released = True
+        close_meter()
+
+    try:
+        changed = platform.refresh_audio_devices(1 if meter_open else 0, release)
+    except Exception as e:  # a lista antiga continua valendo
+        log.debug("reler os dispositivos de áudio: %s", e)
+        changed = False
+    if not changed:
+        return MicRefresh(devices, "", True) if released else None
+    try:
+        fresh = platform.list_input_devices()
+        default = platform.default_input_device()
+    except Exception as e:
+        log.warning("listar microfones depois da mudança: %s", e)
+        return MicRefresh(devices, "", released)
+    keep = combo.currentData()
+    kept = fill_mic_combo(combo, fresh, keep, default.id if default else None)
+    old = {d.id for d in devices}
+    notes = [f"novo: {', '.join(d.name for d in fresh if d.id not in old)}"] if any(d.id not in old for d in fresh) else []
+    if keep and not kept:
+        notes.append("o microfone escolhido saiu; usando o padrão")
+    log.info("microfones relidos: %d na lista%s", len(fresh), " (o escolhido saiu)" if keep and not kept else "")
+    return MicRefresh(fresh, "; ".join(notes), released or meter_open)
+
+
+def fill_mic_combo(combo: QComboBox, devices: list[AudioDevice], keep_id: object, default_id: str | None) -> bool:
+    """Refaz o combo sem disparar a troca de microfone; True quando a escolha anterior segue na lista."""
+    combo.blockSignals(True)
+    try:
+        combo.clear()
+        for d in devices:
+            combo.addItem(d.name, d.id)
+        i = combo.findData(keep_id) if keep_id else -1
+        kept = i >= 0
+        if not kept and default_id:
+            i = combo.findData(default_id)
+        combo.setCurrentIndex(max(0, i) if combo.count() else -1)
+    finally:
+        combo.blockSignals(False)
+    combo.setToolTip(combo.currentText())
+    return kept

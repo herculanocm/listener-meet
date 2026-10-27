@@ -242,6 +242,7 @@ class Controller(QObject):
         # F5 L4: player único, reuniões abertas, Histórico e a reunião da última notificação (Q6)
         self.player = Player(store, parent=self)
         self.player.guard = self._confirm_play
+        self.player.before_play = platform.refresh_audio_devices          # U-043: o "Tocar" vai para o fone que chegou
         self._meetings: dict[int, MeetingWindow] = {}
         self._meeting_index: dict[int, int] = {}              # último `index` concluído visto por reunião aberta
         self._history: HistoryWindow | None = None
@@ -1040,9 +1041,10 @@ class Controller(QObject):
 
     def _pause_player(self, notice: str) -> None:
         """R7-01: o som que o player toca não entra no teste do warm-up: pausa, com o aviso na barra do player e no log (sem
-        balão); retomar passa pela confirmação do Q9 (`_confirm_play`)."""
+        balão); retomar passa pela confirmação do Q9 (`_confirm_play`). A pausa solta o fluxo de saída (U-043, A-04): o
+        warm-up pode reler os dispositivos com o fone que chegou; a retomada abre outro."""
         try:
-            if self.player.pause(notice):
+            if self.player.pause(notice, release=True):
                 log.info("player pausado: %s", notice)
         except Exception as e:  # o player nunca impede o warm-up nem a gravação
             log.warning("não consegui pausar o player: %s", e)

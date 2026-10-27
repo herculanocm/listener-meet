@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, override
 
 from ..llm import prompts, redact
+from ..llm.aio import watched
 from ..log import get_logger
 from ..llm.base import LlmError, LLMProvider, ProviderUnavailableError, RequestTooLargeError, classify_exception
 from ..llm.costs import Price, cost_usd, estimate_cost, estimate_tokens, fmt_usd, price_for
@@ -410,7 +411,7 @@ class LlmJobRunner(BaseJobRunner):
         self._prices = self.store.providers.list_prices(self.config.provider_kind or None)
         if any(t != JobStep.TEST for t in self.tasks):
             self.ctx = build_context(self.store, self.meeting_id, self.parent_job_id, self.config.output_language)
-        asyncio.run(self._run_tasks())
+        asyncio.run(watched(self._run_tasks()))           # D-058: laço preso em código nativo não trava a fila
         failed = [o for o in self.outcomes.values() if not o.ok]
         if failed:
             return self._fail_partial(failed)

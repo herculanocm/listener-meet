@@ -8,7 +8,8 @@ F4 (CP6): caixas "Legenda ao vivo" e "Nomes ao vivo" (a segunda só com a primei
 nulo, senão `live.enabled` e `live.names`; "Salvar como preset" grava as duas; modelos ausentes viram um aviso discreto ao
 lado, com link para as Configurações, sem bloquear a gravação (o controlador grava sem ao vivo).
 U-037 (D-053): sem o token do Hugging Face ou sem a chave da LLM ativa, um aviso acima do "Gravar" diz o que não vai sair
-e leva às Chaves de acesso; some quando nada falta, sem bloquear a gravação."""
+e leva às Chaves de acesso; some quando nada falta, sem bloquear a gravação.
+U-043 (F5.2): a cada 2 s, um fone conectado ou removido com o warm-up aberto entra ou sai do combo (`ui/devices.py`)."""
 from __future__ import annotations
 
 import functools
@@ -32,6 +33,7 @@ from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glos
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
+from .devices import REFRESH_MS, refresh_mics
 from .keys import missing_keys, missing_keys_text
 from .live_prepare import missing_models, preparer
 from .meters import LevelMeter
@@ -198,6 +200,9 @@ class WarmupDialog(QDialog):
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._tick)
+        self._devices_timer = QTimer(self)                  # U-043: fone conectado com o warm-up aberto
+        self._devices_timer.setInterval(REFRESH_MS)
+        self._devices_timer.timeout.connect(self._refresh_devices)
         self._silent_ticks = 0
         self._set_live(None, None)                          # padrão das Configurações; um preset salvo sobrescreve
         self._update_keys_note()
@@ -213,6 +218,7 @@ class WarmupDialog(QDialog):
             self._open_mic()
         self.sources.start()
         self._timer.start()
+        self._devices_timer.start()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -233,6 +239,7 @@ class WarmupDialog(QDialog):
 
     def _shutdown(self) -> None:
         self._timer.stop()
+        self._devices_timer.stop()
         self._glossary_timer.stop()
         if self._preparer_connected:                     # `_shutdown` roda mais de uma vez (aceitar e depois fechar)
             self._preparer_connected = False
@@ -314,6 +321,20 @@ class WarmupDialog(QDialog):
             except Exception as e:
                 log.debug("fechar mic do warm-up: %s", e)
             self._mic_handle = None
+
+    def _refresh_devices(self) -> None:
+        """U-043: o fone conectado ou removido com o warm-up aberto entra ou sai do combo, sem reiniciar o app."""
+        if self._testing:
+            return                                         # o teste de 3 s lê o medidor: fica para o próximo ciclo
+        result = refresh_mics(self.platform, self.mic_combo, self._devices, meter_open=self._mic_handle is not None,
+                              close_meter=self._close_mic)
+        if result is None:
+            return
+        self._devices = result.devices
+        if result.note:
+            self.mic_note.setText(result.note)
+        if result.reopen:
+            self._open_mic()
 
     def _close_r(self) -> None:
         if self._r_handle is not None:

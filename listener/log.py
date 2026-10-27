@@ -194,6 +194,14 @@ def _restart_listener(q: Any, handlers: list[logging.Handler]) -> None:
     _state.listener.start()
 
 
+def dump_all_threads() -> None:
+    """O traceback de todas as threads no arquivo do faulthandler (o vigia do laço do worker, antes de sair, D-058)."""
+    f = _state.fault_file
+    if f is not None:
+        with suppress(Exception):
+            faulthandler.dump_traceback(file=f, all_threads=True)
+
+
 def _enable_faulthandler(path: Path) -> None:
     """Crash nativo (ctypes, COM, PortAudio) deixa o traceback no arquivo de log."""
     try:

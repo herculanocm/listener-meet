@@ -281,7 +281,7 @@ def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None 
     O local (F5.1) vai em lotes de `local_embed.BATCH`, um por vez, sem custo (A-04, A-14), e consulta `defer` (a lease da
     gravação) antes de cada lote: verdadeiro encerra a rodada com os vetores adiados (A-06; os pagos não disputam a CPU e
     ignoram `defer`)."""
-    from ..llm.aio import run_async
+    from ..llm.aio import run_async, watched
 
     status = status or embedder_status(store)
     key = status.model_key
@@ -299,7 +299,7 @@ def fill_vectors(store: Store, meeting_id: int, *, provider: LLMProvider | None 
             break
         plan = _Plan(store, meeting_id, key, status.provider_id or parse_model_key(key)[0], date, job_id, list(batched(rows, size)),
                      result, on_progress, check, paused, defer if is_local(key) else None)
-        run_async(plan.run(provider))
+        run_async(watched(plan.run(provider)))                    # D-058: no worker, laço preso não trava a fila
         if plan.stop_exc is not None:
             result.missing = store.rag.count_missing(meeting_id, key)
             raise plan.stop_exc

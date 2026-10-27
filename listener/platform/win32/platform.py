@@ -22,7 +22,7 @@ import numpy as np
 from ...capture.mixer import FrameMixer
 from ...log import get_logger
 from ..base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
-from ..common import paths, process
+from ..common import paths, portaudio, process
 from . import processes
 from .hotkeys import Win32Hotkeys
 
@@ -41,6 +41,7 @@ POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
 STD_OUTPUT_HANDLE = -11 & 0xFFFFFFFF                   # (DWORD)-11
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
+ROLE_CONSOLE, ROLE_COMMUNICATIONS = 0, 2               # ERole do Core Audio (U-043: os padrões entram na assinatura)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
 MUTE_RETRY_S = 30.0            # após falhar a busca do endpoint do mudo, só tenta de novo depois disto
 
@@ -156,6 +157,31 @@ def _capture_endpoints() -> list[tuple[str, str, Any]]:
     return out
 
 
+def _endpoint_signature() -> tuple[Any, ...] | None:
+    """U-043: os endpoints ativos de captura e de saída e os padrões de cada um (console e comunicação), pelo Core Audio:
+    muda quando o Windows ganha ou perde um dispositivo ou troca o padrão (~19 ms, 27/10). None sem pycaw ou se a
+    enumeração falhar (aí nada é relido)."""
+    _com_init()
+    try:
+        from pycaw.constants import DEVICE_STATE, EDataFlow
+        from pycaw.pycaw import AudioUtilities
+
+        enumerator = AudioUtilities.GetDeviceEnumerator()
+        parts: list[Any] = []
+        for flow in (EDataFlow.eCapture.value, EDataFlow.eRender.value):
+            col = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE.ACTIVE.value)
+            parts.append(tuple(sorted(str(col.Item(i).GetId()) for i in range(col.GetCount()))))
+            for role in (ROLE_CONSOLE, ROLE_COMMUNICATIONS):
+                try:
+                    parts.append(str(enumerator.GetDefaultAudioEndpoint(flow, role).GetId()))
+                except Exception:  # nenhum dispositivo desse fluxo conectado: sem padrão
+                    parts.append("")
+        return tuple(parts)
+    except Exception as e:
+        log.debug("assinatura dos endpoints de áudio: %s", e)
+        return None
+
+
 def _endpoint_volume(dev: Any) -> Any:
     ep = getattr(dev, "EndpointVolume", None)
     if ep is not None:
@@ -187,20 +213,24 @@ def _session_pid(session: Any) -> int:
 
 
 class _StreamHandle:
-    """`CaptureHandle`: começa parada; `stop()` é idempotente e silencia o `on_error` de um encerramento nosso."""
+    """`CaptureHandle`: começa parada; `stop()` é idempotente e silencia o `on_error` de um encerramento nosso. A stream
+    que a biblioteca encerrou (dispositivo removido) segue fechável: o `stop()` seguinte a fecha (U-043: aberta, ela
+    segurava o PortAudio e a lista de dispositivos não era relida)."""
 
     def __init__(self, start_fn: Callable[[], None], stop_fn: Callable[[], None], sample_rate: int, channels: int,
-                 on_error: ErrorCallback | None = None):
+                 on_error: ErrorCallback | None = None, close_fn: Callable[[], None] | None = None):
         self._start_fn = start_fn
         self._stop_fn = stop_fn
+        self._close_fn = close_fn                          # a encerrada pela biblioteca só fecha (A-05: `close` já aborta)
         self.sample_rate = sample_rate
         self.channels = channels
         self.on_error = on_error
         self._started = False
-        self._stopped = False
+        self._stopped = False                              # nós paramos: o fim da stream não é erro
+        self._ended = False                                # a biblioteca encerrou a stream (o `on_error` já avisou)
 
     def start(self) -> None:
-        if not self._started and not self._stopped:
+        if not self._started and not self._stopped and not self._ended:
             self._started = True
             self._start_fn()
 
@@ -208,14 +238,14 @@ class _StreamHandle:
         if not self._stopped:
             self._stopped = True
             try:
-                self._stop_fn()
+                (self._close_fn if self._ended and self._close_fn is not None else self._stop_fn)()
             except Exception as e:
                 log.debug("parar stream: %s", e)
 
     def finished(self) -> None:
         """Chamado pela biblioteca quando a stream termina: só é erro se não fomos nós que paramos."""
-        if not self._stopped and self.on_error is not None:
-            self._stopped = True
+        if not self._stopped and not self._ended and self.on_error is not None:
+            self._ended = True
             try:
                 self.on_error("stream encerrada pelo sistema (dispositivo removido?)")
             except Exception as e:
@@ -310,6 +340,8 @@ class Win32Platform(Platform):
         self._mute = _Win32MicMute()
         self.last_list_apps_ms = 0.0
         self._devices_cache: tuple[float, list[AudioDevice]] | None = None
+        self._audio_signature: tuple[Any, ...] | None = None    # U-043: os endpoints na última leitura do PortAudio
+        self._indices: dict[str, int] = {}                       # id -> índice nesta leitura do PortAudio (A-02)
         self._procs_cache: tuple[float, dict[int, processes.ProcInfo], dict[int, str]] | None = None
 
     # ---------------------------------------------------------------- processo
@@ -372,12 +404,15 @@ class Win32Platform(Platform):
         now = time.monotonic()
         if self._devices_cache is not None and now - self._devices_cache[0] < DEVICE_CACHE_S:
             return list(self._devices_cache[1])
+        self.refresh_audio_devices()                       # U-043: o fone conectado com o app aberto entra na lista
         import sounddevice as sd
 
-        apis = sd.query_hostapis()
+        with portaudio.LOCK:
+            apis = sd.query_hostapis()
+            devices = sd.query_devices()
         endpoints = _capture_endpoints()
         out: list[AudioDevice] = []
-        for i, d in enumerate(sd.query_devices()):
+        for i, d in enumerate(devices):
             if d["max_input_channels"] <= 0:
                 continue
             if "WASAPI" not in apis[d["hostapi"]]["name"]:   # MME/DirectSound/WDM-KS duplicam os mesmos microfones
@@ -386,10 +421,37 @@ class Win32Platform(Platform):
             out.append(AudioDevice(id=stable or f"name:{d['name']}", name=d["name"], api="WASAPI",
                                    channels=int(d["max_input_channels"]), sample_rate=int(d["default_samplerate"]), index=i))
         self._devices_cache = (now, out)
+        self._indices = {d.id: d.index for d in out if d.index is not None}
         return list(out)
 
     def _invalidate_devices(self) -> None:
         self._devices_cache = None
+
+    @override
+    def refresh_audio_devices(self, own_streams: int = 0, release: Callable[[], None] | None = None) -> bool:
+        """U-043: relê os dispositivos de áudio quando o Windows ganhou ou perdeu um, ou trocou o padrão, desde a última
+        leitura do PortAudio (que só lê ao iniciar). Só na thread da interface e sem stream aberto além dos `own_streams`
+        de quem pede, que `release` fecha logo antes do reinício (o medidor do warm-up). True quando a lista foi relida
+        (a primeira chamada relê sempre: o PortAudio pode ter iniciado antes de o fone chegar)."""
+        if threading.current_thread() is not threading.main_thread():
+            return False
+        sig = _endpoint_signature()
+        if sig is None or sig == self._audio_signature:
+            return False
+        with portaudio.LOCK:
+            if portaudio.open_streams() > own_streams:
+                return False                               # alguém toca ou grava: fica para a próxima
+            if release is not None:
+                release()
+            if not portaudio.restart():
+                return False
+        first = self._audio_signature is None
+        self._audio_signature = sig
+        self._invalidate_devices()
+        self._indices = {}                                 # o reinício renumera: índice antigo não vale (A-02)
+        if not first:
+            log.info("dispositivos de áudio mudaram: lista relida")
+        return True
 
     @override
     def default_input_device(self) -> AudioDevice | None:
@@ -410,18 +472,12 @@ class Win32Platform(Platform):
         return devs[0]
 
     def _resolve_index(self, device: AudioDevice | None) -> int | None:
-        import sounddevice as sd
-
         if device is None:
             dev = self.default_input_device()
             return dev.index if dev else None
-        if device.index is not None:
-            try:
-                if sd.query_devices(device.index)["name"] == device.name:
-                    return device.index
-            except Exception as e:
-                log.debug("índice %s inválido: %s", device.index, e)
-        self._invalidate_devices()                         # pode ter mudado (dock, USB): enumera de novo
+        if device.index is not None and self._indices.get(device.id) == device.index:
+            return device.index                            # o índice é desta leitura do PortAudio (A-02: o MME repete nomes)
+        self._invalidate_devices()                         # pode ter mudado (dock, USB, reinício): enumera de novo
         found = pick_device(self.list_input_devices(), device.id, device.name)
         if found is None:
             log.warning("microfone %r não está mais nesta máquina; usando o padrão", device.name)
@@ -515,9 +571,10 @@ class Win32Platform(Platform):
             if handle is not None:
                 handle.finished()
 
-        stream = sd.InputStream(device=idx, samplerate=sample_rate, channels=1, dtype="float32",
-                                blocksize=max(160, int(sample_rate * 0.1)), callback=cb, extra_settings=extra,
-                                finished_callback=finished)
+        with portaudio.LOCK:                               # U-043: o reinício do PortAudio não cruza esta abertura
+            stream = portaudio.track(sd.InputStream(device=idx, samplerate=sample_rate, channels=1, dtype="float32",
+                                                    blocksize=max(160, int(sample_rate * 0.1)), callback=cb,
+                                                    extra_settings=extra, finished_callback=finished))
 
         def start() -> None:
             stream.start()
@@ -527,7 +584,7 @@ class Win32Platform(Platform):
             stream.stop()
             stream.close()
 
-        handle = _StreamHandle(start, stop, sample_rate, 1, on_error)
+        handle = _StreamHandle(start, stop, sample_rate, 1, on_error, close_fn=stream.close)
         return handle
 
     def _session_pids(self) -> set[int]:

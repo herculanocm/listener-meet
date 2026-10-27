@@ -320,6 +320,13 @@ class Recorder:
             self._post(_Lost(channel, source, reason))
         return cb
 
+    def _refresh_devices(self) -> None:
+        """U-043 (A-01): antes de reabrir o microfone que caiu, relê os dispositivos (o fone que voltou tem outro índice)."""
+        try:
+            self.platform.refresh_audio_devices()
+        except Exception as e:  # a reabertura segue com a lista que já havia
+            log.debug("reler os dispositivos antes de reabrir o microfone: %s", e)
+
     def _open_mic(self) -> bool:
         sid = self._new_source_id()
         try:
@@ -411,7 +418,14 @@ class Recorder:
                 continue
             st.last_reopen = now
             with self._lock:
-                ok = self._open_mic() if st.name == "L" else self._open_source(self.source)
+                if st.name == "L":
+                    old, self._l_handle = self._l_handle, None
+                    if old is not None:
+                        old.stop()                        # U-043: a stream morta segurava o PortAudio (lista não relida)
+                    self._refresh_devices()               # A-01: o fone que voltou só entra relendo a lista
+                    ok = self._open_mic()
+                else:
+                    ok = self._open_source(self.source)
             if ok:
                 st.lost_since = None
                 log.info("canal %s voltou (%s)", st.name, st.detail)

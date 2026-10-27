@@ -206,14 +206,16 @@ def test_player_signals_guard_and_bar(qtbot, store):
         return False
 
     player.guard = refuse
-    assert player.play_from(mid, 0) is False and not player.requests and len(asked) == 1
+    reread: list[int] = []
+    player.before_play = lambda: reread.append(1)                      # U-043: relê os dispositivos só se vai tocar
+    assert player.play_from(mid, 0) is False and not player.requests and len(asked) == 1 and reread == []
     player.guard = None
     bar = PlayerBar(player, mid, title=lambda: "Sintética", start=lambda: 1000)
     qtbot.addWidget(bar)
     states: list[str] = []
     player.state_changed.connect(lambda st: states.append(st.state))
     bar.toggle()                                                       # nada carregado: começa esta reunião em `start()`
-    assert player.requests[-1] == PlayRequest(mid, 1000, None, None, "Sintética")
+    assert player.requests[-1] == PlayRequest(mid, 1000, None, None, "Sintética") and reread == [1]
     assert states[-1] == PLAYING and bar.btn_play.text() == "Pausar" and "Sintética" in bar.what.text()
     permits.release(2)
     qtbot.waitUntil(lambda: bool(outs.opened) and len(outs.opened[0].chunks) == 2, timeout=3000)

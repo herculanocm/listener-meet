@@ -27,7 +27,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import numpy as np
@@ -38,6 +38,7 @@ from ..capture.audio import StreamResampler, decode_flac, resample
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..model import EventType
+from ..platform.common import portaudio
 from ..store.core import LEGACY_AUDIO_FILE
 
 if TYPE_CHECKING:
@@ -82,9 +83,10 @@ def sounddevice_output() -> OutputStream:
     (sem PortAudio a importação levanta `OSError`, que vira "sem dispositivo de saída")."""
     import sounddevice as sd
 
-    info = sd.query_devices(kind="output")
-    rate = round(float(info["default_samplerate"]))
-    stream: OutputStream = sd.OutputStream(samplerate=rate, channels=1, dtype="float32")
+    with portaudio.LOCK:                                   # U-043: a escritora abre aqui; o reinício não cruza a abertura
+        info = sd.query_devices(kind="output")
+        rate = round(float(info["default_samplerate"]))
+        stream: OutputStream = portaudio.track(sd.OutputStream(samplerate=rate, channels=1, dtype="float32"))
     return stream
 
 
@@ -279,9 +281,11 @@ class _Feed:
 @dataclass(frozen=True, slots=True, eq=False)
 class _Pause:
     """O comando de pausa: o aviso da barra (R7-01) e, quando alguém espera a confirmação, o evento que a escritora acende
-    depois de tratar a pausa: o bloco em voo saiu e o buffer do dispositivo foi descartado (R8-01)."""
+    depois de tratar a pausa: o bloco em voo saiu e o buffer do dispositivo foi descartado (R8-01). `release` (a pausa do
+    warm-up, U-043) também fecha o fluxo: o PortAudio fica livre para reler os dispositivos, e a retomada abre outro."""
     message: str = ""
     done: threading.Event | None = None
+    release: bool = False
 
 
 class _Chunks:
@@ -384,16 +388,16 @@ class PlaybackEngine:
             self._written, self._anchors, self._rate = 0, [(0, int(req.t_ms))], 0
         self._send("play", req)
 
-    def pause(self, message: str = "") -> None:
+    def pause(self, message: str = "", release: bool = False) -> None:
         """Pausa o que toca; `message` é o aviso da barra até retomar (R7-01). Já pausado, só troca o aviso. O aviso vai
         também no comando: a thread, tratando antes um "retomar" mais antigo, reescreve o estado e o aviso, e a pausa os
-        devolve."""
+        devolve. `release` fecha também o fluxo (a pausa do warm-up, U-043)."""
         with self._cv:
             if self._state == PLAYING:
                 self._paused_at, self._state = self._position_locked(), PAUSED
             if self._state == PAUSED:
                 self._message = message
-        self._send("pause", _Pause(message))
+        self._send("pause", _Pause(message, release=release))
 
     def pause_and_wait(self, message: str, timeout_s: float) -> tuple[bool, bool]:
         """`pause` mais a espera da confirmação da escritora: o bloco em voo saiu e o buffer do dispositivo foi descartado,
@@ -543,11 +547,15 @@ class PlaybackEngine:
                             if self._feed is not None and self._feed.sess is sess:
                                 self._feed = None         # o que estava pronto sai (R7-02)
                             self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
+                    if pause.release and sess is not None and not sess.playing:
+                        self._close(sess)                 # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
                 finally:
                     if pause.done is not None:
                         pause.done.set()                  # quem espera (o gancho do loopback, R8-01) segue
                 return sess
             case ("resume", _):
+                if sess is not None and sess.closed:     # pausa que soltou o fluxo: outro, pela fábrica, do mesmo ponto
+                    return self._open(None, replace(sess.req, t_ms=sess.pos))
                 if sess is not None and not sess.playing:
                     self._start_run(sess, sess.pos)
                 return sess
@@ -581,7 +589,7 @@ class PlaybackEngine:
             self._close(sess)
             self._error(f"não consegui ler o áudio: {e}")
             return None
-        if sess is not None:                          # o som anterior acaba aqui; o fluxo fica para este
+        if sess is not None and not sess.closed:      # o som anterior acaba aqui; o fluxo fica para este
             self._abort(sess)
             self._report(sess)
             stream = sess.stream
@@ -851,6 +859,7 @@ class Player(QObject):
         super().__init__(parent)
         self.engine = PlaybackEngine(store, output_factory or sounddevice_output)
         self.guard: Callable[[PlayRequest], bool] | None = None
+        self.before_play: Callable[[], object] | None = None   # U-043: o controlador relê os dispositivos (saída nova)
         self.requests: deque[PlayRequest] = deque(maxlen=REQUESTS_KEPT)   # instrumentação dos testes
         self._last: PlayerState | None = None
         self._timer = QTimer(self)
@@ -866,6 +875,11 @@ class Player(QObject):
         req = PlayRequest(int(meeting_id), max(0, int(t_ms)), end_ms, channel, title)
         if self.state().state != PLAYING and self.guard is not None and not self.guard(req):
             return False
+        if self.before_play is not None and not self.engine.alive:   # com som aberto o fluxo é reaproveitado: não relê
+            try:
+                self.before_play()
+            except Exception as e:  # o player toca mesmo assim, na saída que já conhecia
+                log.debug("player: reler os dispositivos: %s", e)
         self.requests.append(req)
         self.engine.play(req)
         self._kick()
@@ -886,13 +900,14 @@ class Player(QObject):
         self._kick()
         return True
 
-    def pause(self, notice: str = "") -> bool:
+    def pause(self, notice: str = "", release: bool = False) -> bool:
         """Pausa o som que toca com o aviso `notice` na barra até retomar (R7-01: o warm-up abriu ou a gravação vai captar o
-        sistema inteiro); já pausado, só troca o aviso. Retomar passa pelo `guard` (Q9). True quando havia som tocando."""
+        sistema inteiro); já pausado, só troca o aviso. Retomar passa pelo `guard` (Q9). True quando havia som tocando.
+        `release` (o warm-up, U-043) fecha também o fluxo: o PortAudio fica livre para reler os dispositivos."""
         st = self.state().state
         if st not in (PLAYING, PAUSED):
             return False
-        self.engine.pause(notice)
+        self.engine.pause(notice, release)
         self._kick()
         return st == PLAYING
 

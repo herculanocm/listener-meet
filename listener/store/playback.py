@@ -34,7 +34,10 @@ def decode_range(store: Store, meeting_id: int, channel: str, t0_ms: int, t1_ms:
 def play(samples: np.ndarray, sample_rate: int) -> None:
     import sounddevice as sd
 
-    sd.play(samples, sample_rate)
+    from ..platform.common import portaudio
+
+    with portaudio.LOCK:                                   # U-043: o reinício do PortAudio espera o `sd.play` tocar
+        sd.play(samples, sample_rate)
 
 
 def stop() -> None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import override
 
@@ -34,6 +34,7 @@ class FakeStream:
         self.silent_windows = silent_windows or []   # (início, fim) em segundos da sessão: o driver não entrega nada
         self.started = False
         self.stopped = False
+        self.stop_calls = 0                          # U-043: quem fechou a stream (a morta também precisa ser fechada)
         self.t_next: float | None = None             # início (sessão) do próximo bloco a entregar
         self.phase = 0
         self.delivered = 0
@@ -44,6 +45,7 @@ class FakeStream:
 
     def stop(self) -> None:
         self.stopped = True
+        self.stop_calls += 1
 
     def fail(self, reason: str = "dispositivo removido") -> None:
         """Simula o driver encerrando a stream sozinho (headset desplugado)."""
@@ -194,6 +196,9 @@ class FakePlatform(Platform):
         self.children: list[FakeChild] = []                          # F4: filhos ao vivo silenciosos
         self.lowered = 0
         self.next_pid = 5000
+        self.devices = [AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)]
+        self.next_devices: list[AudioDevice] | None = None    # U-043: o teste "conecta" um dispositivo aqui
+        self.refreshes = 0
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -224,7 +229,18 @@ class FakePlatform(Platform):
 
     @override
     def list_input_devices(self) -> list[AudioDevice]:
-        return [AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)]
+        return list(self.devices)
+
+    @override
+    def refresh_audio_devices(self, own_streams: int = 0, release: Callable[[], None] | None = None) -> bool:
+        """U-043: `next_devices` é o que o "sistema" passou a ter; relê só sem stream aberto além dos de quem pede."""
+        if self.next_devices is None or len(self.live_streams()) > own_streams:
+            return False
+        if release is not None:
+            release()
+        self.devices, self.next_devices = list(self.next_devices), None
+        self.refreshes += 1
+        return True
 
     @override
     def default_input_device(self) -> AudioDevice | None:

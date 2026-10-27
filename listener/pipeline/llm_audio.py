@@ -14,6 +14,7 @@ import numpy as np
 
 from ..capture.audio import encode_flac, to_int16
 from ..llm import prompts
+from ..llm.aio import watched
 from ..llm.base import LLMProvider, ProviderUnavailableError
 from ..llm.types import AudioPart, Capability, LlmTask, ProviderKind, Request
 from ..log import get_logger
@@ -114,7 +115,7 @@ class LLMAudioTranscriber:
             return results
 
         try:
-            results = asyncio.run(go())
+            results = asyncio.run(watched(go()))         # D-058: laço preso em código nativo não trava a fila
         except ProviderUnavailableError as e:
             raise PermanentError(str(e)) from e
         words: list[Word] = []

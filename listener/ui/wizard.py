@@ -16,6 +16,7 @@ from ..config import bootstrap
 from ..config.defaults import LOG_LEVELS
 from ..log import attach_file, get_logger
 from ..store import Store
+from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
 from .meters import LevelMeter
 
@@ -188,6 +189,9 @@ class MicPage(QWizardPage):
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(lambda: self.meter.set_rms(self._level))
+        self._devices_timer = QTimer(self)                  # U-043: fone conectado com o assistente aberto
+        self._devices_timer.setInterval(REFRESH_MS)
+        self._devices_timer.timeout.connect(self._refresh_devices)
         self.combo.currentIndexChanged.connect(lambda _: self._open())
 
     @override
@@ -203,17 +207,32 @@ class MicPage(QWizardPage):
                 self.combo.setCurrentIndex(i)
         self._open()
         self._timer.start()
+        self._devices_timer.start()
 
     @override
     def cleanupPage(self) -> None:
         self._close()
         self._timer.stop()
+        self._devices_timer.stop()
 
     @override
     def validatePage(self) -> bool:
         self._close()
         self._timer.stop()
+        self._devices_timer.stop()
         return True
+
+    def _refresh_devices(self) -> None:
+        """U-043: o fone conectado ou removido com a página aberta entra ou sai do combo, sem reiniciar o app."""
+        result = refresh_mics(self.platform, self.combo, self._devices, meter_open=self._handle is not None,
+                              close_meter=self._close)
+        if result is None:
+            return
+        self._devices = result.devices
+        if result.reopen:
+            self._open()
+        if result.note:
+            self.status.setText(f"{self.status.text()} ({result.note})")
 
     def selected_device(self) -> AudioDevice | None:
         i = self.combo.currentIndex()
