@@ -3,7 +3,7 @@ texto, tempo e pessoa, item 8). Os dois carregam `job_id`: reprocessar escreve o
 transação (`swap_job`, item 12, CP3). Escritas em lotes de até 1000 linhas (`itertools.batched`, CP17)."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from itertools import batched
 from typing import Any, TypedDict, cast
@@ -159,6 +159,19 @@ class SegmentsRepo:
         return self.core.execute("UPDATE segments SET person_id = ?, role_at_time = ? WHERE meeting_id = ? AND cluster_id = ?",
                                  (person_id, role_at_time, meeting_id, cluster_id))
 
+    def freeze_role(self, person_id: int, old_role: str, except_meeting: int) -> int:
+        """U-041 (A-09, D-016): o cargo mudou na ficha; as falas das outras reuniões que seguiam o cargo atual (nulo) guardam
+        o antigo, o cargo daquele dia. Sem cargo antigo não há o que guardar (nulo continua caindo no atual)."""
+        if not old_role:
+            return 0
+        return self.core.execute("UPDATE segments SET role_at_time = ? WHERE person_id = ? AND meeting_id != ? AND role_at_time IS NULL",
+                                 (old_role, person_id, except_meeting))
+
+    def set_role_in_meeting(self, meeting_id: int, person_id: int, role: str | None) -> int:
+        """U-041: o cargo corrigido na revisão vale para as falas da pessoa nesta reunião (o cargo do dia)."""
+        return self.core.execute("UPDATE segments SET role_at_time = ? WHERE meeting_id = ? AND person_id = ?",
+                                 (role or None, meeting_id, person_id))
+
     def set_text_llm(self, meeting_id: int, job_id: int, rows: Iterable[tuple[int, str]]) -> int:
         """Transcrição revisada (F3 item 8): só `text_llm` dos segmentos do job pai; `text` original fica intacto (CP3).
         Lotes de até 1000 numa só transação por bloco."""
@@ -310,6 +323,12 @@ class SegmentsRepo:
 
 
 DECIDED_WITH_PERSON = (str(ClusterStatus.AUTO), str(ClusterStatus.CONFIRMED))
+
+
+def role_of(segment: Mapping[str, Any], person: Mapping[str, Any]) -> str:
+    """O cargo de quem fala (A-09, D-016): o cargo do dia gravado na fala; só nulo cai no cargo atual da ficha. O mesmo na
+    leitura, na busca e no contexto da LLM."""
+    return str(segment.get("role_at_time") or person.get("role") or "")
 
 
 def resolve_person(cluster: ClusterRow, by_id: dict[int, ClusterRow]) -> int | None:

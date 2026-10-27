@@ -5,7 +5,7 @@ from ..types import Message
 from .common import header, system, user
 from .executive import SummaryCtx
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
 MAX_CHARS = 600
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["text"],
                 "properties": {"text": {"type": "string", "maxLength": MAX_CHARS}}}

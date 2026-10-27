@@ -19,7 +19,7 @@ from ..log import get_logger
 from ..model import ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
 from ..store.profiles import normalize
-from ..store.segments import ClusterRow, resolve_person
+from ..store.segments import ClusterRow, resolve_person, role_of
 from .runner import STITCH_ARTIFACT, USER_CLUSTER
 from .types import unpack_artifact
 
@@ -184,7 +184,7 @@ def _speaker(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: 
     person = people.get(int(pid)) if pid is not None else None
     if pid is None or person is None:
         return (f"Voz {s.get('cluster')}" if s.get("cluster") else "Desconhecido"), "", None
-    return str(person["name"]), str(s.get("role_at_time") or person.get("role") or ""), int(pid)
+    return str(person["name"]), role_of(s, person), int(pid)
 
 
 def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow], prefer_llm: bool) -> TranscriptRow:
@@ -335,7 +335,62 @@ def new_person(store: Store, cluster_id: int, name: str, role: str = "", author:
         raise ValueError("informe o nome")
     existing = store.people.find_by_name(name)
     pid = int(existing["id"]) if existing else store.people.create_person(name, role=role)
+    log.info("voz %s: pessoa %s %s pelo nome", cluster_id, pid, "reaproveitada" if existing else "criada")
     return confirm(store, cluster_id, pid, author, source=source)
+
+
+def create_person(store: Store, cluster_id: int, name: str, role: str = "", company: str = "", email: str = "",
+                  author: str = "usuario") -> int:
+    """U-041 (A-11): a ficha da revisão cria a pessoa com todos os campos e confirma a voz. Nunca reaproveita pelo nome: o
+    homônimo a interface oferece antes ("é ela?"), e um "não" quer dizer outra pessoa com o mesmo nome."""
+    name = name.strip()
+    if not name:
+        raise ValueError("informe o nome")
+    pid = store.people.create_person(name, email=email.strip(), role=role.strip(), company=company.strip())
+    log.info("pessoa %s criada pela ficha da revisão (voz %s; cargo %s, empresa %s, e-mail %s)", pid, cluster_id,
+             _filled(role), _filled(company), _filled(email))
+    return confirm(store, cluster_id, pid, author)
+
+
+def edit_person(store: Store, person_id: int, meeting_id: int, name: str, role: str = "", company: str = "",
+                email: str = "") -> list[int]:
+    """U-041 (A-09, A-12): muda a ficha. Um cargo novo vale para as falas da pessoa nesta reunião e congela o antigo nas
+    outras (o cargo do dia, D-016). Devolve as reuniões a reindexar: todas as da pessoa quando o nome ou o cargo mudam (o
+    falante entra no texto dos trechos da busca), senão nenhuma."""
+    person = store.people.get_person(person_id)
+    if person is None:
+        raise ValueError(f"pessoa {person_id} não existe")
+    name, role = name.strip(), role.strip()
+    if not name:
+        raise ValueError("informe o nome")
+    old_role = str(person.get("role") or "")
+    with store.transaction():
+        if role != old_role:
+            frozen = store.segments.freeze_role(person_id, old_role, meeting_id)
+            here = store.segments.set_role_in_meeting(meeting_id, person_id, role)
+            log.info("pessoa %s: cargo mudou na reunião %s (%d fala(s) aqui; %d fala(s) de outras reuniões guardam o antigo)",
+                     person_id, meeting_id, here, frozen)
+        store.people.update_person(person_id, name, email.strip(), role, company.strip())
+    renamed = name != str(person["name"])
+    reindex = store.people.meetings_of(person_id) if renamed or role != old_role else []
+    log.info("pessoa %s editada pela revisão da reunião %s (nome %s, cargo %s); %d reunião(ões) para reindexar", person_id,
+             meeting_id, "mudou" if renamed else "igual", "mudou" if role != old_role else "igual", len(reindex))
+    return reindex
+
+
+def forget_person(store: Store, person_id: int) -> list[int]:
+    """U-041 (A-06, A-08, LGPD): apaga a pessoa (`PeopleRepo.forget`) e limpa o vínculo órfão que outro processo tenha
+    gravado; devolve as reuniões afetadas, para reindexar. Atas, resumos e respostas já gerados ficam como estão (CP3)."""
+    meetings = store.people.forget(person_id)
+    orphans = store.people.scrub_orphans()
+    log.info("pessoa %s apagada pela revisão: %d reunião(ões) afetada(s), %d vínculo(s) órfão(s) limpo(s)", person_id,
+             len(meetings), orphans)
+    return meetings
+
+
+def _filled(value: str) -> str:
+    """Só se o campo veio preenchido: o valor nunca vai para o log (D-053, LGPD)."""
+    return "sim" if value.strip() else "não"
 
 
 def accept_llm(store: Store, cluster_id: int, author: str = "usuario") -> int:
@@ -344,8 +399,10 @@ def accept_llm(store: Store, cluster_id: int, author: str = "usuario") -> int:
     if c is None:
         raise ValueError(f"cluster {cluster_id} não existe")
     if c.get("llm_person_id") is not None:
+        log.info("voz %s da reunião %s: sugestão da LLM aceita (pessoa %s)", c["cluster"], c["meeting_id"], c["llm_person_id"])
         return confirm(store, cluster_id, int(c["llm_person_id"]), author, source=DecisionSource.USER_LLM)  # type: ignore[arg-type]
     if c.get("llm_name"):
+        log.info("voz %s da reunião %s: sugestão da LLM aceita (nome novo)", c["cluster"], c["meeting_id"])
         return new_person(store, cluster_id, str(c["llm_name"]), author=author, source=DecisionSource.USER_LLM)
     raise ValueError("esta voz não tem sugestão da LLM")
 
@@ -358,6 +415,7 @@ def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:
         store.segments.update_cluster(cluster_id, status=ClusterStatus.IGNORED)
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
         store.add_revision("cluster", cluster_id, "status", c["status"], ClusterStatus.IGNORED, author)
+    log.info("voz %s da reunião %s ignorada (estava %s)", c["cluster"], c["meeting_id"], c["status"])
 
 
 def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "usuario") -> None:
@@ -377,9 +435,13 @@ def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "us
         store.add_revision("cluster", cluster_id, "merged_into", c.get("merged_into"), into_cluster_id, author)
         if pid is not None:
             confirm(store, cluster_id, pid, author)
+    log.info("voz %s mesclada na voz %s da reunião %s (%s)", c["cluster"], target["cluster"], c["meeting_id"],
+             f"confirmada como pessoa {pid}" if pid is not None else "o alvo ainda não tem pessoa")
 
 
 def finish(store: Store, meeting_id: int) -> None:
     """"Concluir": a reunião vira `revisada` mesmo com vozes ignoradas ou sem nome (o usuário decidiu)."""
     store.meetings.set_status(meeting_id, MeetingStatus.REVIEWED)
     store.add_event(meeting_id, None, EventType.PROFILE_CONFIRM, {"review": "concluída"})
+    left = len(pending(review_items(store, meeting_id)))
+    log.info("revisão da reunião %s concluída (%d voz(es) ainda sem nome)", meeting_id, left)

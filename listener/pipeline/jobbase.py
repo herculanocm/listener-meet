@@ -82,6 +82,17 @@ class BaseJobRunner:
     def _finish_ok(self) -> JobStatus:
         raise NotImplementedError
 
+    def _scrub_orphan_people(self) -> None:
+        """U-041 (A-08): o job leu pessoas e perfis no começo; uma pessoa apagada no meio volta como vínculo órfão, que sai
+        aqui, antes de a ata e o índice lerem as falas. Falhar não desfaz o job concluído: só o log."""
+        try:
+            n = self.store.people.scrub_orphans()
+        except Exception as e:
+            log.warning("job %s: vínculos com pessoas apagadas não limpos: %s", self.job_id, e)
+            return
+        if n:
+            log.info("job %s: %d vínculo(s) com pessoa apagada limpo(s)", self.job_id, n)
+
     def _cancelled(self) -> JobStatus:
         self.store.jobs.finish(self.job_id, JobStatus.CANCELLED, timings=self._timings_dict())
         self.store.add_event(self.meeting_id, None, EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})

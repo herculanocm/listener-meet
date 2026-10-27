@@ -58,6 +58,7 @@ class MeetingCtx:
     markers: tuple[Marker, ...]
     output_language: str          # "pt-BR", "en"... (já resolvido: `auto` vira o idioma da reunião)
     glossary: str = ""
+    speakers: tuple[Person, ...] = ()   # U-041 (A-10): quem fala, identificado, com cargo e empresa (nunca o e-mail)
 
 
 def stamp(t_ms: int) -> str:
@@ -96,6 +97,9 @@ def header(ctx: MeetingCtx) -> str:
         parts.append(f"Expected participants (as typed by the user): {ctx.participants_text}")
     if ctx.expected:
         parts.append("Expected participants with a profile: " + "; ".join(p.render() for p in ctx.expected))
+    if ctx.speakers:
+        parts.append("Identified speakers in this meeting (person_id, name — role, company): "
+                     + "; ".join(p.render() for p in ctx.speakers))
     if ctx.glossary:
         parts.append(f"Glossary (keep spelling): {ctx.glossary}")
     if ctx.markers:

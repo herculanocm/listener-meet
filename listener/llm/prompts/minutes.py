@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import Line, MeetingCtx, Person, header, ids_schema, system, text_block, user
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
 
 
 def _item(extra: dict | None = None) -> dict:

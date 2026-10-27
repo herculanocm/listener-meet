@@ -166,6 +166,7 @@ class JobRunner(BaseJobRunner):
         self.store.add_event(self.meeting_id, None, EventType.JOB_DONE, {"job_id": self.job_id, "timings": self._timings_dict()})
         log.info("job %s concluído: %s", self.job_id, self._timings_dict())
         self.status = JobStatus.DONE
+        self._scrub_orphan_people()
         self._enqueue_llm()
         self._index_after_pipeline()
         return JobStatus.DONE

@@ -277,6 +277,7 @@ class Controller(QObject):
         if waiting:
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
         self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
+        self._scrub_orphan_people()
         self._enqueue_leftovers()
         local_embed.configure(APP_LOCAL_THREADS)              # F5.1 (A-03): a sessão do e5 no app abre só com o Histórico
         preparer().changed.connect(self._on_preparer_changed)
@@ -286,6 +287,16 @@ class Controller(QObject):
         self._queue_timer.start()
         QTimer.singleShot(PREWARM_AUDIO_MS, self, self._prewarm_audio)
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
+
+    def _scrub_orphan_people(self) -> None:
+        """U-041 (A-08): vínculo com pessoa apagada que um processo gravou depois (o ao vivo, o worker) sai na abertura."""
+        try:
+            n = self.store.people.scrub_orphans()
+        except Exception as e:
+            log.warning("vínculos com pessoas apagadas não limpos na abertura: %s", e)
+            return
+        if n:
+            log.info("abertura: %d vínculo(s) com pessoa apagada limpo(s)", n)
 
     def _prewarm_audio(self) -> None:
         """U-031: o primeiro "Tocar" sai em ~0,5 s em vez de 2 a 5 s (`player.prewarm_audio`); nada depois da saída."""

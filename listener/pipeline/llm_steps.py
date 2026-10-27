@@ -15,7 +15,7 @@ import difflib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, override
 
@@ -37,7 +37,7 @@ from ..store import Store
 from ..store.actions import ActionInsert
 from ..store.jobs import JobRow
 from ..store.llm_calls import LlmCallInsert
-from ..store.segments import ClusterRow, SegmentRow, resolve_person
+from ..store.segments import ClusterRow, SegmentRow, resolve_person, role_of
 from ..store.summaries import SummaryInsert
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep
 from .runner import USER_CLUSTER
@@ -295,6 +295,7 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int, output_lang
     me = store.get_me()
     lines: list[Line] = []
     by_id: dict[int, tuple[str, int]] = {}
+    speakers: dict[int, Person] = {}                     # U-041 (A-10): quem fala, na ordem da primeira fala
     for s in segments:
         text = str(s.get("text") or "")
         cid = s.get("cluster_id")
@@ -303,15 +304,19 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int, output_lang
         if pid is None and crow is not None:
             pid = resolve_person(crow, by_cluster)
         label = str(crow["cluster"]) if crow is not None else None
+        who: Mapping[str, Any] | None = None
         if pid is not None and int(pid) in people:
-            p = people[int(pid)]
-            speaker = str(p["name"]) + (f" ({p['role']})" if p.get("role") else "")
+            who = people[int(pid)]
         elif crow is not None and str(crow["status"]) in PENDING:
             speaker = str(crow["cluster"])
         elif s.get("channel") == "L" and me is not None:
-            speaker = str(me["name"])
+            who = dict(me)                               # o canal L sem pessoa gravada: você, com o seu cargo (A-09)
         else:
             speaker = f"Voz {label}" if label else "Voz"
+        if who is not None:
+            role = role_of(s, who)                       # o cargo do dia; só nulo cai no da ficha (D-016)
+            speaker = str(who["name"]) + (f" ({role})" if role else "")
+            speakers.setdefault(int(who["id"]), Person(int(who["id"]), str(who["name"]), role, str(who.get("company") or "")))
         lines.append(Line(int(s["id"]), int(s["t_start_ms"]), speaker, text, label))
         by_id[int(s["id"])] = (text, int(s["t_start_ms"]))
     expected: list[Person] = []
@@ -327,7 +332,7 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int, output_lang
     participants = meeting.get("expected_participants")
     ctx = MeetingCtx(str(title) if title else None, str(meeting.get("started_at") or "")[:10], str(participants) if participants else None,
                      tuple(expected), markers, resolve_language(output_language, meeting.get("language")),
-                     str(meeting.get("glossary") or ""))
+                     str(meeting.get("glossary") or ""), tuple(speakers.values()))
     candidates = tuple(Person(pid, str(p["name"]), str(p.get("role") or ""), str(p.get("company") or "")) for pid, p in people.items())
     return Context(meeting, ctx, segments, clusters, people, tuple(lines), by_id, candidates, {m.id: m.note for m in markers})
 
@@ -427,6 +432,7 @@ class LlmJobRunner(BaseJobRunner):
         log.info("job llm %s concluído: %d chamada(s), %s%s", self.job_id, self.calls, fmt_usd(self.cost_usd),
                  f"; puladas: {', '.join(self._skipped)}" if self._skipped else "")
         self.status = JobStatus.DONE
+        self._scrub_orphan_people()
         self._enqueue_index()
         return JobStatus.DONE
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import Line, MeetingCtx, header, render_lines, system, user
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
 SCHEMA: dict = {
     "type": "object", "additionalProperties": False, "required": ["revisions"],
     "properties": {"revisions": {"type": "array", "items": {

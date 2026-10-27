@@ -100,7 +100,7 @@ def test_pipeline_enqueues_llm_job_and_runner_writes_everything_with_parent_job_
     assert clusters["SPK_1"]["llm_name"] is None and clusters["L"]["llm_name"] is None
     # ata, executivo, pré-resumo com o job_id do pai; ações com evidência e marca "sem evidência"
     minutes = store.summaries.current(mid, SummaryKind.MINUTES)
-    assert minutes["job_id"] == parent and minutes["provider"] == "gemini" and minutes["prompt_version"] == "minutes/1.0"
+    assert minutes["job_id"] == parent and minutes["provider"] == "gemini" and minutes["prompt_version"] == "minutes/1.1"
     assert minutes["call_id"] and minutes["language"] == "pt-BR" and minutes["text_llm"].startswith("## Contexto")
     assert "## Decisões" in minutes["text_llm"] and "[00:00]" in minutes["text_llm"] and "sem evidência" in minutes["text_llm"]
     assert "**ponto importante**" in minutes["text_llm"]                                              # destaque com a nota do marcador

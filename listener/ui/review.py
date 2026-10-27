@@ -5,7 +5,9 @@ pré-resumo, ata, executivo e ações editáveis com "gerar de novo" por aba (jo
 marca a reunião como revisada. Só metadados no construtor (R-9). F5: cada decisão sobre uma voz e cada edição das abas
 chama `on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reunião 30 s depois da última; "Concluir" na
 hora). F5 L4: as abas da LLM vêm do `LlmTabsGroup` (o mesmo da reunião aberta, F5A-26) e os 5 s passam pelo player único
-do app (um som por vez; o aviso de reprodução aparece no cabeçalho)."""
+do app (um som por vez; o aviso de reprodução aparece no cabeçalho).
+U-041 (F5.2): N abre a ficha (nome, cargo, empresa, e-mail; nome repetido pergunta "é ela?"); O lista "Nome — Cargo ·
+Empresa" pelo id; E edita a ficha da pessoa da voz confirmada e tem "Apagar pessoa…" (LGPD; confirmação, CP3)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,9 +19,10 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ..log import get_logger
-from ..model import JobStep, SummaryKind
+from ..model import ClusterStatus, JobStep, SummaryKind
 from ..pipeline import review
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
+from .person import DELETE, PersonData, PersonDialog
 from .player import ERROR, PlayerState
 
 if TYPE_CHECKING:
@@ -27,6 +30,21 @@ if TYPE_CHECKING:
     from .player import Player
 
 log = get_logger("ui.review")
+DELETE_TEXT = ("Apagar {name}?\n\nSaem a ficha, o perfil de voz e o vínculo com as falas, as legendas e as ações em todas as "
+               "reuniões; as vozes dela voltam a \"sem nome\". O áudio e as falas ficam.\n\nAtas, resumos, respostas do chat e o "
+               "histórico das chamadas à LLM já gerados não mudam: use \"Gerar de novo\" para refazê-los sem o nome.")
+EDITABLE = (ClusterStatus.CONFIRMED, ClusterStatus.AUTO)         # U-041 (A-12): só voz com pessoa decidida tem ficha a editar
+
+
+def person_data(row: Any) -> PersonData:
+    return PersonData(str(row["name"]), str(row.get("role") or ""), str(row.get("company") or ""), str(row.get("email") or ""))
+
+
+def person_labels(people: list[Any]) -> list[str]:
+    """"Nome — Cargo · Empresa" de cada pessoa, na ordem; homônimos iguais até no cargo ganham o id (A-11: a escolha vai
+    pelo id, nunca pelo nome)."""
+    labels = [person_data(p).label() for p in people]
+    return [f"{lab} (#{p['id']})" if labels.count(lab) > 1 else lab for lab, p in zip(labels, people, strict=True)]
 
 
 class ReviewDialog(QDialog):
@@ -58,6 +76,8 @@ class ReviewDialog(QDialog):
         self.btn_merge = QPushButton("É a mesma que… (M)")
         self.btn_ignore = QPushButton("Ignorar (I)")
         self.btn_play = QPushButton("Ouvir 5 s (Espaço)")
+        self.btn_edit = QPushButton("Editar pessoa (E)")                    # U-041: a ficha da pessoa desta voz
+        self.btn_edit.clicked.connect(self.edit_current)
         self.btn_transcript = QPushButton("Ver transcrição")
         self.btn_finish = QPushButton("Concluir")
         self.btn_identify = QPushButton("Identidade por contexto de novo")     # F3.1 R3-05: `identify` sob demanda
@@ -75,6 +95,7 @@ class ReviewDialog(QDialog):
         for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore):
             row1.addWidget(b)
         row2.addWidget(self.btn_play)
+        row2.addWidget(self.btn_edit)
         row2.addWidget(self.btn_identify)
         row2.addStretch(1)
         row2.addWidget(self.btn_transcript)
@@ -102,6 +123,7 @@ class ReviewDialog(QDialog):
         lay.addWidget(self.cost)
         lay.addWidget(self.tabs, 1)
         self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
+        self.list.currentRowChanged.connect(lambda _row: self._update_edit_button())
         if player is not None:
             player.state_changed.connect(self._on_player)
         self.reload(focus=True)
@@ -157,6 +179,7 @@ class ReviewDialog(QDialog):
                 break
         if self.list.currentRow() < 0 and self.list.count():
             self.list.setCurrentRow(0)
+        self._update_edit_button()
         if focus:
             self.list.setFocus()
 
@@ -210,32 +233,113 @@ class ReviewDialog(QDialog):
         return True
 
     def ask_other_person(self) -> None:
+        """"Outra pessoa": a lista mostra "Nome — Cargo · Empresa" e a escolha vai pelo id (homônimos, A-11)."""
         people = self.store.people.list_people()
         if not people:
             self.ask_new_person()
             return
-        names = [str(p["name"]) for p in people]
-        name, ok = QInputDialog.getItem(self, "Outra pessoa", "Quem é esta voz?", names, 0, False)
-        if ok and name in names:
-            self.confirm_current(int(people[names.index(name)]["id"]))
+        labels = person_labels(people)
+        choice, ok = QInputDialog.getItem(self, "Outra pessoa", "Quem é esta voz?", labels, 0, False)
+        if ok and choice in labels:
+            self.confirm_current(int(people[labels.index(choice)]["id"]))
 
     def ask_new_person(self) -> None:
-        name, ok = QInputDialog.getText(self, "Nova pessoa", "Nome:")
-        if ok and name.strip():
-            self.create_person(name.strip())
+        """U-041: a ficha da pessoa (nome obrigatório; cargo, empresa e e-mail opcionais)."""
+        if self.current_item() is None:
+            return
+        dlg = PersonDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.data()
+            self.create_person(data.name, data.role, data.company, data.email)
 
-    def create_person(self, name: str, role: str = "") -> bool:
+    def create_person(self, name: str, role: str = "", company: str = "", email: str = "") -> bool:
+        """Confirma a voz com a pessoa da ficha. Nome que já existe pergunta "é ela?" (pergunta 2 da F5.2): sim confirma a
+        existente; não cria outra pessoa com o mesmo nome; cancelar não faz nada."""
         it = self.current_item()
         if it is None:
             return False
+        for twin in self.store.people.find_all_by_name(name):
+            answer = QMessageBox.question(self, "Nova pessoa", f"Já existe {person_data(twin).label()}. É ela?",
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                                          | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
+            if answer == QMessageBox.StandardButton.Yes:
+                log.info("revisão da reunião %s: o nome da ficha já existia; o usuário escolheu a pessoa %s",
+                         self.meeting_id, twin["id"])
+                return self.confirm_current(int(twin["id"]))
+            if answer != QMessageBox.StandardButton.No:
+                return False
         try:
-            review.new_person(self.store, it.cluster_id, name, role)
+            review.create_person(self.store, it.cluster_id, name, role, company, email)
         except ValueError as e:
             QMessageBox.warning(self, "Revisão", str(e))
             return False
         self._edited()
         self._next_pending()
         return True
+
+    # ---------------------------------------------------------------- ficha (U-041)
+    def editable_person(self) -> int | None:
+        """A pessoa da voz atual quando a voz já tem pessoa decidida (confirmada ou automática, A-12); senão None."""
+        it = self.current_item()
+        if it is None or it.person_id is None or it.status not in EDITABLE:
+            return None
+        return int(it.person_id)
+
+    def _update_edit_button(self) -> None:
+        pid = self.editable_person()
+        self.btn_edit.setEnabled(pid is not None)
+        self.btn_edit.setToolTip("editar a ficha (nome, cargo, empresa, e-mail) ou apagar a pessoa" if pid is not None
+                                 else "confirme a voz antes: só voz com pessoa decidida tem ficha a editar")
+
+    def edit_current(self) -> None:
+        """E: a ficha da pessoa da voz atual; salvar muda a ficha (e o cargo do dia nesta reunião), apagar pede confirmação."""
+        pid = self.editable_person()
+        if pid is None:
+            self.header.setText("Esta voz ainda não tem pessoa confirmada: confirme antes de editar a ficha.")
+            return
+        person = self.store.people.get_person(pid)
+        if person is None:
+            return
+        dlg = PersonDialog(self, data=person_data(person), can_delete=not person.get("is_me"))
+        code = dlg.exec()
+        if code == DELETE:
+            self.delete_person(pid, str(person["name"]))
+        elif code == QDialog.DialogCode.Accepted:
+            self.save_person(pid, dlg.data())
+
+    def save_person(self, person_id: int, data: PersonData) -> bool:
+        try:
+            meetings = review.edit_person(self.store, person_id, self.meeting_id, data.name, data.role, data.company, data.email)
+        except ValueError as e:
+            QMessageBox.warning(self, "Revisão", str(e))
+            return False
+        self._reindex(meetings)
+        self.reload(self.current_cluster_id(), focus=True)
+        return True
+
+    def delete_person(self, person_id: int, name: str) -> bool:
+        answer = QMessageBox.question(self, "Apagar pessoa", DELETE_TEXT.format(name=name),
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                      QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            log.info("revisão da reunião %s: apagar a pessoa %s cancelado", self.meeting_id, person_id)
+            return False
+        try:
+            meetings = review.forget_person(self.store, person_id)
+        except ValueError as e:
+            QMessageBox.warning(self, "Revisão", str(e))
+            return False
+        self._reindex(meetings)
+        self._next_pending()
+        return True
+
+    def _reindex(self, meetings: list[int]) -> None:
+        """O falante entra no texto dos trechos da busca: as reuniões da pessoa reindexam (esta, pelo caminho de sempre)."""
+        for mid in meetings:
+            if mid == self.meeting_id:
+                self._edited()
+            elif self.on_edited is not None:
+                self.on_edited(mid, "review", now=True)
 
     def ask_merge(self) -> None:
         it = self.current_item()
@@ -307,6 +411,8 @@ class ReviewDialog(QDialog):
             self.ask_other_person()
         elif key == Qt.Key.Key_N:
             self.ask_new_person()
+        elif key == Qt.Key.Key_E:
+            self.edit_current()
         elif key == Qt.Key.Key_M:
             self.ask_merge()
         elif key == Qt.Key.Key_I:

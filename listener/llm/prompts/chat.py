@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from ..types import Message, Role
 from .common import Line, MeetingCtx, header, language_instruction, render_lines
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
 SCHEMA = None
 SYSTEM = ("You answer questions about one meeting using only its transcript below. Quote the moment you rely on as [mm:ss] taken "
           "from the transcript lines (for example: 'o prazo foi fechado para sexta [12:03]'). If the transcript does not answer "
