@@ -201,8 +201,9 @@ def test_device_lost_and_back(platform, store, recorder_factory):
     mic.fail("headset removido")
     platform.pump(0.3)
     assert rec.health()["L"] == Health.LOST
+    platform.next_devices = list(platform.devices)             # o fone voltou: a lista do sistema mudou
     rec.check_devices()                                        # registra device_lost e tenta reabrir na hora
-    assert mic.stop_calls == 1                                 # U-043: a stream morta é fechada antes da reabertura
+    assert mic.stop_calls == 1 and platform.refreshes == 1    # U-043 (A-01): a morta fechada, a lista relida, então abre
     platform.pump(0.5)
     assert rec.health()["L"] == Health.OK
     rec.stop()

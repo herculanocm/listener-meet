@@ -30,6 +30,31 @@ def test_stream_handle_closes_a_stream_the_library_ended():
     ours.stop()
     ours.finished()                                                                  # o fim de uma parada nossa
     assert errors == ["stream encerrada pelo sistema (dispositivo removido?)"] and calls[-1] == "ours"
+    # A-05: a encerrada pela biblioteca só fecha (`close` já aborta); a parada nossa usa o `stop` de sempre
+    mic = _StreamHandle(lambda: None, lambda: calls.append("stop+close"), 16000, 1, errors.append,
+                        close_fn=lambda: calls.append("close"))
+    mic.start()
+    mic.finished()
+    mic.stop()
+    assert calls[-1] == "close"
+
+
+def test_an_index_from_an_older_reading_is_resolved_again_by_id(monkeypatch):
+    """A-02: o reinício do PortAudio renumera e o MME repete nomes: só vale o índice que a leitura atual tem para o id."""
+    from listener.platform.base import AudioDevice
+    from listener.platform.win32 import platform as wp
+
+    plat = wp.Win32Platform()
+    plat._indices = {"ep-a": 3}
+    listed: list[int] = []
+
+    def fresh() -> list[AudioDevice]:
+        listed.append(1)
+        return [AudioDevice("ep-a", "Fone", "WASAPI", 1, 16000, index=7)]
+
+    monkeypatch.setattr(plat, "list_input_devices", fresh)
+    assert plat._resolve_index(AudioDevice("ep-a", "Fone", "WASAPI", 1, 16000, index=3)) == 3 and listed == []
+    assert plat._resolve_index(AudioDevice("ep-a", "Fone", "WASAPI", 1, 16000, index=5)) == 7 and listed == [1]
 
 
 def test_refresh_rereads_only_when_the_endpoints_change_and_nothing_else_is_open(monkeypatch):

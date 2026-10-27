@@ -106,6 +106,35 @@ def test_engine_resamples_to_the_device_rate(store):
     assert abs(len(y) - 4 * 48000) <= 48 and np.allclose(y[4800:-4800], 0.4, atol=2e-3)   # estado entre as janelas: sem emenda
 
 
+def test_the_warmup_pause_releases_the_device_and_resume_reopens_it(store):
+    """U-043 (A-04): a pausa do warm-up fecha o fluxo (o PortAudio pode reler os dispositivos com o fone que chegou) e o
+    player segue pausado no mesmo ponto; a retomada abre outro fluxo pela fábrica e toca dali até o fim."""
+    mid = _meeting(store, seconds=8, pause=None)
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(rate=SR, permits=permits)
+    eng = PlaybackEngine(store, outs)
+    eng.play(PlayRequest(mid, 1000))
+    permits.release(4)
+    _wait(lambda: bool(outs.opened) and len(outs.opened[0].chunks) == 4)
+    _wait(lambda: outs.opened[0].entered == 5)
+    eng.pause("pausado para o warm-up", release=True)
+    permits.release(1)
+    _wait(lambda: outs.opened[0].calls[-1] == "close")
+    st = eng.snapshot()
+    assert st.state == PAUSED and st.message == "pausado para o warm-up" and len(outs.opened) == 1
+    permits.release(1000)
+    eng.resume()
+    _wait(lambda: not eng.alive)
+    assert len(outs.opened) == 2 and eng.snapshot().state == STOPPED
+    assert abs(len(outs.opened[1].frames) - (8000 - st.t_ms) * SR // 1000) <= SR // 50     # tocou do ponto pausado ao fim
+    eng.play(PlayRequest(mid, 0))
+    eng.pause(release=True)
+    _wait(lambda: outs.opened[-1].calls[-1] == "close")
+    eng.stop()                                                         # parar depois de soltar: o estado vira parado
+    _wait(lambda: eng.snapshot().state == STOPPED)
+    assert eng.shutdown() is True
+
+
 def test_position_switch_point_pause_seek_and_stop(store):
     mid = _meeting(store, seconds=8, pause=None)
     permits = threading.Semaphore(0)

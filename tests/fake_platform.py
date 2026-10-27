@@ -199,6 +199,7 @@ class FakePlatform(Platform):
         self.devices = [AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)]
         self.next_devices: list[AudioDevice] | None = None    # U-043: o teste "conecta" um dispositivo aqui
         self.refreshes = 0
+        self.mic_streams: list[FakeStream] = []
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -233,8 +234,9 @@ class FakePlatform(Platform):
 
     @override
     def refresh_audio_devices(self, own_streams: int = 0, release: Callable[[], None] | None = None) -> bool:
-        """U-043: `next_devices` é o que o "sistema" passou a ter; relê só sem stream aberto além dos de quem pede."""
-        if self.next_devices is None or len(self.live_streams()) > own_streams:
+        """U-043: `next_devices` é o que o "sistema" passou a ter; relê só sem stream de microfone aberto além dos de quem
+        pede. Aberto é o que ninguém fechou (A-03): a stream que o driver encerrou (`fail`) segura, como no PortAudio."""
+        if self.next_devices is None or sum(1 for s in self.mic_streams if s.stop_calls == 0) > own_streams:
             return False
         if release is not None:
             release()
@@ -261,7 +263,9 @@ class FakePlatform(Platform):
                  on_error: ErrorCallback | None = None) -> FakeStream:
         if self.mic_fail:
             raise RuntimeError("sem microfone")
-        return self._stream(sample_rate, 1, on_audio, on_error, freq=440.0)
+        stream = self._stream(sample_rate, 1, on_audio, on_error, freq=440.0)
+        self.mic_streams.append(stream)                  # U-043: o que o PortAudio do sounddevice abriria
+        return stream
 
     @override
     def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> FakeStream:

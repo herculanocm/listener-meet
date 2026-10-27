@@ -27,6 +27,7 @@ class FakeSD(types.ModuleType):
         self.calls: list[str] = []
         self.play_stream: Stream | None = None
         self.init_failures = 0
+        self._initialized = 1
 
     def stop(self) -> None:
         self.calls.append("stop")
@@ -95,3 +96,6 @@ def test_initialize_is_retried_once_and_a_second_failure_is_logged(sd, caplog):
     with caplog.at_level("WARNING", logger="listener.platform.portaudio"):
         assert portaudio.restart() is False
     assert "reabrindo o app" in caplog.text
+    sd.calls.clear()
+    sd._initialized = 0                                       # A-05: as duas falhas deixaram o PortAudio parado
+    assert portaudio.restart() is True and sd.calls == ["stop", "initialize"]           # só inicia, sem terminar
