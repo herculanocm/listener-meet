@@ -62,7 +62,8 @@ from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..llm import local_embed, partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
-from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
+from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus,
+                     SourceKind, SummaryKind)
 from ..store.jobs import HELD
 from ..pipeline import review, summary_gate
 from ..platform.common import process
@@ -197,7 +198,7 @@ class Controller(QObject):
         self._lease_at: float | None = None
         self._worker_spawned_at: dict[bool, float | None] = {False: None, True: None}     # por classe: pesado, leve (F3)
         self._launch_reason: dict[bool, str | None] = {False: None, True: None}          # o último "não lançado" logado
-        self._notice_meeting: int | None = None              # o próximo balão é sobre esta reunião (o log tira o título)
+        self._notice_meeting: tuple[int, str] | None = None  # o próximo balão é sobre esta reunião: (id, texto sem o título)
         self._seen_done: set[int] = set()
         self._no_llm_warned = False
         self._review_offered: set[int] = set()
@@ -308,20 +309,21 @@ class Controller(QObject):
 
     def notify(self, message: str) -> None:
         """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06). O log diz o
-        que o usuário viu; o de uma reunião leva o id e o texto sem o título dela (o título pode ter nome de terceiro)."""
+        que o usuário viu; o de uma reunião leva o id e o texto, nunca o título (pode ter nome de terceiro, R-03)."""
         about, self._notice_meeting = self._notice_meeting, None
         if about is None:
             log.info("aviso na bandeja: %s", message)
         else:
-            log.info("aviso na bandeja sobre a reunião %s: %s", about, message.split(": ", 1)[-1])
+            log.info("aviso na bandeja sobre a reunião %s: %s", about[0], about[1])
         self._notified_meeting = None
         if self.tray is not None:
             self.tray.showMessage("listener-meet", message)
 
-    def _notify_meeting(self, message: str, meeting_id: int) -> None:
-        """Balão sobre uma reunião: o clique nele abre a reunião (Q6)."""
-        self._notice_meeting = meeting_id
-        self.notify(message)
+    def _notify_meeting(self, meeting_id: int, text: str) -> None:
+        """Balão sobre uma reunião ("<título>: <texto>"): o clique nele abre a reunião (Q6); o título vai só ao balão."""
+        m = self.store.get_meeting(meeting_id) or {}
+        self._notice_meeting = (int(meeting_id), text)
+        self.notify(f"{m.get('title') or f'reunião {meeting_id}'}: {text}")
         self._notified_meeting = int(meeting_id)
 
     def open_last_notified(self) -> MeetingWindow | None:
@@ -917,21 +919,19 @@ class Controller(QObject):
             if mid in self._meetings:
                 self._meetings[mid].reload()
             return
-        m = self.store.get_meeting(mid) or {}
-        title = m.get("title") or f"reunião {mid}"
         if str(job.get("kind")) == JobKind.LLM:
             if self._identity_only(job, mid):
                 log.info("reunião %s: identidade por contexto pronta (job llm %s); a ata espera as vozes, sem balão", mid, job["id"])
             else:
-                self._notify_meeting(f"{title}: {self._llm_done_text(job)}", mid)
+                self._notify_meeting(mid, self._llm_done_text(job))
             if mid in self._reviews:
                 self._reviews[mid].reload()
         else:
             todo = self._pending_voices(mid)
-            waits = todo and self._summary_waits()                 # U-042: a regra do worker, não o evento (A-14)
+            waits = todo and self._summary_waits(mid)              # U-042: a regra do worker, não o evento (A-14)
             text = ("pronta para revisão de falantes; a ata sai depois que as vozes forem identificadas" if waits else
                     "pronta para revisão de falantes" if todo else "processada, sem voz a confirmar")
-            self._notify_meeting(f"{title}: {text}.", mid)
+            self._notify_meeting(mid, f"{text}.")
             self._warn_no_llm(mid, int(job["id"]))
             self._review_offered.add(mid)
             if todo:
@@ -939,11 +939,14 @@ class Controller(QObject):
         if mid in self._meetings:
             self._meetings[mid].reload()
 
-    def _summary_waits(self) -> bool:
-        """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas e há provedor com chave (o mesmo
-        critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído)."""
+    def _summary_waits(self, meeting_id: int) -> bool:
+        """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas, há provedor com chave, a reunião
+        ainda não tem ata (R-10: depois de reprocessar, a ata antiga fica e nada espera) e a revisão não foi concluída antes
+        (R-01): o mesmo critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído."""
         try:
-            return bool(self.store.get(SPECS["llm.auto_tasks"])) and self.store.providers.active_with_key("llm") is not None
+            return (bool(self.store.get(SPECS["llm.auto_tasks"])) and self.store.providers.active_with_key("llm") is not None
+                    and self.store.summaries.current(meeting_id, SummaryKind.MINUTES) is None
+                    and str((self.store.get_meeting(meeting_id) or {}).get("status")) != MeetingStatus.REVIEWED)
         except Exception as e:
             log.debug("critério da ata adiada: %s", e)
             return False

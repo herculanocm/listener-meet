@@ -3,6 +3,7 @@ Também a tabela `providers` (chaves de API em texto aberto no SQLite, CP10): a 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from ..config.defaults import SPECS, SettingSpec
 from ..log import get_logger
@@ -86,13 +87,36 @@ class SettingsRepo:
 
 
 SECRET_HINTS = ("key", "token", "secret", "password", "senha")
+FREE_TEXT_HINTS = ("glossary", "notes", "participants", "title")     # R-04: texto livre pode ter nome de pessoa
 SHOWN_MAX = 80
 
 
 def _shown(key: str, value: str | None) -> str:
-    """O valor de uma configuração para o log: nunca o de uma chave ou token; longo, cortado (o `rtf_json`)."""
+    """O valor de uma configuração para o log: nunca o de uma chave ou token, nem texto livre (o glossário tem nomes: só o
+    tamanho), nem credencial numa URL (o proxy `http://user:senha@host`); longo, cortado (o `rtf_json`)."""
     if value is None:
         return "(padrão)"
-    if any(h in key.lower() for h in SECRET_HINTS):
+    low = key.lower()
+    if any(h in low for h in SECRET_HINTS):
         return "(oculto)"
+    spec = SPECS.get(key)
+    if any(h in low for h in FREE_TEXT_HINTS) and (spec is None or isinstance(spec.default, str)):   # o `_enabled` é bool
+        return f"(texto com {len(value)} caractere(s))"
+    value = safe_url(value)
     return value if len(value) <= SHOWN_MAX else value[:SHOWN_MAX] + "…"
+
+
+def safe_url(value: str) -> str:
+    """A URL sem usuário e senha (`http://***@proxy:8080`); o que não é URL volta igual e a ilegível não vai ao log."""
+    if "://" not in value or "@" not in value:
+        return value
+    try:
+        parts = urlsplit(value)
+        port = parts.port                                # levanta com porta que não é número
+    except ValueError:
+        return "(URL ilegível)"
+    if not (parts.username or parts.password):
+        return value
+    host = parts.hostname or ""
+    host = f"[{host}]" if ":" in host else host          # IPv6
+    return urlunsplit((parts.scheme, f"***@{host}" + (f":{port}" if port else ""), parts.path, parts.query, ""))

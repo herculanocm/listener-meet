@@ -11,6 +11,7 @@ from typing import Any, TypedDict, cast
 
 from ..log import get_logger
 from .core import Core, _now
+from .settings import safe_url
 
 log = get_logger("store.providers")
 
@@ -68,7 +69,7 @@ class ProvidersRepo:
             return
         log.info("provedor %s atualizado: %s", provider_id, ", ".join(
             (f"api_key {'definida' if fields[k] else 'apagada'}" if k == "api_key" else
-             f"{k} = {fields[k]!r}" if k in SHOWN_PROVIDER_FIELDS else k) for k in fields))      # a chave nunca vai para o log
+             f"{k} = {safe_url(str(fields[k]))!r}" if k in SHOWN_PROVIDER_FIELDS else k) for k in fields))   # sem chave nem senha
         cols = ", ".join(f"{k} = ?" for k in fields)
         values = [json.dumps(v, ensure_ascii=False) if isinstance(v, dict | list) else v for v in fields.values()]
         self.core.execute(f"UPDATE providers SET {cols}, updated_at = ? WHERE id = ?", (*values, _now(), provider_id))  # noqa: S608

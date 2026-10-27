@@ -32,7 +32,8 @@ from ..llm.registry import build_provider
 from ..llm.render import render_minutes
 from ..llm.schema import schema_hash
 from ..llm.types import TASK_CLASS, TASK_REASONING, Completion, LlmTask, Message, ModelClass, Request
-from ..model import JOB_STEP_LABELS, ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, SummaryKind
+from ..model import (JOB_STEP_LABELS, ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, MeetingStatus,
+                     SummaryKind)
 from ..store import Store
 from ..store.actions import ActionInsert
 from ..store.jobs import JobRow
@@ -137,6 +138,10 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
             return None
         tasks = [t for t in TASK_ORDER if t in set(auto_tasks_for(store, meeting_id, kind))] if auto else []
         pending = summary_gate.pending_voices(store, meeting_id) if auto and store.providers.active_with_key("llm") else 0
+        if pending and str((store.get_meeting(meeting_id) or {}).get("status")) == MeetingStatus.REVIEWED:
+            log.info("reunião %s: a revisão foi concluída antes do fim do processamento; a ata não espera as %d voz(es) sem "
+                     "nome (R-01)", meeting_id, pending)   # o reprocessamento com voz nova rebaixa o status (R2-11)
+            pending = 0
         now, waiting = summary_gate.split(tasks, pending, manual)   # U-042: com voz pendente, a ata espera a identificação
         if waiting:
             summary_gate.record(store, meeting_id, parent_job_id, waiting, pending)
@@ -357,6 +362,7 @@ class LlmJobRunner(BaseJobRunner):
         self._provider_override = provider
         self.config: LlmJobConfig = config or LlmJobConfig()
         self.tasks: list[JobStep] = []
+        self._speakers = ""                              # R-02: assinatura dos falantes do contexto (A-15)
         self.parent_job_id: int = 0
         self.auto = False
         self.outcomes: dict[JobStep, TaskOutcome] = {}
@@ -424,6 +430,7 @@ class LlmJobRunner(BaseJobRunner):
         self._prices = self.store.providers.list_prices(self.config.provider_kind or None)
         if any(t != JobStep.TEST for t in self.tasks):
             self.ctx = build_context(self.store, self.meeting_id, self.parent_job_id, self.config.output_language)
+            self._speakers = summary_gate.speakers_digest(self.store, self.meeting_id)   # R-02: os nomes que a ata usou
         asyncio.run(watched(self._run_tasks()))           # D-058: laço preso em código nativo não trava a fila
         failed = [o for o in self.outcomes.values() if not o.ok]
         if failed:
@@ -814,7 +821,7 @@ class LlmJobRunner(BaseJobRunner):
         self.store.add_event(self.meeting_id, None, EventType.JOB_STEP,
                              {"job_id": self.job_id, "step": "minutes_done", "strategy": strategy,
                               "decisions": len(data.get("decisions") or []), "actions": len(rows), "summary_id": summary_id,
-                              "speakers": summary_gate.speakers_digest(self.store, self.meeting_id)})   # A-15: nomes mudaram?
+                              "speakers": self._speakers})               # A-15: os nomes mudaram depois desta ata?
 
     def _minutes_json(self) -> str:
         row = self.store.summaries.current(self.meeting_id, SummaryKind.MINUTES)

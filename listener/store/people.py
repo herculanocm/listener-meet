@@ -121,7 +121,10 @@ class PeopleRepo:
 
     def scrub_orphans(self) -> int:
         """A-08: um processo que leu a pessoa antes de ela ser apagada (o worker no meio do job, o ao vivo com os perfis em
-        memória) pode gravar o vínculo depois; aqui ele some. Chamado ao apagar, no fim dos dois runners e na abertura."""
+        memória) pode gravar o vínculo depois; aqui ele some. Chamado ao apagar, no fim dos dois runners e na abertura. Só o
+        apagar cria órfão: sem nenhuma pessoa apagada (`people.max_id` ausente) a varredura nem começa (R-12)."""
+        if not self._kept_max_id():
+            return 0
         with self.core.transaction():                      # `_UNLINK` e as colunas são texto fixo deste módulo
             return sum(self.core.execute(sql.format(who=f"{col} IS NOT NULL AND {col} NOT IN (SELECT id FROM people)"))  # noqa: S608
                        for sql, col in _UNLINK)

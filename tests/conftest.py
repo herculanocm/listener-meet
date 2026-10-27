@@ -81,6 +81,15 @@ def clock() -> ManualClock:
     return ManualClock()
 
 
+@pytest.fixture(autouse=True)
+def disarmed_loop_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-058 (R-05): o `_serve` do worker arma o vigia do laço (que sai com `os._exit`) para o processo inteiro; nos testes
+    em processo cada teste começa desarmado e volta desarmado, sem depender da ordem."""
+    from listener.llm import aio
+
+    monkeypatch.setattr(aio._Stall, "on_stall", None)
+
+
 @pytest.fixture
 def no_summary_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """U-042: os testes de ponta a ponta da LLM (anteriores à F5.2) validam a ata, não a espera pela identificação; o

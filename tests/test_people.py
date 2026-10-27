@@ -68,16 +68,30 @@ def test_forget_unlinks_every_table_and_the_id_never_comes_back(platform, store,
         review.forget_person(store, me)
 
 
-def test_orphan_links_are_scrubbed(platform, store):
+def test_orphan_links_are_scrubbed(platform, store, monkeypatch):
+    """A-08: o vínculo que um processo grava depois do apagar (o worker que leu a pessoa antes) some. R-12: sem ninguém
+    apagado não há órfão possível, e a varredura do fim de cada job e da abertura nem escreve no banco."""
     mid = _record(platform, store)
     _pipeline(store, mid)
     voices = _voices(store, mid)
-    store._x("UPDATE clusters SET person_id = 999, status = ? WHERE id = ?", (ClusterStatus.CONFIRMED, voices["SPK_0"]["id"]))
-    store._x("UPDATE segments SET person_id = 999, role_at_time = 'X' WHERE cluster_id = ?", (voices["SPK_0"]["id"],))
+    writes: list[str] = []
+    execute = store.people.core.execute
+
+    def spy(sql: str, params: tuple = ()) -> int:
+        writes.append(sql)
+        return execute(sql, params)
+
+    monkeypatch.setattr(store.people.core, "execute", spy)
+    assert store.people.scrub_orphans() == 0 and writes == []                                                # R-12
+    monkeypatch.undo()
+    gone = store.people.create_person("Ana")
+    store.people.forget(gone)
+    store._x("UPDATE clusters SET person_id = ?, status = ? WHERE id = ?", (gone, ClusterStatus.CONFIRMED, voices["SPK_0"]["id"]))
+    store._x("UPDATE segments SET person_id = ?, role_at_time = 'X' WHERE cluster_id = ?", (gone, voices["SPK_0"]["id"]))
     assert store.people.scrub_orphans() >= 2
     spk0 = store.segments.get_cluster(voices["SPK_0"]["id"])
     assert (spk0["person_id"], spk0["status"]) == (None, ClusterStatus.UNNAMED)
-    assert store._q("SELECT COUNT(*) FROM segments WHERE person_id = 999 OR role_at_time = 'X'")[0][0] == 0
+    assert store._q("SELECT COUNT(*) FROM segments WHERE person_id = ? OR role_at_time = 'X'", (gone,))[0][0] == 0
     assert store.people.scrub_orphans() == 0                                                                 # nada sobrou
 
 

@@ -171,7 +171,7 @@ def _log_console_events() -> None:
         return
     from ctypes import wintypes
 
-    from ...log import flush
+    from ...log import drain
 
     proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
 
@@ -182,7 +182,7 @@ def _log_console_events() -> None:
         else:
             log.warning("app encerrando: %s (sem passar pelo Sair; uma gravação em curso fica interrompida e é preservada)", what)
         with suppress(Exception):
-            flush()
+            drain()                                        # R-08: só esvazia a fila; nada de parar o listener noutra thread
         return False
 
     callback = proto(handler)

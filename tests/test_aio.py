@@ -44,6 +44,28 @@ def test_a_slow_call_that_awaits_is_not_a_stall(stalls):
     assert asyncio.run(aio.watched(slow())) == "ok" and stalls == []
 
 
+def test_the_local_embedder_computing_in_the_loop_is_not_a_stall(store, tmp_path, monkeypatch, stalls):
+    """R-06: o embedder local calcula no laço, sem ceder (F5.1, sem `to_thread`); a rodada inteira passa do limite do vigia,
+    mas cada lote fica abaixo dele e o laço volta a rodar entre os lotes: o worker leve não sai no meio de um índice longo."""
+    from listener.rag import index
+    from tests.fake_local import FakeSession, long_meeting, use_local
+
+    monkeypatch.setattr(aio._Stall, "limit_s", 0.5)
+    use_local(store, tmp_path, monkeypatch)
+    mid = long_meeting(store, 4)
+    index.sync_text(store, mid)
+    run = FakeSession.run
+
+    def computing(self, names, feed):
+        time.sleep(0.2)                                  # a CPU no laço, como a sessão do ONNX
+        return run(self, names, feed)
+
+    monkeypatch.setattr(FakeSession, "run", computing)
+    t0 = time.monotonic()
+    result = index.fill_vectors(store, mid, batch_size=1)
+    assert time.monotonic() - t0 > 0.5 and result.missing == 0 and result.written == 5 and stalls == []
+
+
 def test_the_worker_logs_dumps_the_threads_and_exits(monkeypatch, caplog):
     from listener.pipeline import worker
 

@@ -25,6 +25,26 @@ def test_file_handler_level_and_thread_name(tmp_path):
     assert applog.current_file() is None
 
 
+def test_drain_writes_from_another_thread_without_restarting_the_listener(tmp_path):
+    """R-08: o handler de console do Windows roda noutra thread no fechamento do terminal; `drain` esvazia a fila e grava sem
+    parar nem reiniciar o listener (o `flush` faz stop e start, que ali disputaria o listener com a thread principal)."""
+    applog.setup("INFO")
+    path = applog.attach_file(tmp_path / "l.log")
+    listener = applog._state.listener
+    lg = applog.get_logger("teste")
+
+    def console() -> None:
+        lg.warning("app encerrando: terminal fechado")
+        applog.drain()
+
+    t = threading.Thread(target=console, name="console")
+    t.start()
+    t.join()
+    assert "app encerrando: terminal fechado" in path.read_text(encoding="utf-8")
+    assert applog._state.listener is listener and listener._thread is not None              # o mesmo, ainda rodando
+    applog.detach_file()
+
+
 def test_versions_line_and_excepthooks(tmp_path):
     applog.setup("INFO")
     path = applog.attach_file(tmp_path / "l.log")

@@ -8,9 +8,12 @@ import json
 
 import pytest
 
-from listener.model import EventType, JobKind, JobStatus, SummaryKind
+from listener.llm.fake import FakeProvider
+from listener.llm.fake_scripts import DEFAULTS
+from listener.llm.types import LlmTask
+from listener.model import EventType, JobKind, JobStatus, MeetingStatus, SummaryKind
 from listener.pipeline import review, summary_gate
-from listener.pipeline.llm_steps import enqueue_after_pipeline
+from listener.pipeline.llm_steps import TASKS_AFTER_MEETING, enqueue_after_pipeline
 from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
 
 WAITING = ("minutes", "executive", "pre_summary", "title")
@@ -66,12 +69,80 @@ def test_concluding_forces_and_another_parent_or_a_queued_pipeline_holds(platfor
     store.add_event(mid, None, EventType.LLM_DEFERRED, {"parent_job_id": parent + 99, "tasks": ["minutes"], "pending": 1})
     assert summary_gate.deferred(store, mid).tasks == WAITING                                 # o de outro job pai não conta
     heavy = store.jobs.enqueue(mid, JobKind.REPROCESS)
+    store.jobs.enqueue(mid, JobKind.EMBED_RANGE, {"t0_ms": 0, "t1_ms": 1000})              # R-09: o perfil de trecho não segura
     assert summary_gate.release(store, mid, "concluir", force=True) is None                  # o reprocessamento terá o seu
     store.jobs.request_cancel(heavy)
     job = summary_gate.release(store, mid, "concluir", force=True)
     assert job is not None and summary_gate.deferred(store, mid) is None
     released = [e for e in store.list_events(mid) if e["type"] == EventType.LLM_RELEASED]
     assert released[-1]["data"]["reason"] == "concluir" and released[-1]["data"]["job_id"] == job
+
+
+def test_a_review_concluded_during_the_processing_does_not_hold_the_minutes(platform, store, caplog):
+    """R-01: o "Concluir" durante o Whisper deixa a reunião `revisada` com voz sem nome por decisão do usuário (R2-11); o fim
+    do processamento não adia a ata por elas (nada mais a liberaria)."""
+    mid = _record(platform, store)
+    _provider_ready(store)
+    store.meetings.set_status(mid, MeetingStatus.REVIEWED)
+    with caplog.at_level("INFO", logger="listener.pipeline.llm"):
+        _pipeline(store, mid)
+    assert summary_gate.pending_voices(store, mid) == 2 and summary_gate.deferred(store, mid) is None
+    assert json.loads(_llm_jobs(store, mid)[0]["params_json"])["tasks"] == [str(t) for t in TASKS_AFTER_MEETING]
+    assert "concluída antes do fim do processamento" in caplog.text
+
+
+def test_a_name_given_while_the_minutes_are_written_lights_the_refresh(platform, store):
+    """R-02: a assinatura de quem fala é a do contexto que a ata leu, não a do fim da geração: o nome dado na revisão
+    enquanto a ata era escrita acende "Atualizar a ata com os nomes"."""
+    mid = _record(platform, store)
+    _provider_ready(store)
+    _pipeline(store, mid)
+    _run_llm(store)                                                                           # a identidade e a revisão
+    first, second = _voices(store, mid)
+    review.create_person(store, first, "Ana", "CFO")
+    assert summary_gate.release(store, mid, "teste", force=True) is not None
+    named: list[int] = []
+
+    def minutes(req):
+        if not named:                                                                         # a revisão anda durante a chamada
+            named.append(review.create_person(store, second, "Bia"))
+        return DEFAULTS[LlmTask.MINUTES](req)
+
+    _runner, status, _fake = _run_llm(store, FakeProvider(scripts={LlmTask.MINUTES: minutes}))
+    assert status == JobStatus.DONE and named and store.summaries.current(mid, SummaryKind.MINUTES) is not None
+    assert summary_gate.names_changed(store, mid)
+
+
+def test_the_tray_promises_the_wait_only_when_the_worker_waits(qtbot, qapp, platform, store, monkeypatch, caplog):
+    """A bandeja usa o critério do worker: "a ata sai depois" só sem ata (R-10: depois de reprocessar, a antiga fica) e sem o
+    "Concluir" antes do fim (R-01). R-03: o log do balão leva o id e o texto, nunca o título, nem o pedaço depois de ": "."""
+    from listener.store.summaries import SummaryInsert
+    from listener.ui.controller import Controller
+
+    mid = _record(platform, store)
+    _provider_ready(store)
+    parent = _pipeline(store, mid)
+    store._x("UPDATE meetings SET title = ? WHERE id = ?", ("Conversa: Zuleica e Bia", mid))
+    c = Controller(qapp, platform, store)
+    c.tray = None
+    opened: list[int] = []
+    monkeypatch.setattr(c, "open_review", opened.append)
+    try:
+        caplog.clear()
+        with caplog.at_level("INFO", logger="listener.ui"):
+            c._on_job_done(store.jobs.get(parent))
+        assert opened == [mid] and "Zuleica" not in caplog.text
+        assert (f"aviso na bandeja sobre a reunião {mid}: pronta para revisão de falantes; a ata sai depois que as vozes "
+                "forem identificadas.") in caplog.text
+        store.meetings.set_status(mid, MeetingStatus.REVIEWED)
+        assert not c._summary_waits(mid)                                                      # R-01
+        store.meetings.set_status(mid, MeetingStatus.PROCESSED)
+        assert c._summary_waits(mid)
+        store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata", "gemini", "m", "minutes/1.1", parent, None,
+                                             "pt-BR"))
+        assert not c._summary_waits(mid)                                                      # R-10
+    finally:
+        c.emergency_stop()
 
 
 def test_without_a_key_or_with_automatic_tasks_off_nothing_waits(platform, store):

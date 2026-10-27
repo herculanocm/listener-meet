@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
 from typing import Any
@@ -33,25 +32,30 @@ def configure_stall(on_stall: Callable[[str], None] | None, limit_s: float = STA
 async def watched[T](aw: Awaitable[T]) -> T:
     """`aw` com o vigia do laço, quando ligado. Uma chamada nativa presa no laço (27/10: a verificação de certificado do
     Windows dentro do aperto de mão TLS travou o worker leve por 52 min) não deixa nenhum timeout do Python disparar, e o
-    heartbeat, em outra thread, segue batendo: a fila parava para sempre. Aqui uma tarefa marca o tempo a cada `TICK_S`
-    e uma thread confere; parado por `limit_s`, `on_stall` recebe o motivo (o worker grava e sai, e o app o relança)."""
+    heartbeat, em outra thread, segue batendo: a fila parava para sempre. Aqui uma tarefa conta voltas a cada `TICK_S` e
+    uma thread confere; `limit_s / TICK_S` conferências seguidas sem volta nova chamam `on_stall` com o motivo (o worker
+    grava e sai, e o app o relança). Voltas, não relógio: o notebook suspenso congela as duas threads e não conta (R-07)."""
     on_stall, limit = _Stall.on_stall, _Stall.limit_s
     if on_stall is None:
         return await aw
-    last = time.monotonic()
+    beats = 0
     done = threading.Event()
 
     async def tick() -> None:
-        nonlocal last
+        nonlocal beats
         while True:
-            last = time.monotonic()
+            beats += 1
             await asyncio.sleep(TICK_S)
 
     def watch() -> None:
+        seen, still = beats, 0
         while not done.wait(TICK_S):
-            stalled = time.monotonic() - last
-            if stalled >= limit:
-                on_stall(f"o laço do asyncio não responde há {stalled:.0f} s (chamada presa em código nativo)")
+            if beats != seen:
+                seen, still = beats, 0
+                continue
+            still += 1
+            if still * TICK_S >= limit:
+                on_stall(f"o laço do asyncio não responde há {still * TICK_S:.0f} s (chamada presa em código nativo)")
                 return
 
     ticker = asyncio.ensure_future(tick())

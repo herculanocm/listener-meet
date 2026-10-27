@@ -332,10 +332,10 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
         assert names.index("Histórico…") == names.index("Fila de processamento…") - 1
         # o clique no balão abre a reunião do balão que está na tela (Q6); um balão sem reunião zera a guardada (R7-06)
         assert c.open_last_notified() is None
-        c._notify_meeting("Orçamento 2027: ata pronta", mid)
+        c._notify_meeting(mid, "ata pronta")
         c.notify("Atalhos que não registraram: …")
         assert c.open_last_notified() is None and c._meetings == {}                  # não abre a reunião do balão anterior
-        c._notify_meeting("Orçamento 2027: ata pronta", mid)
+        c._notify_meeting(mid, "ata pronta")
         win = c.open_last_notified()
         assert win is not None and c._meetings[mid] is win and win.isVisible()
         tray.messageClicked.emit()
@@ -381,7 +381,8 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
     "sistema inteiro" e trocar a fonte para ela pausam o player, com o aviso na barra (e no log), sem balão; retomar passa
     pela confirmação do Q9 (recusada: segue pausado). Com a fonte do app o som segue; fora da gravação, retoma direto; o
     aviso sai quando a gravação acaba. R8: o estado conferido é o que o motor confirmou (os fluxos tocam em tempo real e a
-    pausa descarta o buffer: um `abort` por pausa), sem depender do prazo de um fake que prende o `write`."""
+    pausa descarta o buffer: um `abort` por pausa), sem depender do prazo de um fake que prende o `write`. R-11: a retomada
+    depois do warm-up relê os dispositivos (o fluxo foi solto e a saída pode ter mudado)."""
     from PySide6.QtWidgets import QDialog, QMessageBox
 
     from listener.capture.recorder import RecordConfig
@@ -425,7 +426,8 @@ def test_q9_the_warmup_and_the_whole_system_source_pause_the_player(qtbot, qapp,
         paused(1, ctl.PLAYER_PAUSED_WARMUP)
         qtbot.waitUntil(lambda: outs[0].calls[-1] == "close", timeout=3000)                 # U-043 (A-04): soltou o fluxo
         assert win.bar.note.text() == ctl.PLAYER_PAUSED_WARMUP and asked == []
-        assert c.player.toggle()                                                             # sem gravação: retoma direto
+        platform.next_devices = list(platform.devices)                                       # o sistema mudou na pausa
+        assert c.player.toggle() and platform.refreshes == 1                                 # retoma direto e relê (R-11)
         sounding()
         assert (c.player.state().state, win.bar.note.text(), len(outs)) == (PLAYING, "", 2)   # a retomada abriu outro
         assert c.start_recording(RecordConfig(source=SourceSpec("system", label="Sistema"), **fast), {"title": "q9"})

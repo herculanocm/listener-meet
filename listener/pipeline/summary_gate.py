@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..log import get_logger
-from ..model import HEAVY_JOB_KINDS, EventType, JobStep, SummaryKind
+from ..model import PIPELINE_JOB_KINDS, EventType, JobStep, SummaryKind
 from . import review
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ def release(store: Store, meeting_id: int, reason: str, *, force: bool = False) 
         if d.pending and not force:
             log.debug("reunião %s: a ata segue adiada (%d voz(es) pendente(s))", meeting_id, d.pending)
             return None
-        heavy = [j for j in store.jobs.active(kinds=HEAVY_JOB_KINDS) if int(j["meeting_id"]) == meeting_id]
+        heavy = [j for j in store.jobs.active(kinds=PIPELINE_JOB_KINDS) if int(j["meeting_id"]) == meeting_id]   # R-09
         if heavy:
             log.info("reunião %s: a ata adiada não sai agora (%s): o processamento %s está na fila e terá o próprio adiamento",
                      meeting_id, reason, heavy[0]["id"])

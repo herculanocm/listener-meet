@@ -406,6 +406,7 @@ class _Plan:
             t0 = time.perf_counter()
             try:
                 emb = await provider.embed(texts, model=self.model, dim=self.dim, task=EmbedTask.DOCUMENT)
+                await asyncio.sleep(0)                     # R-06: o embedder local calcula sem ceder; o laço respira (D-058)
                 mat = _checked(emb.vectors, len(rows), self.dim)
             except Exception as e:
                 err = classify_exception(e)

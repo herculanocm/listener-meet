@@ -11,6 +11,7 @@ import queue
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from importlib import metadata
@@ -152,6 +153,22 @@ def flush() -> None:
         for h in listener.handlers:
             with suppress(Exception):
                 h.flush()
+
+
+def drain(timeout_s: float = 1.0) -> None:
+    """Espera a fila do log esvaziar (até `timeout_s`) e os handlers gravarem, sem parar nem reiniciar o listener: seguro
+    em qualquer thread, inclusive a do handler de console do Windows no fechamento do terminal (R-08)."""
+    listener = _state.listener
+    if listener is None:
+        return
+    deadline = time.monotonic() + timeout_s
+    empty = getattr(listener.queue, "empty", None)       # a `SimpleQueue` do `setup`; o tipo do listener não o promete
+    while callable(empty) and not empty() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    time.sleep(0.02)                                     # o último registro tirado da fila pode estar a caminho do handler
+    for h in listener.handlers:                          # o `flush` pega o lock do handler: espera a gravação em curso
+        with suppress(Exception):
+            h.flush()
 
 
 def handle_exception(exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:

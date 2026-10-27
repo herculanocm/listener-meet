@@ -912,6 +912,11 @@ class Player(QObject):
                 log.info("player: retomar a reunião %s recusado (a gravação capta o sistema inteiro)", st.meeting_id)
                 return False
             log.info("player: retomar a reunião %s de %s", st.meeting_id, fmt_mmss(st.t_ms / 1000))
+            if self.before_play is not None:               # R-11: a pausa do warm-up soltou o fluxo; a saída pode ter mudado
+                try:
+                    self.before_play()
+                except Exception as e:  # retoma mesmo assim, na saída que já conhecia
+                    log.debug("player: reler os dispositivos na retomada: %s", e)
             self.engine.resume()
         else:
             return False
