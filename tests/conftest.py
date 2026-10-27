@@ -82,6 +82,16 @@ def clock() -> ManualClock:
 
 
 @pytest.fixture
+def no_summary_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """U-042: os testes de ponta a ponta da LLM (anteriores à F5.2) validam a ata, não a espera pela identificação; o
+    pipeline falso deixa vozes pendentes, então aqui ninguém fica pendente para o adiamento. A espera tem os próprios
+    testes (`test_summary_gate.py`)."""
+    from listener.pipeline import summary_gate
+
+    monkeypatch.setattr(summary_gate, "pending_voices", lambda *_a, **_k: 0)
+
+
+@pytest.fixture
 def platform(tmp_path: Path, clock: ManualClock) -> FakePlatform:
     return FakePlatform(tmp_path, clock=clock)
 

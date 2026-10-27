@@ -6,7 +6,9 @@ ou modificado, a versão nova só acende o aviso "recarregar?". Só metadados e 
 edição gravada (título, ata, executivo, ações) chama `on_edited()`, que reindexa a reunião para a busca (o controlador
 espera 30 s sem edição antes de enfileirar). F5 L4 (F5A-26): `LlmTabsGroup` junta as abas, o selo de custo e o "gerar de
 novo" para a revisão e para a reunião aberta (as duas recarregam igual: ocupado, gerado antes do reprocessamento, pulado
-pelo alerta); o título tem um modo compacto, numa linha, para o cabeçalho da reunião aberta."""
+pelo alerta); o título tem um modo compacto, numa linha, para o cabeçalho da reunião aberta. U-042 (F5.2): a aba da ata
+diz quando ela espera a identificação das vozes ("Gerar ata mesmo assim") ou quando os nomes mudaram depois dela
+("Atualizar a ata com os nomes"); o "gerar de novo" de uma tarefa adiada a libera com as outras."""
 from __future__ import annotations
 
 import json
@@ -19,11 +21,15 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBox
                                QPushButton, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
+from ..log import get_logger
 from ..model import JOB_STEP_LABELS, ActionStatus, JobKind, JobStatus, JobStep, SummaryKind
+from ..pipeline import summary_gate
 from ..store.jobs import ACTIVE
 
 if TYPE_CHECKING:
     from ..store import Store
+
+log = get_logger("ui.llm_tabs")
 
 KIND_STEP: dict[str, JobStep] = {SummaryKind.MINUTES: JobStep.MINUTES, SummaryKind.EXECUTIVE: JobStep.EXECUTIVE,
                                  SummaryKind.PRE_SUMMARY: JobStep.PRE_SUMMARY}
@@ -122,12 +128,18 @@ class TextTab(QWidget):
         self.btn_regen = QPushButton("Gerar de novo")
         self.btn_reload = QPushButton("Recarregar")
         self.btn_reload.setVisible(False)
+        self.btn_extra = QPushButton("")                         # U-042: "Gerar ata mesmo assim" ou "Atualizar a ata…"
+        self.btn_extra.setVisible(False)
+        self._extra_note = ""
+        self._extra_action: Callable[[], Any] | None = None
         self.btn_save.clicked.connect(self.save)
         self.btn_regen.clicked.connect(lambda: self.on_regenerate(KIND_STEP[str(self.kind)]))
         self.btn_reload.clicked.connect(self.load_newer)
+        self.btn_extra.clicked.connect(lambda: self._extra_action() if self._extra_action is not None else None)
         row = QHBoxLayout()
         row.addWidget(self.btn_save)
         row.addWidget(self.btn_regen)
+        row.addWidget(self.btn_extra)
         row.addWidget(self.btn_reload)
         row.addStretch(1)
         lay = QVBoxLayout(self)
@@ -165,11 +177,19 @@ class TextTab(QWidget):
             notes.append(f"{KIND_TITLE[str(self.kind)]}: {STALE_MARK}; use \"Gerar de novo\" para refazer com a transcrição atual.")
         if str(step) in skipped and row is None:
             notes.append(f"{KIND_TITLE[str(self.kind)]} não gerado: {skipped[str(step)]}; gerar?")
+        if self._extra_note:
+            notes.append(self._extra_note)
         self.notice.setText("\n".join(notes))
         self.btn_reload.setVisible(self.newer)
         self.btn_regen.setEnabled(not busy)
         self.btn_regen.setToolTip("há um job de LLM em andamento para esta reunião" if busy else "")
         self.btn_save.setEnabled(self.summary_id is not None)
+
+    def set_extra(self, note: str, label: str = "", action: Callable[[], Any] | None = None) -> None:
+        """U-042: um aviso a mais e um botão contextual (a ata que espera as vozes, os nomes que mudaram); vazio esconde."""
+        self._extra_note, self._extra_action = note, action
+        self.btn_extra.setText(label)
+        self.btn_extra.setVisible(bool(label and action is not None))
 
     def _show(self, current: tuple[int | None, str]) -> None:
         self._loaded = current
@@ -433,6 +453,7 @@ class LlmTabsGroup(QObject):
         stale = set(self.store.summaries.stale_after_reprocess(self.meeting_id, current))
         info = last_llm_info(self.store, self.meeting_id)
         skipped = {str(k): str(v) for k, v in (info.get("skipped") or {}).items()}
+        self._summary_state()
         self.title_tab.reload(busy)
         for tab in self.text_tabs.values():
             tab.reload(stale, skipped, busy)
@@ -446,8 +467,62 @@ class LlmTabsGroup(QObject):
         self.cost.setText(" · ".join(parts))
         return busy
 
+    def _summary_state(self) -> None:
+        """U-042: a aba da ata diz quando a ata espera a identificação (e oferece gerar agora) ou quando os nomes mudaram
+        depois dela (e oferece atualizar); nada sai sozinho."""
+        ata = self.text_tabs[str(SummaryKind.MINUTES)]
+        try:
+            waiting = summary_gate.deferred(self.store, self.meeting_id)
+            changed = waiting is None and summary_gate.names_changed(self.store, self.meeting_id)
+        except Exception as e:  # o aviso nunca impede as abas de carregar
+            log.debug("reunião %s: estado da ata adiada: %s", self.meeting_id, e)
+            waiting, changed = None, False
+        if waiting is not None and self.store.summaries.current(self.meeting_id, SummaryKind.MINUTES) is None:
+            ata.set_extra(f"A ata espera a identificação de {waiting.pending} voz(es): confirme em \"Revisar falantes…\" ou "
+                          "gere agora com as vozes que faltam sem nome.", "Gerar ata mesmo assim", self.release_now)
+        elif changed:
+            ata.set_extra("Os nomes mudaram depois desta ata.", "Atualizar a ata com os nomes", self.refresh_names)
+        else:
+            ata.set_extra("")
+
+    def release_now(self) -> int | None:
+        """"Gerar ata mesmo assim": as tarefas adiadas entram na fila já, com as vozes que faltam sem nome."""
+        job_id = summary_gate.release(self.store, self.meeting_id, "gerar ata mesmo assim", force=True)
+        return self._queued(job_id, "Ata: gerando pela fila com as vozes que faltam sem nome…" if job_id is not None else
+                            "A ata não saiu agora: veja a fila (processamento em curso ou sem chave de LLM).")
+
+    def refresh_names(self) -> int | None:
+        """"Atualizar a ata com os nomes": ata, executivo e pré-resumo de novo pela fila, com os nomes de agora (D-057)."""
+        from ..pipeline.llm_steps import enqueue_llm_job
+
+        if llm_job_active(self.store, self.meeting_id):
+            return self._queued(None, "Já há um job de LLM em andamento para esta reunião; espere terminar.")
+        job_id = enqueue_llm_job(self.store, self.meeting_id, list(summary_gate.REFRESH))
+        log.info("reunião %s: atualizar a ata com os nomes pedido (job llm %s)", self.meeting_id, job_id)
+        return self._queued(job_id, "Atualizando a ata com os nomes pela fila…" if job_id is not None else
+                            "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso.")
+
+    def _queued(self, job_id: int | None, message: str) -> int | None:
+        if self.on_message is not None:
+            self.on_message(message)
+        if job_id is not None:
+            self.regenerated.append(job_id)
+            if self.on_launch is not None:
+                self.on_launch(True)
+        if self.after_regenerate is not None:
+            self.after_regenerate()
+        else:
+            self.reload()
+        return job_id
+
     def regenerate(self, step: JobStep) -> int | None:
-        """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
+        """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar.
+        Tarefa que espera a identificação (U-042, A-14) é liberada com as outras adiadas, para a ata não sair duas vezes."""
+        waiting = summary_gate.deferred(self.store, self.meeting_id)
+        if waiting is not None and str(step) in waiting.tasks:
+            job = summary_gate.release(self.store, self.meeting_id, f"gerar de novo: {step}", force=True)
+            return self._queued(job, f"{step_label(step)}: gerando pela fila com as outras tarefas que esperavam…" if job
+                                is not None else "Não saiu agora: veja a fila (processamento em curso ou sem chave de LLM).")
         job_id, message = request_llm_step(self.store, self.meeting_id, step)
         if self.on_message is not None:
             self.on_message(message)

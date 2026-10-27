@@ -42,6 +42,7 @@ app oferece "Reindexar agora/Depois" com os minutos (A-12), com as Configuraçõ
 from __future__ import annotations
 
 import functools
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -63,7 +64,7 @@ from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
 from ..store.jobs import HELD
-from ..pipeline import review
+from ..pipeline import review, summary_gate
 from ..platform.common import process
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
@@ -919,18 +920,43 @@ class Controller(QObject):
         m = self.store.get_meeting(mid) or {}
         title = m.get("title") or f"reunião {mid}"
         if str(job.get("kind")) == JobKind.LLM:
-            self._notify_meeting(f"{title}: {self._llm_done_text(job)}", mid)
+            if self._identity_only(job, mid):
+                log.info("reunião %s: identidade por contexto pronta (job llm %s); a ata espera as vozes, sem balão", mid, job["id"])
+            else:
+                self._notify_meeting(f"{title}: {self._llm_done_text(job)}", mid)
             if mid in self._reviews:
                 self._reviews[mid].reload()
         else:
             todo = self._pending_voices(mid)
-            self._notify_meeting(f"{title}: {'pronta para revisão de falantes' if todo else 'processada, sem voz a confirmar'}.", mid)
+            waits = todo and self._summary_waits()                 # U-042: a regra do worker, não o evento (A-14)
+            text = ("pronta para revisão de falantes; a ata sai depois que as vozes forem identificadas" if waits else
+                    "pronta para revisão de falantes" if todo else "processada, sem voz a confirmar")
+            self._notify_meeting(f"{title}: {text}.", mid)
             self._warn_no_llm(mid, int(job["id"]))
             self._review_offered.add(mid)
             if todo:
                 self.open_review(mid)
         if mid in self._meetings:
             self._meetings[mid].reload()
+
+    def _summary_waits(self) -> bool:
+        """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas e há provedor com chave (o mesmo
+        critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído)."""
+        try:
+            return bool(self.store.get(SPECS["llm.auto_tasks"])) and self.store.providers.active_with_key("llm") is not None
+        except Exception as e:
+            log.debug("critério da ata adiada: %s", e)
+            return False
+
+    def _identity_only(self, job: Any, meeting_id: int) -> bool:
+        """O job `llm` que só rodou a identidade e a revisão da transcrição enquanto a ata espera (A-14: o balão "LLM
+        concluída" enganaria)."""
+        try:
+            done = set(json.loads(job.get("timings_json") or "{}").get("llm", {}).get("done") or [])
+            return bool(done) and done <= {str(s) for s in summary_gate.EARLY} and summary_gate.deferred(self.store, meeting_id) is not None
+        except Exception as e:
+            log.debug("reunião %s: job llm só de identidade? %s", meeting_id, e)
+            return False
 
     def _pending_voices(self, meeting_id: int) -> bool:
         """D-055: a revisão só abre sozinha (P1 e o fim do job) com voz a confirmar; sem nenhuma, nada sobe por cima do que o

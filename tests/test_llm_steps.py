@@ -23,6 +23,8 @@ from tests.conftest import make_config
 from tests.fake_pipeline import FakeDeps
 from tests.test_runner import CFG
 
+pytestmark = pytest.mark.usefixtures("no_summary_gate")       # U-042: a espera pela identificação tem testes próprios
+
 SCRIPT = {"R": [(0.2, 1.4, "bom dia Ana tudo bem"), (1.6, 2.9, "vamos fechar o orçamento de 2027 hoje")],
           "L": [(0.3, 1.2, "oi gente"), (2.0, 2.8, "sim claro vamos")]}
 KEY = "AIzaSy-chave-de-teste-ABCDEFGH12345678"

@@ -39,6 +39,7 @@ from ..store.jobs import JobRow
 from ..store.llm_calls import LlmCallInsert
 from ..store.segments import ClusterRow, SegmentRow, resolve_person, role_of
 from ..store.summaries import SummaryInsert
+from . import summary_gate
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep
 from .runner import USER_CLUSTER
 
@@ -126,16 +127,23 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
     job pai, nenhum job (F3.1 R3-02)."""
     from ..config.defaults import SPECS
 
-    manual = cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
-    auto = bool(store.get(SPECS["llm.auto_tasks"]))
-    if not auto and not manual:
-        return None
-    if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
-        log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, NO_SPEECH)
-        return None
-    tasks = set(auto_tasks_for(store, meeting_id, kind)) if auto else set()
-    tasks |= manual
-    return enqueue_llm_job(store, meeting_id, [t for t in TASK_ORDER if t in tasks], parent_job_id, auto=auto)
+    with store.transaction():                            # A-13: a decisão de adiar e o job nascem juntos
+        manual = cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
+        auto = bool(store.get(SPECS["llm.auto_tasks"]))
+        if not auto and not manual:
+            return None
+        if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
+            log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, NO_SPEECH)
+            return None
+        tasks = [t for t in TASK_ORDER if t in set(auto_tasks_for(store, meeting_id, kind))] if auto else []
+        pending = summary_gate.pending_voices(store, meeting_id) if auto and store.providers.active_with_key("llm") else 0
+        now, waiting = summary_gate.split(tasks, pending, manual)   # U-042: com voz pendente, a ata espera a identificação
+        if waiting:
+            summary_gate.record(store, meeting_id, parent_job_id, waiting, pending)
+        chosen = set(now) | manual
+        if not chosen:
+            return None
+        return enqueue_llm_job(store, meeting_id, [t for t in TASK_ORDER if t in chosen], parent_job_id, auto=auto)
 
 
 def auto_skip_reason(store: Store, meeting_id: int, parent_job_id: int) -> str | None:
@@ -805,7 +813,8 @@ class LlmJobRunner(BaseJobRunner):
             self.store.actions.insert_many(rows)
         self.store.add_event(self.meeting_id, None, EventType.JOB_STEP,
                              {"job_id": self.job_id, "step": "minutes_done", "strategy": strategy,
-                              "decisions": len(data.get("decisions") or []), "actions": len(rows)})
+                              "decisions": len(data.get("decisions") or []), "actions": len(rows), "summary_id": summary_id,
+                              "speakers": summary_gate.speakers_digest(self.store, self.meeting_id)})   # A-15: nomes mudaram?
 
     def _minutes_json(self) -> str:
         row = self.store.summaries.current(self.meeting_id, SummaryKind.MINUTES)

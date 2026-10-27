@@ -97,7 +97,7 @@ def test_editing_the_role_keeps_the_role_of_the_day_in_other_meetings(store, cap
     assert store.people.get_person(ana)["company"] == "Outra"
 
 
-def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platform, store, caplog):
+def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platform, store, caplog, no_summary_gate):
     store.upsert_me("Eu", role="Gerente", company="Empresa Y")
     mid = _record(platform, store)
     _provider_ready(store)

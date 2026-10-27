@@ -13,6 +13,7 @@ from listener.pipeline import review
 from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
 
 pytest.importorskip("PySide6")
+pytestmark = pytest.mark.usefixtures("no_summary_gate")       # U-042: a espera pela identificação tem testes próprios
 
 
 @pytest.fixture

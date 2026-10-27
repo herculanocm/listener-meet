@@ -40,6 +40,8 @@ class EventType(StrEnum):
     LIVE_DEGRADED = "live_degraded"
     LIVE_CPU = "live_cpu"
     LIVE_STOPPED = "live_stopped"
+    LLM_DEFERRED = "llm_deferred"  # U-042 (F5.2): a ata espera a identificação das vozes (job pai e tarefas)
+    LLM_RELEASED = "llm_released"  # U-042: as tarefas adiadas entraram na fila (job criado e o motivo)
 
 
 class Health(StrEnum):

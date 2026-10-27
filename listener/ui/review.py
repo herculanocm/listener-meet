@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
 
 from ..log import get_logger
 from ..model import ClusterStatus, JobStep, SummaryKind
-from ..pipeline import review
+from ..pipeline import review, summary_gate
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .person import DELETE, PersonData, PersonDialog
 from .player import ERROR, PlayerState
@@ -130,9 +130,24 @@ class ReviewDialog(QDialog):
 
     # ---------------------------------------------------------------- índice da busca (F5)
     def _edited(self, now: bool = False) -> None:
-        """Uma decisão sobre as vozes mudou quem fala na transcrição: a busca reindexa a reunião."""
+        """Uma decisão sobre as vozes mudou quem fala na transcrição: a busca reindexa a reunião, e a ata que esperava a
+        identificação sai quando não resta voz pendente (U-042)."""
         if self.on_edited is not None:
             self.on_edited(self.meeting_id, "review", now=now)
+        self.release_summary("revisão sem voz pendente")
+
+    def release_summary(self, reason: str, force: bool = False) -> int | None:
+        """U-042: as tarefas adiadas entram na fila (uma vez); o worker leve é lançado. Falhar aqui nunca trava a revisão."""
+        try:
+            job_id = summary_gate.release(self.store, self.meeting_id, reason, force=force)
+        except Exception as e:
+            log.warning("reunião %s: a ata adiada não foi liberada (%s): %s", self.meeting_id, reason, e)
+            return None
+        if job_id is not None:
+            self.header.setText("Vozes resolvidas: a ata está sendo gerada pela fila.")
+            if self.on_launch is not None:
+                self.on_launch(True)
+        return job_id
 
     def _text_edited(self) -> None:
         if self.on_edited is not None:
@@ -398,6 +413,7 @@ class ReviewDialog(QDialog):
     def finish(self) -> None:
         review.finish(self.store, self.meeting_id)
         self._edited(now=True)                             # "Concluir": a reindexação não espera os 30 s
+        self.release_summary("concluir", force=True)       # U-042: concluir decide; a ata sai mesmo com voz sem nome
         self.accept()
 
     # ---------------------------------------------------------------- teclado (U-006)
