@@ -14,7 +14,8 @@ Transcrição e o cursor da linha do tempo pelo mesmo `PlaybackFollower` (U-025)
 A-18; `ui/docx_save.py`).
 
 F5.3 (U-046): "Idioma: pt-BR" no cabeçalho, com a troca pelo outro idioma que reprocessa a reunião (`ui/meeting_language.py`);
-a exportação sai no idioma da ata."""
+a exportação sai no idioma da ata. (A-12) A resposta do chat com a janela fora de foco chama `on_chat_answer(ok)` (o aviso do
+controlador, cujo clique volta à aba Chat)."""
 from __future__ import annotations
 
 from collections import deque
@@ -103,7 +104,7 @@ class MeetingWindow(QWidget):
 
     def __init__(self, store: Store, meeting_id: int, *, player: Player | None = None, on_review: Callable[[int], Any] | None = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None, cascade: int = 0,
-                 parent: QWidget | None = None):
+                 on_chat_answer: Callable[[bool], Any] | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
@@ -166,7 +167,7 @@ class MeetingWindow(QWidget):
         self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
                                     play=self._play_point if player is not None else None)
         self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)
-        self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text)
+        self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text, on_answer=on_chat_answer)
         summary = QSplitter(Qt.Orientation.Vertical)
         for kind, label in ((SummaryKind.EXECUTIVE, "Resumo executivo"), (SummaryKind.PRE_SUMMARY, "Pré-resumo")):
             box = QGroupBox(label)

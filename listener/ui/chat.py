@@ -4,11 +4,13 @@ segmento (`listener://play?seg=<id>`), histórico de `chat_messages`. Chat sobre
 F5 L4: a citação toca pelo player único do app, do começo da fala com L e R misturados até parar (item 10); a aba "Chat"
 da reunião aberta usa este painel. R7-05: a recarga da reunião aberta (job `llm` ou `index` concluído) não apaga a pergunta
 em voo e não leva a rolagem ao fim (salvo se estava no fim). R7-03: a saída cancela a pergunta mesmo antes do primeiro
-pedaço e espera a thread antes de o banco fechar."""
+pedaço e espera a thread antes de o banco fechar. F5.3 (A-12): a resposta (ou a falha) que chega com a janela fora de foco
+chama `on_answer(ok)`, e o controlador avisa; a pergunta cancelada não."""
 from __future__ import annotations
 
 import functools
 import html
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QUrl
@@ -28,12 +30,14 @@ log = get_logger("ui.chat")
 
 class ChatPanel(QWidget):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, *, player: Player | None = None,
-                 title: Any = None):
+                 title: Any = None, on_answer: Callable[[bool], Any] | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
         self.player = player                               # F5: as citações tocam pelo player único
         self.title_fn = title                              # o título da reunião para a barra do player
+        self.on_answer = on_answer                         # F5.3 (A-12): a resposta chegou com a janela fora de foco
+        self._stopped = False                              # "Parar" ou fechar a janela: o usuário cancelou, não avisa
         self.task: StreamTask | None = None
         self.answers: list[chat_task.ChatAnswer] = []       # instrumentação dos testes
         self.played: list[tuple[str, int, int]] = []
@@ -89,6 +93,7 @@ class ChatPanel(QWidget):
             return
         self.question.clear()
         self._partial = ""
+        self._stopped = False
         self._base_html = (chat_task.history_html(self.store, self.meeting_id, self.lines)
                            + f"<p><b>Você:</b> {html.escape(text)}</p>")
         self._render_partial()
@@ -117,6 +122,7 @@ class ChatPanel(QWidget):
         if isinstance(result, BaseException):
             self.status.setText(f"falhou: {result}")
             self.reload()
+            self._answered_away(False)
             return
         self.answers.append(result)
         self.reload()
@@ -128,9 +134,18 @@ class ChatPanel(QWidget):
             cites = sum(1 for c in result.citations if c.segment_id is not None)
             cost = f" · {fmt_usd(result.cost_usd)}" if result.cost_usd is not None else ""
             self.status.setText(f"{cites} citação(ões) clicável(is){cost}")
+        if result.error or not result.cancelled:
+            self._answered_away(not result.error)
+
+    def _answered_away(self, ok: bool) -> None:
+        """F5.3 (A-12): terminou com a janela fora de foco (o usuário foi para outro app): o controlador avisa. Parada pelo
+        usuário ("Parar" ou fechar a janela, que grava a parte que chegou como resposta), não."""
+        if self.on_answer is not None and not self._stopped and not self.window().isActiveWindow():
+            self.on_answer(ok)
 
     def stop(self) -> None:
         if self.task is not None:
+            self._stopped = True
             self.task.cancel()
             self.status.setText("parando…")
 

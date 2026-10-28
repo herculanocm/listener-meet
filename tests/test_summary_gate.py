@@ -132,8 +132,8 @@ def test_the_tray_promises_the_wait_only_when_the_worker_waits(qtbot, qapp, plat
         with caplog.at_level("INFO", logger="listener.ui"):
             c._on_job_done(store.jobs.get(parent))
         assert opened == [mid] and "Zuleica" not in caplog.text
-        assert (f"aviso na bandeja sobre a reunião {mid}: pronta para revisão de falantes; a ata sai depois que as vozes "
-                "forem identificadas.") in caplog.text
+        assert (f"aviso na tela (pronto) sobre a reunião {mid}: pronta para revisão de falantes; a ata sai depois que as vozes "
+                "forem identificadas.") in caplog.text                                           # F5.3: o aviso do app
         store.meetings.set_status(mid, MeetingStatus.REVIEWED)
         assert not c._summary_waits(mid)                                                      # R-01
         store.meetings.set_status(mid, MeetingStatus.PROCESSED)

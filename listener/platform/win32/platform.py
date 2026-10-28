@@ -1,6 +1,6 @@
 """Windows: WASAPI (sounddevice), process loopback (proc-tap), loopback do sistema (PyAudioWPatch),
 sessões de áudio e mudo do microfone (pycaw), atalhos (RegisterHotKey), processos (Toolhelp32),
-identidade do processo, suspensão e foco (user32, kernel32, shell32).
+identidade do processo, suspensão, foco e (F5.3) janela fora da captura de tela (user32, kernel32, shell32).
 
 Streams voltam paradas (`CaptureHandle.start()`, M-06). COM: `_Win32MicMute` lembra a busca do endpoint e refaz o
 ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12). Nada daqui roda fora do Windows."""
@@ -41,6 +41,7 @@ PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling 
 POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
 STD_OUTPUT_HANDLE = -11 & 0xFFFFFFFF                   # (DWORD)-11
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
+WDA_EXCLUDEFROMCAPTURE = 0x00000011                    # F5.3 (A-13): SetWindowDisplayAffinity, Windows 10 2004 ou mais novo
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
 ROLE_CONSOLE, ROLE_COMMUNICATIONS = 0, 2               # ERole do Core Audio (U-043: os padrões entram na assinatura)
 SLOW_LIST_APPS_MS = 500.0      # a lista de apps com som acima disto vai para o log mesmo sem mudar
@@ -111,6 +112,21 @@ def _own_process_kernel32() -> Any:
     k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
     k32.K32GetProcessMemoryInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessMemoryCounters), wintypes.DWORD)
     return k32
+
+
+@functools.cache
+def _display_affinity() -> Any:
+    """`SetWindowDisplayAffinity` com a assinatura declarada (F5.3, A-13); instância própria do user32, como o kernel32 acima:
+    sem `argtypes`, o HWND de 64 bits chegaria truncado."""
+    if sys.platform != "win32":
+        raise OSError("user32 só existe no Windows")
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    fn = user32.SetWindowDisplayAffinity
+    fn.argtypes = (wintypes.HWND, wintypes.DWORD)
+    fn.restype = wintypes.BOOL
+    return fn
 
 
 def _com_init() -> None:
@@ -437,6 +453,21 @@ class Win32Platform(Platform):
             return False
         else:
             return ok
+
+    @override
+    def exclude_from_capture(self, window_id: int) -> bool:
+        """F5.3 (A-13): `WDA_EXCLUDEFROMCAPTURE` tira a janela de toda captura (o Teams compartilhando a tela, gravadores,
+        print) e ela segue na tela. Antes do Windows 10 2004, ou se o Windows recusar, False (o erro vai ao DEBUG)."""
+        if sys.platform != "win32":
+            return False
+        try:
+            ok = bool(_display_affinity()(int(window_id), WDA_EXCLUDEFROMCAPTURE))
+        except Exception as e:
+            log.debug("SetWindowDisplayAffinity: %s", e)
+            return False
+        if not ok:
+            log.debug("SetWindowDisplayAffinity recusou a janela %#x (erro %s)", int(window_id), ctypes.get_last_error())
+        return ok
 
     # ---------------------------------------------------------------- dispositivos
     @override

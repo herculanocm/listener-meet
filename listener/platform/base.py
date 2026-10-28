@@ -115,6 +115,9 @@ class Platform(Protocol):
     def app_init(self) -> None: ...                      # antes de criar a interface: identidade do processo etc.
     def keep_awake(self, on: bool) -> bool: ...          # impede a suspensão do sistema enquanto grava
     def bring_to_front(self, window_id: int) -> bool: ...  # traz uma janela nossa para a frente mesmo em segundo plano
+    # F5.3 (A-13): tira uma janela nossa da captura de tela (compartilhamento, gravação, print) e ela segue visível aqui;
+    # True quando o sistema aceitou (o aviso que não sai da captura mostra só o tipo durante a gravação)
+    def exclude_from_capture(self, window_id: int) -> bool: ...
 
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...

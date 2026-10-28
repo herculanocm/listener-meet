@@ -5,7 +5,8 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
   python scripts/win_probe.py app [--seconds 20] [--hotkey]   o app real num perfil isolado: abertura, bandeja, RAM e CPU
                                                               parado, o atalho do Histórico e a saída pelo "Sair"
   python scripts/win_probe.py shots [--out PASTA]             as telas no DPI real sem aparecer na tela do usuário: um PNG
-                                                              por tela e por aba (F5.3: a fila nos seis estados e a Ajuda)
+                                                              por tela e por aba (F5.3: a fila nos seis estados e a Ajuda;
+                                                              um aviso de cada tipo e o grupo "Idioma e avisos")
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
@@ -202,7 +203,7 @@ def cmd_app(args) -> None:
 def cmd_shots(args) -> None:
     os.environ.pop("QT_QPA_PLATFORM", None)
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QTabWidget
+    from PySide6.QtWidgets import QApplication, QGroupBox, QTabWidget
 
     app = QApplication(sys.argv[:1])
     from listener.platform import get_platform
@@ -210,11 +211,13 @@ def cmd_shots(args) -> None:
     from listener.ui.common import install_translations
     from listener.ui.history import HistoryWindow
     from listener.ui.meeting import MeetingWindow
+    from listener.ui.notices import Notice, NoticeAction, NoticeKind, Target
     from listener.ui.player import Player
     from listener.ui.queue import BUTTON_HELP, COLUMN_HELP, QueueDialog
     from listener.ui.queue_help import QueueHelpDialog
     from listener.ui.settings_min import SettingsDialog
     from listener.ui.summary import SummaryDialog
+    from listener.ui.toast import Toast
     from listener.ui.tray import STATE_COLORS, make_icon
     from listener.ui.warmup import WarmupDialog
     from listener.ui.widget import MarkerPopup, RecordingWidget
@@ -249,6 +252,14 @@ def cmd_shots(args) -> None:
                 app.processEvents()
                 shot(w, f"{name}-{tw.tabText(i).replace(' ', '_').replace('/', '_')}")
 
+    def part(w, name: str) -> None:
+        """Um pedaço de uma janela que já está na foto (F5.3: o grupo "Idioma e avisos" das Configurações)."""
+        pix = w.grab()
+        path = out_dir / f"{len(shots):02d}-{name}.png"
+        pix.save(str(path))
+        shots.append({"file": path.name, "logical": [w.width(), w.height()], "pixels": [pix.width(), pix.height()],
+                      "dpr": w.devicePixelRatioF()})
+
     p = get_platform()
     p.app_init()
     store = Store(Path(tempfile.mkdtemp(prefix="listener-shots-db-")))
@@ -272,6 +283,7 @@ def cmd_shots(args) -> None:
     sd = SettingsDialog(store, p, {})
     shot(sd, "configuracoes")
     tabs_of(sd, "configuracoes")
+    part(next(g for g in sd.findChildren(QGroupBox) if g.title() == "Idioma e avisos"), "configuracoes-idioma-e-avisos")
     sd.close()
     mid = store.create_meeting("Comitê de investimentos", "sistema", None, None)
     store.finish_meeting(mid, 1000)
@@ -296,6 +308,18 @@ def cmd_shots(args) -> None:
     hd.close()
     qd._timer.stop()
     qd.close()
+    ready = Notice(NoticeKind.READY, "Comitê de investimentos: ata pronta · US$ 0,32", "Ata pronta · US$ 0,32",
+                   NoticeAction(Target.MEETING, mid))
+    for name, notice, count, private in (                 # F5.3 L3 (U-048): um aviso de cada tipo e o gravando só com o tipo
+            ("aviso-pronto", ready, 1, False),
+            ("aviso-informacao", Notice(NoticeKind.INFO, "2 reunião(ões) processada(s) aguardando revisão de falantes."), 3, False),
+            ("aviso-erro", Notice(NoticeKind.ERROR, "Planejamento: erro na LLM (etapa: ata); veja o motivo na fila.",
+                                  "Erro na LLM (etapa: ata); veja o motivo na fila.", NoticeAction(Target.QUEUE)), 1, False),
+            ("aviso-gravando-so-o-tipo", ready, 1, True)):
+        toast = Toast(notice, 6000, count)
+        toast.set_private(private)
+        shot(toast, name)
+        toast.close()
     player.shutdown()
     for state, color in STATE_COLORS.items():
         make_icon(color).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))

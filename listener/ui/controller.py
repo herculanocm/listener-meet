@@ -40,13 +40,21 @@ F5.1: o embedder local calcula no app com 1 thread (A-03); parar e cancelar a gr
 completa os vetores que o local adiou durante a gravação (A-07); terminado o preparo da busca local com o local ativo, o
 app oferece "Reindexar agora/Depois" com os minutos (A-12), com as Configurações abertas ou não.
 F5.3 L1: na abertura, o `llm.output_language = en` antigo vira `app.language = en` uma vez (A-03); a reunião nasce com o
-idioma do warm-up (A-01); um processamento de troca de idioma não promete a ata adiada (A-06)."""
+idioma do warm-up (A-01); um processamento de troca de idioma não promete a ata adiada (A-06).
+F5.3 L3 (U-048): todo `notify` vira o aviso do próprio app no canto da tela (`ui/toast.py`, `ui/notices.py`; com
+`ui.toast_seconds` = 0, o balão de antes, e o clique nele segue abrindo a reunião do último balão), sempre na thread da
+interface: de outra thread só emite um sinal enfileirado (o notificador de exceções roda na thread que falhou, A-10), com
+trava de reentrada, limite por minuto e nada novo com `_quitting`. Um aviso por job, com o que ficou pronto: processamento e
+LLM (lista e custo, U-020), só a identidade (revê a A-14 da F5.2), job com erro (por job e `finished_at`, semeado na
+abertura, A-11), o fim e o erro do download de modelos e a resposta do chat com a janela fora de foco (A-12); índice,
+glossário e resumo parcial não avisam. O clique faz a ação do aviso e traz o alvo à frente; job lançado põe o polling em 2 s."""
 from __future__ import annotations
 
 import functools
 import json
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
@@ -54,7 +62,7 @@ from typing import TYPE_CHECKING, Any, override
 from contextlib import suppress
 
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon, QWidget
 
 from ..capture.clock import Clock, SessionClock
 from ..capture.recorder import RecordConfig, Recorder
@@ -75,6 +83,8 @@ from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import RAG, preparer, shutdown_preparer
 from .meeting import MeetingWindow
+from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HISTORY_READY, IDENTITY_READY, Notice, NoticeAction,
+                      NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text)
 from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
 from .review import ReviewDialog
@@ -82,6 +92,7 @@ from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
 from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task, wait_before_close
+from .toast import ToastManager
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
@@ -117,7 +128,13 @@ PARTIAL_TICK_MS = 15_000             # F4 L5: confere se o resumo parcial venceu
 PARTIAL_QUIT_WAIT_MS = 2500          # sair do app: espera a chamada cancelada do parcial terminar (cancelamento a cada 0,2 s)
 PREWARM_AUDIO_MS = 2000              # U-031: pré-aquece o áudio do player logo depois da bandeja, com o app ocioso
 APP_LOCAL_THREADS = 1                # F5.1 (A-03): o e5 local no app (vetor da consulta); o worker leve usa 2
+MEETING_TARGETS = (Target.MEETING, Target.MEETING_CHAT)   # F5.3: os avisos cujo balão (0 s) abre a reunião no clique (Q6)
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
+
+
+def _error_key(job: Any) -> tuple[int, str]:
+    """A-11: um erro é o par (job, `finished_at`): o "Tentar de novo" que falha de novo é outro erro e avisa de novo."""
+    return int(job["id"]), str(job.get("finished_at") or "")
 
 
 class _MutePoller(QThread):
@@ -174,6 +191,7 @@ class Controller(QObject):
                                          #      `live_status`: names_ready | names_unavailable (com `reason`)
     partial_state = Signal(object)       # F4 L5: {"state": idle | running | done | error | stopped, "meeting_id", "message"}
     _live_message = Signal(object, object)   # (cliente, mensagem): da thread `live-read` para a da interface
+    _notice_requested = Signal(str, object)  # F5.3 (A-10): (texto, NoticeMeta ou None) de outra thread para a da interface
 
     def __init__(self, app: QApplication, platform: Platform, store: Store, first_run: bool = False,
                  clock_factory: Callable[[], Clock] | None = None):
@@ -202,8 +220,8 @@ class Controller(QObject):
         self._lease_at: float | None = None
         self._worker_spawned_at: dict[bool, float | None] = {False: None, True: None}     # por classe: pesado, leve (F3)
         self._launch_reason: dict[bool, str | None] = {False: None, True: None}          # o último "não lançado" logado
-        self._notice_meeting: tuple[int, str] | None = None  # o próximo balão é sobre esta reunião: (id, texto sem o título)
         self._seen_done: set[int] = set()
+        self._seen_errors: set[tuple[int, str]] = set()      # F5.3 (A-11): (job, finished_at) já vistos com erro
         self._no_llm_warned = False
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
@@ -259,6 +277,15 @@ class Controller(QObject):
         # F5.1: as Configurações abertas (pai da pergunta "Reindexar agora/Depois" do fim do preparo da busca local, A-12)
         self._settings_dialog: SettingsDialog | None = None
         self._preparer_connected = False
+        # F5.3 L3: o aviso do app (`notify`), só na thread da interface (A-10)
+        self._ui_thread = threading.get_ident()
+        self._notice_meta: NoticeMeta | None = None          # tipo, texto curto e ação do próximo `notify` (`_notify_with`)
+        self._notifying = False                              # trava de reentrada
+        self._notice_limit = RateLimit()                     # A-10: o relógio (`clock`) os testes trocam
+        self.notices: deque[Notice] = deque(maxlen=100)      # instrumentação dos testes: os avisos mostrados
+        self.toasts = ToastManager(platform, on_action=self._on_notice_action, recording=self._recording_now,
+                                   anchor=self._toast_anchor, parent=self)
+        self._notice_requested.connect(self._on_notice_requested, Qt.ConnectionType.QueuedConnection)
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
@@ -276,12 +303,13 @@ class Controller(QObject):
             if interrupted:
                 self.notify(f"{interrupted} gravação(ões) interrompida(s) na última execução; os pedaços foram preservados.")
             if missing:
-                self.notify("Arquivo(s) de áudio ausente(s) na pasta do banco: " + ", ".join(missing))
+                self._notify_as(NoticeKind.ERROR, "Arquivo(s) de áudio ausente(s) na pasta do banco: " + ", ".join(missing))
             if self.first_run:
                 self.notify(TRAY_TIP)
         self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
-        self._seen_done = {int(j["id"]) for j in self.store.jobs.list_jobs(limit=500, exclude_kinds=INDEX_KINDS)
-                           if j["status"] == JobStatus.DONE}
+        recent = self.store.jobs.list_jobs(limit=500, exclude_kinds=INDEX_KINDS)
+        self._seen_done = {int(j["id"]) for j in recent if j["status"] == JobStatus.DONE}
+        self._seen_errors = {_error_key(j) for j in recent if j["status"] == JobStatus.ERROR}    # A-11: os antigos não avisam
         waiting = self.store.meetings.list_by_status(MeetingStatus.PROCESSED)
         if waiting:
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
@@ -320,27 +348,137 @@ class Controller(QObject):
         if not self._quitting:
             prewarm_audio()
 
+    # ---------------------------------------------------------------- avisos (F5.3 L3, U-048)
     def notify(self, message: str) -> None:
-        """Balão da bandeja. Sem reunião: o clique nele não abre nada, nem a reunião de um balão anterior (R7-06). O log diz o
-        que o usuário viu; o de uma reunião leva o id e o texto, nunca o título (pode ter nome de terceiro, R-03)."""
-        about, self._notice_meeting = self._notice_meeting, None
-        if about is None:
-            log.info("aviso na bandeja: %s", message)
-        else:
-            log.info("aviso na bandeja sobre a reunião %s: %s", about[0], about[1])
-        self._notified_meeting = None
-        if self.tray is not None:
-            self.tray.showMessage("listener-meet", message)
+        """O aviso ao usuário: o do próprio app, no canto da tela (`ui/toast.py`), ou, com `ui.toast_seconds` = 0, o balão da
+        bandeja de antes. De qualquer thread (A-10): fora da thread da interface só emite um sinal enfileirado (o notificador
+        de exceções roda na thread que falhou). Tipo, texto curto e ação chegam por `_notify_with` (o `notify` segue com um
+        argumento: os testes o trocam por uma lista). Saindo, em reentrada ou acima do limite por minuto, fica só no log."""
+        if threading.get_ident() != self._ui_thread:
+            self._notice_requested.emit(message, None)
+            return
+        meta, self._notice_meta = self._notice_meta or NoticeMeta(), None
+        if self._quitting or self._notifying or not self._notice_limit.allow():
+            why = "saindo" if self._quitting else ("reentrada" if self._notifying else "limite por minuto")
+            log.info("aviso fora da tela (%s)%s", why, meta.log_suffix(message))
+            return
+        self._notifying = True
+        try:
+            self._deliver(meta.notice(message), meta)
+        finally:
+            self._notifying = False
 
-    def _notify_meeting(self, meeting_id: int, text: str) -> None:
-        """Balão sobre uma reunião ("<título>: <texto>"): o clique nele abre a reunião (Q6); o título vai só ao balão."""
-        m = self.store.get_meeting(meeting_id) or {}
-        self._notice_meeting = (int(meeting_id), text)
-        self.notify(f"{m.get('title') or f'reunião {meeting_id}'}: {text}")
-        self._notified_meeting = int(meeting_id)
+    def notify_error(self, message: str) -> None:
+        """Um aviso de erro, de qualquer thread (A-10)."""
+        self._notify_any_thread(message, NoticeMeta(NoticeKind.ERROR))
+
+    def notify_crash(self, message: str) -> None:
+        """O notificador de exceções (`log.set_crash_notifier`), chamado na thread que falhou (A-10): um aviso de erro que,
+        gravando sem a exclusão da captura, diz só que houve um erro (os detalhes ficam no log)."""
+        self._notify_any_thread(message, NoticeMeta(NoticeKind.ERROR, short_text=CRASH_SHORT))
+
+    def _notify_any_thread(self, message: str, meta: NoticeMeta) -> None:
+        if threading.get_ident() != self._ui_thread:
+            self._notice_requested.emit(message, meta)
+        else:
+            self._notify_with(message, meta)
+
+    def _on_notice_requested(self, message: str, meta: object) -> None:
+        """O aviso pedido de outra thread, agora na da interface (A-10)."""
+        self._notify_with(message, meta if isinstance(meta, NoticeMeta) else None)
+
+    def _notify_with(self, message: str, meta: NoticeMeta | None) -> None:
+        """Na thread da interface: o `notify` com o tipo, o texto curto e a ação do aviso."""
+        self._notice_meta = meta
+        try:
+            self.notify(message)
+        finally:
+            self._notice_meta = None
+
+    def _notify_as(self, kind: NoticeKind, message: str, action: NoticeAction | None = None) -> None:
+        self._notify_with(message, NoticeMeta(kind, action))
+
+    def _notify_meeting(self, meeting_id: int, text: str, kind: NoticeKind = NoticeKind.READY,
+                        action: NoticeAction | None = None) -> None:
+        """Aviso sobre uma reunião ("<título>: <texto>"): o clique abre a reunião (Q6) ou faz a `action`; o título vai só à
+        tela, nunca ao log nem ao texto curto (R-03, A-13)."""
+        mid = int(meeting_id)
+        m = self.store.get_meeting(mid) or {}
+        self._notify_with(f"{m.get('title') or f'reunião {mid}'}: {text}",
+                          NoticeMeta(kind, action or NoticeAction(Target.MEETING, mid), (mid, text)))
+
+    def _deliver(self, notice: Notice, meta: NoticeMeta) -> None:
+        """Na tela ou, com 0 s, no balão (aí o clique abre a reunião do último balão: Q6; um balão sem reunião a esquece,
+        R7-06). O log diz o que o usuário viu; o de uma reunião leva o id e o texto, nunca o título (pode ter nome de
+        terceiro, R-03)."""
+        seconds = self._toast_seconds()
+        log.info("aviso %s (%s)%s", "na tela" if seconds > 0 else "na bandeja", notice.kind, meta.log_suffix(notice.text))
+        self.notices.append(notice)
+        if seconds > 0:
+            self.toasts.show(notice, seconds)
+            return
+        action = notice.action
+        self._notified_meeting = action.meeting_id if action is not None and action.target in MEETING_TARGETS else None
+        if self.tray is not None:
+            self.tray.showMessage("listener-meet", notice.text)
+
+    def _toast_seconds(self) -> int:
+        """`ui.toast_seconds` relido a cada aviso (CP8: vale já); banco ocupado: o padrão."""
+        try:
+            return int(self.store.get(SPECS["ui.toast_seconds"]))
+        except Exception as e:
+            log.debug("ui.toast_seconds não lido: %s", e)
+            return int(SPECS["ui.toast_seconds"].default)
+
+    def _recording_now(self) -> bool:
+        return self.state in (AppState.RECORDING, AppState.PAUSED, AppState.SAVING)
+
+    def _toast_anchor(self) -> tuple[int, int, int, int] | None:
+        """Gravando, o retângulo do widget de gravação (A-14): o aviso vai para a tela dele e não o cobre."""
+        w = self.widget
+        if w is None or not w.isVisible() or not self._recording_now():
+            return None
+        g = w.frameGeometry()
+        return g.x(), g.y(), g.width(), g.height()
+
+    def _on_notice_action(self, action: NoticeAction) -> None:
+        """O clique no aviso (A-12, A-14): abre o alvo e o traz à frente pela plataforma (o app está em segundo plano)."""
+        if self._quitting:
+            return
+        log.info("clique no aviso: %s%s", action.target, f" {action.meeting_id}" if action.meeting_id is not None else "")
+        match action.target:
+            case Target.MEETING | Target.MEETING_CHAT:
+                mid = action.meeting_id
+                if mid is None or self.store.get_meeting(mid) is None:
+                    self.notify("Esta reunião não existe mais.")
+                    return
+                self.open_meeting(mid, "chat" if action.target == Target.MEETING_CHAT else None, focus=True)
+            case Target.QUEUE:
+                self.open_queue()
+                self._bring_to_front(self._queue_dialog)
+            case Target.HISTORY:
+                self._bring_to_front(self.open_history())
+            case Target.SETTINGS:
+                self.open_settings(focus=True)
+
+    def _bring_to_front(self, win: QWidget | None) -> None:
+        if win is not None:
+            with suppress(Exception):
+                self.platform.bring_to_front(int(win.winId()))
+
+    def _chat_answered(self, meeting_id: int, ok: bool) -> None:
+        """A-12: a resposta do chat da reunião chegou com a janela dela fora de foco; o clique abre a aba Chat."""
+        self._notify_meeting(meeting_id, CHAT_READY if ok else CHAT_FAILED, NoticeKind.READY if ok else NoticeKind.ERROR,
+                             NoticeAction(Target.MEETING_CHAT, int(meeting_id)))
+
+    def _history_answered(self, ok: bool) -> None:
+        """A-12: a do chat sobre todas as reuniões chegou com o Histórico fora de foco; o clique abre o Histórico."""
+        self._notify_as(NoticeKind.READY if ok else NoticeKind.ERROR, HISTORY_READY if ok else HISTORY_FAILED,
+                        NoticeAction(Target.HISTORY))
 
     def open_last_notified(self) -> MeetingWindow | None:
-        """`messageClicked`: abre a reunião do último balão, quando ele era sobre uma reunião (Q6, R7-06)."""
+        """`messageClicked`: abre a reunião do último balão, quando ele era sobre uma reunião (Q6, R7-06). Só no caminho do
+        balão (`ui.toast_seconds` = 0): o aviso do app faz a própria ação no clique (F5.3)."""
         mid = self._notified_meeting
         if mid is None or self._quitting or self.store.get_meeting(mid) is None:
             return None
@@ -377,9 +515,16 @@ class Controller(QObject):
     def _on_preparer_changed(self, state: Any) -> None:
         """A-12: o preparo da busca local terminou; com o local ativo e pronto e algo a indexar, "Reindexar agora/Depois" com os
         minutos (Q3: a varredura não completa sozinha). A pergunta sai no próximo giro do laço: as Configurações abertas já
-        mostram "pronta" antes dela (e ela sai sobre elas)."""
+        mostram "pronta" antes dela (e ela sai sobre elas). F5.3 (A-11): o fim e o erro do download, do ao vivo e da busca,
+        avisam com o clique nas Configurações; a interrupção pela gravação não (o começo da gravação já avisou)."""
         st = dict(state or {})
-        if not self._quitting and st.get("what") == RAG and st.get("state") == "done":
+        if self._quitting:
+            return
+        found = download_text(st) if st.get("message") != PREPARE_INTERRUPTED else None
+        if found is not None:
+            kind, text = found
+            self._notify_as(kind, text, NoticeAction(Target.SETTINGS))
+        if st.get("what") == RAG and st.get("state") == "done":
             QTimer.singleShot(0, self, self._offer_local_reindex)
 
     def _offer_local_reindex(self) -> None:
@@ -433,9 +578,9 @@ class Controller(QObject):
 
     def _on_hotkeys_registered(self, result: Any) -> None:
         if isinstance(result, BaseException):
-            self.notify(f"Atalhos não registraram: {result}")
+            self._notify_as(NoticeKind.ERROR, f"Atalhos não registraram: {result}")
         elif result:
-            self.notify("Atalhos que não registraram:\n" + "\n".join(f"{k}: {v}" for k, v in result.items()))
+            self._notify_as(NoticeKind.ERROR, "Atalhos que não registraram:\n" + "\n".join(f"{k}: {v}" for k, v in result.items()))
 
     def _on_hotkey(self, name: str) -> None:
         log.debug("atalho %s", name)
@@ -582,7 +727,7 @@ class Controller(QObject):
         ok = self.platform.mic_mute().set(muted)
         self.recorder.set_muted(muted, source="app")
         if not ok:
-            self.notify("Não consegui mutar o microfone no sistema; gravando silêncio mesmo assim.")
+            self._notify_as(NoticeKind.ERROR, "Não consegui mutar o microfone no sistema; gravando silêncio mesmo assim.")
 
     def switch_source(self) -> None:
         if not self.recorder or self.state == AppState.SAVING:
@@ -624,7 +769,7 @@ class Controller(QObject):
         if isinstance(result, BaseException):
             log.error("parada da gravação %s falhou: %s", rec.meeting_id, result)
             stats = rec.stats()
-            self.notify(f"A gravação terminou com erro: {result}")
+            self._notify_as(NoticeKind.ERROR, f"A gravação terminou com erro: {result}")
         else:
             stats = result
         if rec.muted:
@@ -678,6 +823,7 @@ class Controller(QObject):
                 self._clear_lease()
                 self._enqueue_processing(rec.meeting_id)
         self._quitting = True
+        self.toasts.shutdown()                           # F5.3: os avisos da tela e os da fila somem; nada novo aparece
         self._queue_timer.stop()
         try:
             self.platform.hotkeys().stop()
@@ -844,6 +990,7 @@ class Controller(QObject):
         if not active:
             self._launch_reason[light] = None                      # nada a fazer: não é motivo de log
             return False
+        self._poll_fast()
         if not light and self.recorder is not None:
             return self._not_launching(light, active, "o pesado espera o fim da gravação")      # Q7
         held = self.store.jobs.held_fresh(kinds=kinds)
@@ -861,12 +1008,18 @@ class Controller(QObject):
             pid = self.platform.spawn_detached(argv, env)
         except Exception as e:
             log.exception("não consegui lançar o worker%s", " leve" if light else "")
-            self.notify(f"Não consegui iniciar o processamento: {e}")
+            self._notify_as(NoticeKind.ERROR, f"Não consegui iniciar o processamento: {e}")
             return False
         self._worker_spawned_at[light] = time.monotonic()
         log.info("worker%s lançado (pid %s) para %d job(s) ativo(s) (%s): %s", " leve" if light else "", pid, len(active),
                  ", ".join(f"{j['id']}:{j.get('kind')}" for j in active[:6]), " ".join(argv))
         return True
+
+    def _poll_fast(self) -> None:
+        """F5.3 (A-11): com job ativo o polling vai a 2 s (um "Gerar de novo" avisava até 30 s depois); só quando muda, porque
+        o `setInterval` reinicia o timer."""
+        if self._queue_timer.interval() != QUEUE_POLL_ACTIVE_MS:
+            self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS)
 
     def _not_launching(self, light: bool, active: list[Any], reason: str) -> bool:
         """Por que a fila tem job e nenhum worker sai (a "fila parada" do teste de 27/10): uma linha só quando o motivo muda,
@@ -907,6 +1060,10 @@ class Controller(QObject):
             if jid not in self._seen_done:
                 self._seen_done.add(jid)
                 self._on_job_done(job)
+        for job in jobs:                                         # A-11: cada erro novo avisa uma vez
+            if job["status"] == JobStatus.ERROR and _error_key(job) not in self._seen_errors:
+                self._seen_errors.add(_error_key(job))
+                self._on_job_error(job)
         if running is not None and str(running.get("step") or "") in REVIEW_STEPS:
             mid = int(running["meeting_id"])
             if mid not in self._review_offered:
@@ -935,8 +1092,8 @@ class Controller(QObject):
                 self._meetings[mid].reload()
             return
         if str(job.get("kind")) == JobKind.LLM:
-            if self._identity_only(job, mid):
-                log.info("reunião %s: identidade por contexto pronta (job llm %s); a ata espera as vozes, sem balão", mid, job["id"])
+            if self._identity_only(job, mid):                    # F5.3: avisa (revê a A-14 da F5.2, que não avisava)
+                self._notify_meeting(mid, IDENTITY_READY)
             else:
                 self._notify_meeting(mid, self._llm_done_text(job))
             if mid in self._reviews:
@@ -953,6 +1110,13 @@ class Controller(QObject):
                 self.open_review(mid)
         if mid in self._meetings:
             self._meetings[mid].reload()
+
+    def _on_job_error(self, job: Any) -> None:
+        """F5.3 (A-11): processamento, reprocessamento ou LLM com erro: um aviso com a etapa; o clique abre a fila. O índice e
+        o perfil de trecho não avisam."""
+        text = job_error_text(job)
+        if text is not None:
+            self._notify_meeting(int(job["meeting_id"]), text, NoticeKind.ERROR, NoticeAction(Target.QUEUE))
 
     def _summary_waits(self, meeting_id: int, job: Any = None) -> bool:
         """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas, há provedor com chave, a reunião
@@ -1085,7 +1249,8 @@ class Controller(QObject):
                  f", em {t_ms} ms" if t_ms is not None else "", ", tocando" if play else "")
         if win is None:
             win = MeetingWindow(self.store, meeting_id, player=self.player, on_review=self.open_review, on_launch=self.launch_worker,
-                                on_edited=self.on_edited, cascade=len(self._meetings))
+                                on_edited=self.on_edited, cascade=len(self._meetings),
+                                on_chat_answer=functools.partial(self._chat_answered, meeting_id))
             win.closed.connect(self._meeting_closed)
             self._meetings[meeting_id] = win
             with suppress(Exception):
@@ -1115,7 +1280,7 @@ class Controller(QObject):
         win = self._history
         log.info("histórico aberto%s", " pelo atalho da busca" if focus_search else "")
         if win is None:
-            win = HistoryWindow(self.store, on_open=self._open_from_history, on_edited=self.on_edited)
+            win = HistoryWindow(self.store, on_open=self._open_from_history, on_edited=self.on_edited, on_answer=self._history_answered)
             self._history = win
         win.show()
         win.raise_()
@@ -1224,7 +1389,7 @@ class Controller(QObject):
             client.start()
         except Exception as e:
             log.exception("ao vivo da gravação %s não iniciou", rec.meeting_id)
-            self.notify(f"A legenda ao vivo não iniciou: {e}")
+            self._notify_as(NoticeKind.ERROR, f"A legenda ao vivo não iniciou: {e}")
             self._set_live_status("unavailable", reason=str(e))
             return False
         self.live = client
@@ -1321,7 +1486,7 @@ class Controller(QObject):
         reason = str((self._live_error or {}).get("message") or "")
         self._set_live_status("crashed", code=msg.get("code"), reason=reason)
         if recording:
-            self.notify(LIVE_STOPPED_TEXT + (f"\n{reason}" if reason else ""))
+            self._notify_as(NoticeKind.ERROR, LIVE_STOPPED_TEXT + (f"\n{reason}" if reason else ""))
 
     # ---------------------------------------------------------------- interface do ao vivo (F4 L4)
     def _live_badge_tip(self) -> str:
@@ -1569,15 +1734,18 @@ class Controller(QObject):
         text = message if no_provider else f"resumo parcial indisponível agora ({message}); tento de novo no próximo intervalo"
         if not self._partial_warned:
             self._partial_warned = True
-            self.notify(text[:1].upper() + text[1:] + ".")
+            self._notify_as(NoticeKind.INFO if no_provider else NoticeKind.ERROR, text[:1].upper() + text[1:] + ".")
         self._set_partial({"state": "error", "message": text})
 
     # ---------------------------------------------------------------- outros
-    def open_settings(self) -> None:
+    def open_settings(self, *, focus: bool = False) -> None:
+        """As Configurações (modal); `focus` (o clique no aviso, F5.3) as traz à frente pela plataforma ao aparecer."""
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
                              recording=self.recorder is not None)
         self._settings_dialog = dlg
         log.info("configurações abertas%s", " (gravando)" if self.recorder is not None else "")
+        if focus:
+            QTimer.singleShot(0, dlg, functools.partial(self._bring_to_front, dlg))
         try:
             accepted = dlg.exec() == QDialog.DialogCode.Accepted
         finally:
@@ -1591,7 +1759,7 @@ class Controller(QObject):
 
             err = attach_log(self.store)
             if err:
-                self.notify(f"Log em arquivo indisponível: {err}")
+                self._notify_as(NoticeKind.ERROR, f"Log em arquivo indisponível: {err}")
             if self.recorder:
                 self.recorder.cfg.apply_live(self.store)
 

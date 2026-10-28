@@ -200,6 +200,8 @@ class FakePlatform(Platform):
         self.next_devices: list[AudioDevice] | None = None    # U-043: o teste "conecta" um dispositivo aqui
         self.refreshes = 0
         self.mic_streams: list[FakeStream] = []
+        self.capture_exclusion = True                         # F5.3 (A-13): o que `exclude_from_capture` devolve
+        self.excluded: list[int] = []                         # as janelas que pediram para sair da captura
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -227,6 +229,11 @@ class FakePlatform(Platform):
     @override
     def bring_to_front(self, window_id: int) -> bool:
         return True
+
+    @override
+    def exclude_from_capture(self, window_id: int) -> bool:
+        self.excluded.append(int(window_id))
+        return self.capture_exclusion
 
     @override
     def list_input_devices(self) -> list[AudioDevice]:

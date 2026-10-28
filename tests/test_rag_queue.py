@@ -196,6 +196,7 @@ def test_controller_ignores_index_jobs_when_detecting_done_and_in_the_tip(qapp, 
     for mid in meetings:
         store.jobs.enqueue_index(mid, "sweep")
     job = store.jobs.enqueue(heavy_mid)
+    store.set_setting("ui.toast_seconds", "0")                       # F5.3: o balão da bandeja, que esta bandeja falsa registra
     c = Controller(qapp, platform, store)
     tray = _Tray()
     c.tray = tray                                                                                   # type: ignore[assignment]

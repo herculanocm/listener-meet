@@ -112,6 +112,9 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("ui.history_geometry", "", _NOW, "Posição e tamanho da janela Histórico", _text, phase="F5"),     # "x,y,largura,altura"
     SettingSpec("ui.meeting_geometry", "", _NOW, "Posição e tamanho da janela da reunião", _text, phase="F5"),
     SettingSpec("ui.history_filters", "{}", _NOW, "Filtros do Histórico (pessoa e período)", _text, phase="F5", internal=True),
+    # F5.3 (U-048): quanto o aviso do app fica no canto da tela (o mouse em cima segura); 0 volta ao balão da bandeja. No grupo
+    # "Idioma e avisos", montado à mão
+    SettingSpec("ui.toast_seconds", 6, _NOW, "Aviso some em (s)", int, low=0, high=60, phase="F5.3"),
     SettingSpec("warmup.last_preset_id", "", _NOW, "Último preset", _text),
     SettingSpec("warmup.last_mic_device_id", "", _NOW, "Último microfone (id)", _text),
     SettingSpec("warmup.last_mic_device_name", "", _NOW, "Último microfone (nome)", _text),

@@ -330,7 +330,9 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
         tray = TrayIcon(c)
         names = [a.text() for a in tray.menu.actions()]
         assert names.index("Histórico…") == names.index("Fila de processamento…") - 1
-        # o clique no balão abre a reunião do balão que está na tela (Q6); um balão sem reunião zera a guardada (R7-06)
+        # o clique no balão abre a reunião do balão que está na tela (Q6); um balão sem reunião zera a guardada (R7-06). F5.3:
+        # o balão só com `ui.toast_seconds` = 0 (o aviso do app faz a própria ação no clique)
+        store.set_setting("ui.toast_seconds", "0")
         assert c.open_last_notified() is None
         c._notify_meeting(mid, "ata pronta")
         c.notify("Atalhos que não registraram: …")

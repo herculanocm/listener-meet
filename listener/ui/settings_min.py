@@ -19,7 +19,8 @@ e sem custo (A-05); terminado o preparo com o local ativo, o controlador oferece
 U-037 (D-053): o primeiro grupo é "Chaves de acesso" (`ui/keys.py`): a chave de cada provedor de LLM, com "Testar" e o
 estado, e o token do Hugging Face, que saiu do grupo "Processamento", cada um com onde conseguir.
 F5.3 L1 (U-044, A-03): logo depois, o grupo "Idioma e avisos", montado à mão, com o "Idioma padrão" (`app.language`), que
-grava o código pelo `itemData` do combo, não o texto exibido; o idioma das saídas da F3 (`llm.output_language`) saiu.
+grava o código pelo `itemData` do combo, não o texto exibido; o idioma das saídas da F3 (`llm.output_language`) saiu. L3
+(U-048): no mesmo grupo, "Aviso some em (s)" (`ui.toast_seconds`, 0 a 60; 0 volta ao balão da bandeja).
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from ..store import Store
 
 SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na próxima gravação"}
+TOAST_SECONDS = "ui.toast_seconds"                          # F5.3 (U-048): no grupo "Idioma e avisos"
 REINDEX_TITLE = "Busca por sentido"
 IDLE: dict[str, Any] = {"state": "idle"}
 OTHER_DOWNLOAD = "outro download em curso (um por vez)"
@@ -261,7 +263,7 @@ class SettingsDialog(QDialog):
     # ---------------------------------------------------------------- idioma e avisos (F5.3)
     def _language_group(self) -> QGroupBox:
         """"Idioma e avisos" (A-03): o idioma padrão das reuniões novas (o "Antes de gravar" já vem com ele) e do chat sobre
-        todas as reuniões; o L3 acrescenta aqui a duração do aviso."""
+        todas as reuniões; (L3, U-048) quanto o aviso do app fica no canto da tela, 0 volta ao balão da bandeja."""
         box = QGroupBox("Idioma e avisos")
         form = QFormLayout(box)
         self.language_combo = QComboBox()
@@ -271,6 +273,10 @@ class SettingsDialog(QDialog):
         self.language_combo.setToolTip("O idioma das reuniões novas (transcrição, legenda ao vivo e tudo o que a LLM escreve) e do "
                                        "chat sobre todas as reuniões. Cada reunião guarda o seu: a gravada não muda daqui.")
         form.addRow(SPECS[SETTING].label, self._row(SETTING, field=self.language_combo))
+        form.addRow(SPECS[TOAST_SECONDS].label, self._row(TOAST_SECONDS))
+        self._edits[TOAST_SECONDS].setToolTip("Quanto tempo o aviso do listener-meet (ata pronta, erro na fila, download...) fica "
+                                              "no canto da tela; com o mouse em cima ele não some. De 0 a 60; 0 desliga o aviso "
+                                              "do app e volta ao balão do Windows.")
         return box
 
     # ---------------------------------------------------------------- busca (F5 L5)

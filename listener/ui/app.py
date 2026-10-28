@@ -72,12 +72,12 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
     from .controller import Controller
 
     controller = Controller(app, platform, store, first_run=first_run)   # vive até o app.exec() voltar
-    set_crash_notifier(controller.notify)
+    set_crash_notifier(controller.notify_crash)   # F5.3 (A-10): chamado na thread que falhou; o aviso sai na da interface
     app.aboutToQuit.connect(controller.emergency_stop)
     app.commitDataRequest.connect(lambda _manager: controller.emergency_stop(), Qt.ConnectionType.DirectConnection)
     controller.start()
     if log_error:
-        controller.notify(f"Log em arquivo indisponível: {log_error}")
+        controller.notify_error(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:
         controller.open_warmup()
     try:

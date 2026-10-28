@@ -1,6 +1,6 @@
 """Utilidades da interface: níveis em dB, cores de saúde, formatação; F5: área de transferência com texto e HTML; a
 tradução pt-BR dos textos padrão do Qt. F5.3 (U-047, A-08): as cores da barra da fila por estado e o contraste do texto
-sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro."""
+sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro; (U-048) as do aviso que some sozinho, por tipo."""
 from __future__ import annotations
 
 import math
@@ -29,6 +29,12 @@ JOB_STATUS_COLOR_NAMES: dict[str, str] = {JobStatus.PENDING: "barra cinza", JobS
                                           JobStatus.PAUSED: "barra âmbar", JobStatus.DONE: "barra verde", JobStatus.ERROR: "barra vermelha",
                                           JobStatus.CANCELLED: "barra listrada"}
 BLACK, WHITE = "#000000", "#ffffff"
+# F5.3 (U-048, A-14): o aviso que some sozinho, com a faixa na cor do tipo (as chaves são os valores de `ui.toast.NoticeKind`),
+# as mesmas da barra da fila: verde pronto, azul informação, vermelho erro. Fundo, borda e textos são os do widget de
+# gravação; o texto fica claro sobre o fundo (contraste de 4,5:1 ou mais) e a cor do tipo vai só na faixa (3:1 basta).
+NOTICE_COLORS: dict[str, str] = {"pronto": JOB_STATUS_COLORS[JobStatus.DONE], "informação": JOB_STATUS_COLORS[JobStatus.RUNNING],
+                                 "erro": JOB_STATUS_COLORS[JobStatus.ERROR]}
+NOTICE_BACKGROUND, NOTICE_BORDER, NOTICE_TEXT, NOTICE_MUTED = "#1c1e24", "#555555", "#eeeeee", "#aaaaaa"
 TRACK_MIX = 0.15                # o trilho: a base da tabela com 15 % da cor do texto (claro no tema claro, escuro no escuro)
 BAND_OPACITY = 0.4              # a faixa do "rodando": clareia sob texto preto e escurece sob texto branco (o contraste só sobe)
 

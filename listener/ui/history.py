@@ -21,7 +21,9 @@ por sentido", nunca "embedding" nem "FTS". Notas em texto puro e dicas convertid
 não vira HTML (R7-07) e "S&OP" aparece como está (R8-02). A saída do app cancela o chat em voo e o vetor da consulta presos
 na rede (um `threading.Event` ligado ao `shutdown`, R7-03) e espera as `Task`s antes de fechar o banco (F5A-32).
 F5.1 (A-11): com o embedder local ativo e pronto, abrir o Histórico abre a sessão do e5 numa `Task` (a primeira busca por
-sentido não espera a carga; a saída espera a `Task`), e um `QTimer` a solta depois de 10 min sem uso."""
+sentido não espera a carga; a saída espera a `Task`), e um `QTimer` a solta depois de 10 min sem uso.
+F5.3 (A-12): a resposta (ou a falha) de "Perguntar às reuniões" que chega com o Histórico fora de foco, ou escondido, chama
+`on_answer(ok)` (o aviso do controlador, cujo clique abre o Histórico); a pergunta cancelada não."""
 from __future__ import annotations
 
 import functools
@@ -347,11 +349,14 @@ class LinkBrowser(QTextBrowser):
 
 class HistoryPage(QWidget):
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
-                 today: Callable[[], date] | None = None, parent: QWidget | None = None):
+                 on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
         self.on_open = on_open
         self.on_edited = on_edited
+        self.on_answer = on_answer                                # F5.3 (A-12): a resposta chegou com a janela fora de foco
+        self._chat_stopped = False                                # "Parar": o usuário cancelou, não avisa
         self.today = today or (lambda: datetime.now().astimezone().date())
         self.result: SearchResult | None = None
         self.answers: deque[chat_global.GlobalChatAnswer] = deque(maxlen=KEPT)   # instrumentação dos testes
@@ -888,6 +893,7 @@ class HistoryPage(QWidget):
             return
         self.question.clear()
         self._partial = ""
+        self._chat_stopped = False
         self._base_html = ((chat_global.thread_html(self.store, self.thread_id) if self.thread_id is not None else "")
                            + f"<p><b>Você:</b> {html.escape(text)}</p>")
         self._render_partial()
@@ -927,10 +933,12 @@ class HistoryPage(QWidget):
         if isinstance(result, ValueError):              # sem provedor, pergunta vazia, conversa apagada: aviso
             self._render_thread()
             self._chat_warning(str(result)[:1].upper() + str(result)[1:] + ".")
+            self._answered_away(False)
             return
         if isinstance(result, BaseException):
             self._render_thread()
             self._chat_warning(f"A pergunta falhou: {result}")
+            self._answered_away(False)
             return
         ans: chat_global.GlobalChatAnswer = result
         self.answers.append(ans)
@@ -948,12 +956,21 @@ class HistoryPage(QWidget):
             stopped = " · interrompida" if ans.cancelled else ""
             self.chat_status.setText(f"{ans.linked} citação(ões) com link · {ans.excerpts} trecho(s) de {len(ans.aliases)} "
                                      f"reunião(ões) · {how}{cost}{stopped}")
+        if ans.error or not ans.cancelled:
+            self._answered_away(not ans.error)
+
+    def _answered_away(self, ok: bool) -> None:
+        """F5.3 (A-12): terminou com o Histórico fora de foco (o usuário foi para outro app ou o escondeu: a pergunta segue e
+        grava): o controlador avisa. Parada pelo usuário ("Parar"), não."""
+        if self.on_answer is not None and not self._chat_stopped and not self.window().isActiveWindow():
+            self.on_answer(ok)
 
     def _chat_warning(self, text: str) -> None:
         self.chat_status.setText(f"<span style='color:#e67e22'>{html.escape(text)}</span>")
 
     def stop_chat(self) -> None:
         if self.chat_task is not None:
+            self._chat_stopped = True
             self.chat_task.cancel()
             self.chat_status.setText("parando…")
 
@@ -1023,12 +1040,13 @@ class HistoryWindow(QWidget):
     grava); posição e tamanho em `ui.history_geometry`."""
 
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
-                 today: Callable[[], date] | None = None, parent: QWidget | None = None):
+                 on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.setWindowTitle("Histórico — listener-meet")
         self.setMinimumSize(640, 420)
-        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, today=today)
+        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, on_answer=on_answer, today=today)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(self.page)
