@@ -5,7 +5,7 @@ implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047)
 F5.1 (26/10); U-030 a U-033, vistas no Windows, aprovadas e implementadas em 26/10 (D-049); U-034 a U-036 propostas nas
 telas da F5.1 (26/10); U-037 e U-038 pedidas pelo dono no primeiro teste e implementadas (D-053, D-054); U-039 e
 U-040 do segundo teste (D-055); U-041 a U-043 do brainstorm de 27/10, aprovadas (D-057) e implementadas na F5.2;
-U-044 a U-051 aprovadas (D-060) e implementadas na F5.3, quatro delas pedidas pelo dono.
+U-044 a U-051 aprovadas (D-060) e implementadas na F5.3, quatro delas pedidas pelo dono; U-052 a U-088 da F5.4 (design das telas), aprovadas antes de escritas (D-061), com U-014 e U-034 a U-036.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -24,7 +24,7 @@ Tamanho-alvo: 3 KB.
 | U-011 | Exportar ata e transcrição (.md, .docx, área de transferência) sob demanda (D-012) | Histórico | implementada (F5: .md e área de transferência; .docx na F5.1) |
 | U-012 | Notificação de reunião detectada com "Gravar agora" (último preset) e "ignorar por 1 h" (D-010) | Bandeja | aprovada (F6) |
 | U-013 | Assistente de primeiro uso: token HF, chave do provedor, teste do mic, app de reunião | Primeiro uso | aprovada (F6; versão mínima na F1) |
-| U-014 | Tema claro e escuro seguindo o sistema; DPI alto | Geral | aprovada (F6; básico na F1) |
+| U-014 | Tema claro e escuro seguindo o sistema; DPI alto | Geral | aprovada (F5.4: tema e DPI; escolher à mão na F6) |
 | U-015 | Preset "sala de reunião": diariza também o L e desliga "L é sempre eu" | Warm-up | aprovada (metadado na F1; lógica na F2) |
 | U-016 | Detector de eco e alinhamento por correlação cruzada L×R: aviso no warm-up; deslocamento L/R no `--check` | Warm-up, `--check` | implementada (F1.1) |
 | U-017 | Instrução para fixar o ícone da bandeja no Windows 11 (ícones novos vão para o menu oculto) | Primeiro uso | implementada (F1.1) |
@@ -41,9 +41,9 @@ Tamanho-alvo: 3 KB.
 | U-031 | Áudio do player pré-aquecido 2 s depois da bandeja: o primeiro "Tocar" do processo cai de 2 a 5 s para ~0,5 s | Player | implementada (D-049) |
 | U-032 | Vírgula decimal nos números da interface ("446,4 KB", "atraso 1,5 s", "correlação 0,42") | Todas | implementada (D-049) |
 | U-033 | Warm-up: o combo do microfone não engole a largura (a coluna "Janela" das fontes cabe) e o grupo dele sem vazio | Warm-up | implementada (D-049) |
-| U-034 | Linha do tempo sem falas: o rodapé repete o "Sem falas nesta reunião." do meio da vista; com áudio, o rodapé ensina o clique ("clique para ouvir daquele ponto") | Reunião aberta | proposta |
-| U-035 | Voz sem pessoa como "Voz 1", "Voz 2"… por reunião, não pelo rótulo interno do pyannote ("Voz SPEAKER_03"), na linha do tempo, na transcrição e na revisão | Reunião aberta | proposta |
-| U-036 | Estado do índice nas Configurações com o nome legível do modelo ("e5-small, local"), não a chave interna (`local/multilingual-e5-small@384`), e sem mandar "preparar em Configurações (Busca)" quem já está nelas | Configurações | proposta |
+| U-034 | Linha do tempo sem falas: o rodapé repete o "Sem falas nesta reunião." do meio da vista; com áudio, o rodapé ensina o clique ("clique para ouvir daquele ponto") | Reunião aberta | aprovada (F5.4, D-061) |
+| U-035 | Voz sem pessoa como "Voz 1", "Voz 2"… por reunião, não pelo rótulo interno do pyannote ("Voz SPEAKER_03"), na linha do tempo, na transcrição e na revisão | Reunião aberta | aprovada (F5.4, D-061) |
+| U-036 | Estado do índice nas Configurações com o nome legível do modelo ("e5-small, local"), não a chave interna (`local/multilingual-e5-small@384`), e sem mandar "preparar em Configurações (Busca)" quem já está nelas | Configurações | aprovada (F5.4, D-061) |
 | U-037 | "Chaves de acesso" como primeiro grupo das Configurações (Gemini, Hugging Face, GPT e Claude, com Testar, o estado e onde conseguir) e o warm-up avisando antes de gravar quando falta chave ou token; as mensagens apontam para lá | Configurações, Warm-up | implementada (D-053) |
 | U-038 | O assistente da primeira inicialização pede, logo depois da pasta do banco, a LLM (Gemini, GPT ou Claude) com a chave e o "Testar conexão", e o token do Hugging Face, tudo opcional; a escolhida vira a LLM ativa (com o Claude, a busca por sentido fica na local) | Assistente | implementada (D-054) |
 | U-039 | A revisão de falantes só abre sozinha com voz a confirmar; sem nenhuma, o aviso diz "processada, sem voz a confirmar" e nenhuma janela sobe por cima | Bandeja, Revisão | implementada (D-055) |
@@ -59,3 +59,40 @@ Tamanho-alvo: 3 KB.
 | U-049 | Trocar microfone e saída gravada durante a gravação, pelo painel Dispositivos do widget, com os aparelhos conectados no meio dela | Widget | implementada (F5.3; pedido do dono) |
 | U-050 | "novo: <nome>" com "Usar" no widget quando um aparelho chega durante a gravação | Widget | implementada (F5.3) |
 | U-051 | Uma linha "Sistema inteiro: <saída>" por saída ativa na tabela de fontes | Warm-up | implementada (F5.3) |
+| U-052 | Segoe UI Variable: corpo 14 px, legenda 12, título 20; segue o Tamanho do texto do Windows | Geral | aprovada (F5.4 L1, D-061) |
+| U-053 | Ícones próprios em SVG, de uma cor e no tema, no lugar de emoji e caracteres soltos | Geral | aprovada (F5.4 L1, D-061) |
+| U-054 | Nota e estado com 4,5:1 nos dois temas; estado nunca só pela cor (ícone ou texto junto) | Geral | aprovada (F5.4 L1, D-061) |
+| U-055 | Anel de foco de 2 px só pelo teclado, em botão, caixa, aba e item de lista | Geral | aprovada (F5.4 L1, D-061) |
+| U-056 | Um primário preenchido por janela (Gravar, Salvar, Próximo, Concluir); destrutivo em vermelho | Geral | aprovada (F5.4 L1, D-061) |
+| U-057 | Aviso dentro da tela vira faixa com ícone, cor do tipo e ação, no lugar do texto laranja | Geral | aprovada (F5.4 L1, D-061) |
+| U-058 | Tabelas: cabeçalho à esquerda, sem nº de linha, linha inteira selecionada, texto estica | Geral | aprovada (F5.4 L1, D-061) |
+| U-059 | Estado vazio com ícone, frase e ação (Ata ainda não gerada + Gerar ata) | Geral | aprovada (F5.4 L4, D-061) |
+| U-060 | Widget no tema, 360 px fixos; o alerta numa linha embaixo, na cor do tipo, sem alargar | Widget | aprovada (F5.4 L2, D-061) |
+| U-061 | Widget: botões de ícone 36 × 32 com atalho na dica; Parar vermelho; Cancelar afastado | Widget | aprovada (F5.4 L2, D-061) |
+| U-062 | Widget: mudo = microfone cortado; L, R e ao vivo com ícone; apagado salvando; hora h:mm:ss | Widget | aprovada (F5.4 L2, D-061) |
+| U-063 | Medidor com trilho nos dois temas e zonas: verde até -18 dBFS, âmbar até -6, vermelho acima | Widget | aprovada (F5.4 L2, D-061) |
+| U-064 | Dispositivos: atual com marca, nome e tipo em duas linhas, Novo em selo, resultado em faixa | Painel | aprovada (F5.4 L2, D-061) |
+| U-065 | Antes de gravar em duas colunas (Áudio; Reunião), até 984 × 600 px | Warm-up | aprovada (F5.4 L2, D-061) |
+| U-066 | Antes de gravar: falta de chave em faixa no rodapé, ao lado de Gravar (primário com ícone) | Warm-up | aprovada (F5.4 L2, D-061) |
+| U-067 | Fontes com medidor próprio por linha e Reunião em selo; sala e ao vivo numa linha Opções | Warm-up | aprovada (F5.4 L2, D-061) |
+| U-068 | Marcador e avisos no tema, com ícone do tipo além da faixa e fechar de 32 × 32 px | Avisos | aprovada (F5.4 L2, D-061) |
+| U-069 | Resumo da gravação com ícone de sucesso; a lista de marcadores só quando há | Resumo | aprovada (F5.4 L2, D-061) |
+| U-070 | Bandeja: marca do app com o estado em selo de forma e cor, legível a 16 px | Bandeja | aprovada (F5.4 L2, D-061) |
+| U-071 | Configurações em páginas com navegação à esquerda, 960 × 640; um Salvar para todas | Config. | aprovada (F5.4 L3, D-061) |
+| U-072 | Erro de validação abre a página, marca o campo e explica numa faixa, sem caixa de mensagem | Config. | aprovada (F5.4 L3, D-061) |
+| U-073 | Sim/não em caixa; número com vírgula e faixa da `SPECS`; taxa em lista; mesmo valor salvo | Config. | aprovada (F5.4 L3, D-061) |
+| U-074 | Aplica agora e na próxima gravação no subtítulo da página; na linha só o que difere | Config. | aprovada (F5.4 L3, D-061) |
+| U-075 | Chaves, atalhos e downloads com selo (Falta a chave, Conectado, Registrado, Falhou) | Config. | aprovada (F5.4 L3, D-061) |
+| U-076 | Sem jargão interno (F2, F3, F4, F6, CP10) na tela; cabeçalho da tabela de preços inteiro | Config. | aprovada (F5.4 L3, D-061) |
+| U-077 | Fila de 1040 × 480: Estado em selo, barra nos tokens, Ajuda e Fechar numa linha só | Fila | aprovada (F5.4 L3, D-061) |
+| U-078 | Reunião: título de 20 px sem moldura até o foco, fatos em legenda, menus com a seta inteira | Reunião | aprovada (F5.4 L4, D-061) |
+| U-079 | Ata, executivo e pré-resumo formatados; Editar abre o Markdown; origem em dd/mm/aaaa | Reunião | aprovada (F5.4 L4, D-061) |
+| U-080 | Ações: Ação estica e quebra linha; prazo dd/mm/aaaa; atrasada em selo vermelho | Reunião, Histórico | aprovada (F5.4 L4, D-061) |
+| U-081 | Transcrição e Ao vivo: [mm:ss] em legenda, falante em negrito com ponto na cor dele | Reunião | aprovada (F5.4 L4, D-061) |
+| U-082 | Linha do tempo nas cores `speaker`; marcador em `text` com bandeira; cursor em `accent` | Reunião | aprovada (F5.4 L4, D-061) |
+| U-083 | Player: ícones de tocar, pausar, -10 s e +10 s junto do texto; tempo de largura fixa | Reunião | aprovada (F5.4 L4, D-061) |
+| U-084 | Histórico: busca com lupa, índice na linha das abas, Estado em selo, custo à direita | Histórico | aprovada (F5.4 L4, D-061) |
+| U-085 | Histórico: trechos e respostas do chat nas cores dos tokens (HTML sem cor fixa) | Histórico | aprovada (F5.4 L4, D-061) |
+| U-086 | Revisão: voz em cartão com estado em selo; atalho em selo de tecla; primário segue a etapa | Revisão | aprovada (F5.4 L4, D-061) |
+| U-087 | Ficha da pessoa: Apagar pessoa em vermelho à esquerda, longe de Salvar | Revisão | aprovada (F5.4 L4, D-061) |
+| U-088 | Assistente sem a faixa vazia do Aero: título de 20 px, Passo n de 6, Próximo primário | Assistente | aprovada (F5.4 L4, D-061) |

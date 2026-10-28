@@ -59,9 +59,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
-  2. U-034: a linha do tempo sem falas não repete o aviso no rodapé (sim).
-  3. U-035: "Voz 1", "Voz 2"… no lugar de "Voz SPEAKER_03" (sim).
-  4. U-036: o estado do índice com o nome legível do modelo (sim).
+  2. U-034: a linha do tempo sem falas não repete o aviso no rodapé (sim; entra na F5.4, D-061).
+  3. U-035: "Voz 1", "Voz 2"… no lugar de "Voz SPEAKER_03" (sim; entra na F5.4, D-061).
+  4. U-036: o estado do índice com o nome legível do modelo (sim; entra na F5.4, D-061).
   5. `AGENTS.md`: "Testes: `python -m pytest -q` (a rápida); antes de commitar, `--tudo` (D-050)" (sim).
   6. `pytest-xdist`, só de desenvolvimento, para a meta de 8 s (sim, num lote pequeno).
   7. Próximo passo sem o dono: detalhar a spec da F6 e passá-la pela revisão de arquitetura para ele aprovar (sim).
