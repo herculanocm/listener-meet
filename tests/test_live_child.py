@@ -141,28 +141,7 @@ def test_degrade_machine_steps_after_holding_and_never_returns():
     assert m.update(5.0) is None and m.update(50.0) is None and m.stage == proc.Stage.SKIPPING   # nunca volta sozinho
 
 
-def test_language_lock_filters_and_prompt():
-    lang = proc.LanguageLock()
-    lang.observe("pt", 0.9)
-    assert lang.language is None
-    lang.observe("en", 0.3)                                                          # pouco provável: não conta
-    lang.observe("pt", 0.8)
-    assert lang.language == "pt" and lang.tries == 3
-    lang = proc.LanguageLock()
-    lang.observe("pt", 0.52)
-    lang.observe("es", 0.55)
-    assert lang.language is None                                                     # discordantes e incertas: não trava
-    lang.observe("en", 0.9)
-    lang.observe("pt", 0.6)
-    lang.observe("en", 0.65)
-    assert lang.language is None and lang.tries == 5
-    lang.observe("pt", 0.58)                                                         # 6 sem consenso: maior soma das >= 0,5
-    assert lang.language == "pt" and lang.tries == 6                                 # pt 1,70 x en 1,55 x es 0,55
-    assert proc.LanguageLock("pt-BR").language == "pt"
-    lang = proc.LanguageLock()
-    for _ in range(8):
-        lang.observe(None, 0.0)
-    assert lang.language is None and lang.tries == 6                                 # sem nenhuma detecção, segue automático
+def test_caption_filters_and_prompt():
     seg = proc.Segment
     ok = proc.Transcript((seg(" Bom dia. ", 0.1, -0.3, 1.2), seg("ruído", 0.9, -0.3, 1.2), seg("lixo", 0.1, -1.5, 1.2),
                           seg("repete repete", 0.1, -0.3, 3.0), seg(" a todos", 0.0, -0.1, 1.0)))
@@ -297,21 +276,6 @@ def test_emitter_survives_unserializable_lines_and_a_closed_pipe():
     out.close()
     em.emit({"type": "cpu", "live_pct": 2.0})                                         # o app fechou o pipe: só para de emitir
     assert em.closed
-
-
-def test_language_votes_only_with_captioned_windows_of_enough_speech(store):
-    """Revisão do L0 a L3: janela filtrada (ruído) e janela com menos de 2 s de fala não votam no idioma."""
-    mid = store.create_meeting("idioma", None, None, None)
-    session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), store, mid, FakeEngines(), clock=lambda: 1001.0)
-    session.hello = pr.Hello(1000.0)
-    tr = FakeTranscriber("small", itertools.count(1), texts=["curta", "", "uma", "duas", "três"])
-    session.transcriber = tr
-    for i, speech_s in enumerate((1.0, 3.0, 3.0, 3.0, 3.0)):
-        session.queue.put(proc.LiveWindow("R", i * 64000, i * 64000 + 48000, round(speech_s * SR), tone(3.0)))
-    session.queue.close()
-    session._loop()
-    assert [c[1] for c in tr.calls] == [None, None, None, None, "pt"]               # trava depois de 2 votos válidos
-    assert session.language.tries == 2 and session.stats.filtered == 1
 
 
 def test_a_filtered_window_logs_the_metrics_never_the_speech(store, caplog):

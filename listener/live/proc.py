@@ -47,7 +47,7 @@ import sys
 import threading
 import time
 import unicodedata
-from collections import Counter, deque
+from collections import deque
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -104,7 +104,6 @@ ECHO_FRAME_MS = 100              # quadros da conferência de fala própria (L c
 ECHO_OWN_SPEECH_MS = 500         # tanta fala própria numa janela de L e ela nunca é tratada como eco
 CPU_INTERVAL_S = 10.0
 QUEUE_POLL_S = 0.2
-LANG_MIN_SPEECH_S = 2.0          # só janelas com tanta fala (e que viraram legenda) votam no idioma
 TX_GUESS_S = 4.0                 # custo de uma janela antes da primeira medida (`small` int8 no Xeon de 2,1 GHz: 3,6 s)
 TX_EMA = 0.3                     # peso da janela mais recente na média do custo por janela
 
@@ -276,47 +275,6 @@ def build_prompt(terms: Sequence[str], previous: str) -> str:
     fixed = " ".join(", ".join(terms).split()[:PROMPT_GLOSSARY_WORDS])
     context = " ".join(previous.split()[-PROMPT_PREVIOUS_WORDS:])
     return f"{fixed} {context}".strip()
-
-
-class LanguageLock:
-    """Idioma automático até 2 detecções concordantes com probabilidade >= 0,7; sem consenso em 6 detecções, trava no de
-    maior soma de probabilidades entre as >= 0,5 (sem nenhuma, segue automático). Quem chama só passa janelas que viraram
-    legenda com 2 s ou mais de fala: ruído e janela curta detectam mal, e um idioma travado errado estraga as legendas da
-    reunião inteira (revisão do L0 a L3). Um idioma fixo da reunião vale desde o começo."""
-
-    def __init__(self, fixed: str | None = None, agree: int = 2, min_prob: float = 0.7, max_tries: int = 6,
-                 fallback_prob: float = 0.5):
-        self.fixed = (fixed or "").split("-")[0].lower() or None
-        self.agree = agree
-        self.min_prob = min_prob
-        self.max_tries = max_tries
-        self.fallback_prob = fallback_prob
-        self.locked: str | None = None
-        self.tries = 0
-        self.seen: list[tuple[str, float]] = []
-
-    @property
-    def language(self) -> str | None:
-        return self.fixed or self.locked
-
-    def observe(self, language: str | None, prob: float) -> None:
-        if self.language is not None or self.tries >= self.max_tries:
-            return
-        self.tries += 1
-        if language:
-            self.seen.append((language, prob))
-        confident = Counter(lang for lang, p in self.seen if p >= self.min_prob)
-        agreed = [lang for lang, n in confident.items() if n >= self.agree]
-        if agreed:
-            self.locked = agreed[0]
-        elif self.tries >= self.max_tries:
-            weight: dict[str, float] = {}
-            for lang, p in self.seen:
-                if p >= self.fallback_prob:
-                    weight[lang] = weight.get(lang, 0.0) + p
-            self.locked = max(weight, key=weight.__getitem__) if weight else None
-        if self.locked:
-            log.info("idioma do ao vivo travado em %s (%s)", self.locked, [(lang, round(p, 2)) for lang, p in self.seen])
 
 
 class Stage(StrEnum):
@@ -642,7 +600,7 @@ class LiveSession:
         self.previous: dict[str, str] = {}
         self.hello = Hello(0.0)
         self.transcriber: Transcriber | None = None
-        self.language = LanguageLock()
+        self.language: str | None = None                # código do Whisper da reunião, fixo ao abrir (F5.3 A-01)
         self.terms: list[str] = []
         self.eof_at: float | None = None
         self._tx_s: float | None = None                          # custo médio de uma janela (Whisper e nome), em s
@@ -677,7 +635,7 @@ class LiveSession:
         except ProtocolError as e:
             return self._fail(str(e), 2)
         model = self.hello.model if self.hello.model in LIVE_MODELS else LIVE_MODELS[0]
-        self.language = LanguageLock(whisper_code(meeting_language(self.store, meeting)))     # F5.3 A-01: fixo, nunca detectado
+        self.language = whisper_code(meeting_language(self.store, meeting))     # F5.3 A-01: fixo, nunca detectado
         self.terms = glossary_terms(meeting.get("glossary"), self.store.get_setting("pipeline.glossary"))
         self.echo_corr_min = float(self.store.get(SPECS["capture.echo_corr_min"]))
         self.silence_rms = float(self.store.get(SPECS["capture.silence_rms"]))
@@ -696,9 +654,9 @@ class LiveSession:
             log.exception("modelo %s do ao vivo não carregou", model)
             return self._fail(str(e), 1, retry=not isinstance(e, LiveError))
         log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s, idioma %s)", self.meeting_id, self.transcriber.name,
-                 time.perf_counter() - t0, self.hello.threads, self.engines.name, self.language.language)
+                 time.perf_counter() - t0, self.hello.threads, self.engines.name, self.language)
         self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": self.hello.names,
-                                             "engine": self.engines.name, "pid": os.getpid(), "language": self.language.language})
+                                             "engine": self.engines.name, "pid": os.getpid(), "language": self.language})
         self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
         if embedder is not None:
             self._start_names(embedder)
@@ -707,7 +665,7 @@ class LiveSession:
             self._thread.join(timeout=2.0)
         lost = sum(s.lost_frames for s in self.streams.values())
         summary = self.stats.as_dict(lost) | {"model": self.transcriber.name if self.transcriber else None,
-                                              "language": self.language.language, "names": self._names_summary()}
+                                              "language": self.language, "names": self._names_summary()}
         self._event(EventType.LIVE_STOPPED, summary)
         log.info("reunião %s: ao vivo encerrado: %s", self.meeting_id, summary)
         self.out.emit({"type": BYE, **summary})
@@ -922,7 +880,7 @@ class LiveSession:
             return
         prompt = build_prompt(self.terms, self.previous.get(job.channel, ""))
         try:
-            result = transcriber.transcribe(job.samples, language=self.language.language, prompt=prompt)
+            result = transcriber.transcribe(job.samples, language=self.language, prompt=prompt)
         except Exception:
             self.stats.errors += 1
             log.exception("reunião %s: transcrição da janela %s %d-%d ms falhou", self.meeting_id, job.channel, job.start_ms, job.end_ms)
@@ -935,8 +893,6 @@ class LiveSession:
                       [(len(sg.text.strip()), round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
                        for sg in result.segments])
             return
-        if job.speech >= LANG_MIN_SPEECH_S * SAMPLE_RATE:
-            self.language.observe(result.language, result.language_prob)
         person_id, label, confidence = self._name(job)
         latency_ms = round((self.clock() - (self.hello.t0_perf + job.end / SAMPLE_RATE)) * 1000)
         row = CaptionInsert(self.meeting_id, job.channel, job.start_ms, job.end_ms, text, person_id, label, confidence,
