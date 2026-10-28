@@ -49,6 +49,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         vigia do laço faz o worker sair e o app o relança (`4bcc056`).
   - [x] D-059, a pedido do dono: logs para acompanhar e validar cada execução, com a convenção em `ARCHITECTURE.md`
         (`4d4102d`, `3f1cb65`); o terminal fechado com o app aberto passa a deixar a linha no log (conferido).
+- **Em curso: F5.3** (`features/F5.3-idioma-fila-avisos-dispositivos.md`, D-060): spec aprovada em 27/10 com a revisão
+  de arquitetura (A-01 a A-23); implementação em L1 idioma, L2 fila, L3 avisos e L4 dispositivos, um commit por lote.
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
