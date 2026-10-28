@@ -3,7 +3,9 @@ Trocar reprocessa a reunião (refaz a separação de vozes e a transcrição) e 
 o título, a identidade por contexto e a transcrição revisada; antes, a pergunta diz o tempo estimado, o custo estimado da
 LLM (as estimativas da fila e do job) e que a ata editada e as ações viram versão anterior (CP3: nada se apaga).
 Durante o reprocessamento, "pt-BR → en (reprocessando)"; com a reunião gravando, a troca fica desabilitada. O pedido passa
-pelo helper único de reprocessar (`pipeline/reprocess.py`)."""
+pelo helper único de reprocessar (`pipeline/reprocess.py`). R-08: com a troca ainda não aplicada, o botão oferece "Voltar
+para" o idioma que a reunião tem, com uma pergunta própria (sem tempo nem custo: desfazer não reprocessa nem chama a LLM);
+desfeita, ele volta a oferecer o outro idioma."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -25,6 +27,8 @@ log = get_logger("ui.meeting")
 
 TITLE = "Idioma da reunião"
 RECORDING_TIP = "Desabilitado durante a gravação: troque depois de parar."
+UNDO_TIP = "Desfaz a troca ainda não aplicada: a reunião fica como está, sem reprocessar e sem custo da LLM."
+UNDO_BUTTON = "Desfazer a troca"
 
 type Confirm = Callable[[QWidget, str, str], bool]          # (pai, texto, botão de confirmar) -> confirmou?
 
@@ -57,6 +61,17 @@ def change_question(store: Store, meeting_id: int, target: str) -> str:
             f"Tempo estimado: {eta} (refaz a separação de vozes e a transcrição).\n"
             f"LLM: {llm}.\n"
             "A ata editada e as ações atuais ficam como versão anterior; nada se apaga.")
+
+
+def undo_question(store: Store, meeting_id: int) -> str:
+    """R-08: voltar ao idioma que a reunião já tem desfaz a troca em curso; nada é reprocessado nem refeito pela LLM."""
+    current = meeting_language(store, store.get_meeting(meeting_id))
+    running = reprocess.pending_language(store, meeting_id)
+    asked = f" para {label(running[1])}" if running is not None else ""
+    return (f"Desfazer a troca{asked}?\n\n"
+            f"A reunião continua em {label(current)}, como está: o reprocessamento pedido para a troca sai da fila (ou para "
+            "entre as janelas, se já começou), um processamento que já estava na fila segue como antes e a LLM não refaz "
+            "nada por causa dela.")
 
 
 class MeetingLanguage(QWidget):
@@ -93,17 +108,29 @@ class MeetingLanguage(QWidget):
         else:
             self.label.setText(f"Idioma: {current} → {goal} (reprocessando)")
         self.target = other(goal)
+        undo = running is not None and self.target == current          # R-08: a troca em curso pode ser desfeita
         recording = str(m.get("status")) in reprocess.RECORDING
-        self.button.setText(f"Trocar para {label(self.target)}…")
+        self.button.setText(f"{'Voltar para' if undo else 'Trocar para'} {label(self.target)}…")
         self.button.setEnabled(bool(m) and not recording)
-        self.button.setToolTip(RECORDING_TIP if recording else f"Reprocessa a reunião em {label(self.target)}: transcrição, vozes e "
-                               "tudo o que a LLM escreveu")
+        if recording:
+            self.button.setToolTip(RECORDING_TIP)
+        elif undo:
+            self.button.setToolTip(UNDO_TIP)
+        else:
+            self.button.setToolTip(f"Reprocessa a reunião em {label(self.target)}: transcrição, vozes e tudo o que a LLM escreveu")
 
     def ask_change(self) -> int | None:
-        """A pergunta com tempo e custo; confirmada, o reprocessamento no idioma novo. Devolve o job que fará o trabalho."""
+        """A pergunta com tempo e custo; confirmada, o reprocessamento no idioma novo. Voltar ao idioma que a reunião tem
+        desfaz a troca em curso, com a pergunta dela (R-08). Devolve o job que fará trabalho (None quando nada roda)."""
         target = self.target
-        if not self.confirm(self, change_question(self.store, self.meeting_id, target), f"Reprocessar em {label(target)}"):
-            log.info("reunião %s: troca de idioma para %s cancelada na pergunta", self.meeting_id, target)
+        undo = target == meeting_language(self.store, self.store.get_meeting(self.meeting_id))
+        if undo:
+            text, button = undo_question(self.store, self.meeting_id), UNDO_BUTTON
+        else:
+            text, button = change_question(self.store, self.meeting_id, target), f"Reprocessar em {label(target)}"
+        if not self.confirm(self, text, button):
+            log.info("reunião %s: %s cancelado na pergunta", self.meeting_id, "desfazer a troca de idioma" if undo else
+                     f"trocar o idioma para {target}")
             return None
         result = reprocess.request_reprocess(self.store, self.meeting_id, target)
         if self.on_message is not None:
@@ -114,4 +141,4 @@ class MeetingLanguage(QWidget):
         return result.job_id
 
 
-__all__ = ["MeetingLanguage", "change_question", "confirm_change"]
+__all__ = ["MeetingLanguage", "change_question", "confirm_change", "undo_question"]

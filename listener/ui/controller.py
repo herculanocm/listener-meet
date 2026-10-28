@@ -82,6 +82,7 @@ from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, JobK
 from ..store.jobs import HELD
 from ..pipeline import review, summary_gate
 from ..pipeline.reprocess import target_language
+from ..platform.base import log_id
 from ..platform.common import process
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
@@ -136,6 +137,7 @@ PARTIAL_QUIT_WAIT_MS = 2500          # sair do app: espera a chamada cancelada d
 PREWARM_AUDIO_MS = 2000              # U-031: pré-aquece o áudio do player logo depois da bandeja, com o app ocioso
 APP_LOCAL_THREADS = 1                # F5.1 (A-03): o e5 local no app (vetor da consulta); o worker leve usa 2
 MEETING_TARGETS = (Target.MEETING, Target.MEETING_CHAT)   # F5.3: os avisos cujo balão (0 s) abre a reunião no clique (Q6)
+ENDED_BADLY = (JobStatus.ERROR, JobStatus.CANCELLED)      # R-07: o fim que não recarrega a reunião inteira, só o cabeçalho
 _Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
@@ -231,6 +233,7 @@ class Controller(QObject):
         self._launch_reason: dict[bool, str | None] = {False: None, True: None}          # o último "não lançado" logado
         self._seen_done: set[int] = set()
         self._seen_errors: set[tuple[int, str]] = set()      # F5.3 (A-11): (job, finished_at) já vistos com erro
+        self._seen_ended: set[tuple[int, str]] = set()       # R-07: (job, finished_at) em erro ou cancelado já relidos
         self._no_llm_warned = False
         self._review_offered: set[int] = set()
         self._reviews: dict[int, ReviewDialog] = {}
@@ -319,6 +322,7 @@ class Controller(QObject):
         recent = self.store.jobs.list_jobs(limit=500, exclude_kinds=INDEX_KINDS)
         self._seen_done = {int(j["id"]) for j in recent if j["status"] == JobStatus.DONE}
         self._seen_errors = {_error_key(j) for j in recent if j["status"] == JobStatus.ERROR}    # A-11: os antigos não avisam
+        self._seen_ended = {_error_key(j) for j in recent if j["status"] in ENDED_BADLY}
         waiting = self.store.meetings.list_by_status(MeetingStatus.PROCESSED)
         if waiting:
             self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
@@ -643,7 +647,8 @@ class Controller(QObject):
         for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
             self.store.llm_calls.set_meeting(int(call_id), meeting_id)
         log.info("gravação %s iniciada: mic=%s fonte=%s idioma=%s", meeting_id,       # A-22: o id, nunca o nome do aparelho
-                 cfg.mic_device.id if cfg.mic_device else "padrão (acompanha)", cfg.source.log_text(), language.whisper_code(lang))
+                 log_id(cfg.mic_device.id) if cfg.mic_device else "padrão (acompanha)", cfg.source.log_text(),
+                 language.whisper_code(lang))
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
         # o gravador chama `_before_system_loopback` antes de abrir o loopback do sistema inteiro por qualquer caminho: a
@@ -661,6 +666,7 @@ class Controller(QObject):
             return False
         self.recorder = rec
         self.state = AppState.RECORDING
+        self.toasts.refresh_privacy()                    # R-10: o aviso à vista perde o título se a captura não o exclui
         self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
         self._marked_items = set()
         prep = preparer()
@@ -689,18 +695,20 @@ class Controller(QObject):
         w.alert_clicked.connect(self.devices.on_alert)
         self.devices.start()
         w.settings_requested.connect(self.open_settings)
-        w.moved.connect(lambda p: self.store.set_setting("ui.widget_pos", f"{p.x()},{p.y()}"))
+        w.moved.connect(self._save_widget_pos)          # R-06: método, não lambda com `self` (o ciclo pelo C++)
         w.show()
         if self.tray:
             self.tray.set_state(AppState.RECORDING)
         self._timer.start()
         self._start_mute_poller()
         self._write_lease(rec)
-        notices = list(rec.warnings)
-        if not mute_ok and cfg.mic_device is not None:
-            notices.append(f"Não achei o endpoint de '{cfg.mic_device.name}': o mudo global vai no microfone padrão do sistema.")
-        if notices:
-            self.notify("\n".join(notices))
+        lines, plain = list(rec.warnings), list(rec.warnings)
+        if not mute_ok and cfg.mic_device is not None:                  # R-05: o nome do aparelho só na tela (A-22)
+            tail = "o mudo global vai no microfone padrão do sistema."
+            lines.append(f"Não achei o endpoint de '{cfg.mic_device.name}': {tail}")
+            plain.append(f"Não achei o endpoint {log_id(cfg.mic_device.id)}: {tail}")
+        if lines:
+            self._notify_with("\n".join(lines), NoticeMeta(short_text="\n".join(plain), log_text="\n".join(plain)))
         return True
 
     def show_widget(self) -> None:
@@ -884,6 +892,17 @@ class Controller(QObject):
                 task.cancel()
         for task in tasks:
             wait_before_close(task, PARTIAL_QUIT_WAIT_MS, "uma tarefa em voo")
+        self._delete_windows()
+
+    def _delete_windows(self) -> None:
+        """R-06: as janelas sem dono que o controlador criou (o widget, a fila, as revisões, as reuniões e o Histórico) são
+        apagadas na saída, ainda no laço do Qt (o `aboutToQuit` despacha os `deleteLater`); vivas até a derrubada do PySide,
+        seriam destruídas fora de ordem (0xC0000409 na saída). As referências ficam: só o lado C++ some."""
+        self._teardown_widget()
+        for win in (self._queue_dialog, self._history, *self._reviews.values(), *self._meetings.values()):
+            if win is not None:
+                with suppress(RuntimeError):             # já destruída
+                    win.deleteLater()
 
     def _finish(self, rec: Recorder) -> None:
         self._stop_devices()
@@ -894,6 +913,7 @@ class Controller(QObject):
         if self.recorder is rec:
             self.recorder = None
         self.state = AppState.IDLE
+        self.toasts.refresh_privacy()                    # R-10: fora da gravação o título volta
         if self.tray:
             self.tray.set_state(AppState.IDLE)
 
@@ -1091,6 +1111,10 @@ class Controller(QObject):
             if job["status"] == JobStatus.ERROR and _error_key(job) not in self._seen_errors:
                 self._seen_errors.add(_error_key(job))
                 self._on_job_error(job)
+        for job in jobs:                                         # R-07: o fim sem sucesso também muda o cabeçalho (o idioma)
+            if job["status"] in ENDED_BADLY and _error_key(job) not in self._seen_ended:
+                self._seen_ended.add(_error_key(job))
+                self._reload_meeting_header(int(job["meeting_id"]))
         if running is not None and str(running.get("step") or "") in REVIEW_STEPS:
             mid = int(running["meeting_id"])
             if mid not in self._review_offered:
@@ -1137,6 +1161,17 @@ class Controller(QObject):
                 self.open_review(mid)
         if mid in self._meetings:
             self._meetings[mid].reload()
+
+    def _reload_meeting_header(self, meeting_id: int) -> None:
+        """R-07: um job da reunião acabou em erro ou cancelado: a janela aberta dela relê o cabeçalho; uma troca de idioma
+        que não foi até o fim sai do "(reprocessando)" e o botão volta a oferecer o outro idioma."""
+        win = self._meetings.get(meeting_id)
+        if win is None:
+            return
+        try:
+            win.reload_header()
+        except Exception as e:  # a janela relê na próxima vez; o polling não para por ela
+            log.debug("reunião %s: cabeçalho não relido: %s", meeting_id, e)
 
     def _on_job_error(self, job: Any) -> None:
         """F5.3 (A-11): processamento, reprocessamento ou LLM com erro: um aviso com a etapa; o clique abre a fila. O índice e
@@ -1810,6 +1845,9 @@ class Controller(QObject):
         log.info("app encerrado pelo usuário")
         self.player.stop()                               # o som para já; o resto da saída fica com o emergency_stop
         self.app.quit()                                  # aboutToQuit -> emergency_stop fecha atalhos e banco
+
+    def _save_widget_pos(self, pos: QPoint) -> None:
+        self.store.set_setting("ui.widget_pos", f"{pos.x()},{pos.y()}")
 
     def _saved_widget_pos(self) -> QPoint | None:
         raw = self.store.get_setting("ui.widget_pos")

@@ -261,3 +261,104 @@ def test_without_core_audio_the_panel_lists_portaudio_without_new():
     assert [r.key for r in output_rows(None, SYSTEM, frozenset())] == [OUT_FOLLOW, OTHER_APP]
     gone = mic_rows(BASE_ENDPOINTS, [], BT, BASE_ENDPOINTS.ids())
     assert gone[-1].current and gone[-1].text == f"{BT.name} (saiu: gravando no padrão)"
+
+
+# ---------------------------------------------------------------- revisão do L4
+def test_a_failed_back_switch_restores_the_microphone_that_was_recording(platform, store, recorder_factory):
+    """R-01: o escolhido saiu e a gravação seguiu no padrão; ele volta mas não abre (o perfil de chamada falhou): a troca
+    devolve o padrão que GRAVAVA, não o pedido (o mesmo que acabou de falhar), e o canal não fica perdido nem mente."""
+    platform.devices = [MIC, BT]
+    platform.endpoints = with_bt()
+    platform.settle()
+    rec = recorder_factory(make_config(mic_device=BT))
+    rec.start()
+    platform.pump(0.3)
+    bt = _live_mics(platform)[0]
+    platform.next_endpoints, platform.next_devices, platform.fail_ids = BASE_ENDPOINTS, [MIC], {BT.id}   # o fone saiu
+    platform.audio_endpoints()
+    bt.fail("dispositivo removido")
+    platform.pump(0.2)
+    assert rec.switch_mic(BT, reason=DeviceReason.MISSING, strict=False).ok and rec.mic_open_id == MIC.id
+    platform.pump(0.3)
+    platform.next_endpoints, platform.next_devices = with_bt(), [MIC, BT]           # voltou, mas não abre
+    platform.audio_endpoints()
+    result = rec.switch_mic(BT, reason=DeviceReason.BACK)
+    assert not result.ok and rec.mic_device == BT and result.endpoint_id == MIC.id
+    assert rec.mic_open_id == MIC.id and [s.device_id for s in _live_mics(platform)] == [MIC.id]
+    platform.pump(0.3)
+    assert "L" not in rec.snapshot.lost and rec.health()["L"] != Health.LOST
+    rec.stop()
+
+
+def test_a_reopening_whose_start_fails_stays_lost_and_is_tried_again(platform, store, recorder_factory):
+    """R-02: a reabertura cujo `start()` falha já mandou o formato (o `_Open` tira o canal de perdido): o canal volta a
+    perdido, à vista, e a reabertura seguinte, 5 s depois, o devolve."""
+    rec = recorder_factory()
+    rec.start()
+    platform.pump(0.3)
+    platform.start_fail_ids = {MIC.id}
+    _live_mics(platform)[0].fail("dispositivo removido")
+    platform.pump(0.2)
+    rec.check_devices()                                                    # abre, mas o `start()` falha
+    assert "L" in rec.snapshot.lost and rec.health()["L"] == Health.LOST and _live_mics(platform) == []
+    platform.start_fail_ids = set()
+    platform.pump(5.1)
+    rec.check_devices()
+    platform.pump(0.5)
+    assert "L" not in rec.snapshot.lost and rec.health()["L"] != Health.LOST and len(_live_mics(platform)) == 1
+    rec.stop()
+    assert [e["type"] for e in store.list_events(rec.meeting_id)].count(EventType.DEVICE_BACK) == 1
+
+
+def test_an_output_switch_that_fails_brings_back_the_previous_source_or_stays_lost(platform, store, recorder_factory):
+    """R-03: da fonte de um app para o sistema inteiro que não abre, o app volta (não fica sem R); sem nenhuma, o canal fica
+    perdido, à vista, e a reabertura de 5 s o devolve; o `start()` que falha na reabertura automática não sobe."""
+    rec = recorder_factory()                                               # a fonte é o app meeting.exe
+    rec.start()
+    platform.pump(0.3)
+    platform.system_fail = True
+    assert rec.switch_source(SourceSpec("system", output_id=SPEAKERS.id)) is False
+    assert rec.source.kind == "app" and rec.output_open and rec.output_open_id == ""
+    platform.pump(0.3)
+    assert rec.health()["R"] == Health.OK
+    platform.app_fail = True                                               # nem o app nem o sistema abrem
+    assert rec.switch_source(SourceSpec("system")) is False
+    assert not rec.output_open and "R" in rec.snapshot.lost and rec.health()["R"] == Health.LOST
+    platform.app_fail = platform.system_fail = False
+    platform.pump(0.2)
+    rec.check_devices()
+    platform.pump(0.3)
+    assert rec.output_open and rec.source.kind == "app" and rec.health()["R"] != Health.LOST
+    rec.stop()
+    system = recorder_factory(make_config(source=SYSTEM))
+    system.start()
+    platform.pump(0.2)
+    platform.system_start_fail = True
+    assert system.reopen_output(DeviceReason.DEFAULT) is False             # sem exceção: a vigia segue viva
+    assert not system.output_open and "R" in system.snapshot.lost
+    system.stop()
+
+
+def test_a_name_id_never_reaches_the_events_or_the_log(platform, store, recorder_factory, caplog):
+    """R-05 (A-22): sem id do sistema, o aparelho ganha o id `name:<nome>`, com o nome de quem pode ser dono dele; nos
+    eventos, no detalhe do canal e no log ele vai resumido, e o nome fica só na tela."""
+    from listener.platform.base import log_id
+
+    named = AudioDevice(f"name:AirPods de {PERSON}", f"AirPods de {PERSON}", "fake", 1, 16000, index=1)
+    platform.devices = [MIC, named]
+    with caplog.at_level(logging.DEBUG, logger="listener"):
+        rec = recorder_factory(make_config(mic_device=named))
+        rec.start()
+        platform.pump(0.3)
+        _live_mics(platform)[0].fail("dispositivo removido")
+        platform.pump(0.2)
+        rec.check_devices()
+        platform.pump(0.2)
+        assert rec.switch_mic(MIC).ok and rec.switch_mic(named).ok
+        rec.stop()
+        store.set_setting("warmup.last_mic_device_name", named.name)      # o log das configurações também (DEBUG)
+        store.set_setting("warmup.last_mic_device_id", named.id)
+    dumped = json.dumps([e["data"] for e in store.list_events(rec.meeting_id)], ensure_ascii=False)
+    assert PERSON not in dumped and PERSON not in caplog.text and PERSON not in rec.L.detail
+    assert log_id(named.id) in dumped and log_id(named.id).startswith("name#") and log_id(MIC.id) == MIC.id
+    assert "configuração warmup.last_mic_device_name" in caplog.text and "(nome de aparelho)" in caplog.text

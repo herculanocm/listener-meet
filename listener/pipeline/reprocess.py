@@ -3,8 +3,13 @@ reunião aberta, sempre por ação do usuário (CP3). Com a reunião gravando, r
 não duplica um processamento ativo da reunião. Com idioma (U-046), o job leva `{"reason": "language", "language": <código
 do Whisper>}` no `params_json`: um processamento pendente da reunião só troca de idioma (as janelas que uma tentativa
 anterior já transcreveu saem; as vozes ficam, o pyannote não tem idioma); um rodando é cancelado (atende entre janelas) e
-outro entra na fila. O runner transcreve no idioma pedido e o grava em `meetings.language` junto da troca dos segmentos
-(cancelado ou com erro, fica o antigo); a LLM refaz tudo como pedido manual (`target_language` do job pai, A-06)."""
+outro entra na fila, marcado `only_for_language` quando nada foi cancelado para ele. O runner transcreve no idioma pedido e
+o grava em `meetings.language` junto da troca dos segmentos (cancelado ou com erro, fica o antigo); a LLM refaz tudo como
+pedido manual (`target_language` do job pai, A-06).
+R-08: pedir o idioma que a reunião já tem desfaz a troca ainda não aplicada sem custo a mais: o job que existe só por ela é
+cancelado (na fila sai já; rodando, para entre as janelas) e nada entra no lugar; um processamento que já existia volta a
+ser o que era (na fila, perde o idioma pedido; rodando, para e volta à fila como era). Um job com o cancelamento pedido já
+está de saída e não entra em nenhuma decisão daqui."""
 from __future__ import annotations
 
 import json
@@ -24,13 +29,15 @@ if TYPE_CHECKING:
 log = get_logger("pipeline.reprocess")
 
 REASON_LANGUAGE = "language"
+ONLY_FOR_LANGUAGE = "only_for_language"          # o job nasceu só para a troca: desfeita, ele sai (R-08)
+CHANGE_KEYS = ("reason", "language", ONLY_FOR_LANGUAGE)
 RECORDING = frozenset({str(MeetingStatus.RECORDING), str(MeetingStatus.PAUSED)})
 TRANSCRIPT_STEPS = (JobStep.TRANSCRIBE_R, JobStep.TRANSCRIBE_L)
 
 
 @dataclass(frozen=True, slots=True)
 class ReprocessResult:
-    job_id: int | None                   # o job que fará o trabalho (novo, ou o pendente que trocou de idioma); None = recusado
+    job_id: int | None                   # o job que fará o trabalho (novo, ou o pendente que trocou de idioma); None = nada a rodar
     message: str                         # o que a tela mostra
     cancelled: int | None = None         # o processamento em curso cancelado para dar lugar a este
 
@@ -52,8 +59,10 @@ def target_language(job: Mapping[str, Any] | None) -> str | None:
 
 
 def active_jobs(store: Store, meeting_id: int) -> list[JobRow]:
-    """Processamentos (`meeting`, `reprocess`) pendentes, rodando ou pausados da reunião, do mais antigo ao mais novo."""
-    rows = [j for j in store.jobs.for_meeting(meeting_id) if str(j.get("kind")) in PIPELINE_JOB_KINDS and str(j["status"]) in ACTIVE]
+    """Processamentos (`meeting`, `reprocess`) pendentes, rodando ou pausados da reunião, do mais antigo ao mais novo; o que
+    já tem o cancelamento pedido está de saída e fica de fora."""
+    rows = [j for j in store.jobs.for_meeting(meeting_id)
+            if str(j.get("kind")) in PIPELINE_JOB_KINDS and str(j["status"]) in ACTIVE and not j.get("cancel_requested")]
     return sorted(rows, key=lambda j: int(j["id"]))
 
 
@@ -68,8 +77,9 @@ def pending_language(store: Store, meeting_id: int) -> tuple[int, str] | None:
 
 
 def request_reprocess(store: Store, meeting_id: int, language: str | None = None) -> ReprocessResult:
-    """Reprocessa a reunião, em `language` quando dado (qualquer código; vai como o do Whisper). A leitura da fila e a
-    decisão ficam numa transação: o claim de um worker não entra no meio."""
+    """Reprocessa a reunião, em `language` quando dado (qualquer código; vai como o do Whisper); o idioma que ela já tem
+    desfaz a troca em curso (R-08). A leitura da fila e a decisão ficam numa transação: o claim de um worker não entra no
+    meio."""
     target = whisper_code(language) if language else None
     with store.transaction():
         meeting = store.get_meeting(meeting_id)
@@ -81,9 +91,12 @@ def request_reprocess(store: Store, meeting_id: int, language: str | None = None
         active = active_jobs(store, meeting_id)
         if target is None:
             return _plain(store, meeting_id, active)
+        current = whisper_code(meeting_language(store, meeting))
+        if target == current:
+            return _undo(store, meeting_id, active, current)
         pending = next((j for j in active if str(j["status"]) == JobStatus.PENDING), None)
         if pending is not None:
-            return _retarget(store, meeting, pending, target)
+            return _retarget(store, meeting_id, pending, target)
         running = next((j for j in active if str(j["status"]) in HELD), None)
         if running is not None:
             store.jobs.request_cancel(int(running["id"]))
@@ -100,28 +113,65 @@ def _plain(store: Store, meeting_id: int, active: list[JobRow]) -> ReprocessResu
     return ReprocessResult(None, f"Esta reunião já tem um processamento {state} (job {job['id']}): espere terminar.")
 
 
-def _retarget(store: Store, meeting: Mapping[str, Any], job: JobRow, target: str) -> ReprocessResult:
+def _retarget(store: Store, meeting_id: int, job: JobRow, target: str) -> ReprocessResult:
     """O processamento ainda na fila só troca de idioma; o que uma tentativa anterior transcreveu em outro idioma sai (as
     vozes ficam: a retomada não refaz a separação)."""
     job_id = int(job["id"])
     message = f"O processamento na fila (job {job_id}) vai transcrever em {output_code(target)}."
-    asked = target_language(job)
-    if asked == target:                                  # já era este idioma: o que ele transcreveu vale
+    if target_language(job) == target:                   # já era este idioma: o que ele transcreveu vale
         return ReprocessResult(job_id, message)
     store.jobs.set_params(job_id, {**_params(job), "reason": REASON_LANGUAGE, "language": target})
-    before = asked or whisper_code(meeting_language(store, meeting))
-    dropped = sum(store.jobs.delete_artifacts(job_id, step) for step in TRANSCRIPT_STEPS) if before != target else 0
+    dropped = sum(store.jobs.delete_artifacts(job_id, step) for step in TRANSCRIPT_STEPS)
     log.info("reunião %s: o processamento na fila (job %s) passa a transcrever em %s (%d janela(s) já transcritas saem)",
-             meeting["id"], job_id, target, dropped)
+             meeting_id, job_id, target, dropped)
     return ReprocessResult(job_id, message)
 
 
+def _undo(store: Store, meeting_id: int, active: list[JobRow], current: str) -> ReprocessResult:
+    """R-08: o idioma que a reunião já tem desfaz a troca ainda não aplicada, sem reprocessar nem chamar a LLM por causa
+    dela; sem troca em curso, não há o que fazer."""
+    changes = [j for j in active if target_language(j) is not None]
+    if not changes:
+        return ReprocessResult(None, f"A reunião já está em {output_code(current)}: nada a trocar.")
+    results = [_restore(store, meeting_id, job) for job in changes]
+    kept = [job_id for job_id, _text in results if job_id is not None]
+    details = "; ".join(text for _job_id, text in results)
+    return ReprocessResult(kept[-1] if kept else None, f"Troca de idioma desfeita, a reunião segue em {output_code(current)}: {details}.")
+
+
+def _restore(store: Store, meeting_id: int, job: JobRow) -> tuple[int | None, str]:
+    """Um job da troca volta ao que era. Devolve o job que ainda fará trabalho (None quando nada roda) e o que aconteceu."""
+    job_id = int(job["id"])
+    params = _params(job)
+    asked = target_language(job)
+    rest = {k: v for k, v in params.items() if k not in CHANGE_KEYS}
+    pending = str(job["status"]) == JobStatus.PENDING
+    if params.get(ONLY_FOR_LANGUAGE):                    # nasceu só para a troca: sai, e nada entra no lugar
+        store.jobs.request_cancel(job_id)
+        log.info("reunião %s: troca para %s desfeita: o job %s, só dela, foi cancelado", meeting_id, asked, job_id)
+        return None, f"o reprocessamento pedido (job {job_id}) {'saiu da fila' if pending else 'para entre as janelas'}"
+    if pending:                                          # já existia e ainda não rodou: só perde o idioma pedido
+        store.jobs.set_params(job_id, rest)
+        dropped = sum(store.jobs.delete_artifacts(job_id, step) for step in TRANSCRIPT_STEPS)
+        log.info("reunião %s: troca para %s desfeita: o job %s volta ao processamento de antes (%d janela(s) transcritas saem)",
+                 meeting_id, asked, job_id, dropped)
+        return job_id, f"o processamento que já estava na fila (job {job_id}) segue como era"
+    store.jobs.request_cancel(job_id)                    # já existia e roda no idioma pedido: para e volta à fila como era
+    new = store.jobs.enqueue(meeting_id, JobKind(str(job["kind"])), rest or None)
+    log.info("reunião %s: troca para %s desfeita: o job %s para e o %s refaz o processamento de antes", meeting_id, asked, job_id,
+             new)
+    return new, f"o job {job_id} para entre as janelas e o job {new} refaz o processamento de antes"
+
+
 def _enqueue(store: Store, meeting_id: int, target: str | None, cancelled: int | None) -> ReprocessResult:
-    params = {"reason": REASON_LANGUAGE, "language": target} if target else None
-    job_id = store.jobs.enqueue(meeting_id, JobKind.REPROCESS, params)
     if target is None:
+        job_id = store.jobs.enqueue(meeting_id, JobKind.REPROCESS)
         log.info("reunião %s: reprocessamento na fila (job %s)", meeting_id, job_id)
         return ReprocessResult(job_id, f"Reprocessamento na fila (job {job_id}).")
+    params: dict[str, Any] = {"reason": REASON_LANGUAGE, "language": target}
+    if cancelled is None:                                # nada parou para ele: desfeita a troca, ele simplesmente sai (R-08)
+        params[ONLY_FOR_LANGUAGE] = True
+    job_id = store.jobs.enqueue(meeting_id, JobKind.REPROCESS, params)
     log.info("reunião %s: reprocessar em %s na fila (job %s)%s", meeting_id, target, job_id,
              f"; o processamento {cancelled} foi cancelado" if cancelled is not None else "")
     text = f"Reprocessando em {output_code(target)} (job {job_id})"
@@ -130,5 +180,5 @@ def _enqueue(store: Store, meeting_id: int, target: str | None, cancelled: int |
     return ReprocessResult(job_id, f"{text}.", cancelled)
 
 
-__all__ = ["REASON_LANGUAGE", "RECORDING", "ReprocessResult", "active_jobs", "pending_language", "request_reprocess",
-           "target_language"]
+__all__ = ["ONLY_FOR_LANGUAGE", "REASON_LANGUAGE", "RECORDING", "ReprocessResult", "active_jobs", "pending_language",
+           "request_reprocess", "target_language"]

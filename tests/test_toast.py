@@ -244,6 +244,51 @@ def test_recording_without_the_capture_exclusion_shows_only_the_short_text(qtbot
     c.state = AppState.IDLE
 
 
+def test_privacy_is_rechecked_on_each_notice_and_when_recording_starts_or_ends(qtbot, platform):
+    """R-10 (A-13): sem a exclusão da captura, o aviso que já estava à vista quando a gravação começa passa ao texto curto (o
+    título sai da tela que pode estar compartilhada): a cada aviso que chega, novo ou igual, e pelo `refresh_privacy`, que o
+    controlador chama quando a gravação começa ou termina; fora dela, volta ao inteiro, e a pilha se refaz com a altura nova.
+    Fora da captura, o texto inteiro fica."""
+    from listener.ui.toast import GAP, ToastManager
+
+    recording = {"on": False}
+    m = ToastManager(platform, on_action=lambda _a: None, recording=lambda: recording["on"], anchor=lambda: None)
+    platform.capture_exclusion = False
+    title = "Conversa com a Zuleica sobre o orçamento de 2027, os riscos do fundo e o plano de investimentos"
+    minutes = Notice(NoticeKind.READY, f"{title}: ata pronta · US$ 0,32", "Ata pronta · US$ 0,32", NoticeAction(Target.MEETING, 1))
+    review = Notice(NoticeKind.INFO, f"{title}: pronta para revisão.", "Pronta para revisão.", NoticeAction(Target.MEETING, 1))
+
+    def shown(toast: Any) -> str:
+        return toast.body.text() + toast.body.toolTip() + toast.accessibleName()
+
+    try:
+        m.show(minutes, 6)
+        m.show(review, 6)
+        first, second = m.toasts
+        tall = first.height()
+        assert not first.private and "Zuleica" in shown(first) and "Zuleica" in shown(second)
+        recording["on"] = True                                                             # a gravação começou
+        m.show(minutes, 6)                                                                 # um igual se junta: confere
+        assert first.count == 2 and all(t.private and "Zuleica" not in shown(t) for t in (first, second))
+        assert first.body.text() == "Ata pronta · US$ 0,32" and first.height() < tall
+        assert second.y() + second.height() + GAP == first.y()                             # a pilha refeita
+        recording["on"] = False
+        m.refresh_privacy()                                                                # o fim da gravação (controlador)
+        assert not first.private and not second.private and first.height() == tall and "Zuleica" in shown(first)
+        recording["on"] = True
+        m.refresh_privacy()                                                                # o começo da gravação (controlador)
+        assert first.private and second.private and "Zuleica" not in shown(first) + shown(second)
+        platform.capture_exclusion = True
+        m.show(Notice(NoticeKind.READY, f"{title}: processada."), 6)                      # fora da captura: o título fica
+        excluded = m.toasts[-1]
+        for on in (False, True):
+            recording["on"] = on
+            m.refresh_privacy()
+            assert excluded.excluded and not excluded.private and "Zuleica" in shown(excluded)
+    finally:
+        m.shutdown()
+
+
 def test_reentrance_rate_limit_and_quitting_keep_the_notice_in_the_log(qtbot, qapp, platform, store, monkeypatch, caplog):
     from listener.ui.controller import Controller
 

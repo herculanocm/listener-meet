@@ -7,7 +7,7 @@ ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12)
 F5.3 L4: os endpoints pelo Core Audio sem reler o PortAudio (`endpoints.py`, A-19); o handle diz o endpoint aberto e o
 microfone pedido pode ser exigido (`strict`, A-16); o loopback do sistema inteiro abre na saída escolhida, casada pelo
 nome na lista do PyAudioWPatch (A-21); o mudo troca de endpoint de uma vez, sob trava (A-18); log com o id do endpoint,
-nunca o nome do aparelho (A-22)."""
+nunca o nome do aparelho (A-22; o id `name:<nome>`, de quando o Core Audio não casa o nome, vai resumido: `log_id`)."""
 from __future__ import annotations
 
 import ctypes
@@ -26,8 +26,8 @@ import numpy as np
 
 from ...capture.mixer import FrameMixer
 from ...log import get_logger
-from ..base import (AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform, PlayingApp,
-                    pick_device)
+from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform,
+                    PlayingApp, log_id, pick_device)
 from ..common import paths, portaudio, process
 from . import endpoints, processes
 from .endpoints import com_init as _com_init
@@ -146,7 +146,7 @@ def _loopback_target(reading: Endpoints | None, output_id: str | None) -> tuple[
         return "", ""
     ep = reading.output(output_id) if output_id else None
     if ep is None and output_id:
-        log.warning("saída %s ausente; o loopback vai na saída padrão", output_id)
+        log.warning("saída %s ausente; o loopback vai na saída padrão", log_id(output_id))
     ep = ep or reading.output(reading.render_default)
     return (ep.id, ep.name) if ep is not None else ("", "")
 
@@ -372,12 +372,12 @@ class _Win32MicMute(MicMute):
                 try:
                     ep = _endpoint_volume(dev)
                 except Exception as e:
-                    log.debug("EndpointVolume de %s: %s", dev_id, e)
+                    log.debug("EndpointVolume de %s: %s", log_id(dev_id), e)
                 else:
                     self._ep, self.resolved, self._ep_thread = ep, dev_id, threading.get_ident()
                     return ep
         self._retry_after = time.monotonic() + MUTE_RETRY_S
-        log.warning("endpoint de captura %s não encontrado; o mudo global vai no microfone padrão", self._device.id)
+        log.warning("endpoint de captura %s não encontrado; o mudo global vai no microfone padrão", log_id(self._device.id))
         return None
 
     def _default(self) -> Any:
@@ -525,7 +525,7 @@ class Win32Platform(Platform):
             if "WASAPI" not in apis[d["hostapi"]]["name"]:   # MME/DirectSound/WDM-KS duplicam os mesmos microfones
                 continue
             stable = next((dev_id for name, dev_id, _ in endpoints if _names_match(name, d["name"])), None)
-            out.append(AudioDevice(id=stable or f"name:{d['name']}", name=d["name"], api="WASAPI",
+            out.append(AudioDevice(id=stable or f"{NAME_ID_PREFIX}{d['name']}", name=d["name"], api="WASAPI",
                                    channels=int(d["max_input_channels"]), sample_rate=int(d["default_samplerate"]), index=i))
         self._devices_cache = (now, out)
         self._indices = {d.id: d.index for d in out if d.index is not None}
@@ -607,9 +607,9 @@ class Win32Platform(Platform):
         found = pick_device(self.list_input_devices(), device.id, device.name)
         if found is not None:
             return found
-        if strict:
-            raise LookupError(f"o microfone {device.id} não está na lista do sistema de áudio")
-        log.warning("microfone %s não está mais nesta máquina; usando o padrão", device.id)
+        if strict:                                        # a mensagem vai à tela e ao log: o id resumido, nunca o nome (A-22)
+            raise LookupError(f"o microfone {log_id(device.id)} não está na lista do sistema de áudio")
+        log.warning("microfone %s não está mais nesta máquina; usando o padrão", log_id(device.id))
         return self.default_input_device()
 
     # ---------------------------------------------------------------- apps tocando
@@ -713,7 +713,7 @@ class Win32Platform(Platform):
 
         def start() -> None:
             stream.start()
-            log.info("microfone aberto: endpoint %s (índice %s) a %d Hz", dev_id or "?", idx, sample_rate)
+            log.info("microfone aberto: endpoint %s (índice %s) a %d Hz", log_id(dev_id), idx, sample_rate)
 
         def stop() -> None:
             stream.stop()
@@ -837,7 +837,7 @@ class Win32Platform(Platform):
 
         def start() -> None:
             stream.start_stream()
-            log.info("loopback do sistema aberto: saída %s (%s), %d Hz, %d canais", opened_id or "?",
+            log.info("loopback do sistema aberto: saída %s (%s), %d Hz, %d canais", log_id(opened_id),
                      "escolhida" if output_id and opened_id == output_id else "padrão", sr, ch)
 
         def stop() -> None:

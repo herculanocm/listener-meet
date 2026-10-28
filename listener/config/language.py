@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
+from ..model import MeetingStatus
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -24,6 +25,7 @@ LANGUAGES: tuple[str, ...] = (PT, EN)
 LABELS: dict[str, str] = {PT: "Português (pt-BR)", EN: "Inglês (en)"}
 _WHISPER: dict[str, str] = {PT: "pt", EN: "en"}
 _DOCX: dict[str, str] = {PT: "pt-BR", EN: "en-US"}
+_PROCESSED = frozenset({str(MeetingStatus.PROCESSED), str(MeetingStatus.REVIEWED)})   # já passou por um processamento
 
 
 def _primary(code: str | None) -> str:
@@ -64,9 +66,17 @@ def default_language(store: Store) -> str:
 
 
 def meeting_language(store: Store, meeting: Mapping[str, Any] | None) -> str:
-    """O idioma de uma reunião no código do app: o gravado nela ou, vazio (reunião anterior à F5.3), o padrão (A-01)."""
-    code = (meeting or {}).get("language")
-    return output_code(str(code)) if code else default_language(store)
+    """O idioma de uma reunião no código do app: o gravado nela. Vazio numa reunião já processada (antes da F5.3 a D-013
+    detectava, e o nulo é de quem nunca detectou), português, o padrão de então: nunca o de agora, que mudaria a ata, o chat
+    e a exportação de uma reunião antiga (R-11). Vazio numa que ainda não foi processada, o padrão de agora (A-01), que o
+    runner grava ao processar."""
+    m = meeting or {}
+    code = m.get("language")
+    if code:
+        return output_code(str(code))
+    if str(m.get("status")) in _PROCESSED:
+        return PT
+    return default_language(store)
 
 
 def adopt_legacy(store: Store) -> bool:

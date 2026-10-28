@@ -7,8 +7,9 @@ a lease da gravação (Q7). Nunca há transação em volta de computação. Pres
 L é o usuário (`attribution = canal`) e reforça o perfil dele com `source = automatico` (P3). Reprocessar escreve com o
 `job_id` novo e, no último passo, transporta as decisões humanas por cosseno e troca numa só transação (item 12, CP3).
 F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o idioma pedido pela troca na reunião
-aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (gravado quando a reunião
-não tinha). A troca só vale com o job concluído: `meetings.language` muda com `revisions` na transação da troca.
+aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (português numa reunião já
+processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído: `meetings.language`
+muda com `revisions` na transação da troca.
 """
 from __future__ import annotations
 
@@ -148,13 +149,14 @@ class JobRunner(BaseJobRunner):
         return self._finish_ok()
 
     def _log_language(self) -> None:
-        """A-01: de onde veio o idioma deste job; a reunião sem idioma (anterior à F5.3) fica com o padrão já aqui."""
+        """A-01: de onde veio o idioma deste job. A reunião sem idioma (anterior à F5.3) fica com ele já aqui: o padrão de
+        agora, ou português na que já tinha sido processada (R-11, `config.language.meeting_language`)."""
         if self.target_language is not None:
             source = "troca pedida na reunião; grava ao concluir"
         elif self.meeting.get("language"):
             source = "o da reunião"
         else:
-            source = "o padrão das Configurações"
+            source = "a reunião não tinha idioma: gravado agora"
             self.store.meetings.set_language(self.meeting_id, self.language)
         log.info("job %s: transcrição em %s (%s)", self.job_id, self.language, source)
 

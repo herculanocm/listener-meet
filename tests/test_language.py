@@ -70,6 +70,7 @@ def test_the_conversions_live_in_one_place(store):
     store.set_setting("app.language", "en")
     assert language.default_language(store) == "en" and language.meeting_language(store, {"language": None}) == "en"
     assert language.meeting_language(store, {"language": "pt"}) == "pt-BR"
+    assert language.meeting_language(store, {"language": None, "status": "processada"}) == "pt-BR"    # R-11: a antiga, pt
     store.set_setting("app.language", "fr")                                        # inválido no banco: o padrão
     assert language.default_language(store) == "pt-BR"
     mid = store.create_meeting("t", None, None, None, language="en-US")
@@ -125,6 +126,33 @@ def test_an_old_llm_snapshot_with_output_language_still_loads():
     old = json.dumps({"provider_id": "gemini", "provider_kind": "gemini", "fast_model": "f", "output_language": "en", "max_parallel": 3})
     cfg = LlmJobConfig.from_json(old)
     assert cfg.ready and cfg.max_parallel == 3 and "output_language" not in cfg.to_json() and not hasattr(cfg, "output_language")
+
+
+def test_an_old_processed_meeting_without_language_stays_portuguese(platform, store, caplog, no_summary_gate):
+    """R-11: a reunião processada antes da F5.3 com o idioma nulo (a D-013 nunca detectou) vale português, não o padrão de
+    agora: trocar o padrão para inglês não muda a ata, o chat nem a exportação dela; reprocessar grava o `pt`. A que ainda
+    não foi processada segue o padrão de agora."""
+    from listener.pipeline.llm_steps import build_context
+    from listener.rag import export
+
+    mid = _record(platform, store, None)
+    store.jobs.enqueue(mid)
+    _run_heavy(store, FakeDeps(SCRIPT_EN))
+    store._x("UPDATE meetings SET language = NULL WHERE id = ?", (mid,))             # como ficou a processada antes da F5.3
+    store.set_setting("app.language", "en")                                          # o padrão de agora mudou
+    assert language.meeting_language(store, store.get_meeting(mid)) == "pt-BR"
+    assert build_context(store, mid, store.segments.current_job_id(mid)).meeting_ctx.output_language == "pt-BR"
+    data = export.gather(store, mid)
+    assert data is not None and data.language == "pt-BR"
+    new = store.create_meeting("nova", None, None, None)
+    store.finish_meeting(new, 60_000)                                                # gravada, ainda sem processamento
+    assert language.meeting_language(store, store.get_meeting(new)) == "en"
+    store.jobs.enqueue(mid, JobKind.REPROCESS)
+    deps = FakeDeps(SCRIPT_EN)
+    with caplog.at_level("INFO", logger="listener.pipeline.runner"):
+        job, status = _run_heavy(store, deps)
+    assert status == JobStatus.DONE and {c[2] for c in deps.scripted.calls} == {"pt"} and store.get_meeting(mid)["language"] == "pt"
+    assert f"job {job}: transcrição em pt (a reunião não tinha idioma: gravado agora)" in caplog.text
 
 
 # ---------------------------------------------------------------- warm-up

@@ -15,6 +15,7 @@ from ..capture.audio import rms
 from ..config import bootstrap
 from ..config.defaults import LOG_LEVELS
 from ..log import attach_file, get_logger
+from ..platform.base import log_id
 from ..store import Store
 from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
@@ -308,6 +309,7 @@ class FirstRunWizard(QWizard):
         bootstrap.write_db_dir(self.platform.config_dir(), db_dir)
         log.info("primeira inicialização concluída: banco em %s, log em %s (nível %s); microfone %s; ficha do usuário com "
                  "cargo %s, empresa %s, e-mail %s", db_dir, log_path, self.log_page.level.currentText(),
-                 dev.id if dev else "o padrão", *("sim" if self.field(f).strip() else "não" for f in ("role", "company", "email")))
+                 log_id(dev.id) if dev else "o padrão", *("sim" if self.field(f).strip() else "não" for f in ("role", "company",
+                                                                                                              "email")))
         self.store = store
         super().accept()

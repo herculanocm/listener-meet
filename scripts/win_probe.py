@@ -64,6 +64,13 @@ def silent_meeting(store, seconds: int, chunk_s: int = 60) -> int:
     return mid
 
 
+def discard(w) -> None:
+    """R-06: a janela da foto é apagada, não só fechada: sem dono e viva até a derrubada do PySide, seria destruída fora de
+    ordem na saída (0xC0000409)."""
+    w.close()
+    w.deleteLater()
+
+
 def devices_shots(p, shot) -> None:
     """F5.3 L4: com os aparelhos reais desta máquina. O "novo" do painel marca a última saída (como se tivesse chegado depois
     do começo da gravação) só para a foto; a linha do widget mostra o nome do microfone padrão."""
@@ -77,7 +84,7 @@ def devices_shots(p, shot) -> None:
     rw.update_state(125, {"L": 0.1, "R": 0.05}, {"L": "ok", "R": "ok", "db": "ok"}, False, False, 0)
     rw.show_alert(f"novo: {mic.name if mic is not None else 'Fone de ouvido (Hands-Free)'}", "Usar", "use")
     shot(rw, "widget-novo-usar")
-    rw.close()
+    discard(rw)
     start = reading.ids() - {reading.render[-1].id} if reading is not None and reading.render else frozenset()
     for name, source in (("painel-dispositivos", SourceSpec("system", label="Sistema inteiro")),
                          ("painel-dispositivos-app", SourceSpec("app", pid=1, exe="ms-teams.exe", label="ms-teams"))):
@@ -87,7 +94,7 @@ def devices_shots(p, shot) -> None:
         panel.set_status("Microfone trocado.")
         panel.adjustSize()
         shot(panel, name)
-        panel.close()
+        discard(panel)
 
 
 def queue_jobs(store, first_mid: int) -> None:
@@ -230,7 +237,7 @@ def cmd_app(args) -> None:
 # ---------------------------------------------------------------------------- shots
 def cmd_shots(args) -> None:
     os.environ.pop("QT_QPA_PLATFORM", None)
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtWidgets import QApplication, QGroupBox, QTabWidget
 
     app = QApplication(sys.argv[:1])
@@ -297,46 +304,46 @@ def cmd_shots(args) -> None:
                        (lambda: MarkerPopup(12.0, p), "marcador")):
         w = make()
         shot(w, name)
-        w.close()
+        discard(w)
     wiz = FirstRunWizard(p, None)                         # U-038: a página das chaves, aberta direto (sem validar as anteriores)
     wiz.setStartId(wiz.pageIds()[[wiz.page(i) for i in wiz.pageIds()].index(wiz.keys_page)])
     wiz.restart()
     shot(wiz, "assistente-chaves")
-    wiz.close()
+    discard(wiz)
     rw = RecordingWidget()
     rw.update_state(65, {"L": 0.1, "R": 0.01}, {"L": "ok", "R": "warn", "db": "ok"}, False, False, 2)
     rw.show_alert("teste de alerta", "Dispositivos…", "devices")
     shot(rw, "widget")
-    rw.close()
+    discard(rw)
     devices_shots(p, shot)                                # F5.3 L4: o widget com "novo: … Usar" e o painel
     sd = SettingsDialog(store, p, {})
     shot(sd, "configuracoes")
     tabs_of(sd, "configuracoes")
     part(next(g for g in sd.findChildren(QGroupBox) if g.title() == "Idioma e avisos"), "configuracoes-idioma-e-avisos")
-    sd.close()
+    discard(sd)
     mid = store.create_meeting("Comitê de investimentos", "sistema", None, None)
     store.finish_meeting(mid, 1000)
     su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []})
     shot(su, "resumo-gravacao")
-    su.close()
+    discard(su)
     player = Player(store)
     mw = MeetingWindow(store, mid, player=player)
     shot(mw, "reuniao")
     tabs_of(mw, "reuniao")
-    mw.close()
+    discard(mw)
     hw = HistoryWindow(store)
     shot(hw, "historico")
     tabs_of(hw, "historico")
     hw.page.shutdown()
-    hw.close()
+    discard(hw)
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")
     hd = QueueHelpDialog(BUTTON_HELP, COLUMN_HELP, qd)
     shot(hd, "fila-ajuda")
-    hd.close()
+    discard(hd)
     qd._timer.stop()
-    qd.close()
+    discard(qd)
     ready = Notice(NoticeKind.READY, "Comitê de investimentos: ata pronta · US$ 0,32", "Ata pronta · US$ 0,32",
                    NoticeAction(Target.MEETING, mid))
     for name, notice, count, private in (                 # F5.3 L3 (U-048): um aviso de cada tipo e o gravando só com o tipo
@@ -348,10 +355,11 @@ def cmd_shots(args) -> None:
         toast = Toast(notice, 6000, count)
         toast.set_private(private)
         shot(toast, name)
-        toast.close()
+        discard(toast)
     player.shutdown()
     for state, color in STATE_COLORS.items():
         make_icon(color).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)   # R-06: as janelas apagadas antes do banco fechar
     store.close()
     out("shots", folder=str(out_dir), screen={"name": screen.name(), "dpr": screen.devicePixelRatio()}, shots=shots)
 

@@ -46,11 +46,14 @@ class FakeStream:
         self.stopped = False
         self.stop_calls = 0                          # U-043: quem fechou a stream (a morta também precisa ser fechada)
         self.device_id = ""                          # F5.3 (A-16): o endpoint aberto
+        self.fail_start = False                      # o driver recusa o `start()` (revisão do L4, R-02 e R-03)
         self.t_next: float | None = None             # início (sessão) do próximo bloco a entregar
         self.phase = 0
         self.delivered = 0
 
     def start(self) -> None:
+        if self.fail_start:
+            raise RuntimeError("o dispositivo não começou")
         self.started = True
         self.t_next = self.clock.rel()
 
@@ -229,6 +232,9 @@ class FakePlatform(Platform):
         self._pa_default: str | None = None                   # o padrão da última leitura do PortAudio (None = o primeiro)
         self.other_streams: Callable[[], int] = lambda: 0     # o player nos testes do controlador
         self.fail_ids: set[str] = set()                       # microfones que recusam abrir
+        self.start_fail_ids: set[str] = set()                 # microfones que abrem e recusam o `start()`
+        self.system_fail = False                              # o loopback do sistema recusa abrir
+        self.system_start_fail = False                        # ...ou abre e recusa o `start()`
         self.mics_at_open: list[int] = []                     # quantos microfones seguiam abertos em cada abertura (A-15)
         self.loopbacks: list[FakeStream] = []
         self.loopbacks_at_open: list[int] = []                # quantos loopbacks do sistema seguiam abertos em cada abertura
@@ -339,6 +345,7 @@ class FakePlatform(Platform):
         self.mics_at_open.append(sum(1 for s in self.mic_streams if s.stop_calls == 0))
         stream = self._stream(sample_rate, 1, on_audio, on_error, freq=440.0)
         stream.device_id = found.id if found else ""
+        stream.fail_start = stream.device_id in self.start_fail_ids
         self.mic_streams.append(stream)                  # U-043: o que o PortAudio do sounddevice abriria
         return stream
 
@@ -351,6 +358,8 @@ class FakePlatform(Platform):
     @override
     def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None,
                              output_id: str | None = None) -> FakeStream:
+        if self.system_fail:
+            raise RuntimeError("loopback do sistema indisponível")
         still_open = sum(1 for s in self.loopbacks if s.stop_calls == 0)
         self.loopbacks_at_open.append(still_open)
         if not still_open or self._lb_view is None:
@@ -359,6 +368,7 @@ class FakePlatform(Platform):
         stream = self._stream(*self.system_format, on_audio, on_error, freq=330.0, silent=self.r_silent_windows)
         if view is not None:
             stream.device_id = output_id if output_id and view.output(output_id) is not None else view.render_default
+        stream.fail_start = self.system_start_fail
         self.loopbacks.append(stream)
         return stream
 

@@ -178,13 +178,15 @@ def test_the_watch_follows_the_default_and_the_chosen_microphone_that_leaves(qtb
     platform.next_endpoints, platform.next_devices, platform.fail_ids = BASE_ENDPOINTS, [MIC], {BT.id}   # o fone saiu
     bt_stream.fail("dispositivo removido")
     platform.pump(0.2)
-    watch.poll()
+    chosen.check_devices()                                 # R-04: a reabertura de 200 ms cai no padrão antes da vigia
     assert chosen.mic_open_id == MIC.id and chosen.mic_device == BT
+    watch.poll()
     notice = watch.notice()
     assert notice is not None and notice.text.startswith("microfone escolhido saiu")
+    watch.poll()                                           # o mesmo episódio: não avisa de novo
     platform.next_endpoints, platform.next_devices, platform.fail_ids = with_bt(), [MIC, BT], set()   # voltou
     watch.poll()
-    assert chosen.mic_open_id == BT.id
+    assert chosen.mic_open_id == BT.id and watch.notice() is not None and watch.notice().text == "microfone escolhido voltou"
     watch.stop()
     chosen.stop()
     changes = [e["data"] for e in store.list_events(chosen.meeting_id) if e["type"] == EventType.DEVICE_CHANGE]
@@ -265,5 +267,110 @@ def test_the_player_lets_go_of_the_output_before_the_mic_switch_rereads(qtbot, q
         assert c.player.toggle()                                            # fonte de um app: retoma sem perguntar
         qtbot.waitUntil(lambda: len(outs) == 2 and len(outs[1].chunks) >= 2, timeout=3000)
         assert c.player.state().state == PLAYING
+    finally:
+        c.emergency_stop()
+
+
+# ---------------------------------------------------------------- revisão do L4
+def test_the_chosen_output_that_leaves_warns_even_when_the_reopening_got_there_first(qtbot, platform, store,
+                                                                                       recorder_factory):
+    """R-04, na saída: a escolhida some, a reabertura de 200 ms do gravador já abriu a padrão; a vigia de 2 s não tem o que
+    trocar, mas o aviso vem do estado (a escolhida sumiu e outra grava)."""
+    from listener.ui.recording_devices import RecordingDevices
+
+    platform.endpoints = with_bt()
+    rec = recorder_factory(make_config(source=SourceSpec("system", label="Sistema inteiro: AirPods", output_id=BT_OUT.id)))
+    rec.start()
+    watch = RecordingDevices(platform, rec)
+    watch.start()
+    platform.next_endpoints = BASE_ENDPOINTS                               # o fone saiu
+    platform.audio_endpoints()
+    platform.loopbacks[-1].fail("dispositivo removido")
+    platform.pump(0.2)
+    rec.check_devices()
+    assert rec.output_open_id == SPEAKERS.id
+    watch.poll()
+    notice = watch.notice()
+    assert notice is not None and notice.text == "saída escolhida saiu: gravando a saída padrão"
+    watch.stop()
+    rec.stop()
+
+
+def test_a_new_device_the_follow_already_opened_offers_no_use(qtbot, platform, store, recorder_factory):
+    """R-09: o fone chega e vira o padrão; o "acompanha" já trocou para ele: o aviso diz "gravando nele" e mostra as saídas,
+    sem "Usar" (que trocaria de novo, com outro buraco, e tiraria o "acompanha" sem dizer)."""
+    from listener.ui.recording_devices import ACTION_OUTPUTS, RecordingDevices
+
+    rec = recorder_factory()
+    rec.start()
+    watch = RecordingDevices(platform, rec)
+    watch.start()
+    platform.next_endpoints, platform.next_devices = with_bt(mic=BT.id), [MIC, BT]
+    watch.poll()
+    assert rec.mic_open_id == BT.id and rec.mic_device is None
+    notice = watch.notice()
+    assert notice is not None and notice.action == ACTION_OUTPUTS and notice.button != "Usar"
+    assert notice.text == f"novo: {BT.name} (gravando nele)"
+    opened = len(platform.mic_streams)
+    watch.use_new()                                                        # nem o "Usar" de um aviso velho troca de novo
+    assert len(platform.mic_streams) == opened and rec.mic_device is None and watch.panel is not None
+    watch.stop()
+    rec.stop()
+
+
+def test_the_panel_and_the_queue_without_an_owner_are_freed_when_dropped(qtbot, store):
+    """R-06: sem dono, o painel e a fila somem quando a última referência some; um `partial`/lambda com `self` numa conexão
+    de sinal de um filho os prendia do lado C++ (o coletor do Python não vê o ciclo) até a derrubada do PySide."""
+    import gc
+    import weakref
+
+    from listener.ui.devices_panel import DevicesPanel
+    from listener.ui.queue import QueueDialog
+
+    for make in (DevicesPanel, lambda: QueueDialog(store)):
+        window = make()
+        ref = weakref.ref(window)
+        del window
+        gc.collect()
+        assert ref() is None
+
+
+def test_the_exit_deletes_the_windows_the_controller_created_without_an_owner(qtbot, qapp, platform, store, monkeypatch):
+    """R-06: na saída, a fila, a reunião aberta e o widget de uma gravação em curso são apagados no laço do Qt; vivos até a
+    derrubada do PySide, seriam destruídos fora de ordem (0xC0000409)."""
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    c = _controller(qapp, platform, store, monkeypatch)
+    mid = store.create_meeting("saída", None, None, None)
+    store.finish_meeting(mid, 1000)
+    c.open_queue()
+    queue, win = c._queue_dialog, c.open_meeting(mid)
+    assert c.start_recording(_system_cfg(), {"title": "gravando na saída"}) and c.widget is not None
+    widget = c.widget
+    c.emergency_stop()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not any(shiboken6.isValid(w) for w in (queue, win, widget))
+
+
+def test_the_mute_notice_at_the_start_keeps_the_device_name_off_the_log(qtbot, qapp, platform, store, monkeypatch, caplog):
+    """R-05 (A-22): o aviso "Não achei o endpoint de '<nome>'" mostra o nome na tela; o log e o texto curto (gravando sem a
+    exclusão da captura) levam o id resumido."""
+    import logging
+
+    from listener.platform.base import AudioDevice
+
+    named = AudioDevice("name:AirPods de Fulano", "AirPods de Fulano", "fake", 1, 16000, index=1)
+    platform.devices = [MIC, named]
+    monkeypatch.setattr(platform._mute, "set_device", lambda *_a, **_k: False)       # o mudo não achou o endpoint
+    c = _controller(qapp, platform, store, monkeypatch)
+    try:
+        with caplog.at_level(logging.INFO, logger="listener"):
+            cfg = RecordConfig(mic_device=named, source=SourceSpec("system", label="Sistema inteiro"), chunk_seconds=0.5,
+                               stop_timeout_s=1.0, retry_base_s=0.001)
+            assert c.start_recording(cfg, {"title": "mudo"})
+        notice = c.notices[-1]
+        assert "AirPods de Fulano" in notice.text and "Fulano" not in notice.short_text
+        assert "Não achei o endpoint" in caplog.text and "Fulano" not in caplog.text
     finally:
         c.emergency_stop()

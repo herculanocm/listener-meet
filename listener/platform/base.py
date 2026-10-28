@@ -1,12 +1,26 @@
 """Interfaces da camada de plataforma. Nada específico de sistema operacional aqui."""
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 import numpy as np
+
+
+NAME_ID_PREFIX = "name:"        # o id de um aparelho sem id do sistema: o prefixo e o nome (que pode ter nome de pessoa)
+
+
+def log_id(device_id: str | None) -> str:
+    """F5.3 (A-22, R-05): o id de um aparelho para o log e os eventos. O do endpoint vai como está; o `name:<nome>`, montado
+    quando o sistema não deu id, traz o nome do aparelho ("AirPods de Fulano") e vira um resumo curto e estável."""
+    if not device_id:
+        return "(sem id)"
+    if device_id.startswith(NAME_ID_PREFIX):
+        return "name#" + hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:8]
+    return device_id
 
 
 @dataclass(frozen=True, slots=True)

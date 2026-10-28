@@ -88,6 +88,7 @@ class SettingsRepo:
 
 SECRET_HINTS = ("key", "token", "secret", "password", "senha")
 FREE_TEXT_HINTS = ("glossary", "notes", "participants", "title")     # R-04: texto livre pode ter nome de pessoa
+DEVICE_NAME_HINTS = ("device_name",)     # F5.3 (A-22, R-05): o nome do aparelho ("AirPods de Fulano") e o id `name:<nome>`
 SHOWN_MAX = 80
 
 
@@ -102,6 +103,8 @@ def _shown(key: str, value: str | None) -> str:
     spec = SPECS.get(key)
     if any(h in low for h in FREE_TEXT_HINTS) and (spec is None or isinstance(spec.default, str)):   # o `_enabled` é bool
         return f"(texto com {len(value)} caractere(s))"
+    if any(h in low for h in DEVICE_NAME_HINTS) or value.startswith("name:"):
+        return "(nome de aparelho)"
     value = safe_url(value)
     return value if len(value) <= SHOWN_MAX else value[:SHOWN_MAX] + "…"
 

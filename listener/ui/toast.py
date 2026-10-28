@@ -8,7 +8,9 @@ o gerente só na thread da interface (A-10); aqui ficam a janela (`Toast`), a po
 - Posição: gravando, na tela do widget de gravação e, quando a pilha o cruzaria, acima dele (sem espaço acima, no canto);
   fora da gravação, no canto inferior direito do `availableGeometry()` da tela principal.
 - Captura (A-13): a plataforma tira cada janela da captura ao criá-la; se não conseguiu e o app está gravando, o aviso mostra
-  só o texto curto (o tipo, sem o título da reunião). [chute] O Teams respeita a exclusão: o dono confere compartilhando.
+  só o texto curto (o tipo, sem o título da reunião). Reavaliado nos avisos à vista quando a gravação começa ou termina
+  (`ToastManager.refresh_privacy`, que o controlador chama) e a cada aviso que chega, novo ou igual (R-10). [chute] O Teams
+  respeita a exclusão: o dono confere compartilhando.
 - Janela (A-14): `Tool | FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus` com
   `WA_ShowWithoutActivating`, nunca `activateWindow`; o alvo do clique vem à frente pelo controlador (`bring_to_front`). Com
   um diálogo modal aberto (o warm-up), o aviso aparece e some sem receber clique.
@@ -114,6 +116,7 @@ class Toast(QWidget):
         self.count = count
         self.hovered = False
         self.private = False
+        self.excluded = False            # A-13: a janela saiu da captura de tela (o gerente marca ao criar)
         self.title = self._label(f"{KIND_TITLES[notice.kind]} · listener-meet", "toastTitle")
         self.badge = self._label("", "toastMuted")
         self.body = self._label("", "toastText")
@@ -182,7 +185,7 @@ class Toast(QWidget):
         return self._timer.remainingTime()
 
     def bump(self, duration_ms: int) -> None:
-        """Chegou um igual: a contagem sobe e o prazo recomeça."""
+        """Chegou um igual: a contagem sobe e o prazo recomeça (a privacidade o gerente já reavaliou no `show`, R-10)."""
         self.count += 1
         self.duration_ms = duration_ms
         self._show_count()
@@ -260,9 +263,11 @@ class ToastManager(QObject):
         return [(w.notice, w.count) for w in self._waiting]
 
     def show(self, notice: Notice, seconds: int) -> None:
-        """Mostra o aviso por `seconds`, junta-o ao igual (na tela ou na fila) ou o põe na fila com 3 na tela."""
+        """Mostra o aviso por `seconds`, junta-o ao igual (na tela ou na fila) ou o põe na fila com 3 na tela. Antes, confere a
+        privacidade dos que estão à vista: o igual que se junta também (R-10)."""
         if self._closed:
             return
+        self.refresh_privacy()
         duration_ms = max(1, int(seconds)) * 1000
         same = next((t for t in self.toasts if t.notice.key == notice.key), None)
         if same is not None:
@@ -281,11 +286,30 @@ class ToastManager(QObject):
         toast = Toast(notice, duration_ms, count)
         toast.clicked.connect(self._on_clicked)
         toast.closed.connect(self._close)
-        toast.set_private(not self._exclude(toast) and self.recording())      # antes de aparecer: nada vaza (A-13)
+        toast.excluded = self._exclude(toast)
+        toast.set_private(self._private(toast))                               # antes de aparecer: nada vaza (A-13)
         self.toasts.append(toast)
         self._layout()
         toast.show()
         toast.start()
+
+    def _private(self, toast: Toast) -> bool:
+        """A-13: só o texto curto quando a janela não saiu da captura e o app está gravando."""
+        return not toast.excluded and self.recording()
+
+    def refresh_privacy(self) -> None:
+        """A-13 (R-10): reavalia o texto dos avisos à vista; o controlador chama quando a gravação começa ou termina. Sem a
+        exclusão da captura, um aviso que nasceu antes de gravar passa ao texto curto (o título da reunião sai da tela que
+        pode estar compartilhada) e, terminada a gravação, volta ao inteiro. A altura muda junto: a pilha se refaz."""
+        changed = 0
+        for toast in self.toasts:
+            private = self._private(toast)
+            if private != toast.private:
+                toast.set_private(private)
+                changed += 1
+        if changed:
+            log.debug("aviso: %d à vista com o texto trocado pela gravação (sem a exclusão da captura)", changed)
+            self._layout()
 
     def _exclude(self, toast: Toast) -> bool:
         """A-13: a janela fora da captura de tela; o primeiro "não" da sessão vai ao log."""

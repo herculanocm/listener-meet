@@ -200,3 +200,24 @@ def test_the_mute_moves_to_the_new_endpoint_at_once_under_the_lock(monkeypatch):
         assert t.is_alive() and got == []
     t.join(5)
     assert got == [True]
+
+
+def test_a_name_id_is_summarized_in_the_messages_and_the_log(monkeypatch, caplog):
+    """R-05 (A-22): o id `name:<nome>` (sem id do Core Audio) vai resumido na mensagem do modo estrito, que chega à tela e ao
+    log, e no aviso de cair no padrão."""
+    import logging
+
+    from listener.platform.base import AudioDevice, log_id
+    from listener.platform.win32 import platform as wp
+
+    plat = wp.Win32Platform()
+    present = AudioDevice("ep-a", "Microfone", "WASAPI", 1, 16000, index=7)
+    monkeypatch.setattr(plat, "list_input_devices", lambda: [present])
+    monkeypatch.setattr(plat, "default_input_device", lambda: present)
+    named = AudioDevice("name:AirPods de Fulano", "AirPods de Fulano", "WASAPI", 1, 16000)
+    with pytest.raises(LookupError) as err:
+        plat._resolve_input(named, strict=True)
+    assert "Fulano" not in str(err.value) and log_id(named.id) in str(err.value)
+    with caplog.at_level(logging.DEBUG, logger="listener"):
+        assert plat._resolve_input(named) == present
+    assert "Fulano" not in caplog.text and log_id(named.id) in caplog.text

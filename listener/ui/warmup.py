@@ -38,7 +38,7 @@ from ..config.language import LANGUAGES, default_language, label
 from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glossary, request_glossary, split_names
 from ..log import get_logger
 from ..model import SourceKind
-from ..platform.base import pick_device
+from ..platform.base import log_id, pick_device
 from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, fill_mic_combo, refresh_mics
 from .keys import missing_keys, missing_keys_text
 from .live_prepare import missing_models, preparer
@@ -514,7 +514,7 @@ class WarmupDialog(QDialog):
                 return True
             self.mic_note.setText(f"O microfone salvo ({device_name or device_id}) não está nesta máquina; usando o padrão "
                                   "do Windows.")
-            log.warning("microfone salvo %s não encontrado; usando o padrão", device_id or "(sem id)")
+            log.warning("microfone salvo %s não encontrado; usando o padrão", log_id(device_id))
         self.mic_combo.setCurrentIndex(0)
         return False
 

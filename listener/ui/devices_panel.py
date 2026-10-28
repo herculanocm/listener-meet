@@ -6,15 +6,16 @@ captado em qualquer saída; microfone com "Hands-Free" no nome avisa do perfil d
 palpite). Sem o Core Audio, a lista dos microfones é a do PortAudio, sem "novo". U-050: as saídas do mesmo aparelho
 (mesmo ContainerId) do microfone novo vêm primeiro, a de comunicação antes. O clique numa linha pede a troca a quem abriu
 o painel (`ui/recording_devices.py`), que devolve o resultado na linha de estado; Esc fecha. As linhas são montadas sem
-Qt (`mic_rows`, `output_rows`); os nomes dos aparelhos só aparecem aqui, na tela (A-22)."""
+Qt (`mic_rows`, `output_rows`); os nomes dos aparelhos só aparecem aqui, na tela (A-22). R-06: os sinais das listas vão a
+métodos do próprio painel e o adiamento da troca tem o painel como contexto (um `partial` com `self` ficava preso do lado
+C++ do PySide, num ciclo que o coletor do Python não vê, e o painel vivia até a derrubada do Qt)."""
 from __future__ import annotations
 
-import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, Signal, SignalInstance
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGroupBox, QLabel, QListWidget, QListWidgetItem, QVBoxLayout,
                                QWidget)
 
@@ -131,8 +132,13 @@ class DevicesPanel(QDialog):
         self.setMinimumWidth(560)
         self.view: PanelView | None = None                 # instrumentação dos testes
         self._busy = False
-        self.mics = self._list(self.mic_chosen)
-        self.outputs = self._list(self.output_chosen)
+        self._pending: tuple[str, str] | None = None       # ("mic" ou "out", a chave) à espera do adiamento
+        self.mics = self._list()
+        self.outputs = self._list()
+        self.mics.itemClicked.connect(self._on_mic_item)
+        self.mics.itemActivated.connect(self._on_mic_item)              # Enter pelo teclado
+        self.outputs.itemClicked.connect(self._on_output_item)
+        self.outputs.itemActivated.connect(self._on_output_item)
         mic_box = QGroupBox("Microfone (canal L: você)")
         QVBoxLayout(mic_box).addWidget(self.mics)
         out_box = QGroupBox("Saída gravada (canal R: quem você ouve)")
@@ -148,12 +154,11 @@ class DevicesPanel(QDialog):
         for w in (mic_box, out_box, self.notes, self.status, buttons):
             lay.addWidget(w)
 
-    def _list(self, signal: SignalInstance) -> QListWidget:
+    @staticmethod
+    def _list() -> QListWidget:
         lst = QListWidget()
         lst.setTextElideMode(Qt.TextElideMode.ElideMiddle)        # nomes longos: o começo e as marcas do fim ficam à vista
         lst.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        lst.itemClicked.connect(functools.partial(self._on_item, signal))
-        lst.itemActivated.connect(functools.partial(self._on_item, signal))      # Enter pelo teclado
         return lst
 
     def show_view(self, view: PanelView) -> None:
@@ -184,16 +189,25 @@ class DevicesPanel(QDialog):
         self.status.setText(text)
         self.status.setVisible(bool(text))
 
-    def _on_item(self, signal: SignalInstance, item: QListWidgetItem) -> None:
+    def _on_mic_item(self, item: QListWidgetItem) -> None:
+        self._choose("mic", item)
+
+    def _on_output_item(self, item: QListWidgetItem) -> None:
+        self._choose("out", item)
+
+    def _choose(self, which: str, item: QListWidgetItem) -> None:
         key = str(item.data(Qt.ItemDataRole.UserRole) or "")
         if self._busy or not key or key == APP_ROW or item.data(CURRENT_ROLE):
             return
         self._busy = True
+        self._pending = (which, key)
         self.set_status("trocando…")
-        QTimer.singleShot(0, functools.partial(self._emit, signal, key))   # a linha de estado aparece antes da troca
+        QTimer.singleShot(0, self, self._emit_pending)     # a linha de estado aparece antes; apagado o painel, nada chama
 
-    def _emit(self, signal: SignalInstance, key: str) -> None:
+    def _emit_pending(self) -> None:
+        pending, self._pending = self._pending, None
         try:
-            signal.emit(key)
+            if pending is not None:
+                (self.mic_chosen if pending[0] == "mic" else self.output_chosen).emit(pending[1])
         finally:
             self._busy = False

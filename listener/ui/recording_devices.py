@@ -7,7 +7,9 @@ primeira leitura do poller do mudo; soltar o player antes de reler o PortAudio �
 (A-17). U-050: o microfone novo aparece na linha de alerta do widget, "novo: <nome>" com "Usar", por 30 s; "Usar" troca o
 microfone e abre o painel (`ui/devices_panel.py`) com as saídas do mesmo aparelho primeiro. A linha de alerta tem
 prioridade: a saúde dos canais, o banco parado, o aviso dos dispositivos e o banco lento (A-21). Nomes de aparelho só na
-tela (A-22)."""
+tela (A-22). Revisão do L4: o aviso de que o escolhido saiu (e voltou) vem do estado a cada leitura, não de quem trocou,
+porque a reabertura de 200 ms do gravador cai no padrão antes da vigia (R-04); o novo que o "acompanha" já abriu não
+oferece "Usar" (R-09); a troca de saída que falha diz se a anterior voltou (R-03)."""
 from __future__ import annotations
 
 import time
@@ -20,7 +22,7 @@ from PySide6.QtCore import QObject, QTimer
 from ..capture.recorder import REREAD_REFUSED, DeviceSwitch, Recorder, SourceSpec
 from ..log import get_logger
 from ..model import DeviceReason, Health, SourceKind
-from ..platform.base import AudioDevice, Endpoint, Endpoints
+from ..platform.base import AudioDevice, Endpoint, Endpoints, log_id
 from .common import clamp_to_screens
 from .devices_panel import (MIC_FOLLOW, OTHER_APP, OUT_FOLLOW, DevicesPanel, PanelView, is_hands_free, mic_rows, output_rows,
                             panel_notes)
@@ -36,8 +38,10 @@ POLL_MS = 2000
 NEW_NOTICE_S = 30.0               # U-050: "novo: <nome>" some depois disto
 INFO_NOTICE_S = 15.0              # o escolhido que saiu ou voltou
 RETRY_S = 10.0                    # a troca automática que não deu (o player não soltou) tenta de novo
-ACTION_USE, ACTION_DEVICES = "use", "devices"
+ACTION_USE, ACTION_DEVICES, ACTION_OUTPUTS = "use", "devices", "outputs"
 DEVICES_BUTTON = "Dispositivos…"
+GONE_TEXT = {"L": "microfone escolhido saiu: gravando no padrão do Windows", "R": "saída escolhida saiu: gravando a saída padrão"}
+BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +82,19 @@ def output_action(reading: Endpoints, source: SourceSpec, open_id: str) -> str |
     if not target or target == open_id:
         return None
     return DeviceReason.DEFAULT if source.follows else DeviceReason.MISSING
+
+
+def missing_edge(episode: str, wanted: str, present: bool, opened: str) -> tuple[str, str]:
+    """R-04 (item 18): (o episódio, o aviso). O escolhido `wanted` que sumiu do Core Audio enquanto outro aparelho grava abre
+    o episódio e avisa "saiu" uma vez; quando ele grava de novo, "voltou"; trocar de escolhido (ou passar a acompanhar o
+    padrão) encerra o episódio calado."""
+    if episode and episode != wanted:
+        episode = ""
+    if wanted and not present and opened != wanted:
+        return wanted, ("" if episode else "saiu")
+    if episode and opened == wanted:
+        return "", "voltou"
+    return episode, ""
 
 
 def comm_hint(reading: Endpoints | None, source: SourceSpec, open_id: str) -> Endpoint | None:
@@ -136,6 +153,7 @@ class RecordingDevices(QObject):
         self._notice: tuple[Alert, float, Endpoint | None] | None = None   # (alerta, até quando, o microfone novo)
         self._last_sig: tuple[object, ...] | None = None
         self._retry_at: float | None = None
+        self._episodes: dict[str, str] = {"L": "", "R": ""}   # R-04: o escolhido de cada canal que saiu e ainda não voltou
         self._first_container = ""
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
@@ -172,13 +190,27 @@ class RecordingDevices(QObject):
             return
         retry = self._retry_at is not None and self.monotonic() >= self._retry_at
         self.reading = reading
-        if reading.signature == self._last_sig and not retry:
-            return
-        self._last_sig = reading.signature
-        self._announce(reading)
-        self._follow(reading)
-        if self.panel is not None and self.panel.isVisible():
-            self._refresh_panel()
+        if reading.signature != self._last_sig or retry:
+            self._last_sig = reading.signature
+            self._follow(reading)
+            self._announce(reading)                      # R-09: depois da vigia (o novo que o "acompanha" abriu já grava)
+            if self.panel is not None and self.panel.isVisible():
+                self._refresh_panel()
+        self._check_missing(reading)
+
+    def _check_missing(self, reading: Endpoints) -> None:
+        """R-04: o escolhido que sumiu e outro aparelho no lugar, a cada leitura (quem trocou pode ter sido a reabertura do
+        gravador, antes da vigia); "voltou" quando ele grava de novo."""
+        rec = self.recorder
+        mic = rec.mic_device.id if rec.mic_device is not None else ""
+        out = rec.source.output_id if rec.source.kind == SourceKind.SYSTEM else ""
+        for channel, wanted, present, opened in (("L", mic, reading.mic(mic) is not None, rec.mic_open_id),
+                                                 ("R", out, reading.output(out) is not None, rec.output_open_id)):
+            self._episodes[channel], said = missing_edge(self._episodes[channel], wanted, present, opened)
+            if said:
+                text = GONE_TEXT[channel] if said == "saiu" else BACK_TEXT[channel]
+                log.info("reunião %s: canal %s, o escolhido %s %s", rec.meeting_id, channel, log_id(wanted), said)
+                self._set_notice(Alert(text, DEVICES_BUTTON, ACTION_DEVICES), INFO_NOTICE_S)
 
     def _announce(self, reading: Endpoints) -> None:
         present = {e.id for e in reading.capture}
@@ -187,11 +219,18 @@ class RecordingDevices(QObject):
             if ep.id in self.start_ids or ep.id in self._announced:
                 continue
             self._announced.add(ep.id)
-            log.info("reunião %s: microfone novo durante a gravação: %s", self.recorder.meeting_id, ep.id)
-            tip = "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho."
-            if is_hands_free(ep.name):
-                tip += "\nHands-Free: o fone vai para o perfil de chamada (som mono)."
-            self._set_notice(Alert(f"novo: {ep.name or ep.id}", "Usar", ACTION_USE, tip), NEW_NOTICE_S, ep)
+            log.info("reunião %s: microfone novo durante a gravação: %s", self.recorder.meeting_id, log_id(ep.id))
+            self._set_notice(self._new_alert(ep), NEW_NOTICE_S, ep)
+
+    def _new_alert(self, ep: Endpoint) -> Alert:
+        """U-050: "novo: <nome>" com "Usar"; o que já grava (o "acompanha" o seguiu) não oferece "Usar", só as saídas dele
+        (R-09: trocar de novo abriria outro buraco e tiraria o "acompanha" sem dizer)."""
+        hands_free = "\nHands-Free: o fone vai para o perfil de chamada (som mono)." if is_hands_free(ep.name) else ""
+        if ep.id == self.recorder.mic_open_id:
+            return Alert(f"novo: {ep.name or ep.id} (gravando nele)", DEVICES_BUTTON, ACTION_OUTPUTS,
+                         "Mostra as saídas do mesmo aparelho." + hands_free)
+        return Alert(f"novo: {ep.name or ep.id}", "Usar", ACTION_USE,
+                     "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho." + hands_free)
 
     def _follow(self, reading: Endpoints) -> None:
         rec = self.recorder
@@ -201,15 +240,9 @@ class RecordingDevices(QObject):
             reason, strict = mic
             result = self.switch_mic(rec.mic_device, reason, strict=strict)
             retry = not result.ok and result.message == REREAD_REFUSED      # nada fechou: tentar de novo não abre buraco
-            if result.ok and reason in (DeviceReason.MISSING, DeviceReason.BACK) and rec.mic_device is not None:
-                what = "saiu: gravando no padrão do Windows" if reason == DeviceReason.MISSING else "voltou"
-                self._set_notice(Alert(f"microfone escolhido {what}", DEVICES_BUTTON, ACTION_DEVICES), INFO_NOTICE_S)
         out = output_action(reading, rec.source, rec.output_open_id)
         if out is not None:
             retry = not rec.reopen_output(out) or retry
-            if out == DeviceReason.MISSING:
-                self._set_notice(Alert("saída escolhida saiu: gravando a saída padrão", DEVICES_BUTTON, ACTION_DEVICES),
-                                 INFO_NOTICE_S)
         self._retry_at = self.monotonic() + RETRY_S if retry else None
 
     # ---------------------------------------------------------------- trocas
@@ -244,12 +277,18 @@ class RecordingDevices(QObject):
         if ep is None:
             self.open_panel()
             return
+        if ep.id == self.recorder.mic_open_id:           # R-09: já grava nele (o "acompanha" o seguiu): nada a trocar
+            self.open_panel(ep.container)
+            return
         result = self.switch_mic(endpoint_device(ep), DeviceReason.USER)
         self.open_panel(ep.container, self._status(result, "microfone"))
 
     def on_alert(self, action: str) -> None:
         if action == ACTION_USE:
             self.use_new()
+        elif action == ACTION_OUTPUTS:                   # R-09: o novo que já grava: as saídas dele primeiro
+            notice = self._notice
+            self.open_panel(notice[2].container if notice is not None and notice[2] is not None else "")
         elif action == ACTION_DEVICES:
             self.open_panel()
 
@@ -337,7 +376,12 @@ class RecordingDevices(QObject):
             self._after_choice("")
             return True
         ok = self.switch_output("" if key == OUT_FOLLOW else key.removeprefix("out:"))
-        self._after_choice("Saída trocada." if ok else "A saída escolhida não abriu; segue a anterior.", error=not ok)
+        if ok:
+            self._after_choice("Saída trocada.", error=False)
+        elif self.recorder.output_open:
+            self._after_choice("A saída escolhida não abriu; segue a anterior.", error=True)
+        else:                                            # R-03: nem a anterior voltou; a reabertura de 5 s segue tentando
+            self._after_choice("A saída escolhida não abriu, nem a anterior: tentando de novo a cada 5 s.", error=True)
         return ok
 
     def _after_choice(self, status: str, error: bool | None = None) -> None:

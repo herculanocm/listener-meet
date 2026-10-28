@@ -243,8 +243,8 @@ class QueueDialog(QDialog):
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_retry.clicked.connect(self.retry_selected)
         self.btn_reprocess.clicked.connect(self.reprocess_selected)
-        self.btn_review.clicked.connect(lambda: self._open_selected(self.on_review))
-        self.btn_open.clicked.connect(lambda: self._open_selected(self.on_open))
+        self.btn_review.clicked.connect(self._review_selected)          # R-06: métodos, não lambdas com `self` (o ciclo
+        self.btn_open.clicked.connect(self._open_transcript_selected)   # pelo C++ prendia a fila até a derrubada do Qt)
         self.btn_help.clicked.connect(self.open_help)
         row = QHBoxLayout()
         for b in (self.btn_pause, self.btn_cancel, self.btn_retry, self.btn_reprocess, self.btn_review, self.btn_open):
@@ -374,6 +374,12 @@ class QueueDialog(QDialog):
             if self.on_launch is not None:
                 self.on_launch(str(job.get("kind")) in LIGHT_JOB_KINDS)
             self.refresh()
+
+    def _review_selected(self) -> None:
+        self._open_selected(self.on_review)
+
+    def _open_transcript_selected(self) -> None:
+        self._open_selected(self.on_open)
 
     def _open_selected(self, fn: Any) -> None:
         job = self.selected_job()

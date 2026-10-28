@@ -79,11 +79,13 @@ def _capital(text: str) -> str:
 @dataclass(frozen=True, slots=True)
 class NoticeMeta:
     """O que acompanha o texto até o `Controller.notify`, que recebe só o texto (os testes o trocam por uma lista): o tipo, a
-    ação, a reunião de que se fala com o texto sem o título (vai ao log e ao texto curto, R-03 e A-13) e o texto curto."""
+    ação, a reunião de que se fala com o texto sem o título (vai ao log e ao texto curto, R-03 e A-13), o texto curto e o
+    texto do log, quando o da tela tem o que o log não leva (F5.3, A-22: o nome de um aparelho)."""
     kind: NoticeKind = NoticeKind.INFO
     action: NoticeAction | None = None
     about: tuple[int, str] | None = None
     short_text: str = ""
+    log_text: str = ""
 
     def notice(self, text: str) -> Notice:
         short = self.short_text or (_capital(self.about[1]) if self.about is not None else "")
@@ -91,7 +93,9 @@ class NoticeMeta:
 
     def log_suffix(self, text: str) -> str:
         """" sobre a reunião 7: ata pronta" (o id e o texto, nunca o título) ou ": <texto>"."""
-        return f" sobre a reunião {self.about[0]}: {self.about[1]}" if self.about is not None else f": {text}"
+        if self.about is not None:
+            return f" sobre a reunião {self.about[0]}: {self.about[1]}"
+        return f": {self.log_text or text}"
 
 
 class RateLimit:
