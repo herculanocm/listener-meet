@@ -1,108 +1,56 @@
-"""Widget flutuante de gravação: sempre no topo, arrastável, fundo translúcido com cantos arredondados; posição
-presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10).
-Estilos e tooltips só mudam quando o estado muda (M-12).
-F4: selo do ao vivo ("ao vivo", "legenda atrasada", "ao vivo parou") ao lado do estado, sempre que o ao vivo foi lançado;
-com `live.in_widget`, uma linha com a última legenda (`Ana — CFO: texto`, cortada com reticências e inteira no tooltip)
-cujo clique abre a janela "Ao vivo"; com a linha, o widget ganha a altura dela sem encolher o tamanho salvo.
-F5.3 L4 (U-049, U-050): o botão "🎧" abre o painel dos dispositivos (desligado salvando); a linha de alerta tem um botão
-genérico (rótulo e ação dados por quem a mostra, A-21) no lugar do "Trocar fonte" fixo: "Usar" no aparelho novo,
-"Dispositivos…" na saída sem sinal.
-F5.4 (A-11): as cores do estado, da saúde dos canais e do selo do ao vivo são tons dos tokens; o widget segue escuro até o
-L2 (U-060), com os tokens do escuro nos dois esquemas (`common.DARK_SURFACE`): o widget e o marcador são superfícies escuras
-(`theme.surface`), os rótulos têm tom e papel de fonte e o `ThemeStyle` pinta os botões e o campo planos; sem folha de
-estilo (o tique a 5 Hz só troca o tom quando o estado muda, `style_changes`)."""
+"""Widget flutuante de gravação: sempre no topo, arrastável, com cantos arredondados; posição presa a um monitor existente
+(F1.1 A9). Popup do marcador trazido para a frente mesmo com outro app em foco (A10). Estilos e dicas só mudam quando o
+estado muda (M-12; `style_changes` conta as trocas de tom).
+F4: selo do ao vivo ("ao vivo", "legenda atrasada", "ao vivo parou") sempre que o ao vivo foi lançado; com `live.in_widget`,
+uma linha com a última legenda (`Ana — CFO: texto`, cortada com reticências e inteira na dica) cujo clique abre a janela
+"Ao vivo". F5.3 L4 (U-049, U-050): o botão dos dispositivos abre o painel (desligado salvando); a linha de alerta tem um
+botão genérico (rótulo e ação dados por quem a mostra, A-21): "Usar" no aparelho novo, "Dispositivos…" na saída sem sinal.
+F5.4 L2, no tema (claro ou escuro, como o resto do app; sem folha de estilo):
+- U-060, A-16: 360 px fixos (o `ui.widget_size` salvo é ignorado) e a altura vem do estado: 106 px na base, +24 com a linha
+  da legenda e +40 com o alerta, no máximo 170 (Aceite 4); ao crescer, a borda de baixo fica onde estava e `height_changed`
+  avisa quem empilha os avisos. O alerta fica numa linha embaixo, com o ícone e a cor do tipo, cortado sem alargar.
+- U-061: botões só de ícone, 36 x 32, com o nome no `text()` e no `accessibleName` e o atalho na dica; Parar em vermelho;
+  Cancelar afastado, na ponta. U-063: medidores com trilho e zonas (`ui/meters.py`); o fundo é um caminho em cache (5 Hz).
+- U-062: o mudo é o microfone cortado, no botão ligado (preenchido em destaque, como a alternância do Windows 11); L, R e
+  o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h."""
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, override
+from typing import override
 
-from PySide6.QtCore import QPoint, Qt, Signal, SignalInstance
-from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtCore import QPoint, QRectF, Qt, Signal, SignalInstance
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..model import AppState, Health
-from .common import DARK_SURFACE, HEALTH_TEXT, HEALTH_TONES, STATE_TONES, clamp_to_screens
+from .common import HEALTH_TEXT, HEALTH_TONES, STATE_TONES, clamp_to_screens
+from .components import INFO_KINDS, IconButton
+from .icons import set_icon
 from .meters import LevelMeter
-from .theme import Tone, note, qcolor, retone, role, surface, tone
-
-if TYPE_CHECKING:
-    from ..platform.base import Platform
+from .theme import Tone, note, qcolor, role, surface_tokens, tone
+from .widget_parts import (CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, CaptionLine, ElidedLabel, MarkerPopup, caption_text,
+                           channel_letter, clock_text, hbox, health_icon, icon_label, shortcut_text)
 
 log = get_logger("ui.widget")
-LIVE_MIN_HEIGHT = 118             # F4: 96 do widget mais a linha da legenda
-CLICK_SLOP_PX = 6
-ALERT_MIN_PX = 170                # F5.3: a linha de alerta à vista abre esse espaço ao lado dos botões (o resto vai na dica)
-BACKGROUND_ALPHA = 235 / 255      # o fundo um pouco translúcido, como antes da F5.4
+WIDTH = 360                                   # U-060, A-16: fixa
+MARGIN_X, MARGIN_Y, ROW_GAP = 12, 7, 4
+HEAD_H, METERS_H, BUTTONS_H = 36, 16, 32      # 7 + 36 + 4 + 16 + 4 + 32 + 7 = 106 (Aceite 4)
+CAPTION_H, ALERT_H = 20, 36                   # +24 com a legenda e +40 com o alerta: 170 no máximo
+BUTTON_SIZE = (36, 32)                        # U-061
+METER_PX = 6
 # selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo
 LIVE_BADGES: dict[str, tuple[str, Tone]] = {
     "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
     "degraded": ("legenda atrasada", Tone.WARNING), "skipping": ("legenda atrasada", Tone.WARNING),
     "crashed": ("ao vivo parou", Tone.DANGER),
 }
-
-
-def caption_text(label: str | None, text: str) -> str:
-    """"Ana — CFO: texto"; sem rótulo (nomes desligados), só o texto."""
-    text = " ".join(str(text or "").split())
-    return f"{label}: {text}" if label else text
-
-
 def _screen_rects() -> list[tuple[int, int, int, int]]:
     out = []
     for s in QGuiApplication.screens():
         g = s.availableGeometry()
         out.append((g.x(), g.y(), g.width(), g.height()))
     return out
-
-
-class ElidedLabel(QLabel):
-    """Uma linha cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no tooltip (a legenda
-    do F4 e, F5.3, a linha de alerta com o nome de um aparelho)."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.full_text = ""
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-
-    def set_full_text(self, text: str, tip: str = "") -> None:
-        self.full_text = text
-        self.setToolTip(tip or text)
-        self._elide()
-
-    def _elide(self) -> None:
-        self.setText(self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, max(20, self.width())))
-
-    @override
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self._elide()
-
-
-class CaptionLine(ElidedLabel):
-    """A última legenda numa linha, cortada como a `ElidedLabel`; um clique sem arrastar emite `clicked` (o arrasto do
-    widget começa fora da linha)."""
-    clicked = Signal()
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._press: QPoint | None = None
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    @override
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press = event.position().toPoint()
-        event.accept()
-
-    @override
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        press, self._press = self._press, None
-        if press is not None and (event.position().toPoint() - press).manhattanLength() < CLICK_SLOP_PX:
-            self.clicked.emit()
-        event.accept()
 
 
 class RecordingWidget(QWidget):
@@ -116,91 +64,155 @@ class RecordingWidget(QWidget):
     settings_requested = Signal()
     live_clicked = Signal()               # F4: clique na linha da legenda abre a janela "Ao vivo"
     moved = Signal(QPoint)
+    height_changed = Signal()             # F5.4 L2 (A-16): cresceu ou encolheu, com a borda de baixo no lugar
 
-    def __init__(self, size: tuple[int, int] = (320, 96), pos: QPoint | None = None, live_line: bool = False):
+    def __init__(self, size: tuple[int, int] | None = None, pos: QPoint | None = None, live_line: bool = False,
+                 shortcuts: Mapping[str, str] | None = None):
+        """`size` (o `ui.widget_size` salvo) não vale mais: 360 px fixos e a altura do estado (A-16). `shortcuts` são os
+        atalhos globais por ação (`pause`, `mark`, `mute`, `stop`), para a dica dos botões (U-061)."""
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)     # os cantos arredondados do `paintEvent`
         self.setObjectName("recwidget")
-        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-060), sem folha de estilo
         self.live_line = live_line
-        width, height = size
-        self.resize(width, max(height, LIVE_MIN_HEIGHT) if live_line else height)   # o tamanho salvo nunca encolhe
+        self.shortcuts = {k: shortcut_text(v) for k, v in (shortcuts or {}).items() if v}
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
         self._last_health: dict[str, str] = {}
-        self._last_alert: tuple[str | None, str, str, str] = (None, "", "", "")
+        self._last_alert: tuple[str | None, str, str, str, str] = (None, "", "", "", "")
         self._alert_action = ""
         self._last_live: tuple[str, str] | None = None
+        self._path: QPainterPath | None = None
+        self._clock_len = 0
         self.style_changes = 0                                      # instrumentação dos testes (M-12)
+        self._build_head()
+        self._build_meters()
+        self._build_buttons()
+        self._build_alert()
+        self._lay_out()
+        self.setFixedSize(WIDTH, self.target_height())
+        self.move(self._initial_pos(pos))
 
+    # ---------------------------------------------------------------- montagem
+    def _build_head(self) -> None:
         self.time_label = QLabel("00:00")
         role(self.time_label, "clock")
         self.status_label = QLabel("gravando")
         role(self.status_label, "body_strong")
         tone(self.status_label, STATE_TONES[AppState.RECORDING])
-        self.health_l = QLabel("L ●")
-        self.health_r = QLabel("R ●")
-        for lab in (self.health_l, self.health_r):
-            role(lab, "body_strong")
+        self.live_icon = icon_label("live", Tone.NEUTRAL)
+        self.live_badge = QLabel("")
+        note(self.live_badge, Tone.NEUTRAL)
+        self.markers_icon = icon_label("flag", Tone.SECONDARY)
         self.markers_label = QLabel("")
         note(self.markers_label)
-        self.live_badge = QLabel("")
-        role(self.live_badge, "caption")
-        self.live_badge.hide()
+        for w in (self.live_icon, self.live_badge, self.markers_icon, self.markers_label):
+            w.hide()                                      # o ao vivo e os marcadores só aparecem quando há
+        self.time_label.setFixedHeight(self._head_h())
+        self._set_clock("00:00")
+
+    def _build_meters(self) -> None:
+        self.health_l = icon_label(CHANNEL_ICONS["L"], Tone.DISABLED)
+        self.health_r = icon_label(CHANNEL_ICONS["R"], Tone.DISABLED)
+        self.meter_l = LevelMeter(height=METER_PX)
+        self.meter_r = LevelMeter(height=METER_PX)
         self.caption_line = CaptionLine()
         note(self.caption_line, Tone.TEXT)
         self.caption_line.set_full_text("aguardando a primeira legenda…", "clique para abrir a janela Ao vivo")
         self.caption_line.clicked.connect(self.live_clicked)
-        self.caption_line.setVisible(live_line)
+        self.caption_line.setFixedHeight(max(CAPTION_H, self.caption_line.fontMetrics().height() + 4))
+        self.caption_line.setVisible(self.live_line)
 
-        self.meter_l = LevelMeter(height=6)
-        self.meter_r = LevelMeter(height=6)
-
-        self.btn_pause = self._btn("⏸", "Pausar / retomar", self.pause_clicked)
-        self.btn_mark = self._btn("⚑", "Marcador com nota", self.mark_clicked)
-        self.btn_mute = self._btn("🎤", "Mudo global (muta o microfone no sistema)", self.mute_clicked)
+    def _build_buttons(self) -> None:
+        self.btn_pause = self._btn("pause", "Pausar", "Pausar / retomar a gravação", "pause", self.pause_clicked)
+        self.btn_mark = self._btn("flag", "Marcador", "Marcador com nota", "mark", self.mark_clicked)
+        self.btn_mute = self._btn("mic", "Mudo global", "Mudo global: muta o microfone no sistema", "mute", self.mute_clicked)
         self.btn_mute.setCheckable(True)
-        self.btn_devices = self._btn("🎧", "Dispositivos: trocar o microfone e a saída gravada sem parar", self.devices_clicked)
-        self.btn_stop = self._btn("■", "Parar e salvar", self.stop_clicked)
-        self.btn_cancel = self._btn("✕", "Cancelar e descartar", self.cancel_clicked)
+        self.btn_devices = self._btn("headphones", "Dispositivos",
+                                     "Dispositivos: trocar o microfone e a saída gravada sem parar", "", self.devices_clicked)
+        self.btn_stop = self._btn("stop", "Parar e salvar", "Parar e salvar", "stop", self.stop_clicked, Tone.DANGER)
+        self.btn_cancel = self._btn("close", "Cancelar e descartar", "Cancelar e descartar a gravação", "", self.cancel_clicked)
 
+    def _build_alert(self) -> None:
+        self.alert_icon = icon_label("warning", Tone.WARNING)
         self.alert_label = ElidedLabel()                  # F5.3: o nome de um aparelho não alarga o widget
-        self.alert_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.alert_label.setMinimumWidth(ALERT_MIN_PX)
-        note(self.alert_label, Tone.DANGER)
+        self.alert_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.alert_label.setFixedHeight(max(ALERT_H, self.alert_label.fontMetrics().height() + 4))
+        note(self.alert_label, Tone.WARNING)
         self.alert_btn = QPushButton("")
+        self.alert_btn.setFixedHeight(BUTTONS_H)
         self.alert_btn.clicked.connect(self._emit_alert)   # método, não lambda com `self`: o ciclo pelo C++ prendia o widget
-        self.alert_label.hide()
-        self.alert_btn.hide()
+        for w in (self.alert_icon, self.alert_label, self.alert_btn):
+            w.hide()
 
-        top = QHBoxLayout()
-        top.addWidget(self.time_label)
-        top.addWidget(self.status_label)
-        top.addWidget(self.live_badge)
-        top.addStretch(1)
-        top.addWidget(self.markers_label)
-        top.addWidget(self.health_l)
-        top.addWidget(self.health_r)
-        meters = QHBoxLayout()
-        meters.addWidget(QLabel("L"))
-        meters.addWidget(self.meter_l, 1)
-        meters.addWidget(QLabel("R"))
-        meters.addWidget(self.meter_r, 1)
-        buttons = QHBoxLayout()
-        for b in self._buttons():
+    def _lay_out(self) -> None:
+        state = QVBoxLayout()
+        state.setContentsMargins(0, 0, 0, 0)
+        state.setSpacing(0)
+        state.addStretch(1)
+        state.addWidget(self.status_label)
+        live = QHBoxLayout()
+        live.setSpacing(4)
+        live.addWidget(self.live_icon)
+        live.addWidget(self.live_badge)
+        live.addStretch(1)
+        state.addLayout(live)
+        state.addStretch(1)
+        head = hbox(self.time_label, 10)
+        head.addLayout(state)
+        head.addStretch(1)
+        head.addWidget(self.markers_icon)
+        head.addWidget(self.markers_label)
+        meters = hbox(None, 4)
+        for icon, channel, meter in ((self.health_l, "L", self.meter_l), (self.health_r, "R", self.meter_r)):
+            if meter is self.meter_r:
+                meters.addSpacing(8)
+            meters.addWidget(icon)
+            meters.addWidget(channel_letter(channel, METERS_H))
+            meters.addWidget(meter, 1)
+        buttons = hbox(None, 4)
+        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_stop):
             buttons.addWidget(b)
-        buttons.addStretch(1)
-        buttons.addWidget(self.alert_label, 10)           # escondida, a folga fica com o espaço; à vista, quase toda com ela
-        buttons.addWidget(self.alert_btn)
+        buttons.addStretch(1)                             # U-061: Cancelar longe de Parar
+        buttons.addWidget(self.btn_cancel)
+        alert = hbox(self.alert_icon, 6)
+        alert.addWidget(self.alert_label, 1)
+        alert.addWidget(self.alert_btn)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 6)
-        lay.setSpacing(4)
-        lay.addLayout(top)
-        lay.addLayout(meters)
+        lay.setContentsMargins(MARGIN_X, MARGIN_Y, MARGIN_X, MARGIN_Y)
+        lay.setSpacing(ROW_GAP)
+        for line in (head, meters):
+            lay.addLayout(line)
         lay.addWidget(self.caption_line)
         lay.addLayout(buttons)
-        retone(self)                                     # os tons nos tokens da superfície (nasceram fora dela)
-        self.move(self._initial_pos(pos))
+        lay.addLayout(alert)
+
+    def _head_h(self) -> int:
+        """A linha da hora: 36 px, ou o que a fonte pedir com o Tamanho do texto do Windows acima de 100 %."""
+        stacked = self.status_label.fontMetrics().height() + self.live_badge.fontMetrics().height() + 1
+        return max(HEAD_H, self.time_label.fontMetrics().height() + 4, stacked)
+
+    def target_height(self) -> int:
+        """A altura do estado (A-16): a base, mais a legenda quando há a linha e o alerta quando ele está à vista."""
+        h = 2 * MARGIN_Y + self.time_label.height() + ROW_GAP + METERS_H + ROW_GAP + BUTTONS_H
+        if self.live_line:
+            h += ROW_GAP + self.caption_line.height()
+        if not self.alert_label.isHidden():
+            h += ROW_GAP + self.alert_label.height()
+        return h
+
+    def _fit_height(self) -> None:
+        """A altura nova com a borda de baixo onde estava (o widget mora num canto de baixo), sem passar do topo da tela dele;
+        avisa quem empilha os avisos."""
+        h = self.target_height()
+        if h == self.height():
+            return
+        top = self.y() + self.height() - h
+        screen = self.screen()
+        if screen is not None:
+            top = max(top, screen.availableGeometry().top())
+        self.setFixedSize(WIDTH, h)
+        self.move(self.x(), top)
+        self.height_changed.emit()
 
     def _initial_pos(self, pos: QPoint | None) -> QPoint:
         screens = _screen_rects()
@@ -218,54 +230,96 @@ class RecordingWidget(QWidget):
         sem dono vivia até a saída, quando a derrubada do Qt o destruía fora de ordem (0xC0000409 na saída)."""
         self.alert_clicked.emit(self._alert_action)
 
-    def _buttons(self) -> tuple[QToolButton, ...]:
+    def _buttons(self) -> tuple[IconButton, ...]:
         return (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_stop, self.btn_cancel)
 
-    def _btn(self, text: str, tip: str, signal: SignalInstance) -> QToolButton:
-        b = QToolButton()
-        b.setText(text)
-        b.setToolTip(tip)
+    def _btn(self, icon: str, name: str, tip: str, action: str, signal: SignalInstance, value: Tone = Tone.TEXT) -> IconButton:
+        b = IconButton(icon, name, value)
+        b.setFixedSize(*BUTTON_SIZE)
+        self._set_tip(b, tip, action)
         b.clicked.connect(signal)
         return b
 
+    def _set_tip(self, b: IconButton, tip: str, action: str) -> None:
+        """U-061: a dica com o atalho global da ação, quando há."""
+        shortcut = self.shortcuts.get(action, "")
+        b.setToolTip(f"{tip} ({shortcut})" if shortcut else tip)
+
+    @staticmethod
+    def _name(b: IconButton, name: str) -> None:
+        b.setText(name)
+        b.setAccessibleName(name)
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._path = None
+
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
+        t = surface_tokens(self)
+        if self._path is None:                            # o caminho do fundo, refeito só quando o tamanho muda
+            self._path = QPainterPath()
+            radius = t.metrics.radius_card
+            self._path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(qcolor(DARK_SURFACE.stroke)))
-        p.setBrush(qcolor(DARK_SURFACE.input, BACKGROUND_ALPHA))
-        p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 10, 10)
+        p.setPen(QPen(qcolor(t.stroke), 1))
+        p.setBrush(qcolor(t.card))
+        p.drawPath(self._path)
         p.end()
 
     # ---------------------------------------------------------------- estado
     def update_state(self, elapsed: float, levels: Mapping[str, float], health: Mapping[str, str], paused: bool, muted: bool,
                      markers: int, saving: bool = False) -> None:
-        self.time_label.setText(fmt_mmss(elapsed))
+        self._set_clock(clock_text(elapsed))
         self.meter_l.set_rms(levels.get("L", 0.0))
         self.meter_r.set_rms(levels.get("R", 0.0))
         status = (paused, muted, saving)
         if status != self._last_status:
             self._last_status = status
             self.style_changes += 1
-            text = "salvando…" if saving else ("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
-            state = AppState.SAVING if saving else (AppState.PAUSED if paused else AppState.RECORDING)
-            self.status_label.setText(text)
-            tone(self.status_label, STATE_TONES[state])
-            self.btn_pause.setText("▶" if paused else "⏸")
-            self.btn_mute.setChecked(muted)
-            self.btn_mute.setText("🔇" if muted else "🎤")
-            for b in self._buttons():
-                b.setEnabled(not saving)
+            self._show_status(paused, muted, saving)
         for lab, ch in ((self.health_l, "L"), (self.health_r, "R")):
             h = health.get(ch, Health.OFF)
             if self._last_health.get(ch) != h:
                 self._last_health[ch] = h
                 self.style_changes += 1
-                tone(lab, HEALTH_TONES.get(h, Tone.DISABLED))
-                lab.setToolTip(f"canal {ch}: {HEALTH_TEXT.get(h, h)}")
-        text = f"⚑ {markers}" if markers else ""
+                set_icon(lab, health_icon(ch, h), HEALTH_TONES.get(h, Tone.DISABLED), ICON_PX)
+                text = f"canal {ch} ({CHANNEL_NAMES[ch]}): {HEALTH_TEXT.get(h, h)}"
+                lab.setToolTip(text)
+                lab.setAccessibleName(text)
+        text = str(markers) if markers else ""
         if self.markers_label.text() != text:
             self.markers_label.setText(text)
+            self.markers_label.setToolTip(f"{markers} marcador(es)")
+            self.markers_label.setVisible(bool(text))
+            self.markers_icon.setVisible(bool(text))
+
+    def _set_clock(self, text: str) -> None:
+        """A hora com a largura do dígito mais largo ([fato, 28/10] na Segoe UI Variable "12:34" tem 55 px e "00:05" 59): o
+        rótulo não muda de largura a cada segundo (nada de refazer o layout no tique nem o estado tremendo ao lado)."""
+        if len(text) != self._clock_len:
+            self._clock_len = len(text)
+            fm = self.time_label.fontMetrics()
+            widest = max("0123456789", key=fm.horizontalAdvance)
+            self.time_label.setFixedWidth(fm.horizontalAdvance("".join(widest if c.isdigit() else c for c in text)) + 2)
+        self.time_label.setText(text)
+
+    def _show_status(self, paused: bool, muted: bool, saving: bool) -> None:
+        """O estado escrito, o botão de pausa (pausar ou retomar) e o do mudo (o microfone cortado, U-062); salvando, tudo
+        apagado."""
+        text = "salvando…" if saving else ("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
+        state = AppState.SAVING if saving else (AppState.PAUSED if paused else AppState.RECORDING)
+        self.status_label.setText(text)
+        tone(self.status_label, STATE_TONES[state])
+        self._name(self.btn_pause, "Retomar" if paused else "Pausar")
+        set_icon(self.btn_pause, "play" if paused else "pause", Tone.TEXT, 20)
+        self.btn_mute.setChecked(muted)                   # ligado, o `windows11` o preenche em `accent`: o ícone em `on_accent`
+        set_icon(self.btn_mute, "mic-off" if muted else "mic", Tone.ON_ACCENT if muted else Tone.TEXT, 20)
+        self.btn_mute.setAccessibleDescription("ligado" if muted else "desligado")
+        for b in self._buttons():
+            b.setEnabled(not saving)
 
     # ---------------------------------------------------------------- ao vivo (F4)
     def set_live_state(self, state: str, tip: str = "") -> None:
@@ -277,13 +331,16 @@ class RecordingWidget(QWidget):
         self._last_live = key
         if badge is None:
             self.live_badge.hide()
+            self.live_icon.hide()
             return
         text, value = badge
         self.style_changes += 1
-        self.live_badge.setText(f"● {text}")
+        self.live_badge.setText(text)
         tone(self.live_badge, value)
-        self.live_badge.setToolTip(tip or text)
-        self.live_badge.show()
+        set_icon(self.live_icon, "live", value, ICON_PX)
+        for w in (self.live_badge, self.live_icon):
+            w.setToolTip(tip or text)
+            w.show()
 
     def set_caption(self, label: str | None, text: str) -> None:
         """A última legenda na linha (só existe com `live.in_widget`)."""
@@ -292,23 +349,29 @@ class RecordingWidget(QWidget):
         line = caption_text(label, text)
         self.caption_line.set_full_text(line, f"{line}\n\n(clique para abrir a janela Ao vivo)")
 
-    def show_alert(self, text: str | None, button: str = "", action: str = "", tip: str = "") -> None:
-        """A linha de alerta (só muda quando o alerta muda, M-12); `button` é o rótulo do botão e `action` o que o clique
-        emite em `alert_clicked` (F5.3, A-21); sem rótulo, sem botão."""
-        key = (text, button, action, tip)
+    def show_alert(self, text: str | None, button: str = "", action: str = "", tip: str = "", kind: str = "warning") -> None:
+        """A linha de alerta embaixo (só muda quando o alerta muda, M-12), com o ícone e a cor do tipo (`info`, `success`,
+        `warning`, `error`); `button` é o rótulo do botão e `action` o que o clique emite em `alert_clicked` (F5.3, A-21);
+        sem rótulo, sem botão. A altura do widget acompanha (A-16)."""
+        key = (text, button, action, tip, kind)
         if key == self._last_alert:
             return
         self._last_alert = key
         self._alert_action = action
         if text:
+            value, icon = INFO_KINDS.get(kind, INFO_KINDS["warning"])
+            set_icon(self.alert_icon, icon, value, ICON_PX)
+            tone(self.alert_label, value)
             self.alert_label.set_full_text(text, tip or text)
-            self.alert_label.show()
             self.alert_btn.setText(button)
             self.alert_btn.setToolTip(tip)
+            self.alert_icon.show()
+            self.alert_label.show()
             self.alert_btn.setVisible(bool(button))
         else:
-            self.alert_label.hide()
-            self.alert_btn.hide()
+            for w in (self.alert_icon, self.alert_label, self.alert_btn):
+                w.hide()
+        self._fit_height()
 
     # ---------------------------------------------------------------- arrastar
     @override
@@ -332,35 +395,5 @@ class RecordingWidget(QWidget):
         self.settings_requested.emit()
 
 
-class MarkerPopup(QDialog):
-    """Popup junto ao cursor: Enter salva a nota, Esc cancela (U-003). Pede o foco à plataforma ao abrir (A10)."""
-
-    def __init__(self, t_rel: float, platform: Platform | None = None, parent: QWidget | None = None):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.platform = platform
-        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-068); o `ThemeStyle` pinta o campo
-        self.edit = QLineEdit()
-        self.edit.setPlaceholderText("nota do marcador (Enter salva, Esc cancela)")
-        self.edit.setMinimumWidth(320)
-        self.edit.returnPressed.connect(self.accept)
-        lay = QHBoxLayout(self)
-        lay.addWidget(QLabel(f"⚑ [{fmt_mmss(t_rel)}]"))
-        lay.addWidget(self.edit)
-        pos = QCursor.pos()
-        self.move(pos.x() - 20, pos.y() - 20)
-
-    @override
-    def showEvent(self, event: QShowEvent) -> None:
-        super().showEvent(event)
-        if self.platform is not None:
-            try:
-                ok = self.platform.bring_to_front(int(self.winId()))
-                log.debug("popup do marcador para a frente: %s", ok)
-            except Exception as e:
-                log.debug("bring_to_front: %s", e)
-        self.raise_()
-        self.activateWindow()
-        self.edit.setFocus()
-
-    def note(self) -> str:
-        return self.edit.text().strip()
+__all__ = ["HEALTH_ICONS", "LIVE_BADGES", "WIDTH", "CaptionLine", "ElidedLabel", "MarkerPopup", "RecordingWidget", "caption_text",
+           "clock_text", "health_icon", "shortcut_text"]

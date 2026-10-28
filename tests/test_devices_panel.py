@@ -27,7 +27,7 @@ def test_the_panel_lists_mics_and_outputs_with_an_app_source(qtbot, platform, st
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
-    from listener.ui.devices_panel import APP_NOTE, HANDS_FREE_NOTE, OTHER_APP
+    from listener.ui.devices_panel import APP_NOTE, CURRENT_ROLE, DETAIL_ROLE, HANDS_FREE_NOTE, NAME_ROLE, NEW_ROLE, OTHER_APP
     from listener.ui.recording_devices import RecordingDevices
 
     rec = recorder_factory()                                           # a fonte é um app (meeting.exe)
@@ -47,7 +47,9 @@ def test_the_panel_lists_mics_and_outputs_with_an_app_source(qtbot, platform, st
                                     "Sistema inteiro: Alto-falantes Fake", f"Sistema inteiro: {BT_OUT.name} · novo",
                                     f"Sistema inteiro: {BT_HFP.name} (comunicação) · novo", "Outro app…"]
     assert view.outputs[0].current and APP_NOTE in view.notes and HANDS_FREE_NOTE in view.notes
-    assert panel.mics.item(0).text().startswith("● ") and not panel.mics.item(1).text().startswith("● ")
+    assert panel.mics.item(0).data(CURRENT_ROLE) and not panel.mics.item(1).data(CURRENT_ROLE)          # F5.4 (U-064): a marca
+    assert panel.mics.item(0).text().endswith("(em uso)") and panel.mics.item(2).data(NEW_ROLE)                # e o selo "Novo"
+    assert (panel.mics.item(2).data(NAME_ROLE), panel.mics.item(2).data(DETAIL_ROLE)) == (BT.name, "Microfone · perfil de chamada (mono)")
     devices.choose_output(OTHER_APP)                                   # o "Trocar fonte" de antes
     assert other == [1]
     assert devices.choose_output(f"out:{BT_OUT.id}")                   # do app para o sistema inteiro: troca de fonte
@@ -95,6 +97,10 @@ def test_a_headset_connected_while_recording_shows_new_and_use(qtbot, qapp, plat
         c._tick()
         assert (w.alert_label.full_text, w.alert_btn.text()) == (f"novo: {BT.name}", "Usar") and w.alert_btn.isVisibleTo(w)
         assert "Hands-Free" in w.alert_btn.toolTip()
+        assert w.alert_icon.property("theme_icon") == "info:info:16"                 # F5.4 L2 (U-060): o tipo do alerta
+        assert w.btn_pause.toolTip().endswith("(Ctrl+Alt+Shift+P)")                  # U-061: o atalho salvo, na dica
+        signal = w.metaObject().method(w.metaObject().indexOfSignal("height_changed()"))
+        assert w.isSignalConnected(signal)                                             # A-16: a pilha dos avisos acompanha
         now["t"] += 31                                                     # some em 30 s
         c._tick()
         assert not _shows_new(w)

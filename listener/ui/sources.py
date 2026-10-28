@@ -5,7 +5,9 @@ F5.3 L4 (U-051, A-21): cada linha tem uma chave tipada (`SourceKey`) no lugar do
 inteiro" na saída padrão (acompanha) e uma linha "Sistema inteiro" por saída ativa, com o nome dela na segunda coluna
 ("Janela ou saída", larga: o nome longo de uma saída não empurra a coluna das janelas para fora) e "(comunicação)" na
 primeira, sempre à vista, quando o padrão de comunicação difere (A-20). As saídas vêm do Core Audio na thread da
-interface, relidas a cada 2 s (só a assinatura, A-19); a escolhida que sai volta a seleção para a padrão."""
+interface, relidas a cada 2 s (só a assinatura, A-19); a escolhida que sai volta a seleção para a padrão.
+F5.4 L2 (U-067): cada linha com o medidor do app (o `LevelMeter`, com as zonas, no lugar da barra de progresso) e o app de
+reunião com o selo "Reunião" na coluna da fonte (no lugar do "●"), pintado pelo `MeetingBadgeDelegate`."""
 from __future__ import annotations
 
 import functools
@@ -13,13 +15,19 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QProgressBar, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QFontMetrics, QPainter
+from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..capture.recorder import SourceSpec
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import Endpoints, PlayingApp
+from .components import BADGE_PAD_X, BADGE_PAD_Y
+from .meters import LevelMeter
+from .style import rounded
+from .theme import font_for, qcolor, surface_tokens
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -28,6 +36,9 @@ log = get_logger("ui.sources")
 OUTPUTS_MS = 2000
 SYSTEM_TEXT = "Sistema inteiro"
 FOLLOW_TEXT = "saída padrão (acompanha)"
+MEETING_BADGE = "Reunião"                # U-067: o app de reunião
+MEETING_ROLE = Qt.ItemDataRole.UserRole + 1
+LEVEL_W, METER_H, BADGE_GAP = 96, 6, 8
 _live_pollers: set[QThread] = set()      # referências até `finished` (sem parent, M-12)
 
 
@@ -73,6 +84,50 @@ class _Poller(QThread):
             self._wake.wait(self.interval_s)
 
 
+class MeetingBadgeDelegate(QStyledItemDelegate):
+    """U-067: a fonte com o selo "Reunião" à direita quando o app é de reunião (o texto do item, o que o leitor de tela lê,
+    fica como está; o selo é só desenho)."""
+
+    @override
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        if not index.data(MEETING_ROLE):
+            super().paint(painter, option, index)
+            return
+        font = font_for("caption")
+        fm = QFontMetrics(font)
+        width, height = fm.horizontalAdvance(MEETING_BADGE) + 2 * BADGE_PAD_X, fm.height() + 2 * BADGE_PAD_Y
+        opt = QStyleOptionViewItem(option)
+        opt.rect = option.rect.adjusted(0, 0, -(width + BADGE_GAP), 0)
+        super().paint(painter, opt, index)
+        t = surface_tokens(option.widget)
+        pill = QRectF(option.rect.right() - width - 4, option.rect.center().y() - height / 2 + 1, width, height)
+        painter.save()
+        rounded(painter, pill, height / 2, t.info_bg)
+        painter.setFont(font)
+        painter.setPen(qcolor(t.info))
+        painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), MEETING_BADGE)
+        painter.restore()
+
+    @override
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        size = super().sizeHint(option, index)
+        if not index.data(MEETING_ROLE):
+            return size
+        extra = QFontMetrics(font_for("caption")).horizontalAdvance(MEETING_BADGE) + 2 * BADGE_PAD_X + BADGE_GAP + 4
+        return QSize(size.width() + extra, size.height())
+
+
+class MeterCell(QWidget):
+    """A célula do nível: o medidor fino, centrado na linha (U-067)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.meter = LevelMeter(height=METER_H)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 0, 8, 0)
+        lay.addWidget(self.meter, 0, Qt.AlignmentFlag.AlignVCenter)
+
+
 class SourceTable(QWidget):
     selection_changed = Signal()
     first_apps_ready = Signal()
@@ -95,7 +150,8 @@ class SourceTable(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(2, 110)
+        self.table.setColumnWidth(2, LEVEL_W)
+        self.table.setItemDelegateForColumn(0, MeetingBadgeDelegate(self.table))
         self.table.itemSelectionChanged.connect(self.selection_changed)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -180,21 +236,21 @@ class SourceTable(QWidget):
         if it is None:
             it = QTableWidgetItem()
             self.table.setItem(row, 0, it)
-        it.setText(("● " if meeting else "") + name)
+        it.setText(name)
         it.setData(Qt.ItemDataRole.UserRole, key)
+        it.setData(MEETING_ROLE, meeting)
+        it.setToolTip(f"{name}: app de reunião" if meeting else name)
         t = self.table.item(row, 1)
         if t is None:
             t = QTableWidgetItem()
             self.table.setItem(row, 1, t)
         t.setText(title or "")
         t.setToolTip(title or "")                         # o nome inteiro, cortado ou não
-        bar = self.table.cellWidget(row, 2)
-        if not isinstance(bar, QProgressBar):
-            bar = QProgressBar()
-            bar.setRange(0, 100)
-            bar.setTextVisible(False)
-            self.table.setCellWidget(row, 2, bar)
-        bar.setValue(int(min(1.0, peak) * 100))
+        cell = self.table.cellWidget(row, 2)
+        if not isinstance(cell, MeterCell):
+            cell = MeterCell()
+            self.table.setCellWidget(row, 2, cell)
+        cell.meter.set_rms(min(1.0, peak))
 
     def selected_key(self) -> SourceKey | None:
         items = self.table.selectedItems()

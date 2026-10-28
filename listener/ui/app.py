@@ -60,9 +60,9 @@ def _run_app(app: QApplication, platform: Platform) -> int:
     from PySide6.QtWidgets import QDialog, QMessageBox
 
     from ..model import AppState
-    from .tray import icon_color, make_icon
+    from .tray import make_icon
 
-    app.setWindowIcon(make_icon(icon_color(AppState.IDLE)))
+    app.setWindowIcon(make_icon(AppState.IDLE))
     db_dir = bootstrap.read_db_dir(platform.config_dir())
     store: Store | None = None
     if db_dir and (Path(db_dir) / "listener.db").exists():

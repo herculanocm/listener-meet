@@ -67,7 +67,7 @@ for i in range(3):
     hw.page.tabs.setCurrentIndex(i); app.processEvents()
 hw.page.shutdown(); hw.close(); player.shutdown()
 print("histórico ok")
-make_icon("#e74c3c")
+make_icon("recording")
 c = Controller(app, p, store)
 errors = c.register_hotkeys()
 print("atalhos com erro:", errors or "nenhum")

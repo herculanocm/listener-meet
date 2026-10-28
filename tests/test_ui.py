@@ -23,7 +23,8 @@ def test_recording_widget_only_restyles_on_change(qtbot):
         w.update_state(1.0 + i * 0.2, {"L": 0.1, "R": 0.1}, base, False, False, 0)
     assert w.style_changes == n                                   # 20 ticks iguais: nenhum setStyleSheet
     w.update_state(6.0, {"L": 0.0, "R": 0.0}, {**base, "R": "alert"}, True, False, 1)
-    assert w.style_changes == n + 2 and w.status_label.text() == "pausado" and w.markers_label.text() == "⚑ 1"
+    assert w.style_changes == n + 2 and w.status_label.text() == "pausado" and w.markers_label.text() == "1"
+    assert w.markers_icon.isVisibleTo(w) and w.btn_pause.text() == w.btn_pause.accessibleName() == "Retomar"   # U-062
     w.show_alert("x", "Dispositivos…", "devices")
     w.show_alert("x", "Dispositivos…", "devices")
     assert w.alert_btn.isVisibleTo(w) and w.alert_label.full_text == "x" and w.alert_btn.text() == "Dispositivos…"
@@ -133,24 +134,35 @@ def test_warmup_opens_mic_once_and_builds_config(qtbot, store, platform):
 
 def test_warmup_long_microphone_name_leaves_room_for_the_sources(qtbot, store, platform, monkeypatch):
     """U-033, visto no Windows (25/10): o nome do microfone pedia a largura inteira no combo e espremia a tabela de fontes
-    (a coluna "Janela" saía cortada), e o grupo do microfone esticava até a altura da tabela, vazio embaixo."""
+    (a coluna "Janela" saía cortada). F5.4 L2 (A-18, U-065): reescrito para as duas colunas, Áudio (o microfone em cima da
+    saída, na mesma largura) e Reunião: o nome longo não alarga a coluna do áudio nem rouba a da reunião, a tabela é o que
+    estica na altura e o microfone fica do tamanho do conteúdo."""
     from PySide6.QtWidgets import QGroupBox
 
     from listener.platform.base import AudioDevice
     from listener.ui.warmup import WarmupDialog
 
+    def opened() -> WarmupDialog:
+        dlg = WarmupDialog(platform, store)
+        qtbot.addWidget(dlg)
+        dlg.show()
+        qtbot.waitExposed(dlg)
+        return dlg
+
+    short = opened()
+    short_hint = short.sizeHint().width()
+    short.reject()
     name = "Grupo de microfones (Tecnologia Intel® Smart Sound para microfones digitais)"
     monkeypatch.setattr(platform, "list_input_devices", lambda: [AudioDevice("fake-mic-0", name, "fake", 1, 16000, index=0)])
     store.set_setting("warmup.last_mic_device_id", "fake-mic-0")                # o nome longo escolhido (F5.3: sem escolha, "acompanha")
-    dlg = WarmupDialog(platform, store)
-    qtbot.addWidget(dlg)
-    dlg.show()
-    qtbot.waitExposed(dlg)
-    dlg.resize(984, dlg.height())        # F5.4 (A-18): com o corpo de 14 px o 1:2 pede folga; o L2 (U-065) reescreve o teste
+    dlg = opened()
     boxes = {g.title().split(" (")[0]: g for g in dlg.findChildren(QGroupBox)}
-    assert boxes["Microfone"].width() < boxes["Saída"].width()                 # a proporção 1:2 vale com o nome longo
+    mic, out, meeting = boxes["Microfone"], boxes["Saída"], boxes["Reunião"]
+    assert mic.x() == out.x() and mic.width() == out.width() and mic.geometry().bottom() < out.y()   # a coluna do áudio
+    assert meeting.x() > out.geometry().right() and meeting.y() == mic.y()                          # a da reunião, ao lado
+    assert dlg.sizeHint().width() == short_hint                                # o nome longo não alarga a janela
     assert dlg.mic_combo.sizeHint().width() < dlg.mic_combo.fontMetrics().horizontalAdvance(name)   # o combo não pede o nome todo
-    assert boxes["Microfone"].height() < boxes["Saída"].height()               # o grupo do microfone não estica vazio
+    assert mic.height() < out.height()                                         # quem estica é a tabela, não o microfone
     assert dlg.mic_combo.toolTip() == name                                     # o nome inteiro na dica e na lista aberta
     assert dlg.mic_combo.view().minimumWidth() > dlg.mic_combo.fontMetrics().horizontalAdvance(name) > dlg.mic_combo.width()
     dlg.reject()

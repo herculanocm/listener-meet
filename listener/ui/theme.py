@@ -7,9 +7,9 @@
   contraste alto (A-07: `hints` guardado antes de encadear); com o contraste alto fica a paleta do sistema.
 - Widgets (A-02, A-10, passo 5 do A-21): `tone(w, Tone)` põe a cor do texto e `role(w, papel)` a fonte de um papel
   (`caption`, `body`, `body_strong`, `subtitle`, `clock`); `note(w)` é a nota (legenda no secundário); `set_kind` e `primary`
-  marcam o primário e o destrutivo, `set_invalid` o campo com erro, `surface` uma janela inteira noutro esquema (o widget de
-  gravação, o marcador e os avisos seguem escuros até o L2); `qcolor` é o único caminho (com os ícones) para um `QColor`
-  (A-12). Itens de lista e tabela guardam o tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura.
+  marcam o primário e o destrutivo, `set_invalid` o campo com erro, `surface` uma janela inteira noutro esquema (no L1b, o
+  widget de gravação, o marcador e os avisos; desde o L2 eles seguem o tema); `qcolor` é o único caminho (com os ícones) para
+  um `QColor` (A-12). Itens de lista e tabela guardam o tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura.
 - Troca de tema (A-10): `app.setPalette` não alcança o que o tema pôs em cada widget; a varredura de `allWidgets()`, só na
   troca, repinta os tons (`theme_tone`), os ícones (`theme_icon`) e chama `retheme()` de quem pinta ou desenha HTML; depois
   `notifier().changed` avisa os tokens novos (ligado a métodos, nunca a lambda que capture widget).
@@ -111,7 +111,8 @@ def surface_tokens(w: QWidget | None) -> Tokens:
 
 def surface(w: QWidget, t: Tokens) -> None:
     """A janela `w` inteira nos tokens `t`, fora do tema vigente: a paleta própria e a marca `theme_surface`, que o
-    `ThemeStyle`, `tone` e os ícones leem (F5.4: o widget de gravação, o marcador e os avisos ficam escuros até o L2)."""
+    `ThemeStyle`, `tone` e os ícones leem (F5.4 L1b: o widget de gravação, o marcador e os avisos, que seguem o tema desde o
+    L2)."""
     w.setProperty(SURFACE_PROP, t.scheme)
     w.setPalette(build_palette(t))
 

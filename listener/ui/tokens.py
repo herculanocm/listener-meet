@@ -31,6 +31,7 @@ class Tone(StrEnum):
     DISABLED = "disabled"
     TEXT = "text"
     SECONDARY = "secondary"
+    ON_ACCENT = "on_accent"      # L2: o ícone dentro do primário (Gravar), na cor do texto dele (U-066)
 
 
 STATUS_TONES = (Tone.SUCCESS, Tone.WARNING, Tone.DANGER, Tone.INFO, Tone.NEUTRAL)   # os que têm fundo próprio (selo, faixa)

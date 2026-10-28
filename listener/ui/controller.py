@@ -680,8 +680,10 @@ class Controller(QObject):
             self._set_live_status("unavailable", reason="erro")
         self._start_partial(meeting_id)
         live_line = self.live is not None and bool(self.store.get(SPECS["live.in_widget"]))
-        self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos(), live_line=live_line)
+        self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos(), live_line=live_line,
+                                      shortcuts=self._widget_shortcuts())
         w = self.widget
+        w.height_changed.connect(self.toasts.relayout)    # F5.4 L2 (A-16): o widget cresceu para cima; os avisos sobem junto
         w.live_clicked.connect(self.open_live_window)
         w.set_live_state(self.live_status, self._live_badge_tip())
         w.pause_clicked.connect(self.toggle_pause)
@@ -984,7 +986,7 @@ class Controller(QObject):
         if alert is None:
             w.show_alert(None)
         else:
-            w.show_alert(alert.text, alert.button, alert.action, alert.tip)
+            w.show_alert(alert.text, alert.button, alert.action, alert.tip, alert.kind)
 
     # ---------------------------------------------------------------- fila de processamento (F2)
     def _write_lease(self, rec: Recorder) -> None:
@@ -1856,6 +1858,10 @@ class Controller(QObject):
             return QPoint(x, y)
         except ValueError:
             return None
+
+    def _widget_shortcuts(self) -> dict[str, str]:
+        """F5.4 L2 (U-061): os atalhos globais das ações do widget, para a dica dos botões."""
+        return {name: self.store.get_setting(f"hotkeys.{name}") or "" for name in ("pause", "mark", "mute", "stop")}
 
     def _saved_widget_size(self) -> tuple[int, int]:
         raw = self.store.get_setting("ui.widget_size") or "320x96"

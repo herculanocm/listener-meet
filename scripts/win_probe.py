@@ -10,7 +10,9 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               um aviso de cada tipo e o grupo "Idioma e avisos"; o widget
                                                               com o botão 🎧 e a linha "novo: … Usar", e o painel dos
                                                               dispositivos com os aparelhos reais desta máquina); F5.4: com
-                                                              os relatórios `cortados` e `pequenos` de cada foto
+                                                              os relatórios `cortados` e `pequenos` de cada foto; L2: o
+                                                              widget em cada estado e em cada alerta, a folha da bandeja
+                                                              e a moldura de cada janela contra o notebook (1280 x 672)
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -79,20 +81,84 @@ def discard(w) -> None:
     w.deleteLater()
 
 
-def devices_shots(p, shot) -> None:
-    """F5.3 L4: com os aparelhos reais desta máquina. O "novo" do painel marca a última saída (como se tivesse chegado depois
-    do começo da gravação) só para a foto; a linha do widget mostra o nome do microfone padrão."""
-    from listener.capture.recorder import SourceSpec
-    from listener.ui.devices_panel import DevicesPanel, PanelView, mic_rows, output_rows, panel_notes
+NOTEBOOK = (1280, 672)          # o notebook do dono a 150 % (memory/maquina.md), em px lógicos: a moldura cabe nele (A-17)
+OK_HEALTH = {"L": "ok", "R": "ok", "db": "ok"}
+
+
+def widget_shots(p, shot) -> None:
+    """F5.4 L2 (U-060 a U-063): o widget em cada estado (gravando; pausado e mudo, com o ao vivo; salvando; a hora passando
+    de 1 h) e em cada tipo de alerta, com o nome do microfone padrão desta máquina no "novo"; o maior de todos (a legenda e
+    o alerta) confere os 170 px do Aceite 4."""
     from listener.ui.widget import RecordingWidget
 
     reading = p.audio_endpoints(refresh_names=True)
     mic = reading.mic(reading.capture_default) if reading is not None else None
-    rw = RecordingWidget()
-    rw.update_state(125, {"L": 0.1, "R": 0.05}, {"L": "ok", "R": "ok", "db": "ok"}, False, False, 0)
-    rw.show_alert(f"novo: {mic.name if mic is not None else 'Fone de ouvido (Hands-Free)'}", "Usar", "use")
-    shot(rw, "widget-novo-usar")
-    discard(rw)
+    mic_name = mic.name if mic is not None else "Fone de ouvido (Hands-Free)"
+    keys = {"pause": "ctrl+alt+shift+p", "mark": "ctrl+alt+shift+m", "mute": "ctrl+alt+shift+u", "stop": "ctrl+alt+shift+s"}
+    lively = {"L": 0.12, "R": 0.4}
+    states = (("widget-gravando", False, 65, lively, OK_HEALTH, (False, False, 2), None, None),
+              ("widget-pausado-ao-vivo", True, 754, {}, {**OK_HEALTH, "L": "paused", "R": "paused"}, (True, False, 3), "live", None),
+              ("widget-mudo-ao-vivo", True, 3725, {"R": 0.9}, {**OK_HEALTH, "L": "muted"}, (False, True, 1), "skipping", None),
+              ("widget-salvando", False, 3725, {}, OK_HEALTH, (False, False, 4), None, None),
+              ("widget-alerta-erro", False, 125, {"R": 0.05}, {**OK_HEALTH, "L": "lost"}, (False, False, 0), None,
+               ("microfone desconectado; tentando reabrir…", "Dispositivos…", "error")),
+              ("widget-alerta-aviso", False, 125, {"L": 0.1}, {**OK_HEALTH, "R": "alert"}, (False, False, 0), None,
+               ("saída sem sinal: a reunião está tocando em outro app?", "Dispositivos…", "warning")),
+              ("widget-alerta-info", False, 125, lively, OK_HEALTH, (False, False, 0), None, (f"novo: {mic_name}", "Usar", "info")),
+              ("widget-alerta-sucesso", False, 125, lively, OK_HEALTH, (False, False, 0), None,
+               ("microfone escolhido voltou", "Dispositivos…", "success")),
+              ("widget-maximo", True, 36125, {"L": 0.3, "R": 0.95}, {**OK_HEALTH, "R": "warn"}, (False, True, 12), "crashed",
+               ("banco não responde há 12s; 3 pedaço(s) retido(s) em memória", "", "error")))
+    for name, live_line, elapsed, levels, health, (paused, muted, markers), live, alert in states:
+        rw = RecordingWidget(live_line=live_line, shortcuts=keys)
+        rw.update_state(elapsed, levels, health, paused, muted, markers, saving=name == "widget-salvando")
+        if live is not None:
+            rw.set_live_state(live, "legenda ao vivo")
+        if live_line:
+            rw.set_caption("Ana — CFO", "vamos fechar o orçamento de 2027 hoje, com o corte de oito por cento em todas as áreas")
+        if alert is not None:
+            text, button, kind = alert
+            rw.show_alert(text, button, "devices", kind=kind)
+        shot(rw, name)
+        discard(rw)
+
+
+def tray_sheet(out_dir: Path) -> str:
+    """U-070 (A-19): os quatro estados da bandeja em 16, 20, 24 e 32 px, sobre a barra de tarefas clara e a escura (a barra
+    segue `SystemUsesLightTheme`, não o tema dos apps), num PNG ampliado 4 vezes (sem suavizar: os pixels de verdade)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPainter
+
+    from listener.ui.common import STATE_TONES
+    from listener.ui.theme import DARK, LIGHT, qcolor
+    from listener.ui.tray import icon_pixmap
+
+    sizes, pad = (16, 20, 24, 32), 8
+    cell = max(sizes) + pad
+    image = QImage(cell * len(sizes) * 2, cell * len(STATE_TONES), QImage.Format.Format_ARGB32)
+    p = QPainter(image)
+    for half, bar in enumerate((LIGHT.window, DARK.input)):
+        p.fillRect(half * cell * len(sizes), 0, cell * len(sizes), image.height(), qcolor(bar))
+        for row, state in enumerate(STATE_TONES):
+            for col, size in enumerate(sizes):
+                x = half * cell * len(sizes) + col * cell + (cell - size) // 2
+                p.drawPixmap(x, row * cell + (cell - size) // 2, icon_pixmap(state, size))
+    p.end()
+    path = out_dir / "bandeja.png"
+    image.scaled(image.width() * 4, image.height() * 4, Qt.AspectRatioMode.KeepAspectRatio,
+                 Qt.TransformationMode.FastTransformation).save(str(path))
+    for state in STATE_TONES:
+        icon_pixmap(state, 16).save(str(out_dir / f"tray-{state}-16.png"))
+    return path.name
+
+
+def devices_shots(p, shot) -> None:
+    """F5.3 L4: com os aparelhos reais desta máquina. O "novo" do painel marca a última saída (como se tivesse chegado depois
+    do começo da gravação) só para a foto."""
+    from listener.capture.recorder import SourceSpec
+    from listener.ui.devices_panel import DevicesPanel, PanelView, mic_rows, output_rows, panel_notes
+
+    reading = p.audio_endpoints(refresh_names=True)
     start = reading.ids() - {reading.render[-1].id} if reading is not None and reading.render else frozenset()
     for name, source in (("painel-dispositivos", SourceSpec("system", label="Sistema inteiro")),
                          ("painel-dispositivos-app", SourceSpec("app", pid=1, exe="ms-teams.exe", label="ms-teams"))):
@@ -265,7 +331,7 @@ def cmd_shots(args) -> None:
         app.styleHints().setColorScheme(scheme)
     from listener.platform import get_platform
     from listener.store import Store
-    from listener.ui.common import STATE_TONES, install_translations
+    from listener.ui.common import install_translations
     from listener.ui.history import HistoryWindow
     from listener.ui.meeting import MeetingWindow
     from listener.ui.notices import Notice, NoticeAction, NoticeKind, Target
@@ -274,10 +340,11 @@ def cmd_shots(args) -> None:
     from listener.ui.queue_help import QueueHelpDialog
     from listener.ui.settings_min import SettingsDialog
     from listener.ui.summary import SummaryDialog
+    from listener.ui import warmup as warmup_module
+    from listener.ui.common import fit_rect
     from listener.ui.toast import Toast
-    from listener.ui.tray import icon_color, make_icon
     from listener.ui.warmup import WarmupDialog
-    from listener.ui.widget import MarkerPopup, RecordingWidget
+    from listener.ui.widget import MarkerPopup
     from listener.ui.wizard import FirstRunWizard
 
     install_translations(app)
@@ -285,8 +352,20 @@ def cmd_shots(args) -> None:
     themed = apply_theme(app, p, scheme)                  # A-09: depois da tradução, como no app
     out_dir = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="listener-shots-"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    screen = app.primaryScreen()
+    screen = app.primaryScreen                            # relida a cada uso: um monitor que liga ou desliga apaga o `QScreen`
     shots: list[dict] = []
+    fitted: dict[str, list[int]] = {}
+
+    def probe_fit(w) -> None:
+        """O `fit_to_screen` da sonda (A-17): o mesmo cálculo, com a janela fora da tela (sem a trazer para a tela do usuário)."""
+        a, f, g = screen().availableGeometry(), w.frameGeometry(), w.geometry()
+        _x, _y, width, height = fit_rect((a.x(), a.y(), f.width(), f.height()), (g.width(), g.height()),
+                                         (a.x(), a.y(), a.width(), a.height()), (w.minimumWidth(), w.minimumHeight()))
+        fitted[w.windowTitle()] = [width, height]
+        if (width, height) != (g.width(), g.height()):
+            w.resize(width, height)
+
+    warmup_module.fit_to_screen = probe_fit
 
     def shot(w, name: str) -> None:
         w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
@@ -295,7 +374,7 @@ def cmd_shots(args) -> None:
         w.move(-10000, -10000)
         app.processEvents()
         deadline = time.perf_counter() + 1.0
-        while w.devicePixelRatioF() != screen.devicePixelRatio() and time.perf_counter() < deadline:
+        while w.devicePixelRatioF() != screen().devicePixelRatio() and time.perf_counter() < deadline:
             time.sleep(0.02)
             app.processEvents()
         for _ in range(3):                                # F5.4: o texto que chegou de uma tarefa refaz o layout antes da foto
@@ -304,8 +383,11 @@ def cmd_shots(args) -> None:
         path = out_dir / f"{len(shots):02d}-{name}.png"
         pix.save(str(path))
         cut, small = layout_report(w)
-        shots.append({"file": path.name, "logical": [w.width(), w.height()], "pixels": [pix.width(), pix.height()],
-                      "dpr": w.devicePixelRatioF(), "cortados": cut, "pequenos": small})
+        frame = w.frameGeometry()
+        shots.append({"file": path.name, "logical": [w.width(), w.height()], "frame": [frame.width(), frame.height()],
+                      "pixels": [pix.width(), pix.height()], "dpr": w.devicePixelRatioF(),
+                      "cabe_no_notebook": frame.width() <= NOTEBOOK[0] and frame.height() <= NOTEBOOK[1],
+                      "cortados": cut, "pequenos": small})
 
     def tabs_of(w, name: str) -> None:
         for tw in w.findChildren(QTabWidget)[:1]:
@@ -336,12 +418,8 @@ def cmd_shots(args) -> None:
     wiz.restart()
     shot(wiz, "assistente-chaves")
     discard(wiz)
-    rw = RecordingWidget()
-    rw.update_state(65, {"L": 0.1, "R": 0.01}, {"L": "ok", "R": "warn", "db": "ok"}, False, False, 2)
-    rw.show_alert("teste de alerta", "Dispositivos…", "devices")
-    shot(rw, "widget")
-    discard(rw)
-    devices_shots(p, shot)                                # F5.3 L4: o widget com "novo: … Usar" e o painel
+    widget_shots(p, shot)                                 # F5.4 L2: cada estado e cada alerta
+    devices_shots(p, shot)                                # F5.3 L4: o painel
     sd = SettingsDialog(store, p, {})
     shot(sd, "configuracoes")
     tabs_of(sd, "configuracoes")
@@ -351,6 +429,10 @@ def cmd_shots(args) -> None:
     store.finish_meeting(mid, 1000)
     su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []})
     shot(su, "resumo-gravacao")
+    discard(su)
+    store.add_marker(mid, 754_000, "decisão: corte de 8 %")
+    su = SummaryDialog(store, mid, {"duration_s": 3725.0, "warnings": []})
+    shot(su, "resumo-gravacao-marcadores")
     discard(su)
     player = Player(store)
     mw = MeetingWindow(store, mid, player=player)
@@ -383,14 +465,13 @@ def cmd_shots(args) -> None:
         shot(toast, name)
         discard(toast)
     player.shutdown()
-    for state in STATE_TONES:
-        make_icon(icon_color(state)).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))
+    tray = tray_sheet(out_dir)                            # F5.4 L2 (U-070): a bandeja nos dois temas da barra
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)   # R-06: as janelas apagadas antes do banco fechar
     store.close()
     release_theme(app)
-    out("shots", folder=str(out_dir), screen={"name": screen.name(), "dpr": screen.devicePixelRatio()}, themed=themed,
+    out("shots", folder=str(out_dir), screen={"name": screen().name(), "dpr": screen().devicePixelRatio()}, themed=themed,
         scheme=str(app.styleHints().colorScheme()), style=app.style().name(),
-        font=f"{app.font().family()} {QFontInfo(app.font()).pixelSize()} px", shots=shots)
+        font=f"{app.font().family()} {QFontInfo(app.font()).pixelSize()} px", shots=shots, tray=tray, fit_to_screen=fitted)
     for report in ("cortados", "pequenos"):
         found = {s["file"]: s[report] for s in shots if s[report]}
         out(report, total=sum(len(v) for v in found.values()), shots=found)

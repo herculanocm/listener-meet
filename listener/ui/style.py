@@ -16,7 +16,7 @@ dos testes) que pinta o que a paleta não alcança, com os tokens do tema (`ui/t
 - `polish(widget)`: as alturas mínimas (Aceite 3), só nos controles medidos (`SIZED`; o resto sai sem chamada ao C++):
   botão, campo, combo e spin com 32 px e botão com 32 de largura; caixa de seleção e rádio com 24 (o `pequenos` da sonda
   acusou 422 controles de 29 px). As peças internas do Qt (o botão de limpar do campo, as setas das abas) ficam como estão.
-- Superfície noutro esquema (`theme.surface`: o widget de gravação, o marcador e os avisos, escuros até o L2): [fato, 28/10]
+- Superfície noutro esquema (`theme.surface`; no L1b, o widget de gravação, o marcador e os avisos, no tema desde o L2): [fato]
   o `windows11` pinta botão e campo dela no esquema do app e ignora a paleta herdada; aqui saem planos, nos tokens dela."""
 from __future__ import annotations
 

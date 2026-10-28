@@ -201,9 +201,12 @@ def _text_color(w) -> str:
     return w.palette().color(QPalette.ColorRole.WindowText).name()
 
 
-def test_dark_surfaces_stay_dark_until_l2(qtbot):
-    """L1b: o widget, o marcador e o aviso são superfícies escuras (`theme.surface`), sem folha de estilo: a paleta é a do
-    escuro e os tons saem dos tokens do escuro, com o tema claro."""
+def test_recording_surfaces_follow_the_theme(qtbot, qapp, tmp_path, restore_theme):
+    """F5.4 L2 (U-060, U-068): o widget de gravação, o marcador e o aviso seguem o tema (no L1b eram escuros nos dois
+    esquemas), sem folha de estilo e sem a marca de superfície: os tons e os ícones saem dos tokens vigentes e a troca de
+    esquema os repinta. O ícone da bandeja tem as cores fixas dele (A-19), as do claro."""
+    from PySide6.QtCore import Qt
+
     from listener.model import AppState
     from listener.ui.notices import Notice, NoticeKind
     from listener.ui.toast import Toast
@@ -214,15 +217,19 @@ def test_dark_surfaces_stay_dark_until_l2(qtbot):
     qtbot.addWidget(w)
     w.update_state(1.0, {"L": 0.1, "R": 0.1}, {"L": "ok", "R": "warn"}, False, False, 0)
     w.set_live_state("crashed")
-    assert theme.tokens() is LIGHT and theme.surface_tokens(w.status_label) is DARK      # o widget escuro no tema claro
-    assert (_text_color(w.status_label), _text_color(w.health_l), _text_color(w.live_badge)) == (DARK.danger, DARK.success, DARK.danger)
-    assert _text_color(w.time_label) == DARK.text and _text_color(w.markers_label) == DARK.secondary
-    assert not w.styleSheet() and not any(c.styleSheet() for c in w.findChildren(QWidget))
     popup, toast = MarkerPopup(3.0), Toast(Notice(NoticeKind.INFO, "texto"), 1000)
     qtbot.addWidget(popup)
     qtbot.addWidget(toast)
-    assert theme.surface_tokens(popup.edit) is DARK and _text_color(toast.hint) == DARK.secondary and not toast.styleSheet()
-    assert icon_color(AppState.RECORDING) == DARK.danger
+    assert not w.property(theme.SURFACE_PROP) and not popup.property(theme.SURFACE_PROP) and not toast.property(theme.SURFACE_PROP)
+    assert theme.surface_tokens(w.status_label) is LIGHT and theme.surface_tokens(popup.edit) is LIGHT
+    assert (_text_color(w.status_label), _text_color(w.live_badge), _text_color(toast.hint)) == (LIGHT.danger, LIGHT.danger,
+                                                                                                   LIGHT.secondary)
+    assert w.health_r.property("theme_icon") == "speaker:warning:16" and toast.icon.property("theme_icon") == "info:info:16"
+    assert not w.styleSheet() and not any(c.styleSheet() for c in w.findChildren(QWidget)) and not toast.styleSheet()
+    theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Dark)
+    assert (_text_color(w.status_label), _text_color(w.live_badge), _text_color(toast.hint)) == (DARK.danger, DARK.danger,
+                                                                                                   DARK.secondary)
+    assert icon_color(AppState.RECORDING) == LIGHT.danger                                  # A-19: a bandeja, nas cores dela
 
 
 # ---------------------------------------------------------------- widgets: tom, papel, primário, erro (L1b, A-02, A-10)

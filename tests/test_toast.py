@@ -169,6 +169,9 @@ def test_the_stack_goes_above_the_recording_widget_when_it_would_cross_it(qtbot,
         c.notify("gravando")
         toast = c.toasts.toasts[0]
         assert toast.y() + toast.height() <= c.widget.frameGeometry().y()
+        c.widget.height_changed.connect(c.toasts.relayout)                               # como o controlador liga (A-16)
+        c.widget.show_alert("saída sem sinal", "Dispositivos…", "devices")             # o widget cresce 40 px para cima
+        assert toast.y() + toast.height() <= c.widget.frameGeometry().y()                  # e a pilha sobe junto
     finally:
         c.state = AppState.IDLE
         c._teardown_widget()
@@ -514,15 +517,17 @@ def test_settings_language_and_notices_group_has_the_toast_seconds(qtbot, store,
     assert store.get_setting(TOAST_SECONDS) == "0"
 
 
-def test_notice_colors_are_readable_on_the_dark_background():
-    from listener.ui.common import NOTICE_BACKGROUND, NOTICE_COLORS, NOTICE_MUTED, NOTICE_TEXT, NOTICE_TONES, contrast
-    from listener.ui.theme import DARK
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_notice_colors_are_readable_on_the_card_in_both_themes(scheme):
+    """F5.4 L2 (U-068): o aviso segue o tema; sobre o cartão, o texto e a nota a 4,5:1 e a faixa e o ícone do tipo a 3:1."""
+    from listener.ui.common import NOTICE_TONES, contrast
+    from listener.ui.theme import DARK, LIGHT
+    from listener.ui.toast import KIND_ICONS
 
-    assert set(NOTICE_COLORS) == set(NOTICE_TONES) == {str(k) for k in NoticeKind}
-    assert {kind: DARK.tone(tone) for kind, tone in NOTICE_TONES.items()} == NOTICE_COLORS                  # F5.4: escuro até o L2
-    assert (DARK.input, DARK.text, DARK.secondary) == (NOTICE_BACKGROUND, NOTICE_TEXT, NOTICE_MUTED)
-    assert contrast(NOTICE_TEXT, NOTICE_BACKGROUND) >= 4.5 and contrast(NOTICE_MUTED, NOTICE_BACKGROUND) >= 4.5   # texto
-    assert all(contrast(color, NOTICE_BACKGROUND) >= 3.0 for color in NOTICE_COLORS.values())                    # a faixa
+    t = LIGHT if scheme == "light" else DARK
+    assert set(NOTICE_TONES) == set(KIND_ICONS) == {str(k) for k in NoticeKind}
+    assert contrast(t.text, t.card) >= 4.5 and contrast(t.secondary, t.card) >= 4.5                       # texto
+    assert all(contrast(t.tone(tone), t.card) >= 3.0 for tone in NOTICE_TONES.values())                     # a faixa e o ícone
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="SetWindowDisplayAffinity só existe no Windows")

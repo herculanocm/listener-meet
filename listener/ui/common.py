@@ -2,7 +2,8 @@
 tradução pt-BR dos textos padrão do Qt. F5.3 (U-047, A-08): as cores da barra da fila por estado e o contraste do texto
 sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro; (U-048) as do aviso que some sozinho, por tipo. F5.4: as contas
 de contraste moram em `ui/theme.py` e seguem reexportadas daqui (A-13); os dicionários de estado guardam o tom (`Tone`) e a
-cor sai dos tokens do tema vigente na hora (A-11)."""
+cor sai dos tokens do tema vigente na hora (A-11). F5.4 L2: o widget de gravação, o marcador e os avisos seguem o tema (sai
+o `DARK_SURFACE`) e `fit_to_screen` põe a janela inteira, com a moldura, dentro da área livre da tela (A-17)."""
 from __future__ import annotations
 
 import math
@@ -11,16 +12,13 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from ..model import AppState, Health, JobStatus
-from .theme import BLACK, DARK, WHITE, Tokens, Tone, contrast, luminance, mix, text_on, tokens
+from .theme import BLACK, WHITE, Tokens, Tone, contrast, luminance, mix, text_on, tokens
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication, QTranslator
+    from PySide6.QtWidgets import QWidget
 
 QT_LOCALE = "pt_BR"             # a interface é em pt-BR (i18n antes da F6): os botões padrão do Qt seguem o mesmo idioma
-
-# F5.4 (A-11): o widget de gravação, o marcador, os avisos e o ícone da bandeja seguem escuros até o L2 (U-060, U-068,
-# U-070; o ícone tem fundo próprio, A-19): as cores deles saem dos tokens do escuro, nos dois esquemas
-DARK_SURFACE = DARK
 
 HEALTH_TONES: dict[str, Tone] = {Health.OK: Tone.SUCCESS, Health.WARN: Tone.WARNING, Health.ALERT: Tone.DANGER,
                                  Health.MUTED: Tone.NEUTRAL, Health.PAUSED: Tone.WARNING, Health.OFF: Tone.DISABLED,
@@ -41,12 +39,9 @@ JOB_STATUS_COLOR_NAMES: dict[str, str] = {JobStatus.PENDING: "barra cinza", JobS
                                           JobStatus.PAUSED: "barra âmbar", JobStatus.DONE: "barra verde", JobStatus.ERROR: "barra vermelha",
                                           JobStatus.CANCELLED: "barra listrada"}
 # F5.3 (U-048, A-14): o aviso que some sozinho, com a faixa na cor do tipo (as chaves são os valores de `ui.toast.NoticeKind`),
-# os mesmos tons da barra da fila: verde pronto, azul informação, vermelho erro. O aviso segue escuro como o widget de
-# gravação (F5.4: tokens do escuro até o L2); o texto fica claro sobre o fundo (4,5:1 ou mais) e o tipo vai só na faixa (3:1).
+# os mesmos tons da barra da fila: verde pronto, azul informação, vermelho erro. F5.4 L2 (U-068): o aviso segue o tema, com a
+# faixa e o ícone do tipo nos tokens vigentes (o texto em `text` e `secondary` sobre `card`, a faixa a 3:1; matriz do A-13).
 NOTICE_TONES: dict[str, Tone] = {"pronto": Tone.SUCCESS, "informação": Tone.INFO, "erro": Tone.DANGER}
-NOTICE_COLORS: dict[str, str] = {kind: DARK_SURFACE.tone(tone) for kind, tone in NOTICE_TONES.items()}
-NOTICE_BACKGROUND, NOTICE_BORDER = DARK_SURFACE.input, DARK_SURFACE.stroke
-NOTICE_TEXT, NOTICE_MUTED = DARK_SURFACE.text, DARK_SURFACE.secondary
 TRACK_MIX = 0.15                # o trilho: a base da tabela com 15 % da cor do texto (claro no tema claro, escuro no escuro)
 BAND_OPACITY = 0.4              # a faixa do "rodando": clareia sob texto preto e escurece sob texto branco (o contraste só sobe)
 
@@ -142,6 +137,42 @@ def clamp_to_screens(x: int, y: int, w: int, h: int, screens: list[tuple[int, in
     return int(min(max(x, sx), sx + sw - w)), int(min(max(y, sy), sy + sh - h))
 
 
+type Box = tuple[int, int, int, int]          # x, y, largura, altura
+
+
+def fit_rect(frame: Box, client: tuple[int, int], area: Box, minimum: tuple[int, int] = (0, 0)) -> Box:
+    """A-17: o retângulo da moldura (`frame`, com a barra de título) e o tamanho de dentro (`client`) de uma janela que cabe
+    na área livre `area`: o de dentro encolhe o que passar (nunca abaixo de `minimum`, o mínimo do layout) e a moldura volta
+    para dentro da área. Devolve a posição da moldura e o tamanho de dentro."""
+    fx, fy, fw, fh = frame
+    ax, ay, aw, ah = area
+    extra_w, extra_h = fw - client[0], fh - client[1]
+    width = max(minimum[0], min(client[0], aw - extra_w))
+    height = max(minimum[1], min(client[1], ah - extra_h))
+    x = max(ax, min(fx, ax + aw - (width + extra_w)))
+    y = max(ay, min(fy, ay + ah - (height + extra_h)))
+    return x, y, width, height
+
+
+def fit_to_screen(w: QWidget) -> None:
+    """A-17 (F5.4 L2): a janela inteira, com a moldura (`frameGeometry`), dentro da área livre da tela dela, no lugar da regra
+    dos 90 % ([fato] no notebook do dono a 150 %, 1280 x 672 lógicos, sobravam 605 px de altura). Chamada no `showEvent` de
+    quem a usa (a moldura só existe com a janela nativa) e reutilizável pelos outros lotes (Configurações e reunião abrem no
+    limite)."""
+    from PySide6.QtGui import QGuiApplication
+
+    screen = w.screen() or QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+    g, f, a = w.geometry(), w.frameGeometry(), screen.availableGeometry()
+    x, y, width, height = fit_rect((f.x(), f.y(), f.width(), f.height()), (g.width(), g.height()),
+                                   (a.x(), a.y(), a.width(), a.height()), (w.minimumWidth(), w.minimumHeight()))
+    if (width, height) != (g.width(), g.height()):
+        w.resize(width, height)
+    if (x, y) != (f.x(), f.y()):
+        w.move(x, y)                                  # numa janela, `move` posiciona a moldura
+
+
 def copy_rich(plain: str, rich_html: str | None = None) -> None:
     """Põe na área de transferência o texto e, quando dado, o mesmo em HTML (`QMimeData`): o Outlook e o Teams colam com
     formatação, o bloco de notas cola o texto (U-011, U-029).
@@ -172,8 +203,7 @@ def markdown_html(md: str) -> str:
     return doc.toHtml()
 
 
-__all__ = ["BAND_OPACITY", "BLACK", "DARK_SURFACE", "HEALTH_TEXT", "HEALTH_TONES", "JOB_STATUS_COLOR_NAMES", "JOB_STATUS_HATCHED",
-           "JOB_STATUS_TONES", "NOTICE_BACKGROUND", "NOTICE_BORDER", "NOTICE_COLORS", "NOTICE_MUTED", "NOTICE_TEXT", "NOTICE_TONES",
-           "QT_LOCALE", "STATE_TONES", "TRACK_MIX", "WHITE", "BarColors", "bar_colors", "clamp_to_screens", "contrast", "copy_rich",
-           "health_color", "human_size", "install_translations", "job_status_color", "level_fraction", "luminance", "markdown_html",
-           "mix", "state_color", "text_on"]
+__all__ = ["BAND_OPACITY", "BLACK", "HEALTH_TEXT", "HEALTH_TONES", "JOB_STATUS_COLOR_NAMES", "JOB_STATUS_HATCHED", "JOB_STATUS_TONES",
+           "NOTICE_TONES", "QT_LOCALE", "STATE_TONES", "TRACK_MIX", "WHITE", "BarColors", "Box", "bar_colors", "clamp_to_screens",
+           "contrast", "copy_rich", "fit_rect", "fit_to_screen", "health_color", "human_size", "install_translations",
+           "job_status_color", "level_fraction", "luminance", "markdown_html", "mix", "state_color", "text_on"]

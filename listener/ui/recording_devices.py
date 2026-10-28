@@ -9,7 +9,8 @@ microfone e abre o painel (`ui/devices_panel.py`) com as saídas do mesmo aparel
 prioridade: a saúde dos canais, o banco parado, o aviso dos dispositivos e o banco lento (A-21). Nomes de aparelho só na
 tela (A-22). Revisão do L4: o aviso de que o escolhido saiu (e voltou) vem do estado a cada leitura, não de quem trocou,
 porque a reabertura de 200 ms do gravador cai no padrão antes da vigia (R-04); o novo que o "acompanha" já abriu não
-oferece "Usar" (R-09); a troca de saída que falha diz se a anterior voltou (R-03)."""
+oferece "Usar" (R-09); a troca de saída que falha diz se a anterior voltou (R-03). F5.4 L2 (U-060): cada alerta tem um tipo
+(`kind`: `info`, `success`, `warning` ou `error`, os da `InfoBar`), que o widget mostra no ícone e na cor da linha."""
 from __future__ import annotations
 
 import time
@@ -46,11 +47,13 @@ BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
 
 @dataclass(frozen=True, slots=True)
 class Alert:
-    """A linha de alerta do widget: o texto, o rótulo do botão (vazio = sem botão), a ação do clique e a dica."""
+    """A linha de alerta do widget: o texto, o rótulo do botão (vazio = sem botão), a ação do clique, a dica e o tipo (o ícone
+    e a cor da linha, F5.4 L2): erro no que parou de gravar, aviso no que pede atenção, informação no aparelho novo."""
     text: str
     button: str = ""
     action: str = ""
     tip: str = ""
+    kind: str = "warning"
 
 
 def endpoint_device(ep: Endpoint) -> AudioDevice:
@@ -112,9 +115,9 @@ def alert_line(rec: Recorder, health: Mapping[str, str], notice: Alert | None, c
     lento."""
     snap = rec.snapshot
     if health.get("L") == Health.LOST:
-        return Alert("microfone desconectado; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES)
+        return Alert("microfone desconectado; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES, kind="error")
     if health.get("R") == Health.LOST:
-        return Alert("saída desconectada; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES)
+        return Alert("saída desconectada; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES, kind="error")
     if health.get("R") == Health.ALERT:
         text = (f"saída sem sinal: a chamada pode estar em {comm.name} (comunicação)" if comm is not None
                 else "saída sem sinal: a reunião está tocando em outro app?")
@@ -124,7 +127,7 @@ def alert_line(rec: Recorder, health: Mapping[str, str], notice: Alert | None, c
     db = health.get("db", Health.OK)
     if db == Health.ALERT:
         since = int(rec.elapsed() - (snap.pending_since or rec.elapsed()))
-        return Alert(f"banco não responde há {since}s; {snap.pending} pedaço(s) retido(s) em memória")
+        return Alert(f"banco não responde há {since}s; {snap.pending} pedaço(s) retido(s) em memória", kind="error")
     if notice is not None:
         return notice
     if db == Health.WARN:
@@ -210,7 +213,8 @@ class RecordingDevices(QObject):
             if said:
                 text = GONE_TEXT[channel] if said == "saiu" else BACK_TEXT[channel]
                 log.info("reunião %s: canal %s, o escolhido %s %s", rec.meeting_id, channel, log_id(wanted), said)
-                self._set_notice(Alert(text, DEVICES_BUTTON, ACTION_DEVICES), INFO_NOTICE_S)
+                kind = "warning" if said == "saiu" else "success"
+                self._set_notice(Alert(text, DEVICES_BUTTON, ACTION_DEVICES, kind=kind), INFO_NOTICE_S)
 
     def _announce(self, reading: Endpoints) -> None:
         present = {e.id for e in reading.capture}
@@ -228,9 +232,9 @@ class RecordingDevices(QObject):
         hands_free = "\nHands-Free: o fone vai para o perfil de chamada (som mono)." if is_hands_free(ep.name) else ""
         if ep.id == self.recorder.mic_open_id:
             return Alert(f"novo: {ep.name or ep.id} (gravando nele)", DEVICES_BUTTON, ACTION_OUTPUTS,
-                         "Mostra as saídas do mesmo aparelho." + hands_free)
+                         "Mostra as saídas do mesmo aparelho." + hands_free, kind="info")
         return Alert(f"novo: {ep.name or ep.id}", "Usar", ACTION_USE,
-                     "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho." + hands_free)
+                     "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho." + hands_free, kind="info")
 
     def _follow(self, reading: Endpoints) -> None:
         rec = self.recorder

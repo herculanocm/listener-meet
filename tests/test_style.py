@@ -1,7 +1,7 @@
 """F5.4 L1b (A-02, A-04, A-05, A-06; Aceite 3, U-055, U-056, U-058): a pintura do `ThemeStyle` sobre o Fusion do offscreen,
 conferida nos pixels: primário e destrutivo preenchidos, a linha selecionada em `selected` com o tom do item vindo do tema, o
 anel de foco só pelo teclado, a borda de erro, as abas sublinhadas, o grupo como cartão, as alturas mínimas do `polish` e os
-botões planos de uma superfície escura (o widget de gravação até o L2)."""
+botões planos de uma superfície escura (`theme.surface`; o widget de gravação a usou até o L2)."""
 from __future__ import annotations
 
 from collections.abc import Iterator

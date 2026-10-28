@@ -14,9 +14,9 @@ o gerente só na thread da interface (A-10); aqui ficam a janela (`Toast`), a po
 - Janela (A-14): `Tool | FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus` com
   `WA_ShowWithoutActivating`, nunca `activateWindow`; o alvo do clique vem à frente pelo controlador (`bring_to_front`). Com
   um diálogo modal aberto (o warm-up), o aviso aparece e some sem receber clique.
-- Visual sóbrio, como o widget de gravação: fundo escuro, texto claro e a faixa na cor do tipo (`ui/common.py`); F5.4: as
-  cores são os tokens do escuro, nos dois esquemas, até o L2 (U-068) levar o aviso ao tema: a janela é uma superfície
-  escura (`theme.surface`), os rótulos têm tom e papel de fonte e o `ThemeStyle` pinta o "✕"; sem folha de estilo."""
+- Visual sóbrio, como o widget de gravação. F5.4 L2 (U-068): no tema (claro ou escuro), sem folha de estilo: o cartão com
+  borda e cantos de 8 px, a faixa e o ícone do tipo (`common.NOTICE_TONES`; estado nunca só pela cor, U-054), a contagem dos
+  iguais em selo e o fechar só de ícone, de 32 x 32 px; as cores são lidas na pintura (a troca de tema só repinta)."""
 from __future__ import annotations
 
 import functools
@@ -27,12 +27,14 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..log import get_logger
-from .common import DARK_SURFACE, NOTICE_BACKGROUND, NOTICE_BORDER, NOTICE_COLORS
+from .common import NOTICE_TONES
+from .components import Badge, IconButton
+from .icons import set_icon
 from .notices import Notice, NoticeAction, NoticeKind, Target
-from .theme import Tone, note, qcolor, retone, role, surface, tone
+from .theme import Tone, note, qcolor, role, surface_tokens
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QEvent
@@ -46,10 +48,12 @@ MAX_VISIBLE = 3                  # avisos na tela; os outros esperam na fila
 MAX_TEXT = 300                   # caracteres na tela; o texto inteiro vai à dica
 TOAST_WIDTH = 360                # px lógicos (o Qt escala no DPI da tela)
 MARGIN, GAP = 16, 8              # da borda da tela e entre avisos
-RADIUS, ACCENT_W = 10, 4         # cantos e a faixa do tipo
+ACCENT_W = 4                     # a faixa do tipo (os cantos são os da janela flutuante, 8 px)
+CLOSE_PX, ICON_PX = 32, 16       # U-068: o fechar e o ícone do tipo
 TOAST_FLAGS = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                | Qt.WindowType.WindowDoesNotAcceptFocus)
 KIND_TITLES: dict[str, str] = {NoticeKind.READY: "Pronto", NoticeKind.INFO: "Informação", NoticeKind.ERROR: "Erro"}
+KIND_ICONS: dict[str, str] = {NoticeKind.READY: "success", NoticeKind.INFO: "info", NoticeKind.ERROR: "error"}   # U-068
 ACTION_HINTS: dict[str, str] = {Target.MEETING: "Clique para abrir a reunião", Target.MEETING_CHAT: "Clique para abrir o chat da reunião",
                                 Target.QUEUE: "Clique para abrir a fila", Target.SETTINGS: "Clique para abrir as Configurações",
                                 Target.HISTORY: "Clique para abrir o Histórico"}
@@ -108,40 +112,40 @@ class Toast(QWidget):
         self.setObjectName("toast")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFixedWidth(TOAST_WIDTH)
-        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-068), sem folha de estilo
         self.notice = notice
         self.duration_ms = duration_ms
         self.count = count
         self.hovered = False
         self.private = False
         self.excluded = False            # A-13: a janela saiu da captura de tela (o gerente marca ao criar)
+        self.icon = self._label("", "toastIcon")
+        self.icon.setFixedSize(ICON_PX, ICON_PX)
+        set_icon(self.icon, KIND_ICONS[notice.kind], NOTICE_TONES[notice.kind], ICON_PX)
         self.title = self._label(f"{KIND_TITLES[notice.kind]} · listener-meet", "toastTitle")
-        self.badge = self._label("", "toastMuted")
+        self.badge = Badge("", Tone.NEUTRAL)                                 # "3x": o mesmo aviso chegou 3 vezes
+        self.badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.body = self._label("", "toastText")
         self.body.setWordWrap(True)
         self.hint = self._label(ACTION_HINTS[notice.action.target] if notice.action is not None else "", "toastMuted")
         self.hint.setVisible(notice.action is not None)
         if notice.action is not None:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button = QToolButton()
-        self.close_button.setText("✕")                          # o mesmo do "cancelar" do widget de gravação
-        self.close_button.setToolTip("Fechar o aviso")
-        self.close_button.setAccessibleName("Fechar o aviso")
+        self.close_button = IconButton("close", "Fechar o aviso", Tone.SECONDARY)   # o mesmo ícone do "cancelar" do widget
+        self.close_button.setFixedSize(CLOSE_PX, CLOSE_PX)
         self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_button.setCursor(Qt.CursorShape.ArrowCursor)
-        self.close_button.setAutoRaise(True)            # sem fundo até o mouse passar
-        tone(self.close_button, Tone.SECONDARY)
         self.close_button.clicked.connect(self._finish)
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(6)
+        head.addWidget(self.icon)
         head.addWidget(self.title)
         head.addStretch(1)
         head.addWidget(self.badge)
         head.addWidget(self.close_button)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(ACCENT_W + 14, 8, 8, 10)
-        lay.setSpacing(4)
+        lay.setContentsMargins(ACCENT_W + 14, 4, 4, 10)
+        lay.setSpacing(2)
         lay.addLayout(head)
         lay.addWidget(self.body)
         lay.addWidget(self.hint)
@@ -153,15 +157,12 @@ class Toast(QWidget):
         self.set_private(False)
 
     def _style_labels(self) -> None:
-        """O título em legenda semibold, a contagem e a dica em nota, o texto em corpo; os tons nos tokens da superfície (os
-        rótulos nasceram antes de entrar na janela)."""
+        """O título em legenda semibold, a dica em nota, o texto em corpo (a fonte do app)."""
         role(self.title, "caption")
         font = self.title.font()
         font.setWeight(QFont.Weight.DemiBold)
         self.title.setFont(font)
-        for muted in (self.badge, self.hint):
-            note(muted)
-        retone(self)
+        note(self.hint)
 
     @staticmethod
     def _label(text: str, name: str) -> QLabel:
@@ -204,7 +205,8 @@ class Toast(QWidget):
         self.start()
 
     def _show_count(self) -> None:
-        self.badge.setText(f"{self.count}x" if self.count > 1 else "")      # "3x": o mesmo aviso chegou 3 vezes
+        self.badge.setText(f"{self.count}x" if self.count > 1 else "")
+        self.badge.setToolTip(f"o mesmo aviso chegou {self.count} vezes" if self.count > 1 else "")
         self.badge.setVisible(self.count > 1)
 
     def _finish(self) -> None:
@@ -212,13 +214,16 @@ class Toast(QWidget):
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
+        """U-068: o cartão do tema com a borda forte (o aviso flutua sobre qualquer janela) e a faixa na cor do tipo."""
+        t = surface_tokens(self)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(qcolor(NOTICE_BORDER)))
-        p.setBrush(qcolor(NOTICE_BACKGROUND))
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
+        p.setPen(QPen(qcolor(t.stroke_strong), 1))
+        p.setBrush(qcolor(t.card))
+        radius = t.metrics.radius_card
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(qcolor(NOTICE_COLORS[self.notice.kind]))
+        p.setBrush(qcolor(t.tone(NOTICE_TONES[self.notice.kind])))
         p.drawRoundedRect(QRectF(6, 8, ACCENT_W, max(8, self.height() - 16)), 2, 2)
         p.end()
 
@@ -359,6 +364,10 @@ class ToastManager(QObject):
         closing, self._closing = self._closing, []
         for toast in closing:
             toast.deleteLater()
+
+    def relayout(self) -> None:
+        """A pilha de novo (F5.4 L2, A-16): o widget de gravação cresceu ou encolheu com a borda de baixo no lugar."""
+        self._layout()
 
     def _layout(self) -> None:
         if not self.toasts:

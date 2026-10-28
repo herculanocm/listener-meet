@@ -14,6 +14,8 @@ tempos     a abertura das janelas (warm-up, Configurações, reunião, Históric
            vez), e o tema é aplicado com a plataforma real, como no app. [fato, 28/10] nesta CPU híbrida (Core Ultra 5
            235U: núcleos P e E) o mesmo código variou até 40 % entre processos, conforme o Windows os punha num núcleo ou
            noutro: cada filho fica preso aos núcleos da classe de eficiência mais alta (`GetSystemCpuSetInformation`).
+           F5.4 L2: o `fit_to_screen` do warm-up (A-17) traria a janela para a tela, onde o Windows a pintaria (a base não
+           tem isso): a sonda o troca pelo mesmo cálculo sem mover (`fit_offscreen`), e o custo dele segue medido.
 cortados   rótulo, botão, aba, cabeçalho de tabela ou título de cartão (L1b) com o texto maior que o espaço; o cortado de
            propósito, com reticências e o texto inteiro na dica, não conta.
 pequenos   o alvo de clique do Aceite 3: botão, campo e combo abaixo de 32 por 32 px; caixa de seleção abaixo de 24 px.
@@ -47,6 +49,19 @@ def apply_theme(app: Any, platform: Any, scheme: Any = None) -> bool:
         return False
     theme.apply(app, platform, scheme)
     return True
+
+
+def fit_offscreen(w: Any) -> None:
+    """O `fit_to_screen` (A-17) sem mover a janela: o mesmo cálculo e o mesmo redimensionamento, fora da tela."""
+    from PySide6.QtGui import QGuiApplication
+
+    from listener.ui.common import fit_rect
+
+    a, f, g = QGuiApplication.primaryScreen().availableGeometry(), w.frameGeometry(), w.geometry()
+    _x, _y, width, height = fit_rect((a.x(), a.y(), f.width(), f.height()), (g.width(), g.height()),
+                                     (a.x(), a.y(), a.width(), a.height()), (w.minimumWidth(), w.minimumHeight()))
+    if (width, height) != (g.width(), g.height()):
+        w.resize(width, height)
 
 
 def release_theme(app: Any) -> None:
@@ -187,6 +202,10 @@ def measure(root: str | None, rounds: int) -> dict[str, Any]:
     from tests.fake_platform import FakePlatform
 
     install_translations(app)
+    import listener.ui.warmup as warmup_module
+
+    if hasattr(warmup_module, "fit_to_screen"):            # F5.4 L2 (A-17): fora da tela, como a base
+        warmup_module.fit_to_screen = fit_offscreen
     themed = apply_theme(app, get_platform())
     tmp = Path(tempfile.mkdtemp(prefix="listener-tempos-"))
     store = Store(tmp / "db")

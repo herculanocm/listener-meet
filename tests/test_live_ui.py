@@ -26,12 +26,18 @@ def _caption(store: Any, mid: int, t0: int, text: str, label: str | None = "Ana 
 
 
 def test_widget_live_badge_caption_line_and_height(qtbot):
-    from listener.ui.widget import LIVE_MIN_HEIGHT, RecordingWidget
+    """F4: o selo do ao vivo e a linha da legenda (cortada, inteira na dica, o clique abre a janela). F5.4 L2 (A-16): 360 px
+    fixos e a altura do estado; o `ui.widget_size` salvo não vale mais (nem para encolher nem para crescer); a linha da
+    legenda soma 24 px à base; o selo vem com o ícone do ao vivo (U-062)."""
+    from listener.ui.widget import WIDTH, RecordingWidget
 
+    base = RecordingWidget(size=(400, 150))
     w = RecordingWidget(size=(320, 96), live_line=True)
+    qtbot.addWidget(base)
     qtbot.addWidget(w)
     w.show()
-    assert w.height() >= LIVE_MIN_HEIGHT and w.caption_line.isVisibleTo(w) and not w.live_badge.isVisibleTo(w)
+    assert (base.width(), base.height()) == (WIDTH, 106) and (w.width(), w.height()) == (WIDTH, 130)   # Aceite 4
+    assert w.caption_line.isVisibleTo(w) and not w.live_badge.isVisibleTo(w) and not w.live_icon.isVisibleTo(w)
     long_text = "vamos fechar o orçamento de 2027 hoje com corte de oito por cento em todas as áreas " * 3
     w.set_caption("Ana — CFO", long_text)
     full = "Ana — CFO: " + " ".join(long_text.split())
@@ -41,21 +47,20 @@ def test_widget_live_badge_caption_line_and_height(qtbot):
     w.set_live_state("live", "legenda ao vivo")
     w.set_live_state("live", "legenda ao vivo")                                                   # igual: nada muda
     assert w.live_badge.isVisibleTo(w) and "ao vivo" in w.live_badge.text() and w.style_changes == n + 1
+    assert w.live_icon.isVisibleTo(w) and w.live_icon.property("theme_icon") == "live:success:16"
     w.set_live_state("skipping")
     assert "legenda atrasada" in w.live_badge.text()
     w.set_live_state("crashed")
-    assert "ao vivo parou" in w.live_badge.text()
+    assert "ao vivo parou" in w.live_badge.text() and w.live_icon.property("theme_icon") == "live:danger:16"
     w.set_live_state("stopped")
-    assert not w.live_badge.isVisibleTo(w)
+    assert not w.live_badge.isVisibleTo(w) and not w.live_icon.isVisibleTo(w)
     with qtbot.waitSignal(w.live_clicked, timeout=1000):
         qtbot.mouseClick(w.caption_line, pytestqt.qt_compat.qt_api.QtCore.Qt.MouseButton.LeftButton)
-    # sem `live.in_widget`: sem linha, mas o selo aparece; tamanho salvo maior é respeitado
-    w2 = RecordingWidget(size=(400, 150))
-    qtbot.addWidget(w2)
-    w2.set_caption("Ana", "oi")
-    w2.set_live_state("degraded")
-    assert w2.height() == 150 and not w2.caption_line.isVisibleTo(w2) and "legenda atrasada" in w2.live_badge.text()
-    assert RecordingWidget(size=(320, 150), live_line=True).height() == 150
+    # sem `live.in_widget`: sem linha, mas o selo aparece; a altura é a da base, com qualquer tamanho salvo
+    base.set_caption("Ana", "oi")
+    base.set_live_state("degraded")
+    assert base.height() == 106 and not base.caption_line.isVisibleTo(base) and "legenda atrasada" in base.live_badge.text()
+    assert RecordingWidget(size=(320, 150), live_line=True).height() == 130
 
 
 def test_upsert_preset_keeps_live_flags(store):
