@@ -120,6 +120,7 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("warmup.last_mic_device_name", "", _NOW, "Último microfone (nome)", _text),
     SettingSpec("warmup.last_source_kind", "system", _NOW, "Última fonte (tipo)", _text),
     SettingSpec("warmup.last_source_exe", "", _NOW, "Última fonte (executável)", _text),
+    SettingSpec("warmup.last_output_id", "", _NOW, "Última saída do sistema inteiro (id; vazio = a padrão)", _text, phase="F5.3"),
     SettingSpec("warmup.last_in_room", "0", _NOW, "Última sala presencial", _text),
     # F2 (item 16): o worker lê o snapshot no claim ("vale para o próximo job"); o app lê a pausa e a estimativa
     SettingSpec("pipeline.transcriber", "whisper", _NOW, "Transcritor", _text, choices=frozenset(TRANSCRIBERS), phase="F2"),

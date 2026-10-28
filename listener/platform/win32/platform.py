@@ -3,7 +3,11 @@ sessões de áudio e mudo do microfone (pycaw), atalhos (RegisterHotKey), proces
 identidade do processo, suspensão, foco e (F5.3) janela fora da captura de tela (user32, kernel32, shell32).
 
 Streams voltam paradas (`CaptureHandle.start()`, M-06). COM: `_Win32MicMute` lembra a busca do endpoint e refaz o
-ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12). Nada daqui roda fora do Windows."""
+ponteiro quando a thread muda (M-07); enumerações com cache curto (M-07, M-12). Nada daqui roda fora do Windows.
+F5.3 L4: os endpoints pelo Core Audio sem reler o PortAudio (`endpoints.py`, A-19); o handle diz o endpoint aberto e o
+microfone pedido pode ser exigido (`strict`, A-16); o loopback do sistema inteiro abre na saída escolhida, casada pelo
+nome na lista do PyAudioWPatch (A-21); o mudo troca de endpoint de uma vez, sob trava (A-18); log com o id do endpoint,
+nunca o nome do aparelho (A-22)."""
 from __future__ import annotations
 
 import ctypes
@@ -22,9 +26,11 @@ import numpy as np
 
 from ...capture.mixer import FrameMixer
 from ...log import get_logger
-from ..base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, MicMute, Platform, PlayingApp, pick_device
+from ..base import (AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform, PlayingApp,
+                    pick_device)
 from ..common import paths, portaudio, process
-from . import processes
+from . import endpoints, processes
+from .endpoints import com_init as _com_init
 from .hotkeys import Win32Hotkeys
 
 log = get_logger("platform.win32")
@@ -43,7 +49,6 @@ STD_OUTPUT_HANDLE = -11 & 0xFFFFFFFF                   # (DWORD)-11
 VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
 WDA_EXCLUDEFROMCAPTURE = 0x00000011                    # F5.3 (A-13): SetWindowDisplayAffinity, Windows 10 2004 ou mais novo
 DEVICE_CACHE_S = 2.0           # lista de microfones (COM + PortAudio)
-ROLE_CONSOLE, ROLE_COMMUNICATIONS = 0, 2               # ERole do Core Audio (U-043: os padrões entram na assinatura)
 SLOW_LIST_APPS_MS = 500.0      # a lista de apps com som acima disto vai para o log mesmo sem mudar
 # SetConsoleCtrlHandler: o que fechou o terminal do app (os demais encerram o processo em ~5 s sem passar pelo "Sair")
 CTRL_EVENTS = {0: "Ctrl+C no terminal do app", 1: "Ctrl+Break no terminal do app", 2: "o terminal do app foi fechado",
@@ -129,18 +134,56 @@ def _display_affinity() -> Any:
     return fn
 
 
-def _com_init() -> None:
-    try:
-        import comtypes
-
-        comtypes.CoInitialize()
-    except Exception as e:
-        log.debug("CoInitialize: %s", e)
-
-
 def _names_match(a: str, b: str) -> bool:
     a, b = a.strip().lower(), b.strip().lower()
     return a == b or (len(a) >= 20 and b.startswith(a)) or (len(b) >= 20 and a.startswith(b))
+
+
+def _loopback_target(reading: Endpoints | None, output_id: str | None) -> tuple[str, str]:
+    """F5.3 (A-21): (id, nome) da saída cujo som o loopback grava: a escolhida, se está ativa, senão a padrão de console;
+    vazios sem o Core Audio (aí vale a padrão do PyAudioWPatch)."""
+    if reading is None:
+        return "", ""
+    ep = reading.output(output_id) if output_id else None
+    if ep is None and output_id:
+        log.warning("saída %s ausente; o loopback vai na saída padrão", output_id)
+    ep = ep or reading.output(reading.render_default)
+    return (ep.id, ep.name) if ep is not None else ("", "")
+
+
+def _loopback_base(dev: Mapping[str, Any]) -> str:
+    return str(dev["name"]).removesuffix(" [Loopback]")
+
+
+def _by_name[T](items: list[T], name: str, key: Callable[[T], str]) -> T | None:
+    """O item com este nome: o igual primeiro, depois pelo prefixo longo (o fone Bluetooth tem saídas de nomes parecidos)."""
+    low = name.strip().lower()
+    exact = next((it for it in items if key(it).strip().lower() == low), None)
+    return exact if exact is not None else next((it for it in items if _names_match(key(it), name)), None)
+
+
+def _pick_loopback(pa: Any, pyaudio: Any, name: str) -> Mapping[str, Any]:
+    """O loopback da saída `name` na lista do PyAudioWPatch ("<nome> [Loopback]"); sem ela, o da saída padrão dele."""
+    loopbacks = list(pa.get_loopback_device_info_generator())
+    if name:
+        found = _by_name(loopbacks, name, _loopback_base)
+        if found is not None:
+            return found
+    wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+    speakers = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+    dev = speakers if speakers.get("isLoopbackDevice") else next((lb for lb in loopbacks if speakers["name"] in lb["name"]),
+                                                                  None)
+    if dev is None:
+        raise RuntimeError("nenhum dispositivo de loopback WASAPI encontrado")
+    return dev
+
+
+def _render_id(reading: Endpoints | None, name: str) -> str:
+    """O id do Core Audio da saída com este nome ("" quando não se sabe)."""
+    if reading is None:
+        return ""
+    found = _by_name([e for e in reading.render if e.name], name, lambda e: e.name)
+    return found.id if found is not None else ""
 
 
 def _capture_endpoints() -> list[tuple[str, str, Any]]:
@@ -214,26 +257,8 @@ def _log_console_events() -> None:
 def _endpoint_signature() -> tuple[Any, ...] | None:
     """U-043: os endpoints ativos de captura e de saída e os padrões de cada um (console e comunicação), pelo Core Audio:
     muda quando o Windows ganha ou perde um dispositivo ou troca o padrão (~19 ms, 27/10). None sem pycaw ou se a
-    enumeração falhar (aí nada é relido)."""
-    _com_init()
-    try:
-        from pycaw.constants import DEVICE_STATE, EDataFlow
-        from pycaw.pycaw import AudioUtilities
-
-        enumerator = AudioUtilities.GetDeviceEnumerator()
-        parts: list[Any] = []
-        for flow in (EDataFlow.eCapture.value, EDataFlow.eRender.value):
-            col = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE.ACTIVE.value)
-            parts.append(tuple(sorted(str(col.Item(i).GetId()) for i in range(col.GetCount()))))
-            for role in (ROLE_CONSOLE, ROLE_COMMUNICATIONS):
-                try:
-                    parts.append(str(enumerator.GetDefaultAudioEndpoint(flow, role).GetId()))
-                except Exception:  # nenhum dispositivo desse fluxo conectado: sem padrão
-                    parts.append("")
-        return tuple(parts)
-    except Exception as e:
-        log.debug("assinatura dos endpoints de áudio: %s", e)
-        return None
+    enumeração falhar (aí nada é relido). F5.3: a enumeração mora em `endpoints.py`, com a leitura dos nomes (A-19)."""
+    return endpoints.signature()
 
 
 def _endpoint_volume(dev: Any) -> Any:
@@ -272,12 +297,13 @@ class _StreamHandle:
     segurava o PortAudio e a lista de dispositivos não era relida)."""
 
     def __init__(self, start_fn: Callable[[], None], stop_fn: Callable[[], None], sample_rate: int, channels: int,
-                 on_error: ErrorCallback | None = None, close_fn: Callable[[], None] | None = None):
+                 on_error: ErrorCallback | None = None, close_fn: Callable[[], None] | None = None, device_id: str = ""):
         self._start_fn = start_fn
         self._stop_fn = stop_fn
         self._close_fn = close_fn                          # a encerrada pela biblioteca só fecha (A-05: `close` já aborta)
         self.sample_rate = sample_rate
         self.channels = channels
+        self.device_id = device_id                         # F5.3 (A-16): o endpoint aberto ("" = não se sabe; app)
         self.on_error = on_error
         self._started = False
         self._stopped = False                              # nós paramos: o fim da stream não é erro
@@ -309,7 +335,8 @@ class _StreamHandle:
 class _Win32MicMute(MicMute):
     """Muta o endpoint de captura escolhido no warm-up (F1.1 A2); sem ele, o microfone padrão do Windows.
     Lembra o resultado da busca (não re-enumera a cada `get()`), espera 30 s após uma falha e refaz o ponteiro COM
-    quando é usado por outra thread (M-07)."""
+    quando é usado por outra thread (M-07). F5.3 (A-18): uma trava cobre a troca de endpoint, `get` e `set` (o poller lê
+    em outra thread e nunca vê a troca pela metade); `resolved` é o id do endpoint achado, nunca o nome (A-22)."""
 
     def __init__(self) -> None:
         self._device: AudioDevice | None = None
@@ -317,15 +344,21 @@ class _Win32MicMute(MicMute):
         self._ep_thread: int | None = None
         self._lookup_done = False
         self._retry_after = 0.0
+        self._lock = threading.RLock()
         self.resolved: str | None = None
 
     @override
-    def set_device(self, device: AudioDevice | None) -> bool:
-        self._device, self._ep, self._ep_thread, self.resolved = device, None, None, None
-        self._lookup_done, self._retry_after = False, 0.0
-        if device is None:
-            return True
-        return self._lookup() is not None
+    def set_device(self, device: AudioDevice | None, muted: bool = False) -> bool:
+        """Troca o endpoint de uma vez: com `muted` (a gravação está muda), o antigo perde o mudo e o novo ganha (A-18)."""
+        with self._lock:
+            if muted:
+                self.set(False)                            # o antigo: o endpoint que o mudo usa agora
+            self._device, self._ep, self._ep_thread, self.resolved = device, None, None, None
+            self._lookup_done, self._retry_after = False, 0.0
+            found = device is None or self._lookup() is not None
+            if muted:
+                self.set(True)
+            return found
 
     def _lookup(self) -> Any:
         """Procura o endpoint do dispositivo escolhido uma vez (ou após o backoff); guarda o resultado."""
@@ -339,12 +372,12 @@ class _Win32MicMute(MicMute):
                 try:
                     ep = _endpoint_volume(dev)
                 except Exception as e:
-                    log.debug("EndpointVolume de %s: %s", name, e)
+                    log.debug("EndpointVolume de %s: %s", dev_id, e)
                 else:
-                    self._ep, self.resolved, self._ep_thread = ep, name, threading.get_ident()
+                    self._ep, self.resolved, self._ep_thread = ep, dev_id, threading.get_ident()
                     return ep
         self._retry_after = time.monotonic() + MUTE_RETRY_S
-        log.warning("endpoint de captura %r não encontrado; o mudo global vai no microfone padrão", self._device.name)
+        log.warning("endpoint de captura %s não encontrado; o mudo global vai no microfone padrão", self._device.id)
         return None
 
     def _default(self) -> Any:
@@ -363,27 +396,29 @@ class _Win32MicMute(MicMute):
 
     @override
     def get(self) -> bool | None:
-        try:
-            ep = self._endpoint()
-            return bool(ep.GetMute()) if ep is not None else None
-        except Exception as e:
-            log.debug("ler mudo: %s", e)
-            self._ep, self._retry_after = None, time.monotonic() + MUTE_RETRY_S
-            return None
+        with self._lock:
+            try:
+                ep = self._endpoint()
+                return bool(ep.GetMute()) if ep is not None else None
+            except Exception as e:
+                log.debug("ler mudo: %s", e)
+                self._ep, self._retry_after = None, time.monotonic() + MUTE_RETRY_S
+                return None
 
     @override
     def set(self, muted: bool) -> bool:
-        try:
-            ep = self._endpoint()
-            if ep is None:
+        with self._lock:
+            try:
+                ep = self._endpoint()
+                if ep is None:
+                    return False
+                ep.SetMute(1 if muted else 0, None)
+            except Exception as e:
+                log.warning("mutar microfone: %s", e)
+                self._ep, self._retry_after = None, time.monotonic() + MUTE_RETRY_S
                 return False
-            ep.SetMute(1 if muted else 0, None)
-        except Exception as e:
-            log.warning("mutar microfone: %s", e)
-            self._ep, self._retry_after = None, time.monotonic() + MUTE_RETRY_S
-            return False
-        else:
-            return True
+            else:
+                return True
 
 
 class Win32Platform(Platform):
@@ -396,6 +431,7 @@ class Win32Platform(Platform):
         self._devices_cache: tuple[float, list[AudioDevice]] | None = None
         self._audio_signature: tuple[Any, ...] | None = None    # U-043: os endpoints na última leitura do PortAudio
         self._indices: dict[str, int] = {}                       # id -> índice nesta leitura do PortAudio (A-02)
+        self._endpoints = endpoints.EndpointReader()             # F5.3 (A-19): o Core Audio, com os nomes em cache
         self._apps_sig: tuple[tuple[int, str], ...] | None = None   # o último conjunto de apps com som que foi para o log
         self._procs_cache: tuple[float, dict[int, processes.ProcInfo], dict[int, str]] | None = None
 
@@ -525,6 +561,20 @@ class Win32Platform(Platform):
         return True
 
     @override
+    def audio_devices_changed(self) -> bool:
+        """F5.3 (A-17): a assinatura do Core Audio difere da última leitura do PortAudio (só então reler vale a pena)."""
+        sig = _endpoint_signature()
+        return sig is not None and sig != self._audio_signature
+
+    @override
+    def audio_endpoints(self, refresh_names: bool = False) -> Endpoints | None:
+        """F5.3 (A-19): microfones, saídas e padrões pelo Core Audio, sem reiniciar o PortAudio; na thread da interface."""
+        if threading.current_thread() is not threading.main_thread():
+            log.debug("leitura dos endpoints pedida fora da thread da interface: ignorada")
+            return None
+        return self._endpoints.read(refresh_names)
+
+    @override
     def default_input_device(self) -> AudioDevice | None:
         import sounddevice as sd
 
@@ -543,18 +593,24 @@ class Win32Platform(Platform):
         return devs[0]
 
     def _resolve_index(self, device: AudioDevice | None) -> int | None:
+        dev = self._resolve_input(device)
+        return dev.index if dev else None
+
+    def _resolve_input(self, device: AudioDevice | None, strict: bool = False) -> AudioDevice | None:
+        """O dispositivo do PortAudio a abrir: o pedido (o índice só vale se é desta leitura, A-02; senão pelo id) ou o
+        padrão. F5.3 (A-16): com `strict`, o pedido fora da lista é erro em vez do padrão."""
         if device is None:
-            dev = self.default_input_device()
-            return dev.index if dev else None
+            return self.default_input_device()
         if device.index is not None and self._indices.get(device.id) == device.index:
-            return device.index                            # o índice é desta leitura do PortAudio (A-02: o MME repete nomes)
+            return device                                  # o índice é desta leitura do PortAudio (A-02: o MME repete nomes)
         self._invalidate_devices()                         # pode ter mudado (dock, USB, reinício): enumera de novo
         found = pick_device(self.list_input_devices(), device.id, device.name)
-        if found is None:
-            log.warning("microfone %r não está mais nesta máquina; usando o padrão", device.name)
-            dev = self.default_input_device()
-            return dev.index if dev else None
-        return found.index
+        if found is not None:
+            return found
+        if strict:
+            raise LookupError(f"o microfone {device.id} não está na lista do sistema de áudio")
+        log.warning("microfone %s não está mais nesta máquina; usando o padrão", device.id)
+        return self.default_input_device()
 
     # ---------------------------------------------------------------- apps tocando
     def _processes(self) -> tuple[dict[int, processes.ProcInfo], dict[int, str]]:
@@ -623,14 +679,15 @@ class Win32Platform(Platform):
     # ---------------------------------------------------------------- captura
     @override
     def open_mic(self, device: AudioDevice | None, sample_rate: int, on_audio: AudioCallback,
-                 on_error: ErrorCallback | None = None) -> _StreamHandle:
+                 on_error: ErrorCallback | None = None, strict: bool = False) -> _StreamHandle:
         import sounddevice as sd
 
         try:
-            idx = self._resolve_index(device)
+            dev = self._resolve_input(device, strict)
         except Exception:
             self._invalidate_devices()
             raise
+        idx, dev_id = (dev.index, dev.id) if dev is not None else (None, "")
         extra = sd.WasapiSettings(auto_convert=True)
         handle: _StreamHandle | None = None
 
@@ -656,13 +713,13 @@ class Win32Platform(Platform):
 
         def start() -> None:
             stream.start()
-            log.info("microfone aberto: índice %s a %d Hz", idx, sample_rate)
+            log.info("microfone aberto: endpoint %s (índice %s) a %d Hz", dev_id or "?", idx, sample_rate)
 
         def stop() -> None:
             stream.stop()
             stream.close()
 
-        handle = _StreamHandle(start, stop, sample_rate, 1, on_error, close_fn=stream.close)
+        handle = _StreamHandle(start, stop, sample_rate, 1, on_error, close_fn=stream.close, device_id=dev_id)
         return handle
 
     def _session_pids(self) -> set[int]:
@@ -758,18 +815,43 @@ class Win32Platform(Platform):
         return _StreamHandle(start, stop, sr, ch, on_error)
 
     @override
-    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
+    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None,
+                             output_id: str | None = None) -> _StreamHandle:
+        """O som que toca numa saída (o sistema inteiro). F5.3 (A-21): `output_id` é a saída escolhida, casada pelo nome na
+        lista de loopback do PyAudioWPatch; None, ou a escolhida que sumiu, é a padrão de console. Um `PyAudio()` novo por
+        abertura, terminado ao parar ou na falha: com outro vivo a lista seria a antiga (A-15, quem reabre fecha antes)."""
         import pyaudiowpatch as pyaudio
 
+        reading = self.audio_endpoints()
+        target = _loopback_target(reading, output_id)
         pa = pyaudio.PyAudio()
-        wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
-        speakers = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-        dev = speakers if speakers.get("isLoopbackDevice") else next(
-            (lb for lb in pa.get_loopback_device_info_generator() if speakers["name"] in lb["name"]), None)
-        if dev is None:
+        try:
+            dev = _pick_loopback(pa, pyaudio, target[1])
+            matched = bool(target[1]) and _names_match(_loopback_base(dev), target[1])
+            opened_id = target[0] if matched else _render_id(reading, _loopback_base(dev))
+            sr, ch = int(dev["defaultSampleRate"]), int(dev["maxInputChannels"])
+            stream = self._loopback_stream(pa, pyaudio, dev, sr, ch, on_audio)
+        except Exception:
             pa.terminate()
-            raise RuntimeError("nenhum dispositivo de loopback WASAPI encontrado")
-        sr, ch = int(dev["defaultSampleRate"]), int(dev["maxInputChannels"])
+            raise
+
+        def start() -> None:
+            stream.start_stream()
+            log.info("loopback do sistema aberto: saída %s (%s), %d Hz, %d canais", opened_id or "?",
+                     "escolhida" if output_id and opened_id == output_id else "padrão", sr, ch)
+
+        def stop() -> None:
+            try:
+                stream.stop_stream()
+                stream.close()
+            finally:
+                pa.terminate()
+
+        return _StreamHandle(start, stop, sr, ch, on_error, device_id=opened_id)
+
+    @staticmethod
+    def _loopback_stream(pa: Any, pyaudio: Any, dev: Mapping[str, Any], sr: int, ch: int, on_audio: AudioCallback) -> Any:
+        """O stream do loopback, parado, com o callback que só copia e entrega (o carimbo vem do ADC quando há)."""
 
         def cb(in_data: bytes, frame_count: int, time_info: dict[str, float], _status: int) -> tuple[None, int]:
             now = time.perf_counter()
@@ -779,21 +861,8 @@ class Win32Platform(Platform):
             on_audio(arr, now - lag)
             return (None, pyaudio.paContinue)
 
-        stream = pa.open(format=pyaudio.paFloat32, channels=ch, rate=sr, input=True, input_device_index=dev["index"],
-                         frames_per_buffer=sr // 10, stream_callback=cb, start=False)
-
-        def start() -> None:
-            stream.start_stream()
-            log.info("loopback do sistema aberto: %s, %d Hz, %d canais", dev["name"], sr, ch)
-
-        def stop() -> None:
-            try:
-                stream.stop_stream()
-                stream.close()
-            finally:
-                pa.terminate()
-
-        return _StreamHandle(start, stop, sr, ch, on_error)
+        return pa.open(format=pyaudio.paFloat32, channels=ch, rate=sr, input=True, input_device_index=dev["index"],
+                       frames_per_buffer=sr // 10, stream_callback=cb, start=False)
 
     # ---------------------------------------------------------------- controles
     @override

@@ -415,3 +415,32 @@ def test_minus_ten_seconds_crosses_a_recording_pause_while_playing_and_paused(st
     finally:
         permits.release(1000)
         assert eng.shutdown() is True
+
+
+def test_release_output_closes_the_stream_and_waits_for_the_writer(qtbot, store):
+    """F5.3 (A-17): a troca de microfone que relê o PortAudio pede ao player que solte a saída e espera a escritora: o som
+    que toca pausa com o aviso e o fluxo já está fechado na volta; o pausado pela gravação do sistema inteiro (R8-01, fluxo
+    aberto) fecha também e guarda o aviso dele; sem nada tocando, nada a esperar."""
+    mid = _meeting(store, seconds=30, pause=None)
+    outs: list[RealtimeOutput] = []
+
+    def factory() -> RealtimeOutput:
+        outs.append(RealtimeOutput(rate=SR))
+        return outs[-1]
+
+    player = pl.Player(store, factory)
+    notice = "pausado para trocar o microfone"
+    try:
+        assert player.release_output(notice, 1.0) is True and outs == []
+        assert player.play_from(mid, 0)
+        _wait(lambda: bool(outs) and len(outs[0].chunks) >= 2)
+        assert player.release_output(notice, 1.0) is True
+        assert outs[0].calls[-1] == "close" and (player.state().state, player.state().message) == (PAUSED, notice)
+        assert player.toggle()                                         # retomar abre outro fluxo
+        _wait(lambda: len(outs) == 2 and len(outs[1].chunks) >= 2)
+        assert player.pause_and_wait("pausado: sistema inteiro", 1.0) == (True, True)
+        assert outs[1].calls[-1] == "abort"                            # R8-01: pausado, com o fluxo aberto
+        assert player.release_output(notice, 1.0) is True
+        assert outs[1].calls[-1] == "close" and player.state().message == "pausado: sistema inteiro"
+    finally:
+        assert player.shutdown() is True

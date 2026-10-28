@@ -11,7 +11,10 @@ U-037 (D-053): sem o token do Hugging Face ou sem a chave da LLM ativa, um aviso
 e leva às Chaves de acesso; some quando nada falta, sem bloquear a gravação.
 U-043 (F5.2): a cada 2 s, um fone conectado ou removido com o warm-up aberto entra ou sai do combo (`ui/devices.py`).
 U-045 (F5.3 L1, A-01): "Idioma da reunião", com o padrão das Configurações; vai no resultado como o glossário e a reunião
-nasce com ele (transcrição, legenda e LLM). O glossário é pedido no idioma do combo; trocar o combo depois não o refaz."""
+nasce com ele (transcrição, legenda e LLM). O glossário é pedido no idioma do combo; trocar o combo depois não o refaz.
+F5.3 L4: o combo do microfone começa com "Padrão do Windows (acompanha)" (pergunta 11), que vira o microfone `None` da
+gravação e segue o padrão do Windows (A-20); sem escolha salva, é ele. A tabela de fontes ganha "Sistema inteiro: <saída>"
+por saída ativa (U-051) e a escolha fica em `warmup.last_output_id`; o teste de 3 s abre o loopback nessa saída."""
 from __future__ import annotations
 
 import functools
@@ -36,11 +39,11 @@ from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glos
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import pick_device
-from .devices import REFRESH_MS, refresh_mics
+from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, fill_mic_combo, refresh_mics
 from .keys import missing_keys, missing_keys_text
 from .live_prepare import missing_models, preparer
 from .meters import LevelMeter
-from .sources import SourceTable
+from .sources import SYSTEM_FOLLOW, SourceKey, SourceTable
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -81,16 +84,15 @@ class WarmupDialog(QDialog):
         # --- microfone ---
         mic_box = QGroupBox("Microfone (canal L: você)")
         self.mic_combo = QComboBox()
-        for d in self._devices:
-            self.mic_combo.addItem(d.name, d.id)
+        fill_mic_combo(self.mic_combo, self._devices, FOLLOW_ID, None, follow=True)   # F5.3: "acompanha" primeiro
         # U-033: o nome do dispositivo cabe cortado no combo e inteiro na lista e na dica; com o nome todo ("Grupo de
         # microfones (Tecnologia Intel® Smart Sound para microfones digitais)") o grupo engolia a proporção 1:2 e a coluna
         # "Janela" das fontes saía cortada (Windows, 25/10)
         self.mic_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.mic_combo.setMinimumContentsLength(MIC_NAME_CHARS)
-        if self._devices:                                          # a lista aberta nunca mais estreita que o maior nome
-            longest = max(self.mic_combo.fontMetrics().horizontalAdvance(d.name) for d in self._devices)
-            self.mic_combo.view().setMinimumWidth(longest + 32)
+        names = [FOLLOW_TEXT, *(d.name for d in self._devices)]   # a lista aberta nunca mais estreita que o maior nome
+        longest = max(self.mic_combo.fontMetrics().horizontalAdvance(n) for n in names)
+        self.mic_combo.view().setMinimumWidth(longest + 32)
         self.mic_combo.currentTextChanged.connect(self.mic_combo.setToolTip)
         self.mic_combo.setToolTip(self.mic_combo.currentText())
         self.mic_meter = LevelMeter(height=10)
@@ -309,8 +311,9 @@ class WarmupDialog(QDialog):
 
     # ---------------------------------------------------------------- mic
     def _selected_device(self) -> AudioDevice | None:
-        i = self.mic_combo.currentIndex()
-        return self._devices[i] if 0 <= i < len(self._devices) else None
+        """O microfone do combo; None é o "Padrão do Windows (acompanha)" (F5.3)."""
+        key = self.mic_combo.currentData()
+        return next((d for d in self._devices if d.id == key), None) if key else None
 
     def _open_mic(self) -> None:
         self._close_mic()
@@ -338,7 +341,7 @@ class WarmupDialog(QDialog):
         if self._testing:
             return                                         # o teste de 3 s lê o medidor: fica para o próximo ciclo
         result = refresh_mics(self.platform, self.mic_combo, self._devices, meter_open=self._mic_handle is not None,
-                              close_meter=self._close_mic)
+                              close_meter=self._close_mic, follow=True)
         if result is None:
             return
         self._devices = result.devices
@@ -375,7 +378,7 @@ class WarmupDialog(QDialog):
             if spec.kind == SourceKind.APP and spec.pid:
                 self._r_handle = self.platform.open_app_loopback(spec.pid, self._on_r_test)
             else:
-                self._r_handle = self.platform.open_system_loopback(self._on_r_test)
+                self._r_handle = self.platform.open_system_loopback(self._on_r_test, output_id=spec.output_id or None)
             self._r_handle.start()
         except Exception as e:
             log.debug("teste: saída não abriu: %s", e)
@@ -496,34 +499,34 @@ class WarmupDialog(QDialog):
                 self.preset_combo.setCurrentIndex(i)
                 return
         self._select_mic(self.store.get_setting("warmup.last_mic_device_id"), self.store.get_setting("warmup.last_mic_device_name"))
-        self._select_source(self.store.get_setting("warmup.last_source_kind"), self.store.get_setting("warmup.last_source_exe"))
+        self._select_source(self.store.get_setting("warmup.last_source_kind"), self.store.get_setting("warmup.last_source_exe"),
+                            self.store.get_setting("warmup.last_output_id"))
         self.room_check.setChecked(self.store.get_setting("warmup.last_in_room") == "1")
 
     def _select_mic(self, device_id: str, device_name: str) -> bool:
-        """Seleciona o microfone salvo (id estável, depois nome); se sumiu, avisa e cai no padrão (F1.1 A3)."""
+        """Seleciona o microfone salvo (id estável, depois nome); sem nenhum salvo, o "Padrão do Windows (acompanha)" (F5.3,
+        pergunta 11); o salvo que sumiu avisa e cai nele (F1.1 A3). Log com o id, nunca o nome do aparelho (A-22)."""
         if device_id or device_name:
             dev = pick_device(self._devices, device_id or None, device_name or None)
             if dev is not None:
-                self.mic_combo.setCurrentIndex(self._devices.index(dev))
+                self.mic_combo.setCurrentIndex(max(0, self.mic_combo.findData(dev.id)))
                 self.mic_note.setText("")
                 return True
-            self.mic_note.setText(f"O microfone salvo ({device_name or device_id}) não está nesta máquina; usando o padrão.")
-            log.warning("microfone salvo %r não encontrado; usando o padrão", device_name or device_id)
-        default = self.platform.default_input_device()
-        if default:
-            for i, d in enumerate(self._devices):
-                if d.id == default.id:
-                    self.mic_combo.setCurrentIndex(i)
-                    break
+            self.mic_note.setText(f"O microfone salvo ({device_name or device_id}) não está nesta máquina; usando o padrão "
+                                  "do Windows.")
+            log.warning("microfone salvo %s não encontrado; usando o padrão", device_id or "(sem id)")
+        self.mic_combo.setCurrentIndex(0)
         return False
 
-    def _select_source(self, kind: str, exe: str) -> None:
-        """Aplica agora se a lista de apps já chegou; senão fica pendente para a primeira lista (sem chutar tempo)."""
+    def _select_source(self, kind: str, exe: str, output_id: str = "") -> None:
+        """Aplica agora se a lista de apps já chegou; senão fica pendente para a primeira lista (sem chutar tempo). O sistema
+        inteiro vai na saída salva (U-051) ou, sem ela, na padrão."""
         if kind == SourceKind.APP and exe and self.sources.select_exe(exe):
             self._pending_source = None
             return
         if kind == SourceKind.SYSTEM:
-            self.sources.select_pid(-1)
+            if not (output_id and self.sources.select_key(SourceKey(SourceKind.SYSTEM, output_id=output_id))):
+                self.sources.select_key(SYSTEM_FOLLOW)
             self._pending_source = None
             return
         self._pending_source = (kind, exe)
@@ -533,7 +536,7 @@ class WarmupDialog(QDialog):
             kind, exe = self._pending_source
             self._pending_source = None
             if not (kind == SourceKind.APP and exe and self.sources.select_exe(exe)):
-                self.sources.select_pid(-1)
+                self.sources.select_key(SYSTEM_FOLLOW)
 
     def _apply_preset(self, index: int) -> None:
         pid = self.preset_combo.itemData(index)
@@ -570,6 +573,7 @@ class WarmupDialog(QDialog):
         self.store.set_setting("warmup.last_mic_device_name", dev.name if dev else "")
         self.store.set_setting("warmup.last_source_kind", str(spec.kind))
         self.store.set_setting("warmup.last_source_exe", spec.exe or "")
+        self.store.set_setting("warmup.last_output_id", spec.output_id)              # F5.3 (U-051): vazio = acompanha
         self.store.set_setting("warmup.last_in_room", "1" if self.room_check.isChecked() else "0")
 
     # ---------------------------------------------------------------- resultado

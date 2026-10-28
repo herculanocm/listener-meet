@@ -39,6 +39,42 @@ def pick_device(devices: list[AudioDevice], device_id: str | None, name: str | N
 
 
 @dataclass(frozen=True, slots=True)
+class Endpoint:
+    """F5.3 (A-19): um endpoint de áudio como o sistema o vê agora, sem a biblioteca de captura (que só relê os
+    dispositivos reiniciando). `container` é o aparelho físico: o microfone e as saídas de um fone têm o mesmo; vazio
+    quando não se sabe ou quando o aparelho é parte do computador."""
+    id: str
+    name: str
+    container: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Endpoints:
+    """F5.3 (A-19), a leitura única dos endpoints ativos: microfones, saídas e os padrões de console e de comunicação de
+    cada fluxo. `signature` muda quando o sistema ganha ou perde um endpoint ou troca um padrão (a mesma da U-043)."""
+    capture: tuple[Endpoint, ...] = ()
+    render: tuple[Endpoint, ...] = ()
+    capture_default: str = ""          # padrão de console ("" = nenhum microfone)
+    capture_comm: str = ""             # padrão de comunicação
+    render_default: str = ""
+    render_comm: str = ""
+
+    @property
+    def signature(self) -> tuple[object, ...]:
+        return (tuple(sorted(e.id for e in self.capture)), self.capture_default, self.capture_comm,
+                tuple(sorted(e.id for e in self.render)), self.render_default, self.render_comm)
+
+    def ids(self) -> frozenset[str]:
+        return frozenset(e.id for e in (*self.capture, *self.render))
+
+    def mic(self, endpoint_id: str) -> Endpoint | None:
+        return next((e for e in self.capture if e.id == endpoint_id), None)
+
+    def output(self, endpoint_id: str) -> Endpoint | None:
+        return next((e for e in self.render if e.id == endpoint_id), None)
+
+
+@dataclass(frozen=True, slots=True)
 class PlayingApp:
     pid: int
     exe: str                   # nome do executável
@@ -59,9 +95,12 @@ type ErrorCallback = Callable[[str], None]
 
 
 class CaptureHandle(Protocol):
-    """Stream devolvida parada: quem chama registra o formato e só então chama `start()` (F1.2 M-06)."""
+    """Stream devolvida parada: quem chama registra o formato e só então chama `start()` (F1.2 M-06). `device_id` é o
+    endpoint realmente aberto (F5.3, A-16: o pedido pode ter caído no padrão); vazio quando não se sabe ou no loopback de
+    um app."""
     sample_rate: int
     channels: int
+    device_id: str
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
@@ -69,8 +108,9 @@ class CaptureHandle(Protocol):
 
 class MicMute(Protocol):
     """Afinizado à thread em que foi usado pela primeira vez quando a plataforma usa COM (win32): `get()` e `set()`
-    podem ser chamados de outra thread, mas o adaptador refaz o endpoint ao notar a troca (M-07)."""
-    def set_device(self, device: AudioDevice | None) -> bool: ...   # True se achou o endpoint; False = vai no padrão
+    podem ser chamados de outra thread, mas o adaptador refaz o endpoint ao notar a troca (M-07). F5.3 (A-18): a troca
+    de endpoint é atômica sob uma trava; com `muted`, tira o mudo do antigo e põe no novo."""
+    def set_device(self, device: AudioDevice | None, muted: bool = False) -> bool: ...   # True se achou o endpoint
     def get(self) -> bool | None: ...          # None = não sei
     def set(self, muted: bool) -> bool: ...    # True se conseguiu
 
@@ -126,12 +166,21 @@ class Platform(Protocol):
     # U-043: relê os dispositivos de áudio se o sistema ganhou ou perdeu um (ou trocou o padrão), só sem stream aberto
     # além dos `own_streams` de quem pede (`release` os fecha antes); True quando a lista foi relida
     def refresh_audio_devices(self, own_streams: int = 0, release: Callable[[], None] | None = None) -> bool: ...
+    # F5.3 (A-17): o sistema mudou desde a última leitura da biblioteca de áudio (reler pede todo stream fechado)
+    def audio_devices_changed(self) -> bool: ...
+    # F5.3 (A-19): os endpoints ativos e os padrões direto do sistema, sem reler a biblioteca de áudio (que segura o
+    # microfone aberto); nomes em cache por id, relidos com `refresh_names`. None quando o sistema não responde (aí a
+    # lista é a da biblioteca, sem "novo"). Na thread da interface
+    def audio_endpoints(self, refresh_names: bool = False) -> Endpoints | None: ...
 
-    # captura (o callback roda em thread de áudio: só copiar e enfileirar); a stream volta parada
+    # captura (o callback roda em thread de áudio: só copiar e enfileirar); a stream volta parada. F5.3 (A-16): com
+    # `strict`, o microfone pedido que não está na lista é erro, não o padrão; `output_id` (A-21) é a saída cujo som o
+    # loopback do sistema inteiro grava (None = a padrão de console; a escolhida que sumiu cai na padrão)
     def open_mic(self, device: AudioDevice | None, sample_rate: int, on_audio: AudioCallback,
-                 on_error: ErrorCallback | None = None) -> CaptureHandle: ...
+                 on_error: ErrorCallback | None = None, strict: bool = False) -> CaptureHandle: ...
     def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> CaptureHandle: ...
-    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> CaptureHandle: ...
+    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None,
+                             output_id: str | None = None) -> CaptureHandle: ...
 
     # controles
     def mic_mute(self) -> MicMute: ...

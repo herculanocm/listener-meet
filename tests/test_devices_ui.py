@@ -9,6 +9,7 @@ from listener.platform.base import AudioDevice
 pytest.importorskip("PySide6")
 
 BT = AudioDevice("bt-1", "Fone BT (Hands-Free)", "fake", 1, 16000, index=1)
+FOLLOW = "Padrão do Windows (acompanha)"
 
 
 def _items(combo) -> list[str]:
@@ -18,6 +19,7 @@ def _items(combo) -> list[str]:
 def test_warmup_picks_up_a_new_headset_and_keeps_the_choice(qtbot, store, platform):
     from listener.ui.warmup import WarmupDialog
 
+    store.set_setting("warmup.last_mic_device_id", "fake-mic-0")       # um microfone escolhido (F5.3: sem escolha, "acompanha")
     dlg = WarmupDialog(platform, store)
     qtbot.addWidget(dlg)
     dlg.show()
@@ -28,13 +30,13 @@ def test_warmup_picks_up_a_new_headset_and_keeps_the_choice(qtbot, store, platfo
     assert platform.refreshes == 0 and platform.live_streams() == meter
     platform.next_devices = [platform.devices[0], BT]                 # o fone chegou
     dlg._refresh_devices()
-    assert _items(dlg.mic_combo) == ["Mic Fake", "Fone BT (Hands-Free)"] and dlg.mic_combo.currentData() == "fake-mic-0"
+    assert _items(dlg.mic_combo) == [FOLLOW, "Mic Fake", "Fone BT (Hands-Free)"] and dlg.mic_combo.currentData() == "fake-mic-0"
     assert dlg.mic_note.text() == "novo: Fone BT (Hands-Free)" and platform.refreshes == 1
     assert meter[0].stopped and len(platform.live_streams()) == 1 and platform.live_streams() != meter   # reaberto
-    dlg.mic_combo.setCurrentIndex(1)                                  # escolheu o fone; depois ele sai
+    dlg.mic_combo.setCurrentIndex(2)                                  # escolheu o fone; depois ele sai
     platform.next_devices = [platform.devices[0]]
     dlg._refresh_devices()
-    assert _items(dlg.mic_combo) == ["Mic Fake"] and dlg.mic_combo.currentData() == "fake-mic-0"
+    assert _items(dlg.mic_combo) == [FOLLOW, "Mic Fake"] and dlg.mic_combo.currentData() == ""   # F5.3: cai no "acompanha"
     assert "o microfone escolhido saiu" in dlg.mic_note.text() and len(platform.live_streams()) == 1
     dlg.reject()
 
@@ -50,14 +52,14 @@ def test_warmup_waits_while_another_stream_holds_the_audio_library(qtbot, store,
     other.start()
     platform.next_devices = [platform.devices[0], BT]
     dlg._refresh_devices()
-    assert dlg.mic_combo.count() == 1 and platform.refreshes == 0 and len(platform.live_streams()) == 2   # nada fechou
+    assert dlg.mic_combo.count() == 2 and platform.refreshes == 0 and len(platform.live_streams()) == 2   # nada fechou
     other.stop()
     dlg._testing = True                                               # o teste de 3 s lê o medidor: também espera
     dlg._refresh_devices()
     assert platform.refreshes == 0
     dlg._testing = False
     dlg._refresh_devices()
-    assert dlg.mic_combo.count() == 2 and platform.refreshes == 1
+    assert dlg.mic_combo.count() == 3 and platform.refreshes == 1                   # "acompanha" e os dois microfones
     dlg.reject()
 
 

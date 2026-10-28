@@ -47,7 +47,11 @@ interface: de outra thread só emite um sinal enfileirado (o notificador de exce
 trava de reentrada, limite por minuto e nada novo com `_quitting`. Um aviso por job, com o que ficou pronto: processamento e
 LLM (lista e custo, U-020), só a identidade (revê a A-14 da F5.2), job com erro (por job e `finished_at`, semeado na
 abertura, A-11), o fim e o erro do download de modelos e a resposta do chat com a janela fora de foco (A-12); índice,
-glossário e resumo parcial não avisam. O clique faz a ação do aviso e traz o alvo à frente; job lançado põe o polling em 2 s."""
+glossário e resumo parcial não avisam. O clique faz a ação do aviso e traz o alvo à frente; job lançado põe o polling em 2 s.
+F5.3 L4 (U-049, U-050): os dispositivos da gravação moram em `ui/recording_devices.py` (a vigia de 2 s, as trocas, a linha
+de alerta e o painel do botão 🎧); aqui só o fio: o gravador chama `_release_player_for_mic` antes de reler o PortAudio
+(o player solta a saída, "pausado para trocar o microfone", A-17) e a primeira leitura do poller do mudo depois de uma
+troca de microfone é ignorada (A-18). O log da gravação leva o id do microfone, nunca o nome do aparelho (A-22)."""
 from __future__ import annotations
 
 import functools
@@ -73,8 +77,8 @@ from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..llm import local_embed, partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
-from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Health, JobKind, JobStatus, JobStep, MeetingStatus,
-                     SourceKind, SummaryKind)
+from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind,
+                     SummaryKind)
 from ..store.jobs import HELD
 from ..pipeline import review, summary_gate
 from ..pipeline.reprocess import target_language
@@ -87,6 +91,7 @@ from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HIST
                       NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text)
 from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
+from .recording_devices import RecordingDevices
 from .review import ReviewDialog
 from .settings_min import SettingsDialog
 from .sources import SourceTable
@@ -107,6 +112,8 @@ SYSTEM_PLAY_TEXT = ("Você está gravando o som do sistema inteiro: o áudio do 
 PLAYER_PAUSED_WARMUP = "pausado para o warm-up da gravação"                                    # R7-01, na barra do player
 PLAYER_PAUSED_SYSTEM = "pausado: a gravação capta o som do sistema inteiro (tocar pede confirmação)"
 PLAYER_STOP_WAIT_S = 0.5             # R8-01: o gravador espera a pausa confirmada do player antes de abrir o loopback do sistema
+PLAYER_PAUSED_MIC = "pausado para trocar o microfone"                                         # F5.3 (A-17)
+PLAYER_RELEASE_WAIT_S = 1.0          # A-17: a troca de microfone espera o player soltar a saída antes de reler o PortAudio
 TRAY_TIP = ("No Windows 11 o ícone da bandeja nasce no menu oculto (seta ao lado do relógio). Arraste-o para a barra "
             "para ver o estado da gravação.")
 EMERGENCY_STOP_BUDGET_S = 10.0
@@ -210,6 +217,8 @@ class Controller(QObject):
         self._marker_open = False
         self._quitting = False
         self._mute_poller: _MutePoller | None = None
+        self._mute_skip = 0                           # F5.3 (A-18): leituras do poller do mudo a ignorar depois de uma troca
+        self.devices: RecordingDevices | None = None  # F5.3 L4: os dispositivos da gravação em curso
         self.hotkey_pressed.connect(self._on_hotkey)
         self._timer = QTimer(self)
         self._timer.setInterval(200)
@@ -633,14 +642,14 @@ class Controller(QObject):
                                                language=lang)
         for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
             self.store.llm_calls.set_meeting(int(call_id), meeting_id)
-        log.info("gravação %s iniciada: mic=%s fonte=%s idioma=%s", meeting_id,
-                 cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.log_text(), language.whisper_code(lang))
+        log.info("gravação %s iniciada: mic=%s fonte=%s idioma=%s", meeting_id,       # A-22: o id, nunca o nome do aparelho
+                 cfg.mic_device.id if cfg.mic_device else "padrão (acompanha)", cfg.source.log_text(), language.whisper_code(lang))
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
         # o gravador chama `_before_system_loopback` antes de abrir o loopback do sistema inteiro por qualquer caminho: a
         # fonte pedida e a troca automática quando o loopback do app não abre, aqui, na troca de fonte e na reabertura (R8-01)
         rec = Recorder(self.platform, self.store, meeting_id, cfg, clock=self.clock_factory() if self.clock_factory else None,
-                       before_system_loopback=self._before_system_loopback)
+                       before_system_loopback=self._before_system_loopback, before_reread=self._release_player_for_mic)
         try:
             rec.start()
         except Exception as e:
@@ -674,7 +683,11 @@ class Controller(QObject):
         w.mute_clicked.connect(self.toggle_mute)
         w.stop_clicked.connect(self.stop_recording)
         w.cancel_clicked.connect(self.cancel_recording)
-        w.switch_source_clicked.connect(self.switch_source)
+        self.devices = RecordingDevices(self.platform, rec, panel_parent=w, on_mic_switched=self._mic_switched,
+                                        open_other_app=self.switch_source, parent=self)
+        w.devices_clicked.connect(self.devices.open_panel)
+        w.alert_clicked.connect(self.devices.on_alert)
+        self.devices.start()
         w.settings_requested.connect(self.open_settings)
         w.moved.connect(lambda p: self.store.set_setting("ui.widget_pos", f"{p.x()},{p.y()}"))
         w.show()
@@ -759,6 +772,7 @@ class Controller(QObject):
         if self.tray:
             self.tray.set_state(AppState.SAVING)
         self._stop_mute_poller()
+        self._stop_devices()                             # F5.3: nenhuma troca de aparelho enquanto salva
         self._stop_live()
         self._stop_partial()
         self._end_live_window(rec.meeting_id, "gravação parada: só leitura")
@@ -810,6 +824,7 @@ class Controller(QObject):
             rec.cfg.stop_timeout_s = min(rec.cfg.stop_timeout_s, EMERGENCY_STOP_BUDGET_S)
             self._timer.stop()
             self._stop_mute_poller()
+            self._stop_devices()
             self._stop_live(detach=True)                 # EOF: o filho termina sozinho, mesmo com o app saindo
             self._stop_partial()
             try:
@@ -871,6 +886,7 @@ class Controller(QObject):
             wait_before_close(task, PARTIAL_QUIT_WAIT_MS, "uma tarefa em voo")
 
     def _finish(self, rec: Recorder) -> None:
+        self._stop_devices()
         self.platform.keep_awake(False)
         self.platform.mic_mute().set_device(None)
         self.player.clear_notice()                       # a gravação acabou: "a gravação capta..." não vale mais (R8-01)
@@ -881,6 +897,25 @@ class Controller(QObject):
         if self.tray:
             self.tray.set_state(AppState.IDLE)
 
+    def _stop_devices(self) -> None:
+        if self.devices is not None:
+            devices, self.devices = self.devices, None
+            devices.stop()
+            devices.deleteLater()
+
+    def _release_player_for_mic(self) -> bool:
+        """F5.3 (A-17), o gancho do gravador antes de reler o PortAudio (que só reinicia sem stream aberto): o player solta a
+        saída e o gravador espera a confirmação até `PLAYER_RELEASE_WAIT_S`; o som que tocava fica pausado com o aviso na
+        barra."""
+        released = self.player.release_output(PLAYER_PAUSED_MIC, PLAYER_RELEASE_WAIT_S)
+        if not released:
+            log.warning("o player não soltou a saída em %.1f s; a lista de dispositivos pode não ser relida", PLAYER_RELEASE_WAIT_S)
+        return released
+
+    def _mic_switched(self) -> None:
+        """A-18: a leitura do poller do mudo que vier logo depois da troca pode ser do endpoint antigo: ignorada."""
+        self._mute_skip = 1
+
     def _teardown_widget(self) -> None:
         if self.widget:
             self.widget.close()
@@ -889,6 +924,7 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- mudo do sistema
     def _start_mute_poller(self) -> None:
+        self._mute_skip = 0
         if self._mute_poller is None:
             poller = _MutePoller(self.platform)
             poller.changed.connect(self._on_os_mute)
@@ -904,6 +940,9 @@ class Controller(QObject):
             poller.interrupt()
 
     def _on_os_mute(self, os_muted: object) -> None:
+        if self._mute_skip:
+            self._mute_skip -= 1                         # F5.3 (A-18): a primeira depois de uma troca de microfone
+            return
         rec = self.recorder
         if rec is not None and self.state != AppState.SAVING and os_muted is not None and os_muted != rec.muted:
             rec.set_muted(bool(os_muted), source="dispositivo")
@@ -921,23 +960,11 @@ class Controller(QObject):
         rec.check_devices()
         if self._lease_at is not None and rec.elapsed() - self._lease_at >= self.lease_renew_s:
             self._write_lease(rec)
-        snap = rec.snapshot
-        db = health.get("db", Health.OK)
-        if db == Health.ALERT:
-            since = int(rec.elapsed() - (snap.pending_since or rec.elapsed()))
-            w.show_alert(f"banco não responde há {since}s; {snap.pending} pedaço(s) retido(s) em memória")
-        elif health.get("L") == Health.LOST:
-            w.show_alert("microfone desconectado; tentando reabrir…")
-        elif health.get("R") == Health.LOST:
-            w.show_alert("saída desconectada; tentando reabrir…", can_switch=True)
-        elif health.get("R") == Health.ALERT:
-            w.show_alert("saída sem sinal: a reunião está tocando em outro app?", can_switch=True)
-        elif health.get("L") == Health.ALERT:
-            w.show_alert(f"microfone sem sinal há mais de {int(rec.cfg.l_alert_seconds)}s")
-        elif db == Health.WARN:
-            w.show_alert(f"banco lento: {snap.pending} pedaço(s) na fila")
-        else:
+        alert = self.devices.alert(health) if self.devices is not None else None    # F5.3 (A-21): com prioridade
+        if alert is None:
             w.show_alert(None)
+        else:
+            w.show_alert(alert.text, alert.button, alert.action, alert.tip)
 
     # ---------------------------------------------------------------- fila de processamento (F2)
     def _write_lease(self, rec: Recorder) -> None:

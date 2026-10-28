@@ -24,11 +24,16 @@ def test_recording_widget_only_restyles_on_change(qtbot):
     assert w.style_changes == n                                   # 20 ticks iguais: nenhum setStyleSheet
     w.update_state(6.0, {"L": 0.0, "R": 0.0}, {**base, "R": "alert"}, True, False, 1)
     assert w.style_changes == n + 2 and w.status_label.text() == "pausado" and w.markers_label.text() == "⚑ 1"
-    w.show_alert("x", True)
-    w.show_alert("x", True)
-    assert w.alert_btn.isVisibleTo(w) and w.alert_label.text() == "x"
+    w.show_alert("x", "Dispositivos…", "devices")
+    w.show_alert("x", "Dispositivos…", "devices")
+    assert w.alert_btn.isVisibleTo(w) and w.alert_label.full_text == "x" and w.alert_btn.text() == "Dispositivos…"
+    clicked: list[str] = []
+    w.alert_clicked.connect(clicked.append)
+    w.alert_btn.click()                                           # F5.3 (A-21): o botão genérico emite a ação da linha
+    w.show_alert("y")
+    assert clicked == ["devices"] and not w.alert_btn.isVisibleTo(w) and w.alert_label.full_text == "y"
     w.update_state(7.0, {"L": 0.0, "R": 0.0}, base, False, False, 1, saving=True)
-    assert w.status_label.text() == "salvando…" and not w.btn_stop.isEnabled()
+    assert w.status_label.text() == "salvando…" and not w.btn_stop.isEnabled() and not w.btn_devices.isEnabled()
 
 
 def test_level_meter_skips_repaint_when_silent(qtbot):
@@ -136,6 +141,7 @@ def test_warmup_long_microphone_name_leaves_room_for_the_sources(qtbot, store, p
 
     name = "Grupo de microfones (Tecnologia Intel® Smart Sound para microfones digitais)"
     monkeypatch.setattr(platform, "list_input_devices", lambda: [AudioDevice("fake-mic-0", name, "fake", 1, 16000, index=0)])
+    store.set_setting("warmup.last_mic_device_id", "fake-mic-0")                # o nome longo escolhido (F5.3: sem escolha, "acompanha")
     dlg = WarmupDialog(platform, store)
     qtbot.addWidget(dlg)
     dlg.show()

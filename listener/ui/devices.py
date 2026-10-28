@@ -1,7 +1,8 @@
 """U-043 (F5.2): o combo do microfone acompanha os dispositivos do sistema sem reiniciar o app. O "Antes de gravar" e a
 página do microfone do assistente chamam `refresh_mics` a cada `REFRESH_MS`: se o Windows ganhou ou perdeu um dispositivo,
 o medidor é fechado (o PortAudio só reinicia sem stream aberto), a lista é relida e o combo é refeito mantendo a escolha
-pelo id (ou o padrão, com aviso); quem chama reabre o medidor."""
+pelo id (ou o padrão, com aviso); quem chama reabre o medidor. F5.3 (U-045, pergunta 11): no "Antes de gravar" o combo
+começa com "Padrão do Windows (acompanha)" (`follow`), que segue o padrão do Windows também durante a gravação (A-20)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 log = get_logger("ui.devices")
 
 REFRESH_MS = 2000
+FOLLOW_ID = ""                      # o dado do item "acompanha" (o microfone pedido é None)
+FOLLOW_TEXT = "Padrão do Windows (acompanha)"
 
 
 class MicRefresh(NamedTuple):
@@ -26,7 +29,7 @@ class MicRefresh(NamedTuple):
 
 
 def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice], *, meter_open: bool,
-                 close_meter: Callable[[], None]) -> MicRefresh | None:
+                 close_meter: Callable[[], None], follow: bool = False) -> MicRefresh | None:
     """None quando nada mudou (o medidor fica como estava); senão a lista nova, o aviso e se o medidor precisa reabrir."""
     released = False
 
@@ -49,7 +52,7 @@ def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice
         log.warning("listar microfones depois da mudança: %s", e)
         return MicRefresh(devices, "", released)
     keep = combo.currentData()
-    kept = fill_mic_combo(combo, fresh, keep, default.id if default else None)
+    kept = fill_mic_combo(combo, fresh, keep, default.id if default else None, follow=follow)
     old = {d.id for d in devices}
     notes = [f"novo: {', '.join(d.name for d in fresh if d.id not in old)}"] if any(d.id not in old for d in fresh) else []
     if keep and not kept:
@@ -58,17 +61,21 @@ def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice
     return MicRefresh(fresh, "; ".join(notes), released or meter_open)
 
 
-def fill_mic_combo(combo: QComboBox, devices: list[AudioDevice], keep_id: object, default_id: str | None) -> bool:
-    """Refaz o combo sem disparar a troca de microfone; True quando a escolha anterior segue na lista."""
+def fill_mic_combo(combo: QComboBox, devices: list[AudioDevice], keep_id: object, default_id: str | None,
+                   follow: bool = False) -> bool:
+    """Refaz o combo sem disparar a troca de microfone; True quando a escolha anterior segue na lista. Com `follow`, o
+    primeiro item é o "acompanha", que sempre segue, e é ele que fica quando o escolhido saiu."""
     combo.blockSignals(True)
     try:
         combo.clear()
+        if follow:
+            combo.addItem(FOLLOW_TEXT, FOLLOW_ID)
         for d in devices:
             combo.addItem(d.name, d.id)
-        i = combo.findData(keep_id) if keep_id else -1
+        i = 0 if follow and keep_id == FOLLOW_ID else (combo.findData(keep_id) if keep_id else -1)
         kept = i >= 0
-        if not kept and default_id:
-            i = combo.findData(default_id)
+        if not kept:
+            i = 0 if follow else (combo.findData(default_id) if default_id else -1)
         combo.setCurrentIndex(max(0, i) if combo.count() else -1)
     finally:
         combo.blockSignals(False)

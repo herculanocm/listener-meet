@@ -3,7 +3,10 @@ presa a um monitor existente (F1.1 A9). Popup do marcador trazido para a frente 
 Estilos e tooltips só mudam quando o estado muda (M-12).
 F4: selo do ao vivo ("ao vivo", "legenda atrasada", "ao vivo parou") ao lado do estado, sempre que o ao vivo foi lançado;
 com `live.in_widget`, uma linha com a última legenda (`Ana — CFO: texto`, cortada com reticências e inteira no tooltip)
-cujo clique abre a janela "Ao vivo"; com a linha, o widget ganha a altura dela sem encolher o tamanho salvo."""
+cujo clique abre a janela "Ao vivo"; com a linha, o widget ganha a altura dela sem encolher o tamanho salvo.
+F5.3 L4 (U-049, U-050): o botão "🎧" abre o painel dos dispositivos (desligado salvando); a linha de alerta tem um botão
+genérico (rótulo e ação dados por quem a mostra, A-21) no lugar do "Trocar fonte" fixo: "Usar" no aparelho novo,
+"Dispositivos…" na saída sem sinal."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
 log = get_logger("ui.widget")
 LIVE_MIN_HEIGHT = 118             # F4: 96 do widget mais a linha da legenda
 CLICK_SLOP_PX = 6
+ALERT_MIN_PX = 170                # F5.3: a linha de alerta à vista abre esse espaço ao lado dos botões (o resto vai na dica)
 # selo por estado do ao vivo (`Controller.live_status`): texto e cor; os estados fora daqui escondem o selo
 LIVE_BADGES: dict[str, tuple[str, str]] = {
     "starting": ("ao vivo", "#95a5a6"), "restarting": ("ao vivo", "#95a5a6"), "live": ("ao vivo", "#2ecc71"),
@@ -47,17 +51,14 @@ def _screen_rects() -> list[tuple[int, int, int, int]]:
     return out
 
 
-class CaptionLine(QLabel):
-    """A última legenda numa linha: cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no
-    tooltip; um clique sem arrastar emite `clicked` (o arrasto do widget começa fora da linha)."""
-    clicked = Signal()
+class ElidedLabel(QLabel):
+    """Uma linha cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no tooltip (a legenda
+    do F4 e, F5.3, a linha de alerta com o nome de um aparelho)."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.full_text = ""
-        self._press: QPoint | None = None
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_full_text(self, text: str, tip: str = "") -> None:
         self.full_text = text
@@ -71,6 +72,17 @@ class CaptionLine(QLabel):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._elide()
+
+
+class CaptionLine(ElidedLabel):
+    """A última legenda numa linha, cortada como a `ElidedLabel`; um clique sem arrastar emite `clicked` (o arrasto do
+    widget começa fora da linha)."""
+    clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._press: QPoint | None = None
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -92,7 +104,8 @@ class RecordingWidget(QWidget):
     mute_clicked = Signal()
     stop_clicked = Signal()
     cancel_clicked = Signal()
-    switch_source_clicked = Signal()
+    devices_clicked = Signal()            # F5.3 (U-049): o painel dos dispositivos
+    alert_clicked = Signal(str)           # F5.3 (A-21): o botão da linha de alerta, com a ação dela
     settings_requested = Signal()
     live_clicked = Signal()               # F4: clique na linha da legenda abre a janela "Ao vivo"
     moved = Signal(QPoint)
@@ -113,7 +126,8 @@ class RecordingWidget(QWidget):
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
         self._last_health: dict[str, str] = {}
-        self._last_alert: tuple[str | None, bool] = (None, False)
+        self._last_alert: tuple[str | None, str, str, str] = (None, "", "", "")
+        self._alert_action = ""
         self._last_live: tuple[str, str] | None = None
         self.style_changes = 0                                      # instrumentação dos testes (M-12)
 
@@ -140,13 +154,16 @@ class RecordingWidget(QWidget):
         self.btn_mark = self._btn("⚑", "Marcador com nota", self.mark_clicked)
         self.btn_mute = self._btn("🎤", "Mudo global (muta o microfone no sistema)", self.mute_clicked)
         self.btn_mute.setCheckable(True)
+        self.btn_devices = self._btn("🎧", "Dispositivos: trocar o microfone e a saída gravada sem parar", self.devices_clicked)
         self.btn_stop = self._btn("■", "Parar e salvar", self.stop_clicked)
         self.btn_cancel = self._btn("✕", "Cancelar e descartar", self.cancel_clicked)
 
-        self.alert_label = QLabel("")
+        self.alert_label = ElidedLabel()                  # F5.3: o nome de um aparelho não alarga o widget
+        self.alert_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.alert_label.setMinimumWidth(ALERT_MIN_PX)
         self.alert_label.setStyleSheet("color: #ff7675; font-size: 11px;")
-        self.alert_btn = QPushButton("Trocar fonte")
-        self.alert_btn.clicked.connect(self.switch_source_clicked)
+        self.alert_btn = QPushButton("")
+        self.alert_btn.clicked.connect(self._emit_alert)   # método, não lambda com `self`: o ciclo pelo C++ prendia o widget
         self.alert_label.hide()
         self.alert_btn.hide()
 
@@ -164,10 +181,10 @@ class RecordingWidget(QWidget):
         meters.addWidget(QLabel("R"))
         meters.addWidget(self.meter_r, 1)
         buttons = QHBoxLayout()
-        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_stop, self.btn_cancel):
+        for b in self._buttons():
             buttons.addWidget(b)
         buttons.addStretch(1)
-        buttons.addWidget(self.alert_label)
+        buttons.addWidget(self.alert_label, 10)           # escondida, a folga fica com o espaço; à vista, quase toda com ela
         buttons.addWidget(self.alert_btn)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
@@ -187,6 +204,15 @@ class RecordingWidget(QWidget):
             log.info("posição salva do widget fora dos monitores atuais; voltando ao canto padrão")
         screen = QGuiApplication.primaryScreen().availableGeometry()
         return QPoint(screen.right() - self.width() - 16, screen.bottom() - self.height() - 16)
+
+    def _emit_alert(self) -> None:
+        """O clique no botão da linha de alerta, com a ação dela (A-21). Conectado como método do próprio widget: um lambda
+        que captura `self` fica guardado do lado C++ do PySide, num ciclo que o coletor do Python não enxerga, e o widget
+        sem dono vivia até a saída, quando a derrubada do Qt o destruía fora de ordem (0xC0000409 na saída)."""
+        self.alert_clicked.emit(self._alert_action)
+
+    def _buttons(self) -> tuple[QToolButton, ...]:
+        return (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_stop, self.btn_cancel)
 
     def _btn(self, text: str, tip: str, signal: SignalInstance) -> QToolButton:
         b = QToolButton()
@@ -221,7 +247,7 @@ class RecordingWidget(QWidget):
             self.btn_pause.setText("▶" if paused else "⏸")
             self.btn_mute.setChecked(muted)
             self.btn_mute.setText("🔇" if muted else "🎤")
-            for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_stop, self.btn_cancel):
+            for b in self._buttons():
                 b.setEnabled(not saving)
         for lab, ch in ((self.health_l, "L"), (self.health_r, "R")):
             h = health.get(ch, Health.OFF)
@@ -259,14 +285,20 @@ class RecordingWidget(QWidget):
         line = caption_text(label, text)
         self.caption_line.set_full_text(line, f"{line}\n\n(clique para abrir a janela Ao vivo)")
 
-    def show_alert(self, text: str | None, can_switch: bool = False) -> None:
-        if (text, can_switch) == self._last_alert:
+    def show_alert(self, text: str | None, button: str = "", action: str = "", tip: str = "") -> None:
+        """A linha de alerta (só muda quando o alerta muda, M-12); `button` é o rótulo do botão e `action` o que o clique
+        emite em `alert_clicked` (F5.3, A-21); sem rótulo, sem botão."""
+        key = (text, button, action, tip)
+        if key == self._last_alert:
             return
-        self._last_alert = (text, can_switch)
+        self._last_alert = key
+        self._alert_action = action
         if text:
-            self.alert_label.setText(text)
+            self.alert_label.set_full_text(text, tip or text)
             self.alert_label.show()
-            self.alert_btn.setVisible(can_switch)
+            self.alert_btn.setText(button)
+            self.alert_btn.setToolTip(tip)
+            self.alert_btn.setVisible(bool(button))
         else:
             self.alert_label.hide()
             self.alert_btn.hide()

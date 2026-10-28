@@ -6,7 +6,9 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               parado, o atalho do Histórico e a saída pelo "Sair"
   python scripts/win_probe.py shots [--out PASTA]             as telas no DPI real sem aparecer na tela do usuário: um PNG
                                                               por tela e por aba (F5.3: a fila nos seis estados e a Ajuda;
-                                                              um aviso de cada tipo e o grupo "Idioma e avisos")
+                                                              um aviso de cada tipo e o grupo "Idioma e avisos"; o widget
+                                                              com o botão 🎧 e a linha "novo: … Usar", e o painel dos
+                                                              dispositivos com os aparelhos reais desta máquina)
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
@@ -60,6 +62,32 @@ def silent_meeting(store, seconds: int, chunk_s: int = 60) -> int:
             store.insert_chunk(mid, ch, idx, idx * chunk_s * 1000, len(x), SR, 0, encode_flac(x, SR))
     store.finish_meeting(mid, seconds * 1000)
     return mid
+
+
+def devices_shots(p, shot) -> None:
+    """F5.3 L4: com os aparelhos reais desta máquina. O "novo" do painel marca a última saída (como se tivesse chegado depois
+    do começo da gravação) só para a foto; a linha do widget mostra o nome do microfone padrão."""
+    from listener.capture.recorder import SourceSpec
+    from listener.ui.devices_panel import DevicesPanel, PanelView, mic_rows, output_rows, panel_notes
+    from listener.ui.widget import RecordingWidget
+
+    reading = p.audio_endpoints(refresh_names=True)
+    mic = reading.mic(reading.capture_default) if reading is not None else None
+    rw = RecordingWidget()
+    rw.update_state(125, {"L": 0.1, "R": 0.05}, {"L": "ok", "R": "ok", "db": "ok"}, False, False, 0)
+    rw.show_alert(f"novo: {mic.name if mic is not None else 'Fone de ouvido (Hands-Free)'}", "Usar", "use")
+    shot(rw, "widget-novo-usar")
+    rw.close()
+    start = reading.ids() - {reading.render[-1].id} if reading is not None and reading.render else frozenset()
+    for name, source in (("painel-dispositivos", SourceSpec("system", label="Sistema inteiro")),
+                         ("painel-dispositivos-app", SourceSpec("app", pid=1, exe="ms-teams.exe", label="ms-teams"))):
+        mics = mic_rows(reading, p.list_input_devices() if reading is None else [], None, frozenset(start))
+        panel = DevicesPanel()
+        panel.show_view(PanelView(mics, output_rows(reading, source, frozenset(start)), panel_notes(reading, source, mics)))
+        panel.set_status("Microfone trocado.")
+        panel.adjustSize()
+        shot(panel, name)
+        panel.close()
 
 
 def queue_jobs(store, first_mid: int) -> None:
@@ -277,9 +305,10 @@ def cmd_shots(args) -> None:
     wiz.close()
     rw = RecordingWidget()
     rw.update_state(65, {"L": 0.1, "R": 0.01}, {"L": "ok", "R": "warn", "db": "ok"}, False, False, 2)
-    rw.show_alert("teste de alerta", True)
+    rw.show_alert("teste de alerta", "Dispositivos…", "devices")
     shot(rw, "widget")
     rw.close()
+    devices_shots(p, shot)                                # F5.3 L4: o widget com "novo: … Usar" e o painel
     sd = SettingsDialog(store, p, {})
     shot(sd, "configuracoes")
     tabs_of(sd, "configuracoes")

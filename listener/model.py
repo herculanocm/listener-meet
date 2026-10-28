@@ -42,6 +42,7 @@ class EventType(StrEnum):
     LIVE_STOPPED = "live_stopped"
     LLM_DEFERRED = "llm_deferred"  # U-042 (F5.2): a ata espera a identificação das vozes (job pai e tarefas)
     LLM_RELEASED = "llm_released"  # U-042: as tarefas adiadas entraram na fila (job criado e o motivo)
+    DEVICE_CHANGE = "device_change"  # F5.3 (A-21): outro aparelho num canal (id do endpoint, acompanha, motivo; nunca o nome)
 
 
 class Health(StrEnum):
@@ -58,6 +59,14 @@ class SourceKind(StrEnum):
     APP = "app"
     SYSTEM = "system"
     NONE = "none"
+
+
+class DeviceReason(StrEnum):
+    """F5.3 L4: por que o aparelho de um canal mudou (o motivo do evento `device_change`)."""
+    USER = "user"          # o usuário escolheu no painel ou no "Usar"
+    DEFAULT = "default"    # acompanha o padrão do Windows, que mudou (A-20)
+    MISSING = "missing"    # o escolhido não está: o padrão no lugar (A-16)
+    BACK = "back"          # o escolhido voltou (pergunta 10)
 
 
 class SettingScope(StrEnum):

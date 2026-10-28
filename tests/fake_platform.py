@@ -2,6 +2,10 @@
 
 `FakePlatform.pump(seconds)` avança o `ManualClock` e entrega os blocos de todas as streams iniciadas, em ordem de
 tempo, de forma síncrona: com `Recorder(inline_worker=True)` tudo acontece na thread do teste (F1.2 M-27).
+F5.3 L4: `endpoints` é o que o Core Audio vê agora (`next_endpoints` entra na leitura seguinte) e `devices` o que o
+PortAudio leu da última vez (só muda no reinício, com o padrão dessa leitura); `open_mic(strict=True)` recusa o pedido
+fora da lista; o loopback do sistema abre na saída pedida, resolvida contra a lista do primeiro aberto enquanto algum
+segue aberto (um `PyAudio()` vivo mantém a lista antiga, A-15), e `loopbacks_at_open` conta os abertos em cada abertura.
 """
 from __future__ import annotations
 
@@ -15,7 +19,13 @@ from typing import override
 import numpy as np
 
 from listener.capture.clock import ManualClock
-from listener.platform.base import AudioCallback, AudioDevice, ChildProcess, ErrorCallback, Platform, PlayingApp
+from listener.platform.base import (AudioCallback, AudioDevice, ChildProcess, Endpoint, Endpoints, ErrorCallback, Platform,
+                                    PlayingApp)
+
+MIC = AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)
+SPEAKERS = Endpoint("fake-out-0", "Alto-falantes Fake")
+BASE_ENDPOINTS = Endpoints(capture=(Endpoint(MIC.id, MIC.name),), render=(SPEAKERS,), capture_default=MIC.id,
+                           capture_comm=MIC.id, render_default=SPEAKERS.id, render_comm=SPEAKERS.id)
 
 
 class FakeStream:
@@ -35,6 +45,7 @@ class FakeStream:
         self.started = False
         self.stopped = False
         self.stop_calls = 0                          # U-043: quem fechou a stream (a morta também precisa ser fechada)
+        self.device_id = ""                          # F5.3 (A-16): o endpoint aberto
         self.t_next: float | None = None             # início (sessão) do próximo bloco a entregar
         self.phase = 0
         self.delivered = 0
@@ -72,12 +83,21 @@ class FakeStream:
 
 
 class FakeMute:
+    """`muted` é o mudo do endpoint de agora; `by_device` guarda o de cada endpoint que já passou por aqui (A-18)."""
+
     def __init__(self) -> None:
         self.muted = False
         self.device: AudioDevice | None = None
+        self.by_device: dict[str | None, bool] = {}
+        self.switches: list[tuple[str | None, bool]] = []          # (endpoint novo, mudo passado junto)
 
-    def set_device(self, device: AudioDevice | None) -> bool:
+    def set_device(self, device: AudioDevice | None, muted: bool = False) -> bool:
+        self.by_device[self.device.id if self.device else None] = False if muted else self.muted
         self.device = device
+        key = device.id if device else None
+        self.switches.append((key, muted))
+        self.muted = True if muted else self.by_device.get(key, False)
+        self.by_device[key] = self.muted
         return True
 
     def get(self) -> bool | None:
@@ -85,6 +105,7 @@ class FakeMute:
 
     def set(self, muted: bool) -> bool:
         self.muted = muted
+        self.by_device[self.device.id if self.device else None] = muted
         return True
 
 
@@ -196,10 +217,22 @@ class FakePlatform(Platform):
         self.children: list[FakeChild] = []                          # F4: filhos ao vivo silenciosos
         self.lowered = 0
         self.next_pid = 5000
-        self.devices = [AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)]
+        self.devices = [MIC]
         self.next_devices: list[AudioDevice] | None = None    # U-043: o teste "conecta" um dispositivo aqui
         self.refreshes = 0
         self.mic_streams: list[FakeStream] = []
+        # F5.3 L4: o Core Audio (agora e na próxima leitura), o que o PortAudio leu da última vez e quem mais o segura
+        self.endpoints: Endpoints | None = BASE_ENDPOINTS
+        self.next_endpoints: Endpoints | None = None
+        self.endpoint_reads = 0
+        self._pa_signature = BASE_ENDPOINTS.signature
+        self._pa_default: str | None = None                   # o padrão da última leitura do PortAudio (None = o primeiro)
+        self.other_streams: Callable[[], int] = lambda: 0     # o player nos testes do controlador
+        self.fail_ids: set[str] = set()                       # microfones que recusam abrir
+        self.mics_at_open: list[int] = []                     # quantos microfones seguiam abertos em cada abertura (A-15)
+        self.loopbacks: list[FakeStream] = []
+        self.loopbacks_at_open: list[int] = []                # quantos loopbacks do sistema seguiam abertos em cada abertura
+        self._lb_view: Endpoints | None = None                # a lista do PyAudio vivo (A-15)
         self.capture_exclusion = True                         # F5.3 (A-13): o que `exclude_from_capture` devolve
         self.excluded: list[int] = []                         # as janelas que pediram para sair da captura
 
@@ -215,6 +248,12 @@ class FakePlatform(Platform):
 
     def live_streams(self) -> list[FakeStream]:
         return [s for s in self.streams if s.started and not s.stopped]
+
+    def settle(self) -> None:
+        """F5.3: o PortAudio leu agora (o app abriu assim): a lista e o padrão dele são os do Core Audio de agora."""
+        if self.endpoints is not None:
+            self._pa_signature = self.endpoints.signature
+            self._pa_default = self.endpoints.capture_default or None
 
     # ---- Platform ----
     @override
@@ -242,18 +281,38 @@ class FakePlatform(Platform):
     @override
     def refresh_audio_devices(self, own_streams: int = 0, release: Callable[[], None] | None = None) -> bool:
         """U-043: `next_devices` é o que o "sistema" passou a ter; relê só sem stream de microfone aberto além dos de quem
-        pede. Aberto é o que ninguém fechou (A-03): a stream que o driver encerrou (`fail`) segura, como no PortAudio."""
-        if self.next_devices is None or sum(1 for s in self.mic_streams if s.stop_calls == 0) > own_streams:
+        pede. Aberto é o que ninguém fechou (A-03): a stream que o driver encerrou (`fail`) segura, como no PortAudio.
+        F5.3: também relê quando o Core Audio mudou desde a última leitura (o padrão novo entra aqui)."""
+        if not self.audio_devices_changed() or self._held() > own_streams:
             return False
         if release is not None:
             release()
-        self.devices, self.next_devices = list(self.next_devices), None
+        if self.next_devices is not None:
+            self.devices, self.next_devices = list(self.next_devices), None
+        if self.endpoints is not None:
+            self._pa_signature = self.endpoints.signature
+            self._pa_default = self.endpoints.capture_default or None
         self.refreshes += 1
         return True
 
+    def _held(self) -> int:
+        return sum(1 for s in self.mic_streams if s.stop_calls == 0) + self.other_streams()
+
+    @override
+    def audio_devices_changed(self) -> bool:
+        return self.next_devices is not None or (self.endpoints is not None and self.endpoints.signature != self._pa_signature)
+
+    @override
+    def audio_endpoints(self, refresh_names: bool = False) -> Endpoints | None:
+        if self.next_endpoints is not None:
+            self.endpoints, self.next_endpoints = self.next_endpoints, None
+        self.endpoint_reads += 1
+        return self.endpoints
+
     @override
     def default_input_device(self) -> AudioDevice | None:
-        return self.list_input_devices()[0]
+        devices = self.list_input_devices()
+        return next((d for d in devices if d.id == self._pa_default), devices[0] if devices else None)
 
     @override
     def list_playing_apps(self) -> list[PlayingApp]:
@@ -267,10 +326,19 @@ class FakePlatform(Platform):
 
     @override
     def open_mic(self, device: AudioDevice | None, sample_rate: int, on_audio: AudioCallback,
-                 on_error: ErrorCallback | None = None) -> FakeStream:
+                 on_error: ErrorCallback | None = None, strict: bool = False) -> FakeStream:
         if self.mic_fail:
             raise RuntimeError("sem microfone")
+        found = self.default_input_device() if device is None else next((d for d in self.devices if d.id == device.id), None)
+        if found is None:
+            if strict and device is not None:
+                raise LookupError(f"o microfone {device.id} não está na lista")
+            found = self.default_input_device()
+        if found is not None and found.id in self.fail_ids:
+            raise RuntimeError("o microfone recusou abrir")
+        self.mics_at_open.append(sum(1 for s in self.mic_streams if s.stop_calls == 0))
         stream = self._stream(sample_rate, 1, on_audio, on_error, freq=440.0)
+        stream.device_id = found.id if found else ""
         self.mic_streams.append(stream)                  # U-043: o que o PortAudio do sounddevice abriria
         return stream
 
@@ -281,8 +349,18 @@ class FakePlatform(Platform):
         return self._stream(*self.r_format, on_audio, on_error, freq=220.0, silent=self.r_silent_windows)
 
     @override
-    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> FakeStream:
-        return self._stream(*self.system_format, on_audio, on_error, freq=330.0, silent=self.r_silent_windows)
+    def open_system_loopback(self, on_audio: AudioCallback, on_error: ErrorCallback | None = None,
+                             output_id: str | None = None) -> FakeStream:
+        still_open = sum(1 for s in self.loopbacks if s.stop_calls == 0)
+        self.loopbacks_at_open.append(still_open)
+        if not still_open or self._lb_view is None:
+            self._lb_view = self.endpoints                     # PyAudio novo: a lista de agora (com outro vivo, a antiga)
+        view = self._lb_view
+        stream = self._stream(*self.system_format, on_audio, on_error, freq=330.0, silent=self.r_silent_windows)
+        if view is not None:
+            stream.device_id = output_id if output_id and view.output(output_id) is not None else view.render_default
+        self.loopbacks.append(stream)
+        return stream
 
     @override
     def mic_mute(self) -> FakeMute:

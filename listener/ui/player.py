@@ -19,7 +19,9 @@ Sem dispositivo de saída, sem o PortAudio do `sounddevice`, sem o arquivo de á
 `erro` com o motivo, que a barra mostra; nada quebra. A fábrica do fluxo de saída é injetável (os testes usam uma falsa
 que registra os quadros). Q9: o controlador põe um `guard` chamado antes de o som começar (a gravação em curso captura o
 sistema inteiro: o som do player entraria no canal R) e pausa o som com um aviso na barra (`pause(aviso)`, R7-01). Títulos
-e avisos em texto puro na barra (R7-07)."""
+e avisos em texto puro na barra (R7-07). F5.3 (A-17): `release_output` solta o fluxo de saída e espera a escritora
+confirmar, para a troca de microfone que relê o PortAudio (que só reinicia sem stream aberto); fecha também o fluxo que a
+pausa do R8-01 deixa aberto a gravação inteira com o sistema inteiro."""
 from __future__ import annotations
 
 import importlib
@@ -415,6 +417,20 @@ class PlaybackEngine:
             return playing, True
         self._send("pause", _Pause(message, done))
         return playing, done.wait(timeout_s)
+
+    def release_and_wait(self, message: str, timeout_s: float) -> bool:
+        """F5.3 (A-17): o fluxo de saída fecha e a escritora confirma: o som que tocava pausa com `message`; o já pausado
+        guarda o aviso dele (o fluxo que a pausa do R8-01 deixou aberto também fecha). True quando nada ficou aberto no
+        prazo; sem escritora viva não há fluxo."""
+        done = threading.Event()
+        with self._cv:
+            if self._state == PLAYING:
+                self._paused_at, self._state, self._message = self._position_locked(), PAUSED, message
+            alive = self._thread is not None and self._thread.is_alive()
+        if not alive:
+            return True
+        self._send("pause", _Pause(message, done, release=True))
+        return done.wait(timeout_s)
 
     def clear_notice(self) -> None:
         """Tira o aviso da pausa (a gravação que o pediu não começou ou acabou); o som segue pausado (R8-01)."""
@@ -943,6 +959,16 @@ class Player(QObject):
         result = self.engine.pause_and_wait(notice, timeout_s)
         self._kicked.emit()
         return result
+
+    def release_output(self, notice: str, timeout_s: float) -> bool:
+        """F5.3 (A-17): solta o fluxo de saída e espera (a troca de microfone vai reler o PortAudio): o som que toca pausa
+        com `notice` na barra, e retomar passa pelo `guard` como sempre. True quando nada ficou aberto no prazo."""
+        st = self.state()
+        if st.active or self.engine.alive:
+            log.info("player: soltar a saída da reunião %s (%s)", st.meeting_id, notice)
+        released = self.engine.release_and_wait(notice, timeout_s)
+        self._kicked.emit()
+        return released
 
     def clear_notice(self) -> None:
         """Tira o aviso da pausa da barra; o som segue pausado (a gravação que pediu a pausa não começou ou acabou, R8-01)."""
