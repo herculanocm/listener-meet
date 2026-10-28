@@ -52,23 +52,29 @@ def test_level_meter_skips_repaint_when_silent(qtbot):
 
 
 def test_settings_dialog_validates_with_platform_grammar(qtbot, store, platform):
+    from listener.ui.settings_editors import ChoiceEditor, TextEditor
     from listener.ui.settings_min import SettingsDialog
 
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
     assert dlg.validation_error() is None
-    dlg._edits["capture.target_rate"].setText("0")
+    rate = dlg.editor("capture.target_rate")                         # F5.4 L3 (A-14): a taxa em lista não aceita "0";
+    rate.set_raw("0")                                                # o texto entra como se viesse do banco
     assert "Taxa de amostragem" in (dlg.validation_error() or "")
-    dlg._edits["capture.target_rate"].setText("16000")
-    dlg._edits["hotkeys.mark"].setText("ctrl+ç")
+    rate.set_raw("16000")
+    mark = dlg.editor("hotkeys.mark")
+    assert isinstance(mark, TextEditor)                              # o atalho segue um campo de texto: o usuário digita
+    mark.edit.setText("ctrl+ç")
     assert "tecla desconhecida" in (dlg.validation_error() or "")
-    dlg._edits["hotkeys.mark"].setText("ctrl+alt+shift+r")      # igual ao de iniciar
+    mark.edit.setText("ctrl+alt+shift+r")                            # igual ao de iniciar
     assert dlg.validation_error() == "Dois atalhos iguais."
-    dlg._edits["hotkeys.mark"].setText("ctrl+alt+shift+m")
-    dlg._edits["pipeline.threshold"].setText("0.9")                 # F2: grupo Processamento gerado da tabela
+    mark.edit.setText("ctrl+alt+shift+m")
+    dlg.editor("pipeline.threshold").set_raw("0.9")                  # F2: Processamento gerado da tabela
     assert "Limiar" in (dlg.validation_error() or "")
-    dlg._edits["pipeline.threshold"].setText("0.7")
-    dlg._combos["pipeline.whisper_model"].setCurrentText("small")
+    dlg.editor("pipeline.threshold").set_raw("0.7")
+    whisper = dlg.editor("pipeline.whisper_model")
+    assert isinstance(whisper, ChoiceEditor)
+    whisper.combo.setCurrentText("small")
     dlg.hf_token.setText("hf_abc")
     dlg._save()
     assert store.get_setting("capture.target_rate") == "16000" and dlg.result() == dlg.DialogCode.Accepted
@@ -80,15 +86,13 @@ def test_settings_database_path_wraps_instead_of_widening_the_form(qtbot, store,
     """Visto no Windows a 150 % (25/10): o caminho do banco numa linha só alargava o formulário além do diálogo, com
     rolagem horizontal e as dicas da direita ("na próxima gravação", "aplica agora") cortadas. O grupo do banco não pode
     ser o que define a largura (offscreen as fontes são outras: a comparação é entre os grupos, não com a tela)."""
-    from PySide6.QtWidgets import QGroupBox
-
     from listener.ui.settings_min import SettingsDialog, breakable_path
 
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    groups = {g.title(): g for g in dlg.findChildren(QGroupBox)}
+    database = dlg.page("Log e banco de dados").cards["Banco de dados"]          # F5.4 L3: o cartão na página dele
     assert len(str(store.base_dir)) > 20
-    assert groups["Banco de dados"].minimumSizeHint().width() < groups["Captura"].minimumSizeHint().width()
+    assert database.minimumSizeHint().width() < dlg.page("Captura").body.minimumSizeHint().width()
     assert breakable_path("C:\\a\\b").replace("\u200b", "") == "C:\\a\\b" and breakable_path("/x/y").count("\u200b") == 2
 
 

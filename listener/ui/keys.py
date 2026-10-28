@@ -5,7 +5,10 @@ quem fala); sem a chave da LLM ativa, sai a transcrição sem ata, resumo nem t�
 texto aberto (CP10); os links são fixos (nenhum texto do usuário vira HTML, R7-07).
 U-038 (D-054): a página "Chaves de acesso" do assistente da primeira inicialização (`KeysPage`): a LLM escolhida (Gemini,
 GPT ou Claude) com a chave e o "Testar conexão", e o token do Hugging Face, tudo opcional; o assistente grava no fim
-(`save_wizard_keys`), e a escolhida vira a LLM ativa."""
+(`save_wizard_keys`), e a escolhida vira a LLM ativa.
+F5.4 L3 (U-071, U-075): nas Configurações, a página "Chaves de acesso" tem um cartão por provedor (`keys_cards`), cada um
+com a chave, o "Testar conexão" e o estado em selo (Falta a chave, Conectado, Falhou...); o do Hugging Face diz se falta o
+token (`hf_state`). Sem jargão interno na tela (U-076)."""
 from __future__ import annotations
 
 import functools
@@ -13,7 +16,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QResizeEvent
-from PySide6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QWizardPage
+from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QWizardPage
 
 from ..config.defaults import HF_PROVIDER_ID
 from ..llm.adapters_common import friendly_error
@@ -23,6 +26,7 @@ from ..llm.types import Capability, ProviderKind
 from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LOCAL_ID
+from .components import Badge, Card
 from .providers import TITLES, test_connection
 from . import theme
 from .tasks import run_task
@@ -55,8 +59,9 @@ WIZARD_HELP = {"gemini": LLM_HELP["gemini"],
                              "fica na busca local, sem custo (prepare em Configurações, Busca, 135 MB).")}
 WIZARD_NOTE = ("Tudo opcional: pule e cole depois em Configurações, Chaves de acesso. Ficam no banco do app, em texto aberto "
                "(CP10).")
-STORAGE_NOTE = ("Valem ao salvar. Ficam no banco do app, em texto aberto (CP10): mantenha a pasta do banco fora do OneDrive "
-                "e do git. Qual LLM faz o quê fica no grupo LLM, mais abaixo.")
+STORAGE_NOTE = ("Ficam no banco do app, em texto aberto: mantenha a pasta do banco fora do OneDrive e do git. Qual LLM faz o "
+                "quê fica na página LLM.")
+HF_MISSING, HF_SET = "Falta o token", "Informado"   # U-075: o token não tem teste aqui; o selo diz só se foi informado
 
 
 class WrapLabel(QLabel):
@@ -94,32 +99,53 @@ def note(text: str, *, links: bool = False) -> QLabel:
     return label
 
 
-def _llm_rows(form: QFormLayout, tabs: ProviderTabs, pid: str) -> None:
+def _state_row(badge: Badge, detail: QLabel | None = None) -> QHBoxLayout:
+    """O selo do estado no tamanho do texto e, ao lado, o detalhe (que estica)."""
+    badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+    row = QHBoxLayout()
+    row.setSpacing(theme.METRICS.form_row)
+    row.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+    if detail is not None:
+        row.addWidget(detail, 1)
+    else:
+        row.addStretch(1)
+    return row
+
+
+def _llm_card(tabs: ProviderTabs, pid: str) -> Card:
+    """O cartão de um provedor de LLM: a chave com o "Testar conexão", o estado em selo e onde conseguir."""
     tab = tabs.tab_by_id[pid]
+    card = Card(TITLES.get(pid, pid))
     row = QHBoxLayout()
     row.addWidget(tab.key, 1)
     row.addWidget(tab.btn_test)
-    form.addRow(TITLES.get(pid, pid), row)
-    form.addRow("", tab.key_status)
+    card.content.addLayout(row)
+    card.content.addLayout(_state_row(tab.key_badge, tab.key_status))
     if pid in LLM_HELP:
-        form.addRow("", note(LLM_HELP[pid], links=True))
+        card.content.addWidget(note(LLM_HELP[pid], links=True))
+    return card
 
 
-def keys_group(tabs: ProviderTabs, hf_token: QLineEdit) -> QGroupBox:
-    """O grupo: Gemini (o padrão), o token do Hugging Face e os outros provedores. Os campos são os das sub-abas e o do
-    token, só postos aqui: quem grava continua sendo `ProviderTabs.save` e o `_save` do diálogo."""
-    box = QGroupBox(f"{KEYS_TITLE} (a LLM faz a ata e o resumo; o Hugging Face, saber quem fala)")
-    form = QFormLayout(box)
-    if FIRST in tabs.tab_by_id:
-        _llm_rows(form, tabs, FIRST)
+def hf_state(token: str) -> tuple[str, theme.Tone]:
+    """O selo do token do Hugging Face (U-075): falta (aviso) ou informado."""
+    return (HF_SET, theme.Tone.NEUTRAL) if token.strip() else (HF_MISSING, theme.Tone.WARNING)
+
+
+def keys_cards(tabs: ProviderTabs, hf_token: QLineEdit) -> tuple[list[Card], Badge]:
+    """Os cartões da página: Gemini (o padrão), o Hugging Face e os outros provedores, e o selo do token (quem chama o
+    atualiza quando o token muda). Os campos são os das sub-abas e o do token, só postos aqui: quem grava continua sendo
+    `ProviderTabs.save` e o `_save` do diálogo."""
     hf_token.setPlaceholderText(HF_PLACEHOLDER)
-    form.addRow("Hugging Face", hf_token)
-    form.addRow("", note(HF_HELP, links=True))
-    for pid in tabs.tab_by_id:
-        if pid != FIRST:
-            _llm_rows(form, tabs, pid)
-    form.addRow(note(STORAGE_NOTE))
-    return box
+    hf_token.setAccessibleName("Token do Hugging Face")
+    hf_badge = Badge(*hf_state(hf_token.text()))
+    hf = Card("Hugging Face")
+    hf.content.addWidget(hf_token)
+    hf.content.addLayout(_state_row(hf_badge))
+    hf.content.addWidget(note(HF_HELP, links=True))
+    cards = [_llm_card(tabs, FIRST)] if FIRST in tabs.tab_by_id else []
+    cards.append(hf)
+    cards += [_llm_card(tabs, pid) for pid in tabs.tab_by_id if pid != FIRST]
+    return cards, hf_badge
 
 
 def missing_keys(store: Store) -> tuple[str, ...]:
@@ -239,4 +265,5 @@ def save_wizard_keys(store: Store, provider_id: str, key: str, hf_token: str, te
              "informado" if token else "ausente")
 
 
-__all__ = ["KEYS_TITLE", "KeysPage", "keys_group", "missing_keys", "missing_keys_text", "note", "save_wizard_keys"]
+__all__ = ["HF_MISSING", "HF_SET", "KEYS_TITLE", "STORAGE_NOTE", "KeysPage", "hf_state", "keys_cards", "missing_keys",
+           "missing_keys_text", "note", "save_wizard_keys"]

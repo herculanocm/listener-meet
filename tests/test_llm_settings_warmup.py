@@ -63,13 +63,15 @@ def test_request_glossary_with_fake_and_without_key(store, monkeypatch):
 
 
 def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, platform, monkeypatch):
+    from listener.ui.settings_editors import FloatEditor
     from listener.ui.settings_min import SettingsDialog
 
     monkeypatch.setenv("LISTENER_LLM", "fake")
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    assert "llm.output_language" not in dlg._combos and "llm.cost_alert_usd" in dlg._edits and dlg.provider_tabs.tabs.count() == 3
-    assert not _item_enabled(dlg._combos["pipeline.transcriber"], "llm")                                # sem provedor com chave
+    assert "llm.output_language" not in dlg._editors and dlg.page("LLM").isAncestorOf(dlg.editor("llm.cost_alert_usd").widget)
+    assert dlg.provider_tabs.tabs.count() == 3
+    assert not _item_enabled(dlg.editor("pipeline.transcriber").widget, "llm")                          # sem provedor com chave
     tab = dlg.provider_tabs.tab_by_id["gemini"]
     assert tab.key.text() == "" and tab.fast.currentText() == "gemini-3.8-flash" and tab.strong.currentText() == "gemini-3.1-pro-preview"
     assert tab.status.text() == "ainda não testado" and tab.prices.rowCount() >= 4
@@ -88,7 +90,9 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     tab.params.setText("{nao json")
     assert "parâmetros não são JSON" in (dlg.validation_error() or "")
     tab.params.setText('{"top_p": 0.9}')
-    dlg._edits["llm.cost_alert_usd"].setText("5")
+    cost = dlg.editor("llm.cost_alert_usd")
+    assert isinstance(cost, FloatEditor)
+    cost.spin.setValue(5.0)                                                                     # F5.4 L3: o spin em US$
     dlg.provider_tabs.active_llm.setCurrentIndex(dlg.provider_tabs.active_llm.findData("openai"))
     dlg.provider_tabs.active_embed.setCurrentIndex(dlg.provider_tabs.active_embed.findData("gemini"))
     assert dlg.provider_tabs.active_embed.findData("anthropic") < 0                                     # sem embeddings na Anthropic
@@ -109,7 +113,7 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     store.providers.set_active("gemini", llm=True)
     dlg2 = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg2)
-    assert _item_enabled(dlg2._combos["pipeline.transcriber"], "llm")
+    assert _item_enabled(dlg2.editor("pipeline.transcriber").widget, "llm")
 
 
 def test_warmup_glossary_debounce_stale_and_no_key(qtbot, store, platform, monkeypatch):
@@ -209,6 +213,7 @@ def test_fast_model_never_falls_back_to_embeddings_and_prices_validate_before_sa
     """R3-09: sem modelo rápido, a config usa o padrão do provedor (nunca o de embeddings em `model`); a sub-aba recusa o
     rápido vazio. R3-12: preço inválido aparece em `validation_error` e nada é gravado."""
     from listener.llm.jobconfig import LlmJobConfig
+    from listener.ui.settings_editors import FloatEditor
     from listener.ui.settings_min import SettingsDialog
 
     store.providers.update_provider("gemini", api_key=KEY, fast_model=None, model="gemini-embedding-001")
@@ -229,13 +234,17 @@ def test_fast_model_never_falls_back_to_embeddings_and_prices_validate_before_sa
     assert "preço inválido" in (dlg.validation_error() or "")
     tab.prices.item(0, 2).setText("-1")
     assert "preço negativo" in (dlg.validation_error() or "")
-    dlg._edits["llm.cost_alert_usd"].setText("7")
+    cost = dlg.editor("llm.cost_alert_usd")
+    assert isinstance(cost, FloatEditor)
+    cost.spin.setValue(7.0)
     from PySide6.QtWidgets import QMessageBox
 
     warned: list[str] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(str(a[2])))
-    dlg._save()
-    assert warned and "preço negativo" in warned[0] and dlg.result() != dlg.DialogCode.Accepted
+    dlg._save()                                              # F5.4 L3 (U-072): a página LLM e a sub-aba abertas, a faixa
+    assert "preço negativo" in dlg.error_bar.label.text() and not dlg.error_bar.isHidden() and warned == []
+    assert dlg.stack.currentWidget() is dlg.page("LLM") and dlg.provider_tabs.tabs.currentWidget() is tab
+    assert tab.prices.property("invalid") and dlg.result() != dlg.DialogCode.Accepted
     assert store.get_setting("llm.cost_alert_usd") != "7"                                               # nada gravado
     assert {p["model"]: p["output_usd_m"] for p in store.providers.list_prices("gemini")} == before
 

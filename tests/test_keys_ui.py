@@ -49,21 +49,21 @@ def test_key_and_token_messages_point_to_the_keys_group(store, tmp_path, forget_
 
 
 def test_settings_open_with_the_keys_group_first(qtbot, store, platform, monkeypatch):
-    from PySide6.QtWidgets import QGroupBox, QLabel, QScrollArea
+    from PySide6.QtWidgets import QLabel
 
-    from listener.ui.keys import KEYS_TITLE
-    from listener.ui.providers import KEY_EDITED, NO_KEY
+    from listener.ui.keys import HF_MISSING, HF_SET, KEYS_TITLE
+    from listener.ui.providers import CONNECTED, KEY_EDITED, KEY_NEW, NO_KEY
     from listener.ui.settings_min import SettingsDialog
 
     monkeypatch.setenv("LISTENER_LLM", "fake")
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    first = dlg.findChild(QScrollArea).widget().layout().itemAt(0).widget()
-    assert isinstance(first, QGroupBox) and first.title().startswith(KEYS_TITLE)
+    first = dlg.page(KEYS_TITLE)                                 # F5.4 L3: a primeira página, a que abre
+    assert dlg.nav.item(0).text() == KEYS_TITLE and dlg.stack.currentWidget() is first
     tabs = dlg.provider_tabs.tab_by_id
     assert set(tabs) == {"gemini", "openai", "anthropic"} and first.isAncestorOf(dlg.hf_token)
-    for tab in tabs.values():                                    # a chave, o Testar e o estado: no primeiro grupo, não na aba
-        assert all(first.isAncestorOf(w) and not tab.isAncestorOf(w) for w in (tab.key, tab.btn_test, tab.key_status))
+    for tab in tabs.values():                                    # a chave, o Testar e o estado: na primeira página, não na aba
+        assert all(first.isAncestorOf(w) and not tab.isAncestorOf(w) for w in (tab.key, tab.btn_test, tab.key_badge, tab.key_status))
     helps = [label for label in first.findChildren(QLabel) if label.openExternalLinks()]
     links = " ".join(label.text() for label in helps)
     assert all(url in links for url in ("aistudio.google.com", "huggingface.co/settings/tokens",
@@ -71,17 +71,20 @@ def test_settings_open_with_the_keys_group_first(qtbot, store, platform, monkeyp
     dlg.show()                                                   # a ajuda com links tem a altura do texto, sem vazio em volta
     qtbot.waitUntil(lambda: all(h.height() == h.heightForWidth(h.width()) for h in helps), timeout=3000)
     gemini = tabs["gemini"]
-    assert gemini.key_status.text() == NO_KEY
+    assert gemini.key_badge.text() == NO_KEY and gemini.key_status.text() == ""             # U-075: o estado em selo
     gemini.key.setText(KEY)
-    assert gemini.key_status.text() == KEY_EDITED
+    assert gemini.key_badge.text() == KEY_NEW and gemini.key_status.text() == KEY_EDITED
     gemini.key.setText("")
-    assert gemini.key_status.text() == NO_KEY
+    assert gemini.key_badge.text() == NO_KEY
     gemini.key.setText(KEY)
     gemini.fast.setCurrentText("fake-fast")
     gemini.btn_test.click()                                      # testa a chave digitada, antes de salvar
     qtbot.waitUntil(lambda: gemini.last_test is not None, timeout=3000)
-    assert gemini.key_status.text().startswith("ok: ") and gemini.key_status.text() == gemini.status.text()
+    assert gemini.key_badge.text() == CONNECTED and gemini.status.text().startswith("ok: ")
+    assert gemini.key_status.text() and gemini.status.text().endswith(gemini.key_status.text())   # o mesmo resultado nos dois
+    assert dlg.hf_badge.text() == HF_MISSING
     dlg.hf_token.setText("hf_abc")
+    assert dlg.hf_badge.text() == HF_SET
     dlg._save()
     assert store.providers.get("gemini")["api_key"] == KEY and store.settings.provider_key(HF_PROVIDER_ID) == "hf_abc"
 

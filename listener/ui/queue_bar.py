@@ -4,19 +4,20 @@ itens a cada 2 s e reordena as linhas, e um widget de célula ficaria no job err
 preenchido tem a cor do estado (`common.JOB_STATUS_TONES`, nos tokens do tema; F5.4), o cancelado é hachurado e o número
 fica preto ou branco pela luminância do que está embaixo dele (sobre o preenchido e sobre o trilho, cada lado com a sua
 cor). No "rodando" uma faixa anda pela barra; quem a move é o timer da fila (`phase`), ligado só com alguma linha rodando e
-a fila visível."""
+a fila visível. F5.4 L3 (U-077): a barra com os cantos no raio dos controles (o token `radius`), recortada uma vez para o
+preenchido, as listras, a faixa e o número."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QRectF, Qt
-from PySide6.QtGui import QBrush, QFont, QLinearGradient, QPainter, QPalette
+from PySide6.QtGui import QBrush, QFont, QLinearGradient, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..model import JobStatus
 from .common import BAND_OPACITY, bar_colors
-from .theme import qcolor
+from .theme import qcolor, surface_tokens
 
 PROGRESS_ROLE = Qt.ItemDataRole.UserRole + 1      # fração de 0 a 1; None = sem barra (a linha agregada do índice com erro)
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 2        # o estado do job, que dá a cor
@@ -55,6 +56,10 @@ class ProgressBarDelegate(QStyledItemDelegate):
         fill = QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(1.0, float(value))), bar.height())
         rest = QRectF(fill.right(), bar.top(), bar.right() - fill.right(), bar.height())
         painter.save()
+        radius = surface_tokens(opt.widget).metrics.radius
+        shape = QPainterPath()
+        shape.addRoundedRect(bar, radius, radius)
+        painter.setClipPath(shape, Qt.ClipOperation.IntersectClip)
         painter.fillRect(bar, qcolor(colors.track))
         painter.fillRect(fill, qcolor(colors.fill))
         if colors.hatch:

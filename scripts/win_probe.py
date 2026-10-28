@@ -12,7 +12,11 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               dispositivos com os aparelhos reais desta máquina); F5.4: com
                                                               os relatórios `cortados` e `pequenos` de cada foto; L2: o
                                                               widget em cada estado e em cada alerta, a folha da bandeja
-                                                              e a moldura de cada janela contra o notebook (1280 x 672)
+                                                              e a moldura de cada janela contra o notebook (1280 x 672);
+                                                              L3: cada página das Configurações (a parte à vista e a
+                                                              página inteira), as sub-abas dos provedores, o erro de
+                                                              validação na página, e a fila nos seis estados e com o
+                                                              aviso; quem usa o `fit_to_screen` cabe no notebook
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -171,6 +175,41 @@ def devices_shots(p, shot) -> None:
         discard(panel)
 
 
+def _slug(text: str) -> str:
+    return text.lower().replace(" ", "-").replace("/", "-")
+
+
+def settings_shots(store, p, shot, part, app) -> None:
+    """F5.4 L3 (U-071 a U-076): cada página das Configurações (a parte à vista e a página inteira, a rolagem incluída), as
+    sub-abas dos provedores na página LLM e o erro de validação (U-072) com a página aberta, o campo marcado e a faixa. A
+    rolagem horizontal de uma página vai para o `cortados` dela (o conteúdo mais largo que a página)."""
+    from listener.ui.settings_min import SettingsDialog
+
+    sd = SettingsDialog(store, p, {"ctrl+alt+shift+h": "outro programa já usa este atalho"})
+    for row in range(sd.nav.count()):
+        sd.nav.setCurrentRow(row)
+        app.processEvents()
+        page = sd.stack.currentWidget()
+        name = f"configuracoes-{row + 1}-{_slug(page.page_title)}"
+        shot(sd, name)
+        if page.horizontalScrollBar().isVisible():
+            out("rolagem_horizontal", pagina=page.page_title, largura=page.body.minimumSizeHint().width(),
+                vista=page.viewport().width())
+        part(page.body, f"{name}-inteira")
+        if page.page_title == "LLM":
+            tabs = sd.provider_tabs.tabs
+            for i in range(1, tabs.count()):
+                tabs.setCurrentIndex(i)
+                app.processEvents()
+                shot(sd, f"{name}-{_slug(tabs.tabText(i))}")
+            tabs.setCurrentIndex(0)
+    sd.editor("hotkeys.mark").widget.setText("ctrl+ç")
+    sd._save()                                            # U-072: a página Atalhos, o campo marcado e a faixa
+    app.processEvents()
+    shot(sd, "configuracoes-erro")
+    discard(sd)
+
+
 def queue_jobs(store, first_mid: int) -> None:
     """A fila nos seis estados para a foto (F5.3 L2, U-047): concluído, erro, cancelado (hachurado), pausado, rodando a 42 %
     e pendente devolvido à fila com 30 %, mais a linha agregada do índice rodando a 55 %. Cada tipo de job só tem um claim
@@ -320,7 +359,7 @@ def cmd_shots(args) -> None:
         os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"       # A-21: antes do QApplication
     from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtGui import QFontInfo
-    from PySide6.QtWidgets import QApplication, QGroupBox, QTabWidget
+    from PySide6.QtWidgets import QApplication, QTabWidget
 
     from probe_ui import apply_theme, layout_report, release_theme
 
@@ -338,8 +377,9 @@ def cmd_shots(args) -> None:
     from listener.ui.player import Player
     from listener.ui.queue import BUTTON_HELP, COLUMN_HELP, QueueDialog
     from listener.ui.queue_help import QueueHelpDialog
-    from listener.ui.settings_min import SettingsDialog
     from listener.ui.summary import SummaryDialog
+    from listener.ui import queue as queue_module
+    from listener.ui import settings_min as settings_module
     from listener.ui import warmup as warmup_module
     from listener.ui.common import fit_rect
     from listener.ui.toast import Toast
@@ -357,15 +397,18 @@ def cmd_shots(args) -> None:
     fitted: dict[str, list[int]] = {}
 
     def probe_fit(w) -> None:
-        """O `fit_to_screen` da sonda (A-17): o mesmo cálculo, com a janela fora da tela (sem a trazer para a tela do usuário)."""
+        """O `fit_to_screen` da sonda (A-17): o mesmo cálculo, com a janela fora da tela (sem a trazer para a tela do usuário)
+        e a área livre limitada à do notebook do dono (L3: as Configurações abrem no limite dele; a foto é a do notebook)."""
         a, f, g = screen().availableGeometry(), w.frameGeometry(), w.geometry()
-        _x, _y, width, height = fit_rect((a.x(), a.y(), f.width(), f.height()), (g.width(), g.height()),
-                                         (a.x(), a.y(), a.width(), a.height()), (w.minimumWidth(), w.minimumHeight()))
+        area = (a.x(), a.y(), min(a.width(), NOTEBOOK[0]), min(a.height(), NOTEBOOK[1]))
+        _x, _y, width, height = fit_rect((a.x(), a.y(), f.width(), f.height()), (g.width(), g.height()), area,
+                                         (w.minimumWidth(), w.minimumHeight()))
         fitted[w.windowTitle()] = [width, height]
         if (width, height) != (g.width(), g.height()):
             w.resize(width, height)
 
-    warmup_module.fit_to_screen = probe_fit
+    for module in (warmup_module, settings_module, queue_module):
+        module.fit_to_screen = probe_fit
 
     def shot(w, name: str) -> None:
         w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
@@ -420,11 +463,7 @@ def cmd_shots(args) -> None:
     discard(wiz)
     widget_shots(p, shot)                                 # F5.4 L2: cada estado e cada alerta
     devices_shots(p, shot)                                # F5.3 L4: o painel
-    sd = SettingsDialog(store, p, {})
-    shot(sd, "configuracoes")
-    tabs_of(sd, "configuracoes")
-    part(next(g for g in sd.findChildren(QGroupBox) if g.title() == "Idioma e avisos"), "configuracoes-idioma-e-avisos")
-    discard(sd)
+    settings_shots(store, p, shot, part, app)              # F5.4 L3: cada página, as sub-abas e o erro
     mid = store.create_meeting("Comitê de investimentos", "sistema", None, None)
     store.finish_meeting(mid, 1000)
     su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []})
@@ -447,6 +486,9 @@ def cmd_shots(args) -> None:
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")
+    qd.table.selectRow(next(r for r in range(qd.table.rowCount()) if qd.table.item(r, 3).text() == "rodando"))
+    qd.reprocess_selected()                               # F5.4 L3 (U-057): o aviso da última ação numa faixa
+    shot(qd, "fila-aviso")
     hd = QueueHelpDialog(BUTTON_HELP, COLUMN_HELP, qd)
     shot(hd, "fila-ajuda")
     discard(hd)

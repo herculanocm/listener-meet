@@ -81,19 +81,16 @@ def test_the_conversions_live_in_one_place(store):
 
 
 def test_settings_language_group_saves_the_code_of_the_combo(qtbot, store, platform):
-    from PySide6.QtWidgets import QScrollArea
-
     from listener.ui.keys import KEYS_TITLE
     from listener.ui.settings_min import SettingsDialog
 
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    body = dlg.findChild(QScrollArea).widget().layout()
-    first, second = (body.itemAt(i).widget().title() for i in range(2))
-    assert first.startswith(KEYS_TITLE) and second == "Idioma e avisos"                # logo depois das chaves
+    assert [dlg.nav.item(i).text() for i in range(2)] == [KEYS_TITLE, "Idioma e avisos"]   # F5.4 L3: a página logo depois
     combo = dlg.language_combo
+    assert dlg.page("Idioma e avisos").isAncestorOf(combo) and dlg.editor("app.language").widget is combo
     assert [combo.itemText(i) for i in range(combo.count())] == ["Português (pt-BR)", "Inglês (en)"]
-    assert combo.currentData() == "pt-BR" and "llm.output_language" not in dlg._combos
+    assert combo.currentData() == "pt-BR" and "llm.output_language" not in dlg._editors
     combo.setCurrentIndex(combo.findData("en"))
     assert dlg.validation_error() is None
     dlg._save()

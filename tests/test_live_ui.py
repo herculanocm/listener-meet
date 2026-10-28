@@ -135,6 +135,8 @@ def _prepare_target(db: Path, gate: threading.Event | None = None, models: Path 
 
 
 def test_settings_live_group_prepares_models_once_and_survives_closing(qtbot, store, platform, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QComboBox
+
     from listener.ui.live_prepare import ModelPreparer
     from listener.ui.settings_min import SettingsDialog
 
@@ -152,8 +154,11 @@ def test_settings_live_group_prepares_models_once_and_survives_closing(qtbot, st
 
     dlg = SettingsDialog(store, platform, {}, model_preparer=prep)
     qtbot.addWidget(dlg)
-    assert "live.model" in dlg._combos and {"live.enabled", "live.summary_interval_min", "live.in_widget"} <= set(dlg._edits)
+    page = dlg.page("Ao vivo")
+    assert isinstance(dlg.editor("live.model").widget, QComboBox)
+    assert all(page.isAncestorOf(dlg.editor(k).widget) for k in ("live.enabled", "live.summary_interval_min", "live.in_widget"))
     assert dlg.prepare_btn.isEnabled() and dlg.prepare_status.text() == "prontos (small e base)"
+    assert dlg.live_row.badge.text() == "Prontos"                                                 # F5.4 L3 (U-075)
     monkeypatch.setattr(platform, "spawn_child", spawn_with(_prepare_target(store.base_dir)))   # o `--prepare` real, modo fake
     dlg.prepare_models()
     qtbot.waitUntil(lambda: prep.state["state"] == "done", timeout=5000)
@@ -167,10 +172,11 @@ def test_settings_live_group_prepares_models_once_and_survives_closing(qtbot, st
     dlg.reject()
     dlg2 = SettingsDialog(store, platform, {}, model_preparer=prep)
     qtbot.addWidget(dlg2)
-    assert dlg2.prepare_status.text() == "faltam: small, base"
+    assert dlg2.prepare_status.text() == "faltam: small, base" and dlg2.live_row.badge.text() == "Faltam"
     dlg2.prepare_models()
     qtbot.waitUntil(lambda: prep.state.get("model") == "small", timeout=5000)
     assert not dlg2.prepare_btn.isEnabled() and "small: baixando" in dlg2.prepare_status.text()
+    assert dlg2.live_row.badge.text() == "Baixando"
     dlg2.prepare_models()
     assert prep.start(store, platform.spawn_child) is False and prep.starts == 2 and len(spawned) == 2
     dlg2.reject()                                                                                 # fecha com o download no meio

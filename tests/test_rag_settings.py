@@ -85,9 +85,10 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     launched: list[bool] = []
     dlg = SettingsDialog(store, platform, {}, on_launch=launched.append)
     qtbot.addWidget(dlg)
-    assert {"rag.auto_index", "rag.top_k", "rag.max_per_meeting"} <= set(dlg._edits) and dlg._edits["rag.top_k"].text() == "12"
+    assert {"rag.auto_index", "rag.top_k", "rag.max_per_meeting"} <= set(dlg._editors) and dlg.editor("rag.top_k").raw() == "12"
     status = dlg.index_status.text()
-    assert "2 de 2 reuniões processadas no índice" in status and f"vetores de {MODEL}" in status and "faltam" in status
+    assert "2 de 2 reuniões processadas no índice" in status and "faltam" in status
+    assert "vetores de gemini-embedding-001, Gemini" in status and MODEL not in status            # U-036: o nome, não a chave
     assert "embeddings prontos" in status and "completar:" in status and dlg.complete_btn.isEnabled()
     asked: list[str] = []
     answer = {"value": False}
@@ -116,7 +117,7 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     store.finish_meeting(empty, 1000)
     _pipeline_job(store, empty)
     assert dlg.complete_index() == 1 and len(asked) == 4 and launched == [True, True, True]
-    dlg._edits["rag.top_k"].setText("3")
+    dlg.editor("rag.top_k").set_raw("3")                                                  # A-14: o spin não aceita o 3
     assert "Trechos por pergunta" in (dlg.validation_error() or "")
 
 

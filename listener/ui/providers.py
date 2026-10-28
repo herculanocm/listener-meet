@@ -6,7 +6,11 @@ embeddings). Aviso factual: o texto da reunião sai da máquina para o provedor 
 F5.1 (A-01): "Local (e5-small, sem custo)" sempre no "Ativo para embeddings" (sem sub-aba: não tem chave nem modelo a
 escolher); a linha `local` nasce ao salvar com ele escolhido (`ensure_local`), e cada papel é gravado num `UPDATE` só.
 U-037 (D-053): a chave, o "Testar conexão" e o estado da chave (`key_status`) de cada sub-aba ficam no grupo "Chaves de
-acesso", o primeiro das Configurações (`ui/keys.py`); a sub-aba diz onde e guarda o resto."""
+acesso", o primeiro das Configurações (`ui/keys.py`); a sub-aba diz onde e guarda o resto.
+F5.4 L3: o estado da chave em selo (`key_badge`, U-075: Falta a chave, Não testada, Chave nova, Testando, Conectado, Falhou)
+com o detalhe em nota (`key_status`); a tabela de preços com o cabeçalho inteiro, à esquerda e sem número de linha (U-076,
+U-058); o aviso do envio numa faixa (U-057); sem jargão interno na tela; `validation_problem` devolve o campo do erro para a
+página marcá-lo (U-072)."""
 from __future__ import annotations
 
 import functools
@@ -15,8 +19,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
-                               QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..llm.adapters_common import friendly_error
 from ..llm.aio import run_async
@@ -27,8 +31,9 @@ from ..llm.types import Capability, ConnectionTest, ModelInfo, ProviderKind
 from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LLM_KINDS, LOCAL_ID
+from .components import Badge, InfoBar
 from .tasks import run_task
-from .theme import Tone, note, tone
+from .theme import METRICS, Tone, note
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -38,12 +43,14 @@ log = get_logger("ui.providers")
 
 TITLES = {"gemini": "Gemini (Google)", "openai": "GPT (OpenAI)", "anthropic": "Claude (Anthropic)"}
 LOCAL_TITLE = "Local (e5-small, sem custo)"
-LOCAL_TIP = ("Busca por sentido calculada nesta máquina, sem chave, sem rede e sem custo; prepare antes em Configurações, "
-             "grupo Busca (135 MB)")
+LOCAL_TIP = "Busca por sentido calculada nesta máquina, sem chave, sem rede e sem custo; prepare antes na página Busca (135 MB)"
 PRICE_COLUMNS = ("Modelo (id ou prefixo)", "Entrada US$/M", "Saída US$/M", "Cache US$/M", "Áudio US$/M")
-KEY_ELSEWHERE = "no grupo Chaves de acesso, o primeiro das Configurações (com o Testar conexão)"
-NO_KEY = "falta a chave"
-KEY_EDITED = "chave nova: Testar confere antes de salvar"
+KEY_ELSEWHERE = "na página Chaves de acesso, com o Testar conexão"
+# U-075: o estado da chave em selo, com o detalhe ao lado
+NO_KEY, NOT_TESTED, KEY_NEW, TESTING, CONNECTED, FAILED = ("Falta a chave", "Não testada", "Chave nova", "Testando…", "Conectado",
+                                                          "Falhou")
+KEY_EDITED = "Testar confere antes de salvar"
+type KeyState = tuple[str, Tone, str]                 # o selo, o tom dele e o detalhe
 SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é enviado ao provedor escolhido. Áudio só sai com a opção ligada."
 
 
@@ -83,7 +90,8 @@ class ProviderTab(QWidget):
         self.last_test: ConnectionTest | None = None
         self.last_models: tuple[ModelInfo, ...] = ()
         self.key = QLineEdit(str(row.get("api_key") or ""))
-        self.key.setPlaceholderText("chave de API (fica no banco do app, em texto aberto; CP10)")
+        self.key.setPlaceholderText("chave de API (fica no banco do app, em texto aberto)")
+        self.key.setAccessibleName(f"Chave do {TITLES.get(self.pid, self.pid)}")
         self.fast = QComboBox()
         self.strong = QComboBox()
         for combo in (self.fast, self.strong):
@@ -105,24 +113,20 @@ class ProviderTab(QWidget):
         self.status = QLabel(self._tested_text(row))
         self.status.setWordWrap(True)
         self.saved_key = str(row.get("api_key") or "").strip()
-        self.saved_state = self._tested_text(row) if self.saved_key else NO_KEY
-        self.key_status = QLabel(self.saved_state)                                       # posto junto da chave (U-037)
+        self.saved_state: KeyState = ((CONNECTED, Tone.SUCCESS, self._tested_text(row)) if row.get("tested_at") else
+                                      (NOT_TESTED, Tone.NEUTRAL, "")) if self.saved_key else (NO_KEY, Tone.WARNING, "")
+        self.key_badge = Badge()                                                         # postos junto da chave (U-037)
+        self.key_status = QLabel("")
         self.key_status.setTextFormat(Qt.TextFormat.PlainText)
         self.key_status.setWordWrap(True)
         note(self.key_status)
+        self._show_key(self.saved_state)
         self.key.textChanged.connect(self._key_edited)
-        self.prices = QTableWidget(0, len(PRICE_COLUMNS))
-        self.prices.setHorizontalHeaderLabels(list(PRICE_COLUMNS))
-        self.prices.horizontalHeader().setStretchLastSection(True)
-        header = self.prices.horizontalHeader()                # F5.4 (L1, `cortados`): o "Modelo (id ou prefixo)" inteiro
-        header.resizeSection(0, max(header.defaultSectionSize(), header.sectionSizeHint(0)))
-        self.prices.setMaximumHeight(160)
+        self.prices = self._prices_table()
         self._fill_prices()
         self.month = QLabel("")
         self.refresh_month()
-        warn = QLabel(SEND_WARNING)
-        warn.setWordWrap(True)
-        tone(warn, Tone.WARNING)
+        warn = InfoBar("warning", SEND_WARNING)                                          # U-057: o aviso numa faixa
         form = QFormLayout()
         where = QLabel(KEY_ELSEWHERE)
         where.setWordWrap(True)
@@ -145,6 +149,20 @@ class ProviderTab(QWidget):
         lay.addWidget(warn)
 
     # ---------------------------------------------------------------- leitura
+    @staticmethod
+    def _prices_table() -> QTableWidget:
+        """U-076 e U-058: o cabeçalho inteiro e à esquerda, o modelo esticando, sem o número de linha."""
+        table = QTableWidget(0, len(PRICE_COLUMNS))
+        table.setHorizontalHeaderLabels(list(PRICE_COLUMNS))
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(METRICS.control_h)
+        header = table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        table.setMaximumHeight(160)
+        return table
+
     @staticmethod
     def _tested_text(row: ProviderRow) -> str:
         if row.get("tested_at"):
@@ -176,36 +194,47 @@ class ProviderTab(QWidget):
         return NetworkConfig.from_store(self.store)
 
     # ---------------------------------------------------------------- ações
-    def _say(self, text: str) -> None:
-        """O resultado do teste na sub-aba e junto da chave (U-037)."""
+    def _show_key(self, state: KeyState) -> None:
+        """U-075: o estado da chave no selo e o detalhe na nota ao lado (vazia quando o selo diz tudo)."""
+        badge, value, detail = state
+        self.key_badge.setText(badge)
+        self.key_badge.set_tone(value)
+        self.key_status.setText(detail)
+
+    def _say(self, text: str, state: KeyState) -> None:
+        """O resultado do teste na sub-aba e, em selo, junto da chave (U-037, U-075)."""
         self.status.setText(text)
-        self.key_status.setText(text)
+        self._show_key(state)
 
     def _key_edited(self, text: str) -> None:
         key = text.strip()
-        self.key_status.setText(NO_KEY if not key else self.saved_state if key == self.saved_key else KEY_EDITED)
+        self._show_key((NO_KEY, Tone.WARNING, "") if not key else self.saved_state if key == self.saved_key else
+                       (KEY_NEW, Tone.INFO, KEY_EDITED))
 
     def run_test(self) -> None:
         key = self.key.text().strip()
         if not key:
-            self._say("informe a chave antes de testar")
+            self._say("informe a chave antes de testar", (NO_KEY, Tone.WARNING, "informe a chave antes de testar"))
             return
         self.btn_test.setEnabled(False)
-        self._say("testando…")
+        self._say("testando…", (TESTING, Tone.INFO, ""))
         kind, model, net = str(self.kind), self.fast.currentText().strip(), self._net()
         run_task(functools.partial(test_connection, kind, key, model, net), self.store, self._on_test)
 
     def _on_test(self, result: Any) -> None:
         self.btn_test.setEnabled(True)
         if isinstance(result, BaseException):
-            self._say(f"falhou: {friendly_error(str(result))}")
+            error = friendly_error(str(result))
+            self._say(f"falhou: {error}", (FAILED, Tone.DANGER, error))
             return
         self.last_test = result
         if result.ok:
-            self._say(f"ok: {result.model} respondeu em {result.latency_ms} ms")
+            detail = f"{result.model} respondeu em {result.latency_ms} ms"
+            self._say(f"ok: {detail}", (CONNECTED, Tone.SUCCESS, detail))
             self.store.providers.update_provider(self.pid, tested_at=_now(), latency_ms=int(result.latency_ms))
         else:
-            self._say(f"falhou: {friendly_error(result.error)}")
+            error = friendly_error(result.error)
+            self._say(f"falhou: {error}", (FAILED, Tone.DANGER, error))
 
     def refresh_models(self) -> None:
         key = self.key.text().strip()
@@ -259,22 +288,27 @@ class ProviderTab(QWidget):
             out.append((model, values))
         return out
 
-    def validation_error(self) -> str | None:
-        """Primeiro erro da sub-aba antes de gravar qualquer coisa (F3.1 R3-09, R3-12): parâmetros, modelo rápido e preços."""
+    def validation_problem(self) -> tuple[str, QWidget] | None:
+        """Primeiro erro da sub-aba antes de gravar qualquer coisa (F3.1 R3-09, R3-12), com o campo dele (U-072):
+        parâmetros, modelo rápido e preços."""
         name = TITLES.get(self.pid, self.pid)
         params = self.params.text().strip()
         if params:
             try:
                 json.loads(params)
             except ValueError as e:
-                return f"{name}: parâmetros não são JSON ({e})"
+                return f"{name}: parâmetros não são JSON ({e})", self.params
         if not self.fast.currentText().strip():
-            return f"{name}: escolha o modelo rápido (é o das tarefas de todo dia)"
+            return f"{name}: escolha o modelo rápido (é o das tarefas de todo dia)", self.fast
         try:
             self._price_rows()
         except ValueError as e:
-            return str(e)
+            return str(e), self.prices
         return None
+
+    def validation_error(self) -> str | None:
+        problem = self.validation_problem()
+        return problem[0] if problem is not None else None
 
     def save(self) -> None:
         err = self.validation_error()
@@ -323,12 +357,21 @@ class ProviderTabs(QWidget):
         lay.addLayout(form)
         lay.addWidget(self.tabs)
 
-    def validation_error(self) -> str | None:
+    def validation_problem(self) -> tuple[str, QWidget] | None:
+        """O primeiro erro das sub-abas, com o campo (U-072)."""
         for tab in self.tab_by_id.values():
-            err = tab.validation_error()
-            if err:
-                return err
+            problem = tab.validation_problem()
+            if problem is not None:
+                return problem
         return None
+
+    def validation_error(self) -> str | None:
+        problem = self.validation_problem()
+        return problem[0] if problem is not None else None
+
+    def tab_of(self, widget: QWidget) -> ProviderTab | None:
+        """A sub-aba que contém `widget` (o erro abre nela)."""
+        return next((tab for tab in self.tab_by_id.values() if tab is widget or tab.isAncestorOf(widget)), None)
 
     def save(self) -> None:
         """As sub-abas e os ativos; cada papel num `UPDATE` só, que escolhe o provedor ou zera o papel ("nenhum"). A linha

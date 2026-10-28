@@ -4,30 +4,34 @@ nem de modelos aqui (R-9). F5: os jobs `index` (dezenas depois da varredura) nã
 "Índice: N reuniões (M com erro)" fica no fim da tabela (F5A-05). F5.3 (A-05): "Reprocessar" passa pelo helper único
 (`pipeline/reprocess.py`), que não põe outro processamento atrás de um ativo da mesma reunião e diz por quê. F5.3 L2
 (U-047): a coluna "Enviado" (o `created_at` na hora local; início, fim e tempo de trabalho na dica, A-08), a "%" como barra
-na cor do estado (`queue_bar.py`, A-08) e o botão "Ajuda" (`queue_help.py`, A-09)."""
+na cor do estado (`queue_bar.py`, A-08) e o botão "Ajuda" (`queue_help.py`, A-09).
+F5.4 L3 (U-077, U-058): 1040 x 480, aberta dentro da área livre pelo `fit_to_screen` (A-17); o Estado em selo
+(`BadgeDelegate`; o texto segue no `DisplayRole`, para o leitor de tela e os testes); a barra com o raio do token; Ajuda e
+Fechar na linha dos botões; a tabela com o cabeçalho à esquerda, sem número de linha, a linha inteira selecionada e a
+Reunião esticando (a Etapa e o Detalhe com largura própria; o texto inteiro dessas três na dica); o resultado da última
+ação numa faixa (U-057). Os textos das colunas moram em `ui/queue_rows.py` e seguem reexportados daqui."""
 from __future__ import annotations
 
-import json
-import math
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from ..config.defaults import SPECS
-from ..llm.costs import fmt_usd
 from ..llm.types import LLM_JOB_TASKS
 from ..log import get_logger
-from ..model import JOB_KIND_LABELS, JOB_STEP_LABELS, LIGHT_JOB_KINDS, JobKind, JobStatus
+from ..model import LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..store.jobs import HELD
-from ..pipeline.estimate import fmt_remaining, remaining_seconds
 from ..pipeline.reprocess import request_reprocess
+from .common import fit_to_screen
+from .components import BadgeDelegate, InfoBar
 from .queue_bar import PROGRESS_ROLE, STATUS_ROLE, ProgressBarDelegate
 from .queue_help import QueueHelpDialog
-from .theme import Tone, tone
+from .queue_rows import (TIME_FORMAT, fmt_work, index_progress, index_row_texts, job_row_texts, job_times_tip, llm_job_texts, local_time,
+                         pct_text, work_seconds)
+from .theme import METRICS, TONE_ROLE, Tone, note
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -39,9 +43,15 @@ REFRESH_MS = 2000
 BAND_MS = 120                   # a faixa do "rodando" anda nesse passo, só com linha rodando e a fila visível (A-08)
 COLUMNS = ("Reunião", "Enviado", "Tipo", "Estado", "Etapa", "%", "Estimativa", "Detalhe")
 SENT_COL, STATE_COL, PROGRESS_COL = COLUMNS.index("Enviado"), COLUMNS.index("Estado"), COLUMNS.index("%")
+MEETING_COL, DETAIL_COL = COLUMNS.index("Reunião"), COLUMNS.index("Detalhe")
 INDEX_KINDS: tuple[str, ...] = (str(JobKind.INDEX),)
-TIME_FORMAT = "%d/%m %H:%M:%S"
-TIMING_BLOCKS = frozenset({"llm", "index"})         # os resumos do job `llm` (custo, tarefas) e do `index` (trechos, nota): sem tempo
+SIZE, MIN_SIZE = (1040, 480), (720, 360)             # U-077; A-17
+MARGIN = 16
+PROGRESS_W, STEP_W, DETAIL_W = 96, 180, 160          # a barra; a etapa e o detalhe (o texto inteiro na dica)
+TIP_COLS = frozenset({MEETING_COL, COLUMNS.index("Etapa"), DETAIL_COL})   # as colunas que podem sair com reticências
+# U-077: o Estado em selo, no tom do estado; o cancelado no neutro (o selo não tem o apagado), com o texto que o distingue
+STATUS_BADGES: dict[str, Tone] = {JobStatus.PENDING: Tone.NEUTRAL, JobStatus.RUNNING: Tone.INFO, JobStatus.PAUSED: Tone.WARNING,
+                                  JobStatus.DONE: Tone.SUCCESS, JobStatus.ERROR: Tone.DANGER, JobStatus.CANCELLED: Tone.NEUTRAL}
 BUTTON_HELP: dict[str, str] = {                     # a Ajuda (A-09), com o nome que cada botão tem na tela
     "Pausar fila": "nada novo começa, e o que está rodando para no próximo ponto seguro e fica pausado. O botão vira "
                    "\"Retomar fila\", que continua de onde parou.",
@@ -61,137 +71,6 @@ COLUMN_HELP: dict[str, str] = {
 }
 
 
-def local_time(iso: str | None) -> str:
-    """Data ISO do banco (com fuso, `store.core._now`) na hora local deste computador: "27/10 09:05:07"; vazio sem data."""
-    if not iso:
-        return ""
-    try:
-        return datetime.fromisoformat(str(iso)).astimezone().strftime(TIME_FORMAT)
-    except (ValueError, OverflowError, OSError):
-        return ""
-
-
-def fmt_work(seconds: float | None) -> str:
-    """"menos de 1 s", "45 s", "3 min 07 s", "1 h 05 min"; vazio sem medida."""
-    if seconds is None:
-        return ""
-    s = round(seconds)
-    if s < 1:
-        return "menos de 1 s"
-    if s < 60:
-        return f"{s} s"
-    if s < 3600:
-        return f"{s // 60} min {s % 60:02d} s"
-    return f"{s // 3600} h {(s % 3600) // 60:02d} min"
-
-
-def work_seconds(timings_json: str | None) -> float | None:
-    """Tempo de trabalho de um job pelo `timings_json` (A-08): a soma do `wall_s` das etapas, de todas as tentativas (o
-    `started_at` é o do primeiro claim e o "Tentar de novo" não o zera: fim menos início contaria a espera). O pipeline grava
-    `{etapa: {audio_s, speech_s, wall_s, model}}` (`StepTiming`), uma etapa depois da outra; o job `llm` grava o mesmo por
-    tarefa mais o bloco `llm`, e o `index` o mesmo por etapa mais o bloco `index`, os dois sem tempo. Executivo, pré-resumo e
-    título rodam juntos no job `llm` (`llm_steps.PARALLEL`): contam pelo maior, não pela soma. None quando nada foi medido."""
-    from ..pipeline.llm_steps import PARALLEL
-
-    try:
-        data = json.loads(timings_json) if timings_json else {}
-    except ValueError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    walls = {str(k): w for k, v in data.items() if k not in TIMING_BLOCKS and (w := _wall(v)) is not None}
-    if not walls:
-        return None
-    together = [w for k, w in walls.items() if k in PARALLEL]
-    return sum(w for k, w in walls.items() if k not in PARALLEL) + max(together, default=0.0)
-
-
-def _wall(block: object) -> float | None:
-    """O `wall_s` de um bloco de etapa; None num bloco sem tempo ou com lixo (o JSON aceita NaN)."""
-    if not isinstance(block, dict):
-        return None
-    wall = block.get("wall_s")
-    return float(wall) if isinstance(wall, int | float) and math.isfinite(wall) else None
-
-
-def job_times_tip(job: JobRow) -> str:
-    """A dica de "Enviado" (F5.3 item 7): enviado, início, fim e tempo de trabalho; "—" no que ainda não houve."""
-    rows = (("Enviado", local_time(job.get("created_at"))), ("Início", local_time(job.get("started_at"))),
-            ("Fim", local_time(job.get("finished_at"))), ("Tempo de trabalho", fmt_work(work_seconds(job.get("timings_json")))))
-    return "\n".join(f"{name}: {value or '—'}" for name, value in rows)
-
-
-def pct_text(progress: float | None) -> str:
-    return f"{float(progress or 0.0) * 100:.0f} %"
-
-
-def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, llm_latency_s: float | None = None) -> tuple[str, ...]:
-    """Texto das colunas de um job, na ordem de `COLUMNS` (separado do widget para o teste e para o tooltip da bandeja).
-    `llm_latency_s`: latência média das chamadas (`llm_calls`) para estimar o que falta num job `llm` (F3 item 16)."""
-    title = (meeting or {}).get("title") or f"reunião {job['meeting_id']}"
-    started = str((meeting or {}).get("started_at") or "")[:16].replace("T", " ")
-    status = str(job["status"])
-    step = str(job.get("step") or "")
-    duration_ms = (meeting or {}).get("duration_ms") or 0
-    eta = ""
-    if status in (JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.PENDING):
-        eta = fmt_remaining(remaining_seconds(step or None, float(job.get("progress") or 0.0), duration_ms / 1000 if duration_ms else None,
-                                              rtf_json, job.get("timings_json"), kind=str(job.get("kind") or "")))
-    detail = str(job.get("error") or "")
-    label = JOB_STEP_LABELS.get(step, step)
-    if str(job.get("kind")) == JobKind.LLM:                              # F3: "LLM: ata (2 de 4)" e custo acumulado (U-020)
-        label, cost, left = llm_job_texts(job, label)
-        detail = " · ".join(x for x in (cost, detail) if x)
-        if status in (JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.PENDING) and llm_latency_s and left:
-            eta = fmt_remaining(llm_latency_s * left)
-    return (f"{title} ({started})" if started else title, local_time(job.get("created_at")),
-            JOB_KIND_LABELS.get(str(job.get("kind")), str(job.get("kind"))), status, label, pct_text(job.get("progress")), eta, detail)
-
-
-def index_row_texts(summary: dict[str, int], running: JobRow | None) -> tuple[str, ...] | None:
-    """Linha agregada dos jobs `index` (F5A-05): "Índice: 3 reuniões (1 com erro)"; None quando não há nada a mostrar.
-    "Enviado" é o do job que roda; sem ele, vazio (F5.3)."""
-    meetings, errors = int(summary.get("meetings") or 0), int(summary.get("errors") or 0)
-    if not meetings and not errors:
-        return None
-    title = f"Índice: {meetings} {'reunião' if meetings == 1 else 'reuniões'}" + (f" ({errors} com erro)" if errors else "")
-    sent = ""
-    if running is not None:
-        state, step, sent = str(running["status"]), str(running.get("step") or ""), local_time(running.get("created_at"))
-        label, pct = JOB_STEP_LABELS.get(step, step), pct_text(running.get("progress"))
-    elif summary.get("pending"):
-        state, label, pct = str(JobStatus.PENDING), "", pct_text(0.0)
-    else:
-        state, label, pct = str(JobStatus.ERROR), "", ""
-    detail = "a busca por palavra já vale; os vetores vêm em seguida" if meetings else ""
-    return (title, sent, JOB_KIND_LABELS[JobKind.INDEX], state, label, pct, "", detail)
-
-
-def index_progress(summary: dict[str, int], running: JobRow | None) -> float | None:
-    """A fração da barra da linha agregada: a do job que roda; 0 com pendentes; None (sem barra) quando só há erros."""
-    if running is not None:
-        return float(running.get("progress") or 0.0)
-    return 0.0 if summary.get("pending") else None
-
-
-def llm_job_texts(job: JobRow, label: str) -> tuple[str, str, int]:
-    """Rótulo com a contagem de tarefas, custo acumulado e tarefas que faltam do job `llm` (`params_json.tasks`, `timings_json.llm`)."""
-    try:
-        tasks = json.loads(job.get("params_json") or "{}").get("tasks") or []
-    except ValueError:
-        tasks = []
-    try:
-        llm = json.loads(job.get("timings_json") or "{}").get("llm") or {}
-    except ValueError:
-        llm = {}
-    done = len(llm.get("done") or [])
-    if tasks and label:
-        label = f"{label} ({min(done + 1, len(tasks))} de {len(tasks)})" if str(job["status"]) in (JobStatus.RUNNING, JobStatus.PAUSED) \
-            else f"{label} ({done} de {len(tasks)})"
-    cost = llm.get("cost_usd")
-    return label, (f"custo {fmt_usd(float(cost))}" if cost else ""), max(0, len(tasks) - done)
-
-
 class QueueDialog(QDialog):
     def __init__(self, store: Store, parent: QWidget | None = None, on_launch: Any = None, on_open: Any = None, on_review: Any = None):
         super().__init__(parent)
@@ -200,29 +79,21 @@ class QueueDialog(QDialog):
         self.on_open = on_open                          # abre a transcrição da reunião selecionada
         self.on_review = on_review                      # abre a revisão de falantes
         self.setWindowTitle("Fila de processamento")
-        self.setMinimumSize(860, 360)
+        self.resize(*SIZE)
+        self.setMinimumSize(*MIN_SIZE)
         self.jobs: list[JobRow] = []
         self._running_rows = 0                          # linhas rodando no último refresh: ligam a faixa animada
         self._help: QueueHelpDialog | None = None
-        self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(list(COLUMNS))
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.bar_delegate = ProgressBarDelegate(self.table)
-        self.table.setItemDelegateForColumn(PROGRESS_COL, self.bar_delegate)
+        self._message_bar: InfoBar | None = None        # o resultado da última ação, montado na primeira (U-057)
+        self.table = self._make_table()
         self.status_label = QLabel("")
-        self.message = QLabel("")                       # o resultado da última ação (o rodapé acima é refeito a cada 2 s)
-        self.message.setWordWrap(True)
-        tone(self.message, Tone.WARNING)
-        closing = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        closing.rejected.connect(self.reject)
-        lay = QVBoxLayout(self)
-        lay.addWidget(self.table, 1)
-        lay.addWidget(self.status_label)
-        lay.addWidget(self.message)
-        lay.addLayout(self._buttons())
-        lay.addWidget(closing)
+        note(self.status_label)
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
+        self._lay.setSpacing(METRICS.form_row)
+        self._lay.addWidget(self.table, 1)
+        self._lay.addWidget(self.status_label)
+        self._lay.addLayout(self._buttons())
         self._timer = QTimer(self)
         self._timer.setInterval(REFRESH_MS)
         self._timer.timeout.connect(self.refresh)
@@ -231,8 +102,31 @@ class QueueDialog(QDialog):
         self._band_timer.timeout.connect(self._animate)
         self.refresh()                                   # o timer da leitura só roda com a fila à vista (`showEvent`)
 
+    def _make_table(self) -> QTableWidget:
+        """U-058: o cabeçalho à esquerda, sem o número de linha, a linha inteira selecionada, as linhas de 32 px e a Reunião
+        esticando; as colunas curtas no tamanho do texto, a barra e o detalhe com largura própria. U-077: o Estado em selo."""
+        table = QTableWidget(0, len(COLUMNS))
+        table.setHorizontalHeaderLabels(list(COLUMNS))
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setWordWrap(False)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(METRICS.control_h)
+        header = table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(MEETING_COL, QHeaderView.ResizeMode.Stretch)
+        for col, width in ((PROGRESS_COL, PROGRESS_W), (COLUMNS.index("Etapa"), STEP_W), (DETAIL_COL, DETAIL_W)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            header.resizeSection(col, width)
+        self.bar_delegate = ProgressBarDelegate(table)
+        table.setItemDelegateForColumn(PROGRESS_COL, self.bar_delegate)
+        self.badge_delegate = BadgeDelegate(table)
+        table.setItemDelegateForColumn(STATE_COL, self.badge_delegate)
+        return table
+
     def _buttons(self) -> QHBoxLayout:
-        """A fileira de ações da seleção e, à direita, a "Ajuda" (A-09)."""
+        """A fileira de ações da seleção e, à direita, a "Ajuda" (A-09) e o "Fechar" (U-077: na mesma linha)."""
         self.btn_pause = QPushButton("Pausar fila")
         self.btn_cancel = QPushButton("Cancelar")
         self.btn_retry = QPushButton("Tentar de novo")
@@ -247,12 +141,33 @@ class QueueDialog(QDialog):
         self.btn_review.clicked.connect(self._review_selected)          # R-06: métodos, não lambdas com `self` (o ciclo
         self.btn_open.clicked.connect(self._open_transcript_selected)   # pelo C++ prendia a fila até a derrubada do Qt)
         self.btn_help.clicked.connect(self.open_help)
+        self.btn_close = QPushButton("Fechar")
+        self.btn_close.clicked.connect(self.reject)
         row = QHBoxLayout()
         for b in (self.btn_pause, self.btn_cancel, self.btn_retry, self.btn_reprocess, self.btn_review, self.btn_open):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.btn_help)
+        row.addWidget(self.btn_close)
         return row
+
+    @property
+    def message(self) -> QLabel:
+        """O texto da faixa do resultado da última ação (o rodapé acima dela é refeito a cada 2 s)."""
+        return self._bar().label
+
+    def _bar(self) -> InfoBar:
+        if self._message_bar is None:
+            self._message_bar = InfoBar("info")
+            self._message_bar.hide()
+            self._lay.insertWidget(self._lay.indexOf(self.status_label) + 1, self._message_bar)
+        return self._message_bar
+
+    def _say(self, text: str, kind: str) -> None:
+        bar = self._bar()
+        bar.set_kind(kind)
+        bar.set_text(text)
+        bar.setVisible(bool(text))
 
     # ---------------------------------------------------------------- leitura
     def refresh(self) -> None:
@@ -296,6 +211,10 @@ class QueueDialog(QDialog):
                 item.setData(Qt.ItemDataRole.UserRole, job_id)
             if c == SENT_COL and times_tip:
                 item.setToolTip(times_tip)
+            elif c == STATE_COL:
+                item.setData(TONE_ROLE, STATUS_BADGES.get(text, Tone.NEUTRAL).value)      # U-077: o selo no tom do estado
+            elif c in TIP_COLS and text:
+                item.setToolTip(text)
             elif c == PROGRESS_COL:
                 item.setData(PROGRESS_ROLE, progress)
                 item.setData(STATUS_ROLE, texts[STATE_COL])
@@ -329,6 +248,7 @@ class QueueDialog(QDialog):
     @override
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        fit_to_screen(self)                              # A-17: a janela inteira, com a moldura, na área livre
         if not self._timer.isActive():
             self.refresh()                               # o que mudou com ela fechada
             self._timer.start()
@@ -393,8 +313,13 @@ class QueueDialog(QDialog):
         if job is None:
             return None
         result = request_reprocess(self.store, int(job["meeting_id"]))
-        self.message.setText(result.message)
+        self._say(result.message, "info" if result.job_id is not None else "warning")
         if result.job_id is not None and self.on_launch is not None:
             self.on_launch(False)
         self.refresh()
         return result.job_id
+
+
+__all__ = ["BAND_MS", "BUTTON_HELP", "COLUMNS", "COLUMN_HELP", "PROGRESS_COL", "REFRESH_MS", "SENT_COL", "STATE_COL", "STATUS_BADGES",
+           "TIME_FORMAT", "QueueDialog", "fmt_work", "index_progress", "index_row_texts", "job_row_texts", "job_times_tip",
+           "llm_job_texts", "local_time", "pct_text", "work_seconds"]

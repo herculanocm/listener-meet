@@ -499,19 +499,20 @@ def test_the_log_carries_the_meeting_id_and_never_the_title(qtbot, controller, s
 
 # ---------------------------------------------------------------- configurações, cores e plataforma
 def test_settings_language_and_notices_group_has_the_toast_seconds(qtbot, store, platform):
-    from PySide6.QtWidgets import QGroupBox
-
+    from listener.ui.settings_editors import IntEditor
     from listener.ui.settings_min import TOAST_SECONDS, SettingsDialog
 
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    group = next(g for g in dlg.findChildren(QGroupBox) if g.title() == "Idioma e avisos")
-    edit = dlg._edits[TOAST_SECONDS]
-    assert group.isAncestorOf(edit) and edit.text() == "6" and "balão" in edit.toolTip()
-    for bad in ("61", "-1", "abc"):
-        edit.setText(bad)
+    editor = dlg.editor(TOAST_SECONDS)                       # F5.4 L3 (U-073): um spin de 0 a 60 na página da F5.3
+    assert isinstance(editor, IntEditor)
+    spin = editor.spin
+    assert dlg.page("Idioma e avisos").isAncestorOf(spin) and editor.raw() == "6" and "balão" in spin.toolTip()
+    assert (spin.minimum(), spin.maximum()) == (0, 60)
+    for bad in ("61", "-1", "abc"):                          # A-14: o spin não aceita; o texto entra como se viesse do banco
+        editor.set_raw(bad)
         assert (dlg.validation_error() or "").startswith("Aviso some em (s)")
-    edit.setText("0")
+    spin.setValue(0)
     assert dlg.validation_error() is None
     dlg._save()
     assert store.get_setting(TOAST_SECONDS) == "0"
