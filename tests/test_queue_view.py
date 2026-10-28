@@ -255,6 +255,24 @@ def test_band_moves_only_with_a_running_row_and_the_queue_visible(qtbot, store):
     dlg.hide()
 
 
+def test_the_refresh_timer_runs_only_with_the_queue_visible(qtbot, store):
+    """Fechada, a fila não consulta o banco (antes a leitura de 2 s seguia depois do "Fechar"); ao abrir de novo, lê na
+    hora o que mudou."""
+    from listener.ui.queue import REFRESH_MS, QueueDialog
+
+    dlg = QueueDialog(store)
+    qtbot.addWidget(dlg)
+    assert not dlg._timer.isActive() and dlg.table.rowCount() == 0                  # criada e lida, sem leitura periódica
+    dlg.show()
+    assert dlg._timer.isActive() and dlg._timer.interval() == REFRESH_MS
+    dlg.hide()
+    assert not dlg._timer.isActive()
+    store.jobs.enqueue(_meeting(store))
+    dlg.show()
+    assert dlg._timer.isActive() and dlg.table.rowCount() == 1                       # o job enfileirado com ela fechada
+    dlg.hide()
+
+
 # ---------------------------------------------------------------- a Ajuda (item 9)
 def test_help_covers_every_kind_status_and_step_in_the_order_they_run(qtbot, store, caplog):
     from listener.model import JOB_KIND_HELP, JOB_KIND_LABELS, JOB_STATUS_HELP, JOB_STEP_HELP, JOB_STEP_LABELS

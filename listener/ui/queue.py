@@ -228,8 +228,7 @@ class QueueDialog(QDialog):
         self._band_timer = QTimer(self)
         self._band_timer.setInterval(BAND_MS)
         self._band_timer.timeout.connect(self._animate)
-        self._timer.start()
-        self.refresh()
+        self.refresh()                                   # o timer da leitura só roda com a fila à vista (`showEvent`)
 
     def _buttons(self) -> QHBoxLayout:
         """A fileira de ações da seleção e, à direita, a "Ajuda" (A-09)."""
@@ -329,11 +328,17 @@ class QueueDialog(QDialog):
     @override
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        if not self._timer.isActive():
+            self.refresh()                               # o que mudou com ela fechada
+            self._timer.start()
         self._sync_band()
 
     @override
     def hideEvent(self, event: QHideEvent) -> None:
+        """Fechada (ou minimizada), a fila não consulta o banco: antes a leitura de 2 s seguia para sempre depois do "Fechar",
+        e a de uma fila esquecida num teste batia num banco já fechado."""
         super().hideEvent(event)
+        self._timer.stop()
         self._band_timer.stop()
 
     # ---------------------------------------------------------------- ações
