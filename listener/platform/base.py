@@ -11,6 +11,7 @@ import numpy as np
 
 
 NAME_ID_PREFIX = "name:"        # o id de um aparelho sem id do sistema: o prefixo e o nome (que pode ter nome de pessoa)
+TEXT_SCALE_PERCENT = (100, 225)  # F5.4 (A-08): a faixa do "Tamanho do texto" da acessibilidade do Windows
 
 
 def log_id(device_id: str | None) -> str:
@@ -21,6 +22,15 @@ def log_id(device_id: str | None) -> str:
     if device_id.startswith(NAME_ID_PREFIX):
         return "name#" + hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:8]
     return device_id
+
+
+def text_scale_from_percent(value: object) -> float:
+    """F5.4 (A-08): o fator de texto a partir da porcentagem do sistema (100 a 225; fora da faixa fica na borda); o que não
+    é número inteiro vale 1,0."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 1.0
+    low, high = TEXT_SCALE_PERCENT
+    return min(max(value, low), high) / 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +182,10 @@ class Platform(Protocol):
     # F5.3 (A-13): tira uma janela nossa da captura de tela (compartilhamento, gravação, print) e ela segue visível aqui;
     # True quando o sistema aceitou (o aviso que não sai da captura mostra só o tipo durante a gravação)
     def exclude_from_capture(self, window_id: int) -> bool: ...
+    # F5.4 (A-08): a aparência que vem do sistema. O "Tamanho do texto" da acessibilidade, de 1,0 a 2,25 (lido na abertura:
+    # mudar vale na próxima); e o estilo base do Qt por baixo do tema ("windows11" no Windows, "Fusion" no fake)
+    def text_scale(self) -> float: ...
+    def ui_style(self) -> str: ...
 
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...

@@ -15,7 +15,8 @@ por `bisect` com 150 ms de antecedência (a fala clicada toca da primeira palavr
 última que começou. As duas linhas são repintadas sem `dataChanged`: neste `QListView` com quebra de linha e alturas
 variáveis cada `dataChanged` refaz o layout da lista inteira (200 a 360 ms com 3.000 falas, no Windows em 26/10); pelo
 mesmo motivo não há negrito, que mudaria a quebra das linhas sem o layout refeito. Recarregar reaplica o destaque; pausado,
-fica; parado ou com outra reunião tocando, some."""
+fica; parado ou com outra reunião tocando, some. F5.4 (A-11): a faixa no tom de aviso e o fundo no fundo dele, dos tokens do
+tema vigente (claro e escuro), refeitos quando o tema muda."""
 from __future__ import annotations
 
 import bisect
@@ -35,6 +36,7 @@ from ..pipeline import review
 from ..rag import export
 from .common import copy_rich
 from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
+from .theme import Tokens, Tone, tokens
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -44,16 +46,15 @@ log = get_logger("ui.transcript")
 
 FOLLOW_PAUSE_S = 5.0             # Q2: o destaque não rola nos 5 s seguintes a uma rolagem do usuário
 NAV_KEYS = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End})
-PLAYING_TINT = (255, 193, 7, 80)         # âmbar translúcido: legível no tema claro e no escuro, diferente da seleção
-PLAYING_ACCENT = (230, 126, 34)          # a faixa à esquerda da fala que toca
+PLAYING_TONE = Tone.WARNING              # âmbar: o fundo dele é legível com o texto nos dois temas e diferente da seleção
 PLAYING_ACCENT_SPAN = 0.005              # da largura da linha (~5 px numa lista de 1.000 px)
 
 
-def playing_brush() -> QBrush:
-    """O fundo da fala que toca: a faixa forte à esquerda e o tom âmbar no resto (relativo ao retângulo da linha)."""
+def playing_brush(t: Tokens) -> QBrush:
+    """O fundo da fala que toca: a faixa forte à esquerda e o fundo âmbar no resto (relativo ao retângulo da linha)."""
     grad = QLinearGradient(0.0, 0.0, 1.0, 0.0)
     grad.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
-    accent, tint = QColor(*PLAYING_ACCENT), QColor(*PLAYING_TINT)
+    accent, tint = QColor(t.tone(PLAYING_TONE)), QColor(t.background(PLAYING_TONE))
     for stop, color in ((0.0, accent), (PLAYING_ACCENT_SPAN, accent), (PLAYING_ACCENT_SPAN + 1e-4, tint), (1.0, tint)):
         grad.setColorAt(stop, color)
     return QBrush(grad)
@@ -63,7 +64,7 @@ class SegmentsModel(QAbstractListModel):
     def __init__(self, rows: list[review.TranscriptRow], parent: Any = None):
         super().__init__(parent)
         self.highlight: int | None = None                 # U-025: a linha da fala que toca (papel `BackgroundRole`)
-        self._brush = playing_brush()
+        self._brush: tuple[Tokens, QBrush] | None = None  # F5.4: refeito quando os tokens do tema mudam
         self.rows = rows
         self._index()
 
@@ -88,8 +89,14 @@ class SegmentsModel(QAbstractListModel):
             span = f"{row.t_start_ms / 1000:.1f} a {row.t_end_ms / 1000:.1f} s".replace(".", ",")
             return f"canal {row.channel} · {span} · clique para ouvir daqui"
         if role == Qt.ItemDataRole.BackgroundRole and index.row() == self.highlight:
-            return self._brush
+            return self._playing_brush()
         return None
+
+    def _playing_brush(self) -> QBrush:
+        t = tokens()
+        if self._brush is None or self._brush[0] is not t:
+            self._brush = (t, playing_brush(t))
+        return self._brush[1]
 
     def replace(self, rows: list[review.TranscriptRow]) -> None:
         self.beginResetModel()

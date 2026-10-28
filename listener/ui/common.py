@@ -1,6 +1,8 @@
 """Utilidades da interface: níveis em dB, cores de saúde, formatação; F5: área de transferência com texto e HTML; a
 tradução pt-BR dos textos padrão do Qt. F5.3 (U-047, A-08): as cores da barra da fila por estado e o contraste do texto
-sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro; (U-048) as do aviso que some sozinho, por tipo."""
+sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro; (U-048) as do aviso que some sozinho, por tipo. F5.4: as contas
+de contraste moram em `ui/theme.py` e seguem reexportadas daqui (A-13); os dicionários de estado guardam o tom (`Tone`) e a
+cor sai dos tokens do tema vigente na hora (A-11)."""
 from __future__ import annotations
 
 import math
@@ -8,33 +10,43 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from ..model import Health, JobStatus
+from ..model import AppState, Health, JobStatus
+from .theme import BLACK, DARK, WHITE, Tokens, Tone, contrast, luminance, mix, text_on, tokens
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication, QTranslator
 
 QT_LOCALE = "pt_BR"             # a interface é em pt-BR (i18n antes da F6): os botões padrão do Qt seguem o mesmo idioma
 
-HEALTH_COLORS: dict[str, str] = {Health.OK: "#2ecc71", Health.WARN: "#f1c40f", Health.ALERT: "#e74c3c", Health.MUTED: "#7f8c8d",
-                                 Health.PAUSED: "#95a5a6", Health.OFF: "#34495e", Health.LOST: "#e74c3c"}
+# F5.4 (A-11): o widget de gravação, o marcador, os avisos e o ícone da bandeja seguem escuros até o L2 (U-060, U-068,
+# U-070; o ícone tem fundo próprio, A-19): as cores deles saem dos tokens do escuro, nos dois esquemas
+DARK_SURFACE = DARK
+
+HEALTH_TONES: dict[str, Tone] = {Health.OK: Tone.SUCCESS, Health.WARN: Tone.WARNING, Health.ALERT: Tone.DANGER,
+                                 Health.MUTED: Tone.NEUTRAL, Health.PAUSED: Tone.WARNING, Health.OFF: Tone.DISABLED,
+                                 Health.LOST: Tone.DANGER}
 HEALTH_TEXT: dict[str, str] = {Health.OK: "ok", Health.WARN: "sem sinal", Health.ALERT: "MUDO", Health.MUTED: "mudo",
                                Health.PAUSED: "pausado", Health.OFF: "desligado", Health.LOST: "dispositivo perdido"}
 
-# F5.3 (A-08): a barra da fila na cor do estado, a mesma nos dois temas (tons médios aparecem no trilho claro e no escuro);
-# o cancelado é hachurado, porque um cinza-escuro some no tema escuro. A próxima fase (design) junta a paleta inteira aqui.
-JOB_STATUS_COLORS: dict[str, str] = {JobStatus.PENDING: "#95a5a6", JobStatus.RUNNING: "#3498db", JobStatus.PAUSED: "#f39c12",
-                                     JobStatus.DONE: "#2ecc71", JobStatus.ERROR: "#e74c3c", JobStatus.CANCELLED: "#bdc3c7"}
-JOB_STATUS_HATCH: dict[str, str] = {JobStatus.CANCELLED: "#7f8c8d"}
+# o estado do app (gravando, pausado, salvando): o ícone da bandeja e o estado escrito no widget
+STATE_TONES: dict[str, Tone] = {AppState.IDLE: Tone.NEUTRAL, AppState.RECORDING: Tone.DANGER, AppState.PAUSED: Tone.WARNING,
+                                AppState.SAVING: Tone.INFO}
+
+# F5.3 (A-08): a barra da fila na cor do estado; F5.4: a cor do tom nos tokens de cada tema. O pendente fica no neutro e o
+# cancelado no apagado, hachurado (as listras na cor contrária à do número): os dois cinzas não se confundem.
+JOB_STATUS_TONES: dict[str, Tone] = {JobStatus.PENDING: Tone.NEUTRAL, JobStatus.RUNNING: Tone.INFO, JobStatus.PAUSED: Tone.WARNING,
+                                     JobStatus.DONE: Tone.SUCCESS, JobStatus.ERROR: Tone.DANGER, JobStatus.CANCELLED: Tone.DISABLED}
+JOB_STATUS_HATCHED: frozenset[str] = frozenset({JobStatus.CANCELLED})
 JOB_STATUS_COLOR_NAMES: dict[str, str] = {JobStatus.PENDING: "barra cinza", JobStatus.RUNNING: "barra azul, com uma faixa que anda",
                                           JobStatus.PAUSED: "barra âmbar", JobStatus.DONE: "barra verde", JobStatus.ERROR: "barra vermelha",
                                           JobStatus.CANCELLED: "barra listrada"}
-BLACK, WHITE = "#000000", "#ffffff"
 # F5.3 (U-048, A-14): o aviso que some sozinho, com a faixa na cor do tipo (as chaves são os valores de `ui.toast.NoticeKind`),
-# as mesmas da barra da fila: verde pronto, azul informação, vermelho erro. Fundo, borda e textos são os do widget de
-# gravação; o texto fica claro sobre o fundo (contraste de 4,5:1 ou mais) e a cor do tipo vai só na faixa (3:1 basta).
-NOTICE_COLORS: dict[str, str] = {"pronto": JOB_STATUS_COLORS[JobStatus.DONE], "informação": JOB_STATUS_COLORS[JobStatus.RUNNING],
-                                 "erro": JOB_STATUS_COLORS[JobStatus.ERROR]}
-NOTICE_BACKGROUND, NOTICE_BORDER, NOTICE_TEXT, NOTICE_MUTED = "#1c1e24", "#555555", "#eeeeee", "#aaaaaa"
+# os mesmos tons da barra da fila: verde pronto, azul informação, vermelho erro. O aviso segue escuro como o widget de
+# gravação (F5.4: tokens do escuro até o L2); o texto fica claro sobre o fundo (4,5:1 ou mais) e o tipo vai só na faixa (3:1).
+NOTICE_TONES: dict[str, Tone] = {"pronto": Tone.SUCCESS, "informação": Tone.INFO, "erro": Tone.DANGER}
+NOTICE_COLORS: dict[str, str] = {kind: DARK_SURFACE.tone(tone) for kind, tone in NOTICE_TONES.items()}
+NOTICE_BACKGROUND, NOTICE_BORDER = DARK_SURFACE.input, DARK_SURFACE.stroke
+NOTICE_TEXT, NOTICE_MUTED = DARK_SURFACE.text, DARK_SURFACE.secondary
 TRACK_MIX = 0.15                # o trilho: a base da tabela com 15 % da cor do texto (claro no tema claro, escuro no escuro)
 BAND_OPACITY = 0.4              # a faixa do "rodando": clareia sob texto preto e escurece sob texto branco (o contraste só sobe)
 
@@ -51,46 +63,40 @@ class BarColors:
     hatch: str | None = None    # as listras do cancelado
 
 
-def _rgb(color: str) -> tuple[int, int, int]:
-    value = color.lstrip("#")
-    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+def _resolve(t: Tokens | None) -> Tokens:
+    return t if t is not None else tokens()
 
 
-def luminance(color: str) -> float:
-    """Luminância relativa do WCAG 2.1 de uma cor "#rrggbb": 0 no preto, 1 no branco."""
-    def linear(c: int) -> float:
-        s = c / 255
-        return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
-
-    r, g, b = (linear(c) for c in _rgb(color))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+def health_color(health: str, t: Tokens | None = None) -> str:
+    """A cor da saúde de um canal nos tokens `t` (os do tema vigente quando não dados); a desconhecida sai apagada."""
+    return _resolve(t).tone(HEALTH_TONES.get(health, Tone.DISABLED))
 
 
-def contrast(a: str, b: str) -> float:
-    """Contraste do WCAG entre duas cores, de 1 a 21 (texto comum pede 4,5)."""
-    high, low = sorted((luminance(a), luminance(b)), reverse=True)
-    return (high + 0.05) / (low + 0.05)
+def state_color(state: str, t: Tokens | None = None) -> str:
+    """A cor do estado do app (o desconhecido sai neutro)."""
+    return _resolve(t).tone(STATE_TONES.get(state, Tone.NEUTRAL))
 
 
-def text_on(background: str) -> str:
-    """Preto ou branco, o que contrastar mais com o fundo: nunca abaixo de 4,58:1 (o pior caso é um cinza médio)."""
-    return BLACK if contrast(BLACK, background) >= contrast(WHITE, background) else WHITE
+def job_status_color(status: str, t: Tokens | None = None) -> str:
+    """A cor da barra de um job no estado (o desconhecido sai como pendente)."""
+    return _resolve(t).tone(JOB_STATUS_TONES.get(status, JOB_STATUS_TONES[JobStatus.PENDING]))
 
 
-def mix(a: str, b: str, amount: float) -> str:
-    """`a` com `amount` (0 a 1) de `b`, em "#rrggbb"."""
-    return "#" + "".join(f"{round(x + (y - x) * amount):02x}" for x, y in zip(_rgb(a), _rgb(b), strict=True))
+def bar_colors(status: str, base: str, text: str, t: Tokens | None = None) -> BarColors:
+    """As cores da barra de um job no estado `status` sobre a tabela de base `base` e texto `text` (cores da palette(),
+    "#rrggbb"), nos tokens `t` (os do tema vigente quando não dados); um estado desconhecido sai como pendente."""
+    return _bar_colors(status, base, text, _resolve(t))
 
 
 @lru_cache(maxsize=64)
-def bar_colors(status: str, base: str, text: str) -> BarColors:
-    """As cores da barra de um job no estado `status` sobre a tabela de base `base` e texto `text` (cores da palette(),
-    "#rrggbb"); um estado desconhecido sai como pendente. Em cache: a faixa do "rodando" repinta a coluna a cada 120 ms."""
-    fill = JOB_STATUS_COLORS.get(status, JOB_STATUS_COLORS[JobStatus.PENDING])
+def _bar_colors(status: str, base: str, text: str, t: Tokens) -> BarColors:
+    """Em cache (com os tokens na chave: a troca de tema não reaproveita): a faixa do "rodando" repinta a coluna a cada 120 ms."""
+    fill = job_status_color(status, t)
     track = mix(base, text, TRACK_MIX)
     on_fill, on_track = text_on(fill), text_on(track)
-    return BarColors(track, fill, on_fill, on_track, WHITE if on_fill == BLACK else BLACK, WHITE if on_track == BLACK else BLACK,
-                     JOB_STATUS_HATCH.get(status))
+    contrary = WHITE if on_fill == BLACK else BLACK
+    return BarColors(track, fill, on_fill, on_track, contrary, WHITE if on_track == BLACK else BLACK,
+                     contrary if status in JOB_STATUS_HATCHED else None)
 
 
 def install_translations(app: QCoreApplication) -> QTranslator | None:
@@ -164,3 +170,10 @@ def markdown_html(md: str) -> str:
     doc = QTextDocument()
     doc.setMarkdown(md)
     return doc.toHtml()
+
+
+__all__ = ["BAND_OPACITY", "BLACK", "DARK_SURFACE", "HEALTH_TEXT", "HEALTH_TONES", "JOB_STATUS_COLOR_NAMES", "JOB_STATUS_HATCHED",
+           "JOB_STATUS_TONES", "NOTICE_BACKGROUND", "NOTICE_BORDER", "NOTICE_COLORS", "NOTICE_MUTED", "NOTICE_TEXT", "NOTICE_TONES",
+           "QT_LOCALE", "STATE_TONES", "TRACK_MIX", "WHITE", "BarColors", "bar_colors", "clamp_to_screens", "contrast", "copy_rich",
+           "health_color", "human_size", "install_translations", "job_status_color", "level_fraction", "luminance", "markdown_html",
+           "mix", "state_color", "text_on"]

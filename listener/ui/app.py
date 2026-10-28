@@ -1,5 +1,8 @@
 """Ponto de entrada da interface: identidade do processo, log, primeira inicialização, banco, bandeja, controlador.
-`aboutToQuit` e `commitDataRequest` (logoff, desligamento) param a gravação sem diálogo (M-05)."""
+`aboutToQuit` e `commitDataRequest` (logoff, desligamento) param a gravação sem diálogo (M-05). F5.4 (A-09): o tema (fonte,
+paleta e estilo) entra depois da tradução e antes do ícone e do assistente; o estilo em Python sai quando o laço de eventos
+volta (depois do `aboutToQuit` e da parada de emergência) e em toda saída antecipada (assistente cancelado, banco que não
+abre), sempre antes da derrubada do PySide (R-06)."""
 from __future__ import annotations
 
 import sys
@@ -12,6 +15,8 @@ from ..platform import get_platform
 from ..store import Store
 
 if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
+
     from ..platform.base import Platform
 
 log = get_logger("ui.app")
@@ -29,8 +34,7 @@ def attach_log(store: Store) -> str | None:
 
 
 def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+    from PySide6.QtWidgets import QApplication
 
     setup()
     platform = platform or get_platform()
@@ -38,13 +42,27 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
     app = QApplication(argv or sys.argv)
     app.setApplicationName("listener-meet")
     app.setQuitOnLastWindowClosed(False)
+    from . import theme
     from .common import install_translations
 
     if install_translations(app) is None:
         log.info("tradução pt-BR do Qt indisponível: os botões padrão ficam em inglês")
-    from .tray import STATE_COLORS, make_icon
+    theme.apply(app, platform)                # F5.4 (A-09): antes do ícone e do assistente
+    try:
+        return _run_app(app, platform)
+    finally:
+        theme.release(app)                    # A-09 (R-06): o estilo em Python não chega à derrubada do PySide
 
-    app.setWindowIcon(make_icon(STATE_COLORS["idle"]))
+
+def _run_app(app: QApplication, platform: Platform) -> int:
+    """O ícone, o banco (ou o assistente da primeira vez), o controlador e o laço de eventos."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from ..model import AppState
+    from .tray import icon_color, make_icon
+
+    app.setWindowIcon(make_icon(icon_color(AppState.IDLE)))
     db_dir = bootstrap.read_db_dir(platform.config_dir())
     store: Store | None = None
     if db_dir and (Path(db_dir) / "listener.db").exists():

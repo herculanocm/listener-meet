@@ -4,7 +4,9 @@ F2: o worker em subprocesso real (`--worker --once`, `LISTENER_PIPELINE=fake`) �
 para o processo ao vivo (`--live`, `LISTENER_LIVE=fake`) quando `tests/test_live_child.py` está na sessão.
 D-050: suíte rápida e lenta. Todo teste com `qtbot` ou `qapp` ganha a marca `lento` (telas); subprocesso, tempo real e
 contas pesadas são marcados nos arquivos. O padrão local pula os lentos (`addopts` no pyproject); `--tudo` roda todos (o
-CI e antes de commitar). Os subprocessos da coleta só nascem quando os testes deles ficaram na seleção."""
+CI e antes de commitar). Os subprocessos da coleta só nascem quando os testes deles ficaram na seleção.
+F5.4 (A-03, A-09): o `qapp` da sessão sai com o tema aplicado como no app (esquema claro explícito: o offscreen não tem
+esquema, fonte do Windows nem `windows11`) e o estilo em Python sai no fim da sessão."""
 from __future__ import annotations
 
 import gc
@@ -28,6 +30,20 @@ from listener.store import Store
 from tests.fake_platform import FakePlatform
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp(qapp: Any, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    """O `qapp` do pytest-qt com o tema da F5.4 (fonte, paleta e o `ThemeStyle` sobre o Fusion da plataforma falsa). Quem
+    pede `qtbot` ou `qapp` recebe este; os testes sem tela não criam o app. No fim, o estilo em Python sai antes da
+    derrubada do PySide (R-06)."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui import theme
+
+    theme.apply(qapp, FakePlatform(tmp_path_factory.mktemp("tema")), Qt.ColorScheme.Light)
+    yield qapp
+    theme.release(qapp)
 
 
 @pytest.fixture(autouse=True)

@@ -8,7 +8,8 @@ A dica é texto puro (nome ou fala com "<b>" não vira HTML, R7-07). A pintura c
 sem travar). Ampliada, a vista vira a página atrás do cursor, salvo nos 5 s depois de o usuário rolar ou ampliar. Sem
 duração ainda (gravando, sem falas), o cursor só é guardado. A aba lê as falas da aba Transcrição (`transcript.model.rows`,
 as mesmas na mesma ordem), os marcadores e as pausas da gravação (`pause_intervals`) a cada recarga (A-15); sem falas, o
-aviso "sem falas"; sem player, o clique avisa. As faixas e as contas puras ficam em `ui/timeline.py`."""
+aviso "sem falas"; sem player, o clique avisa. As faixas e as contas puras ficam em `ui/timeline.py`. F5.4 (A-11): as
+faixas nas cores dos falantes, o cursor e o marcador em tons dos tokens do tema, lidos na pintura."""
 from __future__ import annotations
 
 import math
@@ -27,6 +28,7 @@ from ..llm.prompts.common import stamp
 from ..pipeline.review import PLAY_LEAD_MS
 from ..rag.export import fmt_duration
 from .player import pause_intervals
+from .theme import Tone, tokens
 from .timeline import BAR_MIN_PX, Lane, bar_at, build_lanes, merge_spans, opening, tick_step_ms, visible_slice
 
 if TYPE_CHECKING:
@@ -42,8 +44,7 @@ FOLLOW_PAUSE_S = 5.0             # A-19 e Q2: depois de o usuário rolar ou ampl
 FOLLOW_MARGIN_PX, FOLLOW_LEAD = 24, 0.1      # vira a página perto da borda; o cursor volta a 10 % da largura
 CURSOR_HALO = 7                  # a faixa repintada em volta do cursor (a cabeça tem 5 px para cada lado)
 WHEEL_PX = 60                    # rolagem horizontal por dente da roda
-LANE_COLORS = ("#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac")
-CURSOR_COLOR, MARKER_COLOR = "#e74c3c", "#e67e22"
+CURSOR_TONE, MARKER_TONE = Tone.DANGER, Tone.WARNING      # o L4 (U-082) os leva a `accent` e `text` com bandeira
 EMPTY_TEXT = "Sem falas nesta reunião."
 NO_PLAYER_TEXT = "Reprodução indisponível nesta janela."
 
@@ -269,7 +270,7 @@ class TimelineView(QAbstractScrollArea):
                 continue
             p.fillRect(QRect(self._label_w, top, self.viewport().width(), self._lane_h), self.palette().alternateBase())
             lo, hi = visible_slice(lane, t0, t1)
-            color = QColor(LANE_COLORS[i % len(LANE_COLORS)])
+            color = QColor(tokens().speaker(i))
             x0, x1 = (origin + lane.starts[lo:hi] * scale).tolist(), (origin + lane.ends[lo:hi] * scale).tolist()
             for a, b in merge_spans(x0, x1):
                 p.fillRect(QRectF(a, top + 2, b - a, self._lane_h - 4), color)
@@ -287,7 +288,7 @@ class TimelineView(QAbstractScrollArea):
             if b >= t0 and a <= t1:
                 x = self.x_of(a)
                 p.fillRect(QRectF(x, top, max(1.0, self.x_of(b) - x), height), QBrush(hatch, Qt.BrushStyle.BDiagPattern))
-        p.setPen(QPen(QColor(MARKER_COLOR), 1))
+        p.setPen(QPen(QColor(tokens().tone(MARKER_TONE)), 1))
         for t, _note in self.markers:
             if t0 <= t <= t1:
                 p.drawLine(QPointF(self.x_of(t), top), QPointF(self.x_of(t), height))
@@ -309,7 +310,7 @@ class TimelineView(QAbstractScrollArea):
             p.drawLine(QPointF(x, AXIS_H - 5), QPointF(x, AXIS_H))
             p.drawText(QPointF(x + 3, AXIS_H - 10), stamp(t))
             t += step
-        p.setBrush(QColor(MARKER_COLOR))
+        p.setBrush(QColor(tokens().tone(MARKER_TONE)))
         for mt, _note in self.markers:
             if t0 <= mt <= t1:
                 x = self.x_of(mt)
@@ -323,9 +324,10 @@ class TimelineView(QAbstractScrollArea):
             return
         x = self.x_of(self.cursor_ms)
         if self._label_w - 1 <= x <= self.viewport().width() + 1:
-            p.setPen(QPen(QColor(CURSOR_COLOR), 2))
+            color = QColor(tokens().tone(CURSOR_TONE))
+            p.setPen(QPen(color, 2))
             p.drawLine(QPointF(x, 0), QPointF(x, self.viewport().height()))
-            p.setBrush(QColor(CURSOR_COLOR))
+            p.setBrush(color)
             p.drawPolygon(QPolygonF([QPointF(x - 5, 0), QPointF(x + 5, 0), QPointF(x, 7)]))
 
     def _paint_labels(self, p: QPainter, rect: QRect) -> None:

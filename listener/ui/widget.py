@@ -6,7 +6,9 @@ com `live.in_widget`, uma linha com a última legenda (`Ana — CFO: texto`, cor
 cujo clique abre a janela "Ao vivo"; com a linha, o widget ganha a altura dela sem encolher o tamanho salvo.
 F5.3 L4 (U-049, U-050): o botão "🎧" abre o painel dos dispositivos (desligado salvando); a linha de alerta tem um botão
 genérico (rótulo e ação dados por quem a mostra, A-21) no lugar do "Trocar fonte" fixo: "Usar" no aparelho novo,
-"Dispositivos…" na saída sem sinal."""
+"Dispositivos…" na saída sem sinal.
+F5.4 (A-11): as cores do estado, da saúde dos canais e do selo do ao vivo são tons dos tokens; o widget segue escuro até o
+L2 (U-060), com os tokens do escuro nos dois esquemas (`common.DARK_SURFACE`)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -19,9 +21,10 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushBut
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
-from ..model import Health
-from .common import HEALTH_COLORS, HEALTH_TEXT, clamp_to_screens
+from ..model import AppState, Health
+from .common import DARK_SURFACE, HEALTH_TEXT, clamp_to_screens, health_color, state_color
 from .meters import LevelMeter
+from .theme import Tone
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -30,10 +33,11 @@ log = get_logger("ui.widget")
 LIVE_MIN_HEIGHT = 118             # F4: 96 do widget mais a linha da legenda
 CLICK_SLOP_PX = 6
 ALERT_MIN_PX = 170                # F5.3: a linha de alerta à vista abre esse espaço ao lado dos botões (o resto vai na dica)
-# selo por estado do ao vivo (`Controller.live_status`): texto e cor; os estados fora daqui escondem o selo
-LIVE_BADGES: dict[str, tuple[str, str]] = {
-    "starting": ("ao vivo", "#95a5a6"), "restarting": ("ao vivo", "#95a5a6"), "live": ("ao vivo", "#2ecc71"),
-    "degraded": ("legenda atrasada", "#f39c12"), "skipping": ("legenda atrasada", "#f39c12"), "crashed": ("ao vivo parou", "#e74c3c"),
+# selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo
+LIVE_BADGES: dict[str, tuple[str, Tone]] = {
+    "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
+    "degraded": ("legenda atrasada", Tone.WARNING), "skipping": ("legenda atrasada", Tone.WARNING),
+    "crashed": ("ao vivo parou", Tone.DANGER),
 }
 
 
@@ -134,7 +138,7 @@ class RecordingWidget(QWidget):
         self.time_label = QLabel("00:00")
         self.time_label.setStyleSheet("font-size: 22px; font-weight: 600;")
         self.status_label = QLabel("gravando")
-        self.status_label.setStyleSheet("color: #e74c3c; font-weight: 600;")
+        self.status_label.setStyleSheet(f"color: {state_color(AppState.RECORDING, DARK_SURFACE)}; font-weight: 600;")
         self.health_l = QLabel("L ●")
         self.health_r = QLabel("R ●")
         self.markers_label = QLabel("")
@@ -241,7 +245,8 @@ class RecordingWidget(QWidget):
             self._last_status = status
             self.style_changes += 1
             text = "salvando…" if saving else ("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
-            color = "#3498db" if saving else ("#f1c40f" if paused else "#e74c3c")
+            state = AppState.SAVING if saving else (AppState.PAUSED if paused else AppState.RECORDING)
+            color = state_color(state, DARK_SURFACE)
             self.status_label.setText(text)
             self.status_label.setStyleSheet(f"color: {color}; font-weight: 600;")
             self.btn_pause.setText("▶" if paused else "⏸")
@@ -254,7 +259,7 @@ class RecordingWidget(QWidget):
             if self._last_health.get(ch) != h:
                 self._last_health[ch] = h
                 self.style_changes += 1
-                lab.setStyleSheet(f"color: {HEALTH_COLORS.get(h, '#888')}; font-weight: 600;")
+                lab.setStyleSheet(f"color: {health_color(h, DARK_SURFACE)}; font-weight: 600;")
                 lab.setToolTip(f"canal {ch}: {HEALTH_TEXT.get(h, h)}")
         text = f"⚑ {markers}" if markers else ""
         if self.markers_label.text() != text:
@@ -271,7 +276,8 @@ class RecordingWidget(QWidget):
         if badge is None:
             self.live_badge.hide()
             return
-        text, color = badge
+        text, tone = badge
+        color = DARK_SURFACE.tone(tone)
         self.style_changes += 1
         self.live_badge.setText(f"● {text}")
         self.live_badge.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 600;")

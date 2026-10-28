@@ -241,6 +241,7 @@ class FakePlatform(Platform):
         self._lb_view: Endpoints | None = None                # a lista do PyAudio vivo (A-15)
         self.capture_exclusion = True                         # F5.3 (A-13): o que `exclude_from_capture` devolve
         self.excluded: list[int] = []                         # as janelas que pediram para sair da captura
+        self.text_scale_factor = 1.0                          # F5.4 (A-08): o "Tamanho do texto" do sistema simulado
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -279,6 +280,14 @@ class FakePlatform(Platform):
     def exclude_from_capture(self, window_id: int) -> bool:
         self.excluded.append(int(window_id))
         return self.capture_exclusion
+
+    @override
+    def text_scale(self) -> float:
+        return self.text_scale_factor
+
+    @override
+    def ui_style(self) -> str:
+        return "Fusion"                                       # F5.4 (A-03): o offscreen não tem o `windows11`
 
     @override
     def list_input_devices(self) -> list[AudioDevice]:

@@ -1,6 +1,7 @@
 """Ícone na bandeja com estado (ocioso, gravando, pausado, salvando) e menu; F4: "Ao vivo…" abre a janela das legendas
 durante a gravação (U-021). F5: "Histórico…" abre a busca e as reuniões, e o clique no balão abre a reunião da última
-notificação que tinha reunião (Q6)."""
+notificação que tinha reunião (Q6). F5.4 (A-11, A-19): a cor do estado é um tom dos tokens do escuro, sobre o fundo próprio
+do ícone (a barra de tarefas segue o tema dela, não o do app)."""
 from __future__ import annotations
 
 from functools import cache
@@ -11,14 +12,18 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..model import AppState
+from .common import DARK_SURFACE, state_color
 
 if TYPE_CHECKING:
     from .controller import Controller
 
-STATE_COLORS: dict[str, str] = {AppState.IDLE: "#7f8c8d", AppState.RECORDING: "#e74c3c", AppState.PAUSED: "#f1c40f",
-                                AppState.SAVING: "#3498db"}
 STATE_TIPS: dict[str, str] = {AppState.IDLE: "listener-meet: pronto", AppState.RECORDING: "listener-meet: gravando",
                               AppState.PAUSED: "listener-meet: pausado", AppState.SAVING: "listener-meet: salvando…"}
+
+
+def icon_color(state: str) -> str:
+    """A cor do estado no ícone (o fundo do ícone é escuro: os tokens do escuro)."""
+    return state_color(state, DARK_SURFACE)
 
 
 @cache
@@ -80,7 +85,7 @@ class TrayIcon(QSystemTrayIcon):
 
     def set_state(self, state: AppState) -> None:
         self._state = state
-        self.setIcon(make_icon(STATE_COLORS.get(state, "#7f8c8d")))
+        self.setIcon(make_icon(icon_color(state)))
         self._apply_tip()
         recording = state in (AppState.RECORDING, AppState.PAUSED)
         self.act_record.setEnabled(state == AppState.IDLE)

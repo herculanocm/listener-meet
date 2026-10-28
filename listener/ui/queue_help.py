@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayo
 
 from ..model import JOB_KIND_HELP, JOB_KIND_LABELS, JOB_STATUS_HELP, JOB_STEP_HELP, JOB_STEP_LABELS, JobKind, JobStatus, JobStep
 from ..pipeline.estimate import STEP_ORDER
-from .common import JOB_STATUS_COLOR_NAMES, JOB_STATUS_COLORS, JOB_STATUS_HATCH
+from .common import JOB_STATUS_COLOR_NAMES, JOB_STATUS_HATCHED, job_status_color
 
 type StepGroup = tuple[JobStep, ...]            # etapas que rodam juntas (quase sempre uma só)
 type HelpItems = Mapping[str, str]              # nome -> o que faz, de botões e colunas
@@ -55,8 +55,9 @@ def _group_html(group: StepGroup) -> str:
 
 
 def _status_html(status: JobStatus) -> str:
-    """O estado com a amostra da cor da barra e o nome da cor (quem não distingue cores lê o nome)."""
-    mark, color = ("▨", JOB_STATUS_HATCH[status]) if status in JOB_STATUS_HATCH else ("■", JOB_STATUS_COLORS[status])
+    """O estado com a amostra da cor da barra, nos tokens do tema (F5.4), e o nome da cor (quem não distingue cores lê o
+    nome)."""
+    mark, color = ("▨" if status in JOB_STATUS_HATCHED else "■"), job_status_color(status)
     return (f'<li><span style="color:{color}">{mark}</span> <b>{_esc(status)}</b> ({_esc(JOB_STATUS_COLOR_NAMES[status])}): '
             f"{_esc(JOB_STATUS_HELP[status])}</li>")
 

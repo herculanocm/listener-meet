@@ -512,9 +512,12 @@ def test_settings_language_and_notices_group_has_the_toast_seconds(qtbot, store,
 
 
 def test_notice_colors_are_readable_on_the_dark_background():
-    from listener.ui.common import NOTICE_BACKGROUND, NOTICE_COLORS, NOTICE_MUTED, NOTICE_TEXT, contrast
+    from listener.ui.common import NOTICE_BACKGROUND, NOTICE_COLORS, NOTICE_MUTED, NOTICE_TEXT, NOTICE_TONES, contrast
+    from listener.ui.theme import DARK
 
-    assert set(NOTICE_COLORS) == {str(k) for k in NoticeKind}
+    assert set(NOTICE_COLORS) == set(NOTICE_TONES) == {str(k) for k in NoticeKind}
+    assert {kind: DARK.tone(tone) for kind, tone in NOTICE_TONES.items()} == NOTICE_COLORS                  # F5.4: escuro até o L2
+    assert (DARK.input, DARK.text, DARK.secondary) == (NOTICE_BACKGROUND, NOTICE_TEXT, NOTICE_MUTED)
     assert contrast(NOTICE_TEXT, NOTICE_BACKGROUND) >= 4.5 and contrast(NOTICE_MUTED, NOTICE_BACKGROUND) >= 4.5   # texto
     assert all(contrast(color, NOTICE_BACKGROUND) >= 3.0 for color in NOTICE_COLORS.values())                    # a faixa
 

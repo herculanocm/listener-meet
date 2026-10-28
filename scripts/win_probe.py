@@ -4,11 +4,14 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
 
   python scripts/win_probe.py app [--seconds 20] [--hotkey]   o app real num perfil isolado: abertura, bandeja, RAM e CPU
                                                               parado, o atalho do Histórico e a saída pelo "Sair"
-  python scripts/win_probe.py shots [--out PASTA]             as telas no DPI real sem aparecer na tela do usuário: um PNG
+  python scripts/win_probe.py shots [--out PASTA] [--escuro] [--dpr1]
+                                                              as telas no DPI real sem aparecer na tela do usuário: um PNG
                                                               por tela e por aba (F5.3: a fila nos seis estados e a Ajuda;
                                                               um aviso de cada tipo e o grupo "Idioma e avisos"; o widget
                                                               com o botão 🎧 e a linha "novo: … Usar", e o painel dos
-                                                              dispositivos com os aparelhos reais desta máquina)
+                                                              dispositivos com os aparelhos reais desta máquina); F5.4: com
+                                                              os relatórios `cortados` e `pequenos` de cada foto
+  python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
@@ -19,7 +22,12 @@ app     APPDATA e LOCALAPPDATA apontam para uma pasta temporária antes de o app
         pré-aquecimento do áudio (U-031). Com --hotkey, Ctrl+Alt+Shift+H é simulado (keybd_event; o RegisterHotKey do app
         consome a combinação) e o Histórico abre na frente por uns segundos.
 shots   janelas reais em (-10000, -10000) com WA_ShowWithoutActivating: o DPI vem da tela de verdade e nada rouba o foco
-        (com WA_DontShowOnScreen os diálogos saem em DPR 1; a plataforma offscreen não tem as fontes do Windows).
+        (com WA_DontShowOnScreen os diálogos saem em DPR 1; a plataforma offscreen não tem as fontes do Windows). F5.4
+        (A-03, A-21): `--escuro` força o esquema escuro no Qt (o Windows segue como está) e `--dpr1` desliga a escala
+        (`QT_ENABLE_HIGHDPI_SCALING=0` antes do `QApplication`); o tema é aplicado como no app. `cortados` e `pequenos`
+        estão em `scripts/probe_ui.py`.
+tempos  `scripts/probe_ui.py`: mediana de 7 aberturas por janela, em rodadas alternadas, e o menor de 3 processos; com
+        `--base PASTA`, as rodadas alternam o código de antes (uma cópia, `git archive <commit> listener tests`) e o atual.
 player  a reunião é silêncio (nada audível) em pedaços de 60 s; o primeiro som roda em processos novos, um frio e um com o
         `prewarm_audio` antes; os buracos vêm da linha "player: reunião N: … buraco(s)" do log; a carga são processos
         `while True: pass` abaixo do normal, como o worker pesado.
@@ -165,6 +173,9 @@ def cmd_app(args) -> None:
     app.setApplicationName("listener-meet")
     app.setQuitOnLastWindowClosed(False)
     translated = install_translations(app) is not None
+    from probe_ui import apply_theme, release_theme
+
+    themed = apply_theme(app, platform)                    # F5.4 (A-09): como no app
     db_dir = profile / "db"
     with Store(db_dir) as seed:
         seed.upsert_me("Teste")
@@ -229,6 +240,8 @@ def cmd_app(args) -> None:
         QTimer.singleShot(idle_from_ms + 3000, check_history)
     QTimer.singleShot(int(idle_from_ms + args.seconds * 1000), finish)
     code = app.exec()
+    release_theme(app)
+    result["themed"] = themed
     result["exit_code"] = code
     result["quit_to_return_s"] = round(time.perf_counter() - marks.get("quit_at", time.perf_counter()), 2)
     out("app", **result)
@@ -237,13 +250,22 @@ def cmd_app(args) -> None:
 # ---------------------------------------------------------------------------- shots
 def cmd_shots(args) -> None:
     os.environ.pop("QT_QPA_PLATFORM", None)
+    if args.dpr1:
+        os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"       # A-21: antes do QApplication
     from PySide6.QtCore import QCoreApplication, QEvent, Qt
+    from PySide6.QtGui import QFontInfo
     from PySide6.QtWidgets import QApplication, QGroupBox, QTabWidget
 
+    from probe_ui import apply_theme, layout_report, release_theme
+
     app = QApplication(sys.argv[:1])
+    scheme = None
+    if args.escuro:                                       # A-03: o esquema escuro só no Qt, sem trocar o do Windows
+        scheme = Qt.ColorScheme.Dark
+        app.styleHints().setColorScheme(scheme)
     from listener.platform import get_platform
     from listener.store import Store
-    from listener.ui.common import install_translations
+    from listener.ui.common import STATE_TONES, install_translations
     from listener.ui.history import HistoryWindow
     from listener.ui.meeting import MeetingWindow
     from listener.ui.notices import Notice, NoticeAction, NoticeKind, Target
@@ -253,12 +275,14 @@ def cmd_shots(args) -> None:
     from listener.ui.settings_min import SettingsDialog
     from listener.ui.summary import SummaryDialog
     from listener.ui.toast import Toast
-    from listener.ui.tray import STATE_COLORS, make_icon
+    from listener.ui.tray import icon_color, make_icon
     from listener.ui.warmup import WarmupDialog
     from listener.ui.widget import MarkerPopup, RecordingWidget
     from listener.ui.wizard import FirstRunWizard
 
     install_translations(app)
+    p = get_platform()
+    themed = apply_theme(app, p, scheme)                  # A-09: depois da tradução, como no app
     out_dir = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="listener-shots-"))
     out_dir.mkdir(parents=True, exist_ok=True)
     screen = app.primaryScreen()
@@ -274,11 +298,14 @@ def cmd_shots(args) -> None:
         while w.devicePixelRatioF() != screen.devicePixelRatio() and time.perf_counter() < deadline:
             time.sleep(0.02)
             app.processEvents()
+        for _ in range(3):                                # F5.4: o texto que chegou de uma tarefa refaz o layout antes da foto
+            app.processEvents()
         pix = w.grab()
         path = out_dir / f"{len(shots):02d}-{name}.png"
         pix.save(str(path))
+        cut, small = layout_report(w)
         shots.append({"file": path.name, "logical": [w.width(), w.height()], "pixels": [pix.width(), pix.height()],
-                      "dpr": w.devicePixelRatioF()})
+                      "dpr": w.devicePixelRatioF(), "cortados": cut, "pequenos": small})
 
     def tabs_of(w, name: str) -> None:
         for tw in w.findChildren(QTabWidget)[:1]:
@@ -293,9 +320,8 @@ def cmd_shots(args) -> None:
         path = out_dir / f"{len(shots):02d}-{name}.png"
         pix.save(str(path))
         shots.append({"file": path.name, "logical": [w.width(), w.height()], "pixels": [pix.width(), pix.height()],
-                      "dpr": w.devicePixelRatioF()})
+                      "dpr": w.devicePixelRatioF(), "cortados": [], "pequenos": []})
 
-    p = get_platform()
     p.app_init()
     store = Store(Path(tempfile.mkdtemp(prefix="listener-shots-db-")))
     store.upsert_me("Teste")
@@ -357,11 +383,31 @@ def cmd_shots(args) -> None:
         shot(toast, name)
         discard(toast)
     player.shutdown()
-    for state, color in STATE_COLORS.items():
-        make_icon(color).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))
+    for state in STATE_TONES:
+        make_icon(icon_color(state)).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)   # R-06: as janelas apagadas antes do banco fechar
     store.close()
-    out("shots", folder=str(out_dir), screen={"name": screen.name(), "dpr": screen.devicePixelRatio()}, shots=shots)
+    release_theme(app)
+    out("shots", folder=str(out_dir), screen={"name": screen.name(), "dpr": screen.devicePixelRatio()}, themed=themed,
+        scheme=str(app.styleHints().colorScheme()), style=app.style().name(),
+        font=f"{app.font().family()} {QFontInfo(app.font()).pixelSize()} px", shots=shots)
+    for report in ("cortados", "pequenos"):
+        found = {s["file"]: s[report] for s in shots if s[report]}
+        out(report, total=sum(len(v) for v in found.values()), shots=found)
+
+
+# ---------------------------------------------------------------------------- tempos (F5.4, A-21)
+def cmd_tempos(args) -> None:
+    from probe_ui import run_tempos
+
+    run_tempos(Path(__file__).resolve(), args.base, args.runs, args.rounds, out)
+
+
+def cmd_tempos_child(args) -> None:
+    """(processo filho) Uma rodada: a mediana de cada janela e o tique, numa linha JSON."""
+    from probe_ui import measure
+
+    print(json.dumps(measure(args.root, args.rounds), ensure_ascii=False), flush=True)
 
 
 # ---------------------------------------------------------------------------- player
@@ -526,6 +572,15 @@ def main() -> None:
     p.add_argument("--hotkey", action="store_true")
     p = sub.add_parser("shots")
     p.add_argument("--out", default=None)
+    p.add_argument("--escuro", action="store_true", help="força o esquema escuro no Qt (A-03)")
+    p.add_argument("--dpr1", action="store_true", help="sem a escala de DPI (QT_ENABLE_HIGHDPI_SCALING=0)")
+    p = sub.add_parser("tempos")
+    p.add_argument("--base", default=None, help="pasta com uma cópia do código de antes (listener/ e tests/)")
+    p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--rounds", type=int, default=7)
+    p = sub.add_parser("_tempos", help=argparse.SUPPRESS)
+    p.add_argument("--root", default=None)
+    p.add_argument("--rounds", type=int, default=7)
     p = sub.add_parser("player")
     p.add_argument("--seconds", type=float, default=20.0)
     sub.add_parser("export")
@@ -533,9 +588,10 @@ def main() -> None:
     p.add_argument("--prewarm", action="store_true")
     sub.add_parser("_copy_exit", help=argparse.SUPPRESS)
     args = ap.parse_args()
-    out("env", python=sys.version.split()[0], platform=sys.platform, cores=os.cpu_count())
-    {"app": cmd_app, "shots": cmd_shots, "player": cmd_player, "export": cmd_export, "_first": cmd_first,
-     "_copy_exit": cmd_copy_exit}[args.cmd](args)
+    if args.cmd != "_tempos":                             # a linha JSON do filho é a última da saída dele
+        out("env", python=sys.version.split()[0], platform=sys.platform, cores=os.cpu_count())
+    {"app": cmd_app, "shots": cmd_shots, "tempos": cmd_tempos, "_tempos": cmd_tempos_child, "player": cmd_player,
+     "export": cmd_export, "_first": cmd_first, "_copy_exit": cmd_copy_exit}[args.cmd](args)
 
 
 if __name__ == "__main__":

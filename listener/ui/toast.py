@@ -14,8 +14,8 @@ o gerente só na thread da interface (A-10); aqui ficam a janela (`Toast`), a po
 - Janela (A-14): `Tool | FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus` com
   `WA_ShowWithoutActivating`, nunca `activateWindow`; o alvo do clique vem à frente pelo controlador (`bring_to_front`). Com
   um diálogo modal aberto (o warm-up), o aviso aparece e some sem receber clique.
-- Visual sóbrio, como o widget de gravação: fundo escuro, texto claro e a faixa na cor do tipo (`ui/common.py`); a fase de
-  design refina a paleta."""
+- Visual sóbrio, como o widget de gravação: fundo escuro, texto claro e a faixa na cor do tipo (`ui/common.py`); F5.4: as
+  cores são os tokens do escuro, nos dois esquemas, até o L2 (U-068) levar o aviso ao tema."""
 from __future__ import annotations
 
 import functools

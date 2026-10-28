@@ -27,7 +27,7 @@ import numpy as np
 from ...capture.mixer import FrameMixer
 from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform,
-                    PlayingApp, log_id, pick_device)
+                    PlayingApp, log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
 from . import endpoints, processes
 from .endpoints import com_init as _com_init
@@ -56,6 +56,8 @@ CTRL_EVENTS = {0: "Ctrl+C no terminal do app", 1: "Ctrl+Break no terminal do app
 _CONSOLE_HANDLERS: list[Any] = []                      # o callback precisa viver o processo inteiro (o ctypes não o segura)
 PROCESS_CACHE_S = 3.0          # snapshot Toolhelp32 e títulos de janela durante o polling de apps
 MUTE_RETRY_S = 30.0            # após falhar a busca do endpoint do mudo, só tenta de novo depois disto
+ACCESSIBILITY_KEY = r"Software\Microsoft\Accessibility"   # F5.4 (A-08): o "Tamanho do texto", em HKCU
+WIN11_BUILD = 22000            # F5.4: o Qt só escolhe o `windows11` a partir daqui; antes, o `windowsvista`
 
 
 class ProcessMemoryCounters(ctypes.Structure):          # PROCESS_MEMORY_COUNTERS do psapi
@@ -504,6 +506,30 @@ class Win32Platform(Platform):
         if not ok:
             log.debug("SetWindowDisplayAffinity recusou a janela %#x (erro %s)", int(window_id), ctypes.get_last_error())
         return ok
+
+    # ---------------------------------------------------------------- aparência (F5.4)
+    @override
+    def text_scale(self) -> float:
+        """A-08 (U-052): o `TextScaleFactor` (DWORD de 100 a 225) da chave de acessibilidade do usuário; ausente ou ilegível
+        (o "Tamanho do texto" nunca mexido não cria o valor), 1,0."""
+        if sys.platform != "win32":
+            return 1.0
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, ACCESSIBILITY_KEY) as key:
+                value, kind = winreg.QueryValueEx(key, "TextScaleFactor")
+        except OSError:
+            return 1.0
+        return text_scale_from_percent(value) if kind == winreg.REG_DWORD else 1.0
+
+    @override
+    def ui_style(self) -> str:
+        """A-01: o `windows11` do Qt, o que ele próprio escolhe no Windows 11; no 10, o `windowsvista`, como o Qt (o
+        `windows11` desenha as setas e marcas com a Segoe Fluent Icons, que o 10 não tem)."""
+        if sys.platform != "win32":
+            return "Fusion"
+        return "windows11" if sys.getwindowsversion().build >= WIN11_BUILD else "windowsvista"
 
     # ---------------------------------------------------------------- dispositivos
     @override

@@ -1,9 +1,10 @@
 """A barra de progresso da fila (F5.3 item 8, U-047, A-08): um `QStyledItemDelegate` que pinta a coluna "%" pelo dado do
 item (a fração em `PROGRESS_ROLE` e o estado em `STATUS_ROLE`), nunca por widget de célula: o `refresh` da fila refaz os
 itens a cada 2 s e reordena as linhas, e um widget de célula ficaria no job errado. O trilho vem da palette() da tabela, o
-preenchido tem a cor do estado (`common.JOB_STATUS_COLORS`), o cancelado é hachurado e o número fica preto ou branco pela
-luminância do que está embaixo dele (sobre o preenchido e sobre o trilho, cada lado com a sua cor). No "rodando" uma faixa
-anda pela barra; quem a move é o timer da fila (`phase`), ligado só com alguma linha rodando e a fila visível."""
+preenchido tem a cor do estado (`common.JOB_STATUS_TONES`, nos tokens do tema; F5.4), o cancelado é hachurado e o número
+fica preto ou branco pela luminância do que está embaixo dele (sobre o preenchido e sobre o trilho, cada lado com a sua
+cor). No "rodando" uma faixa anda pela barra; quem a move é o timer da fila (`phase`), ligado só com alguma linha rodando e
+a fila visível."""
 from __future__ import annotations
 
 from collections.abc import Sequence

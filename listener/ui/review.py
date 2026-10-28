@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
@@ -24,6 +24,7 @@ from ..pipeline import review, summary_gate
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .person import DELETE, PersonData, PersonDialog
 from .player import ERROR, PlayerState
+from .theme import Tone, tokens
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -34,6 +35,7 @@ DELETE_TEXT = ("Apagar {name}?\n\nSaem a ficha, o perfil de voz e o vínculo com
                "reuniões; as vozes dela voltam a \"sem nome\". O áudio e as falas ficam.\n\nAtas, resumos, respostas do chat e o "
                "histórico das chamadas à LLM já gerados não mudam: use \"Gerar de novo\" para refazê-los sem o nome.")
 EDITABLE = (ClusterStatus.CONFIRMED, ClusterStatus.AUTO)         # U-041 (A-12): só voz com pessoa decidida tem ficha a editar
+PENDING_TONE = Tone.DANGER       # F5.4 (A-11): a voz pendente no tom de perigo do tema (antes, o `darkRed` fixo)
 
 
 def person_data(row: Any) -> PersonData:
@@ -180,7 +182,7 @@ class ReviewDialog(QDialog):
             item = QListWidgetItem(f"{it.title} · {it.minutes_text} · {it.summary()}")
             item.setData(Qt.ItemDataRole.UserRole, it.cluster_id)
             if it.pending and it.merged_into is None:
-                item.setForeground(Qt.GlobalColor.darkRed)
+                item.setForeground(QColor(tokens().tone(PENDING_TONE)))
             self.list.addItem(item)
         waiting = review.pending(self.items)
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else

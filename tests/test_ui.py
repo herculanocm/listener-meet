@@ -146,6 +146,7 @@ def test_warmup_long_microphone_name_leaves_room_for_the_sources(qtbot, store, p
     qtbot.addWidget(dlg)
     dlg.show()
     qtbot.waitExposed(dlg)
+    dlg.resize(984, dlg.height())        # F5.4 (A-18): com o corpo de 14 px o 1:2 pede folga; o L2 (U-065) reescreve o teste
     boxes = {g.title().split(" (")[0]: g for g in dlg.findChildren(QGroupBox)}
     assert boxes["Microfone"].width() < boxes["Saída"].width()                 # a proporção 1:2 vale com o nome longo
     assert dlg.mic_combo.sizeHint().width() < dlg.mic_combo.fontMetrics().horizontalAdvance(name)   # o combo não pede o nome todo

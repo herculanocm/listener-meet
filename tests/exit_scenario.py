@@ -62,6 +62,9 @@ def main() -> int:
 
     fake.FakeProvider.__init__ = slow_init  # type: ignore[method-assign]
     platform = FakePlatform(root)
+    from listener.ui import theme
+
+    theme.apply(app, platform)                               # F5.4 (A-09): como no app, com o estilo em Python até a saída
     c = Controller(app, platform, store)
     c.tray = None
     app.aboutToQuit.connect(c.emergency_stop)
@@ -85,6 +88,7 @@ def main() -> int:
     t0 = time.monotonic()
     QTimer.singleShot(QUIT_AFTER_MS, app.quit)
     code = app.exec()
+    theme.release(app)                                       # A-09 (R-06): como o `run` do app, depois do laço
     sys.stderr.write(f"app.exec() voltou {code} em {time.monotonic() - t0:.1f} s; o processo sai agora\n")
     if "--glossary" in sys.argv:                             # o desfecho do glossário ficou no banco (já fechado pela saída)
         with Store(root / "db") as check:

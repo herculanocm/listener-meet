@@ -55,6 +55,7 @@ from ..store.rag import SearchFilters
 from ..store.segments import ClusterRow, resolve_person
 from .common import clamp_to_screens, copy_rich
 from .tasks import StreamTask, run_stream, run_task, wait_before_close
+from .theme import Tone, tokens
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 HIT_SCHEME, MEETING_SCHEME = "listener://hit?c=", "listener://meeting?m="
 CHAT_EMPTY = ("<p style='color:#888'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
               "numa citação abre a reunião naquele ponto e toca. Os filtros de pessoa e período valem aqui também.</p>")
-OVERDUE_COLOR = "#c0392b"
+OVERDUE_TONE = Tone.DANGER       # F5.4 (A-11): a ação atrasada e a busca que falhou, no tom de perigo do tema
 KEPT = 100                       # instrumentação dos testes: as últimas respostas e cópias
 
 type OpenMeeting = Callable[..., Any]          # on_open(meeting_id, tab=None, t_ms=None, play=False)
@@ -721,7 +722,7 @@ class HistoryPage(QWidget):
             return                                       # resultado velho: o usuário já digitou outra coisa
         if isinstance(result, BaseException):
             log.warning("busca %d falhou: %s", gen, type(result).__name__)
-            self.badge.setText(f"<span style='color:{OVERDUE_COLOR}'>a busca falhou: {html.escape(str(result))}</span>")
+            self.badge.setText(f"<span style='color:{tokens().tone(OVERDUE_TONE)}'>a busca falhou: {html.escape(str(result))}</span>")
             return
         log.info("busca %d: %d trecho(s) de %d reunião(ões)", gen, len(result.hits), len({h.meeting_id for h in result.hits}))
         self.show_result(result)
@@ -808,7 +809,7 @@ class HistoryPage(QWidget):
                 if c == 3:
                     item.setToolTip("Enter ou duplo clique abre a reunião na evidência da ação")
                 if line.overdue:
-                    item.setForeground(QColor(OVERDUE_COLOR))
+                    item.setForeground(QColor(tokens().tone(OVERDUE_TONE)))
                     if c == 2:
                         item.setFont(bold)
                 self.action_table.setItem(r, c, item)

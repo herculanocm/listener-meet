@@ -27,6 +27,7 @@ from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import SummaryKind
 from .common import clamp_to_screens
+from .theme import tokens
 from .widget import LIVE_BADGES, _screen_rects
 
 if TYPE_CHECKING:
@@ -252,7 +253,7 @@ class LiveWindow(QWidget):
         marked = caption_key(row) in self.marked_captions
         item.setText(("⚑ " if marked else "") + caption_line(row))
         if marked:
-            item.setForeground(QColor("#2e86c1"))
+            item.setForeground(QColor(tokens().accent))        # F5.4 (A-11): a legenda marcada no destaque do tema
 
     @property
     def captions(self) -> list[dict[str, Any]]:
@@ -343,8 +344,8 @@ class LiveWindow(QWidget):
 
     # ---------------------------------------------------------------- estado
     def set_live_state(self, state: str) -> None:
-        badge = LIVE_BADGES.get(state)
-        text, color = badge if badge else (STATE_TEXT.get(state, ""), "#888")
+        badge, t = LIVE_BADGES.get(state), tokens()
+        text, color = (badge[0], t.tone(badge[1])) if badge else (STATE_TEXT.get(state, ""), t.secondary)
         self.live_label.setText(f"<span style='color:{color}'>{html.escape(text)}</span>" if text else "")
 
     def set_finished(self, text: str = "gravação encerrada: só leitura") -> None:

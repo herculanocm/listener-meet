@@ -1,7 +1,8 @@
 """F5.3 L2 (U-047): a fila com a coluna "Enviado" (o `created_at` na hora local; na dica, início, fim e o tempo de trabalho
 pela soma do `timings_json`, A-08), a "%" como barra pintada por um delegate na cor do estado (o número com 4,5:1 ou mais
 nos temas claro e escuro; a faixa do "rodando" só anda com linha rodando e a fila visível) e a Ajuda com todo tipo, estado
-e etapa, na ordem em que rodam (A-09)."""
+e etapa, na ordem em que rodam (A-09). F5.4 (A-11): a cor de cada estado é um tom dos tokens do tema; a tabela tem a base e o
+texto dos tokens."""
 from __future__ import annotations
 
 import json
@@ -13,8 +14,8 @@ import pytest
 
 from listener.model import JobKind, JobStatus, JobStep
 from listener.store import Store
+from listener.ui.theme import DARK, LIGHT
 
-LIGHT, DARK = ("#ffffff", "#000000"), ("#2d2d2d", "#ffffff")       # base e texto da palette() do windows11 (medidos em 27/10)
 CELL_W, CELL_H = 200, 28
 BACKDROP = "#123456"                                                  # o que já estava na célula: fora da barra, fica
 
@@ -160,14 +161,17 @@ def test_index_row_sent_tip_and_bar_follow_the_running_index_job(qtbot, store):
 
 
 # ---------------------------------------------------------------- a barra na cor do estado (item 8)
-@pytest.mark.parametrize(("base", "text"), [LIGHT, DARK], ids=["claro", "escuro"])
-def test_bar_colors_per_state_keep_the_number_readable_in_both_themes(base, text):
-    from listener.ui.common import BAND_OPACITY, JOB_STATUS_COLOR_NAMES, JOB_STATUS_COLORS, bar_colors, contrast, mix
+@pytest.mark.parametrize("t", [LIGHT, DARK], ids=["claro", "escuro"])
+def test_bar_colors_per_state_keep_the_number_readable_in_both_themes(t):
+    from listener.ui.common import BAND_OPACITY, JOB_STATUS_COLOR_NAMES, JOB_STATUS_TONES, bar_colors, contrast, job_status_color, mix
 
-    assert set(JOB_STATUS_COLORS) == set(JOB_STATUS_COLOR_NAMES) == set(JobStatus)
+    assert set(JOB_STATUS_TONES) == set(JOB_STATUS_COLOR_NAMES) == set(JobStatus)
+    base, text = t.input, t.text                                                     # a tabela com o tema (F5.4)
     looks = set()
     for status in JobStatus:
-        c = bar_colors(status, base, text)
+        c = bar_colors(status, base, text, t)
+        assert c.fill == t.tone(JOB_STATUS_TONES[status]) == job_status_color(status, t), status
+        assert contrast(c.fill, c.track) > 1.3, status                                # o preenchido aparece no trilho
         assert contrast(c.text, c.fill) >= 4.5 and contrast(c.track_text, c.track) >= 4.5, status
         assert contrast(c.text, mix(c.fill, c.band, BAND_OPACITY)) >= contrast(c.text, c.fill), status          # a faixa só ajuda
         assert contrast(c.track_text, mix(c.track, c.track_band, BAND_OPACITY)) >= contrast(c.track_text, c.track), status
@@ -175,9 +179,9 @@ def test_bar_colors_per_state_keep_the_number_readable_in_both_themes(base, text
             assert contrast(c.text, c.hatch) >= 4.5
         looks.add((c.fill, c.hatch))
     assert len(looks) == len(JobStatus)                                              # cada estado com a sua cor
-    assert bar_colors(JobStatus.CANCELLED, base, text).hatch is not None             # o cancelado, hachurado
-    assert bar_colors("???", base, text).fill == JOB_STATUS_COLORS[JobStatus.PENDING]
-    assert contrast(bar_colors(JobStatus.RUNNING, base, text).track, base) > 1.3     # o trilho aparece na tabela
+    assert bar_colors(JobStatus.CANCELLED, base, text, t).hatch is not None          # o cancelado, hachurado
+    assert bar_colors("???", base, text, t).fill == t.tone(JOB_STATUS_TONES[JobStatus.PENDING])
+    assert contrast(bar_colors(JobStatus.RUNNING, base, text, t).track, base) > 1.3  # o trilho aparece na tabela
 
 
 def test_black_or_white_text_always_reaches_4_5_to_1():
