@@ -5,7 +5,7 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
   python scripts/win_probe.py app [--seconds 20] [--hotkey]   o app real num perfil isolado: abertura, bandeja, RAM e CPU
                                                               parado, o atalho do Histórico e a saída pelo "Sair"
   python scripts/win_probe.py shots [--out PASTA]             as telas no DPI real sem aparecer na tela do usuário: um PNG
-                                                              por tela e por aba
+                                                              por tela e por aba (F5.3: a fila nos seis estados e a Ajuda)
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
@@ -59,6 +59,49 @@ def silent_meeting(store, seconds: int, chunk_s: int = 60) -> int:
             store.insert_chunk(mid, ch, idx, idx * chunk_s * 1000, len(x), SR, 0, encode_flac(x, SR))
     store.finish_meeting(mid, seconds * 1000)
     return mid
+
+
+def queue_jobs(store, first_mid: int) -> None:
+    """A fila nos seis estados para a foto (F5.3 L2, U-047): concluído, erro, cancelado (hachurado), pausado, rodando a 42 %
+    e pendente devolvido à fila com 30 %, mais a linha agregada do índice rodando a 55 %. Cada tipo de job só tem um claim
+    vivo por vez: um tipo por claim."""
+    from listener.model import JobKind, JobStatus, JobStep
+
+    ids = [first_mid]
+    for title in ("Diretoria", "Planejamento", "Reunião de vendas"):
+        mid = store.create_meeting(title, "teams", None, None)
+        store.finish_meeting(mid, 1_800_000)
+        ids.append(mid)
+    a, b, c, d = ids
+    timings = {"diarize": {"audio_s": 1800.0, "speech_s": 0.0, "wall_s": 610.4, "model": "pyannote"},
+               "transcribe_r": {"audio_s": 1800.0, "speech_s": 1100.0, "wall_s": 737.2, "model": "large-v3-turbo"}}
+    done = store.jobs.enqueue(a)
+    store.jobs.claim(pid=1, kinds=("meeting",))
+    store.jobs.finish(done, JobStatus.DONE, timings=timings)
+    error = store.jobs.enqueue(a, JobKind.LLM, {"tasks": ["identify", "minutes", "executive", "title"]})
+    store.jobs.claim(pid=2, kinds=("llm",))
+    store.jobs.set_progress(error, JobStep.MINUTES, 0.25, {"identify": {"wall_s": 21.5}, "llm": {"cost_usd": 0.02, "done": ["identify"]}})
+    store.jobs.finish(error, JobStatus.ERROR, error="ata falhou: sem rede")
+    cancelled = store.jobs.enqueue(b, JobKind.REPROCESS)
+    store.jobs.claim(pid=3, kinds=("reprocess",))
+    store.jobs.set_progress(cancelled, JobStep.TRANSCRIBE_R, 0.6, timings)
+    store.jobs.finish(cancelled, JobStatus.CANCELLED)
+    paused = store.jobs.enqueue(b, JobKind.LLM, {"tasks": ["minutes", "title"]})
+    store.jobs.claim(pid=4, kinds=("llm",))
+    store.jobs.set_progress(paused, JobStep.MINUTES, 0.5)
+    store.jobs.set_status(paused, JobStatus.PAUSED, JobStep.WAITING)
+    running = store.jobs.enqueue(c)
+    store.jobs.claim(pid=5, kinds=("meeting",))
+    store.jobs.set_progress(running, JobStep.TRANSCRIBE_R, 0.42, timings)
+    pending = store.jobs.enqueue(d, JobKind.REPROCESS)
+    store.jobs.claim(pid=6, kinds=("reprocess",))
+    store.jobs.set_progress(pending, JobStep.DIARIZE, 0.3)
+    store.jobs.finish(pending, JobStatus.ERROR, error="worker parou sem concluir")
+    store.jobs.retry(pending)
+    index = store.jobs.enqueue_index(a, "pipeline")
+    store.jobs.enqueue_index(b, "pipeline")
+    store.jobs.claim(pid=7, kinds=("index",))
+    store.jobs.set_progress(index, JobStep.INDEX_VECTORS, 0.55)
 
 
 # ---------------------------------------------------------------------------- app
@@ -168,6 +211,8 @@ def cmd_shots(args) -> None:
     from listener.ui.history import HistoryWindow
     from listener.ui.meeting import MeetingWindow
     from listener.ui.player import Player
+    from listener.ui.queue import BUTTON_HELP, COLUMN_HELP, QueueDialog
+    from listener.ui.queue_help import QueueHelpDialog
     from listener.ui.settings_min import SettingsDialog
     from listener.ui.summary import SummaryDialog
     from listener.ui.tray import STATE_COLORS, make_icon
@@ -243,6 +288,14 @@ def cmd_shots(args) -> None:
     tabs_of(hw, "historico")
     hw.page.shutdown()
     hw.close()
+    queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
+    qd = QueueDialog(store)
+    shot(qd, "fila")
+    hd = QueueHelpDialog(BUTTON_HELP, COLUMN_HELP, qd)
+    shot(hd, "fila-ajuda")
+    hd.close()
+    qd._timer.stop()
+    qd.close()
     player.shutdown()
     for state, color in STATE_COLORS.items():
         make_icon(color).pixmap(32, 32).save(str(out_dir / f"tray-{state}.png"))

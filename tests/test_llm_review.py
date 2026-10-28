@@ -304,10 +304,10 @@ def test_queue_texts_and_notification_for_llm_jobs(store):
     store.jobs.claim(pid=1, kinds=("llm",))
     store.jobs.set_progress(jid, "minutes", 0.25, {"llm": {"cost_usd": 0.1234, "done": ["identify"], "calls": 1, "skipped": {}}})
     texts = job_row_texts(store.jobs.get(jid), store.get_meeting(mid), "{}")
-    assert list(texts[1:4]) == ["LLM", "rodando", "LLM: ata (2 de 4)"] and texts[5] == "sem estimativa" and texts[6] == "custo US$ 0,12"
+    assert list(texts[2:5]) == ["LLM", "rodando", "LLM: ata (2 de 4)"] and texts[6] == "sem estimativa" and texts[7] == "custo US$ 0,12"
     store.jobs.finish(jid, JobStatus.DONE, timings={"llm": {"cost_usd": 0.32, "done": ["identify", "minutes", "executive", "title"]}})
     job = store.jobs.get(jid)
-    assert job_row_texts(job, None, "{}")[3] == "LLM: ata (4 de 4)" and llm_done_text(dict(job)) == "ata pronta · US$ 0,32"
+    assert job_row_texts(job, None, "{}")[4] == "LLM: ata (4 de 4)" and llm_done_text(dict(job)) == "ata pronta · US$ 0,32"
     assert llm_done_text({"timings_json": json.dumps({"llm": {"done": ["title"], "cost_usd": 0}})}) == "LLM concluída."
     assert llm_done_text({"timings_json": None}) == "LLM sem tarefas novas."
     skipped = {"llm": {"cost_usd": 0.1, "done": ["minutes"], "skipped": {"executive": "estimado US$ 2,00", "revise": "estimado"}}}

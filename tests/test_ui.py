@@ -304,9 +304,10 @@ def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     dlg = QueueDialog(store, on_launch=lambda light=False: launched.append(1 + int(light)))
     qtbot.addWidget(dlg)
     assert dlg.table.rowCount() == 2
-    row0 = [dlg.table.item(0, c).text() for c in range(7)]
-    assert row0[0].startswith("Diretoria (") and row0[1:5] == ["processar", "rodando", "separando vozes", "20"] and row0[5].startswith("≈ ")
-    assert job_row_texts(store.jobs.get(j2), None, "{}")[0] == f"reunião {mid}" and "sem estimativa" not in row0[5]
+    row0 = [dlg.table.item(0, c).text() for c in range(8)]
+    assert row0[0].startswith("Diretoria (") and row0[2:6] == ["processar", "rodando", "separando vozes", "20 %"]
+    assert row0[6].startswith("≈ ")
+    assert job_row_texts(store.jobs.get(j2), None, "{}")[0] == f"reunião {mid}" and "sem estimativa" not in row0[6]
     dlg.table.selectRow(1)
     assert dlg.selected_job_id() == j2
     dlg.cancel_selected()

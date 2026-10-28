@@ -133,6 +133,53 @@ JOB_STEP_LABELS: dict[str, str] = {
 LLM_STEPS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
                                   JobStep.REVISE, JobStep.TEST)
 
+# F5.3 (U-047, A-09): os textos da fila e da Ajuda dela, para quem usa o app (sem jargão); o teste exige todo tipo, estado e
+# etapa. A ordem das etapas vem dos próprios runners (`ui/queue_help.py`), não daqui.
+JOB_KIND_LABELS: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "reprocessar", JobKind.EMBED_RANGE: "perfil de trecho",
+                                   JobKind.LLM: "LLM", JobKind.INDEX: "índice"}
+JOB_KIND_HELP: dict[str, str] = {
+    JobKind.MEETING: "transforma a gravação em falas com o nome de quem fala: separa as vozes, reconhece quem já tem perfil e "
+                     "escreve o que cada um disse. Começa sozinho quando você para a gravação, roda neste computador com "
+                     "prioridade baixa e espera a gravação seguinte terminar para não disputar o computador com ela.",
+    JobKind.REPROCESS: "faz de novo o processamento de uma reunião (por exemplo, depois de trocar o idioma dela). A versão atual "
+                       "continua valendo até o fim, e os nomes que você já confirmou passam para a nova. As etapas são as mesmas "
+                       "de \"processar\".",
+    JobKind.EMBED_RANGE: "vai criar um perfil de voz a partir de um trecho que você escolher. F6: ainda não roda.",
+    JobKind.LLM: "a inteligência artificial escolhida nas Configurações (a LLM) escreve a partir da transcrição: quem é cada voz "
+                 "ainda sem nome, a ata, o resumo executivo, o pré-resumo, o título e a transcrição revisada. Usa a internet e a "
+                 "sua chave de acesso; o custo aparece em \"Detalhe\". Cada item faz só as tarefas pedidas.",
+    JobKind.INDEX: "prepara a reunião para a busca do Histórico: primeiro os trechos (a busca por palavra já funciona), depois "
+                   "os vetores (a busca pelo sentido). Todos aparecem numa linha só, no fim da tabela.",
+}
+JOB_STATUS_HELP: dict[str, str] = {
+    JobStatus.PENDING: "na fila, esperando a vez.",
+    JobStatus.RUNNING: "sendo feito agora.",
+    JobStatus.PAUSED: "parado por enquanto: espera a gravação em curso terminar ou você retomar a fila, e continua sozinho.",
+    JobStatus.DONE: "pronto.",
+    JobStatus.ERROR: "parou por um problema; o motivo está em \"Detalhe\". \"Tentar de novo\" o põe de volta na fila.",
+    JobStatus.CANCELLED: "você cancelou; \"Tentar de novo\" o põe de volta na fila.",
+}
+JOB_STEP_HELP: dict[str, str] = {
+    JobStep.DOWNLOAD: "só na primeira vez ou ao trocar de modelo: baixa para este computador os modelos de voz e de transcrição.",
+    JobStep.WAITING: "a fila espera a gravação terminar (ou você retomar a fila) e continua sozinha.",
+    JobStep.DIARIZE: "descobre quantas pessoas falam no áudio da reunião e em que momentos cada uma fala.",
+    JobStep.EMBED: "junto com a separação, tira a \"impressão\" de cada voz para comparar com os perfis.",
+    JobStep.MATCH: "compara cada voz com os perfis salvos e põe o nome quando tem certeza; daqui em diante a revisão de falantes "
+                   "já abre.",
+    JobStep.TRANSCRIBE_R: "escreve o que foi dito no áudio da reunião (os outros participantes).",
+    JobStep.TRANSCRIBE_L: "escreve o que foi dito no seu microfone.",
+    JobStep.SEGMENTS: "junta o texto e as vozes em falas, com nome e horário.",
+    JobStep.IDENTIFY: "sugere quem é cada voz ainda sem nome pelo que foi dito na conversa; você confirma na revisão.",
+    JobStep.MINUTES: "escreve a ata: decisões, ações com dono e prazo, destaques, pendências e próximos passos.",
+    JobStep.EXECUTIVE: "um resumo curto da ata, para quem não esteve na reunião.",
+    JobStep.PRE_SUMMARY: "duas ou três frases com o assunto e o resultado, mostradas na lista de reuniões.",
+    JobStep.TITLE: "sugere um título curto para a reunião.",
+    JobStep.REVISE: "corrige pontuação, nomes e palavras mal entendidas, sem mudar o sentido.",
+    JobStep.TEST: "só quando você testa a conexão nas Configurações: confere a chave e o provedor.",
+    JobStep.INDEX_TEXT: "divide a reunião em trechos para a busca por palavra.",
+    JobStep.INDEX_VECTORS: "calcula os vetores de cada trecho para a busca pelo sentido.",
+}
+
 
 class ClusterStatus(StrEnum):
     AUTO = "auto"                  # acima do limiar: nome sem perguntar

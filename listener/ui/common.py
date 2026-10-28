@@ -1,11 +1,14 @@
 """Utilidades da interface: níveis em dB, cores de saúde, formatação; F5: área de transferência com texto e HTML; a
-tradução pt-BR dos textos padrão do Qt."""
+tradução pt-BR dos textos padrão do Qt. F5.3 (U-047, A-08): as cores da barra da fila por estado e o contraste do texto
+sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro."""
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from ..model import Health
+from ..model import Health, JobStatus
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication, QTranslator
@@ -16,6 +19,72 @@ HEALTH_COLORS: dict[str, str] = {Health.OK: "#2ecc71", Health.WARN: "#f1c40f", H
                                  Health.PAUSED: "#95a5a6", Health.OFF: "#34495e", Health.LOST: "#e74c3c"}
 HEALTH_TEXT: dict[str, str] = {Health.OK: "ok", Health.WARN: "sem sinal", Health.ALERT: "MUDO", Health.MUTED: "mudo",
                                Health.PAUSED: "pausado", Health.OFF: "desligado", Health.LOST: "dispositivo perdido"}
+
+# F5.3 (A-08): a barra da fila na cor do estado, a mesma nos dois temas (tons médios aparecem no trilho claro e no escuro);
+# o cancelado é hachurado, porque um cinza-escuro some no tema escuro. A próxima fase (design) junta a paleta inteira aqui.
+JOB_STATUS_COLORS: dict[str, str] = {JobStatus.PENDING: "#95a5a6", JobStatus.RUNNING: "#3498db", JobStatus.PAUSED: "#f39c12",
+                                     JobStatus.DONE: "#2ecc71", JobStatus.ERROR: "#e74c3c", JobStatus.CANCELLED: "#bdc3c7"}
+JOB_STATUS_HATCH: dict[str, str] = {JobStatus.CANCELLED: "#7f8c8d"}
+JOB_STATUS_COLOR_NAMES: dict[str, str] = {JobStatus.PENDING: "barra cinza", JobStatus.RUNNING: "barra azul, com uma faixa que anda",
+                                          JobStatus.PAUSED: "barra âmbar", JobStatus.DONE: "barra verde", JobStatus.ERROR: "barra vermelha",
+                                          JobStatus.CANCELLED: "barra listrada"}
+BLACK, WHITE = "#000000", "#ffffff"
+TRACK_MIX = 0.15                # o trilho: a base da tabela com 15 % da cor do texto (claro no tema claro, escuro no escuro)
+BAND_OPACITY = 0.4              # a faixa do "rodando": clareia sob texto preto e escurece sob texto branco (o contraste só sobe)
+
+
+@dataclass(frozen=True, slots=True)
+class BarColors:
+    """As cores da barra de um job (A-08): o número fica preto ou branco pela luminância do que está embaixo dele."""
+    track: str                  # o trilho, da palette() da tabela
+    fill: str                   # o preenchido, na cor do estado
+    text: str                   # o número sobre o preenchido
+    track_text: str             # o número sobre o trilho
+    band: str                   # a faixa animada sobre o preenchido
+    track_band: str             # a faixa animada sobre o trilho
+    hatch: str | None = None    # as listras do cancelado
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    value = color.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def luminance(color: str) -> float:
+    """Luminância relativa do WCAG 2.1 de uma cor "#rrggbb": 0 no preto, 1 no branco."""
+    def linear(c: int) -> float:
+        s = c / 255
+        return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(c) for c in _rgb(color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a: str, b: str) -> float:
+    """Contraste do WCAG entre duas cores, de 1 a 21 (texto comum pede 4,5)."""
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def text_on(background: str) -> str:
+    """Preto ou branco, o que contrastar mais com o fundo: nunca abaixo de 4,58:1 (o pior caso é um cinza médio)."""
+    return BLACK if contrast(BLACK, background) >= contrast(WHITE, background) else WHITE
+
+
+def mix(a: str, b: str, amount: float) -> str:
+    """`a` com `amount` (0 a 1) de `b`, em "#rrggbb"."""
+    return "#" + "".join(f"{round(x + (y - x) * amount):02x}" for x, y in zip(_rgb(a), _rgb(b), strict=True))
+
+
+@lru_cache(maxsize=64)
+def bar_colors(status: str, base: str, text: str) -> BarColors:
+    """As cores da barra de um job no estado `status` sobre a tabela de base `base` e texto `text` (cores da palette(),
+    "#rrggbb"); um estado desconhecido sai como pendente. Em cache: a faixa do "rodando" repinta a coluna a cada 120 ms."""
+    fill = JOB_STATUS_COLORS.get(status, JOB_STATUS_COLORS[JobStatus.PENDING])
+    track = mix(base, text, TRACK_MIX)
+    on_fill, on_track = text_on(fill), text_on(track)
+    return BarColors(track, fill, on_fill, on_track, WHITE if on_fill == BLACK else BLACK, WHITE if on_track == BLACK else BLACK,
+                     JOB_STATUS_HATCH.get(status))
 
 
 def install_translations(app: QCoreApplication) -> QTranslator | None:

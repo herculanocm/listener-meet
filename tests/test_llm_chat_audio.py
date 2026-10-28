@@ -231,7 +231,7 @@ def test_queue_estimates_llm_job_by_average_latency(store):
     store.jobs.claim(pid=1, kinds=("llm",))
     store.jobs.set_progress(jid, "minutes", 0.33, {"llm": {"done": ["identify"], "cost_usd": 0}})
     job = store.jobs.get(jid)
-    assert job_row_texts(job, None, "{}")[5] == "sem estimativa"
+    assert job_row_texts(job, None, "{}")[6] == "sem estimativa"
     for ms in (30_000, 90_000):
         store.llm_calls.insert(LlmCallInsert(mid, 1, "minutes", "gemini", "m", None, None, 1, 1, 0, 0, None, ms, LlmCallStatus.OK))
-    assert job_row_texts(job, None, "{}", store.llm_calls.avg_latency_ms() / 1000)[5] == "≈ 2 min"       # 60 s x 2 tarefas que faltam
+    assert job_row_texts(job, None, "{}", store.llm_calls.avg_latency_ms() / 1000)[6] == "≈ 2 min"       # 60 s x 2 tarefas que faltam

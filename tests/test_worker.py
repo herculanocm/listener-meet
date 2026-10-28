@@ -185,7 +185,7 @@ def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store, monkeypat
     heavy = store.jobs.enqueue(mid)
     llm = store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"], "parent_job_id": heavy})
     texts = job_row_texts(store.jobs.get(llm), store.get_meeting(mid), "{}")
-    assert texts[1] == "LLM" and texts[5] == "sem estimativa"
+    assert texts[2] == "LLM" and texts[6] == "sem estimativa"
     assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
     row = store.jobs.get(llm)
     # o pai ainda não rodou: erro permanente antes de qualquer chamada (F3.1 R3-02), sem contar tentativa

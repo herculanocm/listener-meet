@@ -243,8 +243,8 @@ def test_queue_dialog_shows_index_as_one_aggregated_row_and_retries_by_class(qtb
     qtbot.addWidget(dlg)
     dlg._timer.stop()                                                                              # o banco fecha no fim do teste
     assert dlg.table.rowCount() == 2                                                                 # o llm e a linha agregada
-    last = [dlg.table.item(1, c).text() for c in range(7)]
-    assert last[:5] == ["Índice: 2 reuniões", "índice", "rodando", "índice: vetores", "40"]
+    last = [dlg.table.item(1, c).text() for c in range(8)]
+    assert [last[0], *last[2:6]] == ["Índice: 2 reuniões", "índice", "rodando", "índice: vetores", "40 %"]
     assert "pendente(s)" in dlg.status_label.text() and "0 ativo(s)" in dlg.status_label.text()       # o rodapé sem os `index`
     dlg.table.selectRow(1)
     assert dlg.selected_job_id() is None
@@ -254,7 +254,8 @@ def test_queue_dialog_shows_index_as_one_aggregated_row_and_retries_by_class(qtb
     dlg.retry_selected()
     assert launched == [True] and store.jobs.get(j_llm)["status"] == "pendente"                      # llm: o worker leve
     assert index_row_texts({"meetings": 0, "errors": 0, "pending": 0}, None) is None
-    assert index_row_texts({"meetings": 1, "errors": 1, "pending": 1}, None)[:3] == ("Índice: 1 reunião (1 com erro)", "índice", "pendente")
+    assert index_row_texts({"meetings": 1, "errors": 1, "pending": 1}, None)[:4] == ("Índice: 1 reunião (1 com erro)", "", "índice",
+                                                                                 "pendente")
 
 
 def test_chat_threads_rating_and_meeting_chat_unchanged(store):
