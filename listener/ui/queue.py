@@ -1,7 +1,8 @@
 """Fila de processamento mínima pela bandeja (F2 item 15, U-005): reunião, etapa, porcentagem, estimativa; pausar e
 retomar (pausa manual), cancelar, tentar de novo e reprocessar (só por ação do usuário, CP3). Só metadados: nada de áudio
 nem de modelos aqui (R-9). F5: os jobs `index` (dezenas depois da varredura) não entram linha a linha: uma linha agregada
-"Índice: N reuniões (M com erro)" fica no fim da tabela (F5A-05)."""
+"Índice: N reuniões (M com erro)" fica no fim da tabela (F5A-05). F5.3 (A-05): "Reprocessar" passa pelo helper único
+(`pipeline/reprocess.py`), que não põe outro processamento atrás de um ativo da mesma reunião e diz por quê."""
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from ..llm.types import LLM_JOB_TASKS
 from ..model import JOB_STEP_LABELS, LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..store.jobs import HELD
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
+from ..pipeline.reprocess import request_reprocess
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -103,6 +105,9 @@ class QueueDialog(QDialog):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.status_label = QLabel("")
+        self.message = QLabel("")                       # o resultado da última ação (o rodapé acima é refeito a cada 2 s)
+        self.message.setWordWrap(True)
+        self.message.setStyleSheet("color: #e67e22;")
         self.btn_pause = QPushButton("Pausar fila")
         self.btn_cancel = QPushButton("Cancelar")
         self.btn_retry = QPushButton("Tentar de novo")
@@ -124,6 +129,7 @@ class QueueDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self.table, 1)
         lay.addWidget(self.status_label)
+        lay.addWidget(self.message)
         lay.addLayout(row)
         lay.addWidget(buttons)
         self._timer = QTimer(self)
@@ -198,11 +204,14 @@ class QueueDialog(QDialog):
         if job is not None and fn is not None:
             fn(int(job["meeting_id"]))
 
-    def reprocess_selected(self) -> None:
+    def reprocess_selected(self) -> int | None:
+        """"Reprocessar" a reunião da linha selecionada (só por ação do usuário, CP3); devolve o job criado."""
         job = self.selected_job()
         if job is None:
-            return
-        self.store.jobs.enqueue(int(job["meeting_id"]), JobKind.REPROCESS)
-        if self.on_launch is not None:
+            return None
+        result = request_reprocess(self.store, int(job["meeting_id"]))
+        self.message.setText(result.message)
+        if result.job_id is not None and self.on_launch is not None:
             self.on_launch(False)
         self.refresh()
+        return result.job_id

@@ -7,7 +7,9 @@ tarefa a tarefa, só depois de o `Completion` chegar; o provedor nasce e fecha d
 hora e nunca entra em `config_json`, eventos ou erros (redação). Modo hierárquico por tokens (60 % da janela) ou quando o
 provedor devolve "request too large". Custo estimado antes de rodar: acima de `llm.cost_alert_usd`, as tarefas opcionais
 (executivo e transcrição revisada) ficam de fora no job automático e a revisão oferece gerá-las (P5). O alerta é da reunião:
-soma o que ela já gastou fora deste job (resumo parcial ao vivo, glossário, chat, jobs anteriores; F4 Q6)."""
+soma o que ela já gastou fora deste job (resumo parcial ao vivo, glossário, chat, jobs anteriores; F4 Q6).
+F5.3 (A-02, A-06): toda saída sai no idioma da reunião (`build_context`); depois de uma troca de idioma (o job pai com
+`reason = language`), todas as tarefas entram como pedido manual, sem a espera da U-042 e sem o corte do alerta de custo."""
 from __future__ import annotations
 
 import asyncio
@@ -15,10 +17,11 @@ import difflib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, override
 
+from ..config.language import meeting_language, output_code
 from ..llm import prompts, redact
 from ..llm.aio import watched
 from ..log import get_logger
@@ -42,6 +45,7 @@ from ..store.segments import ClusterRow, SegmentRow, resolve_person, role_of
 from ..store.summaries import SummaryInsert
 from . import summary_gate
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep
+from .reprocess import target_language
 from .runner import USER_CLUSTER
 
 log = get_logger("pipeline.llm")
@@ -125,12 +129,19 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
     """Encadeado por `JobRunner._finish_ok` (F3A-01): tarefas automáticas conforme `llm.auto_tasks` e o tipo do job pai. Antes,
     os jobs `llm` pendentes da reunião com outro job pai são cancelados (rodariam sobre segmentos apagados) e as tarefas dos
     pedidos manuais entre eles ("gerar de novo") passam para o job novo, mesmo com `llm.auto_tasks` desligado; sem falas no
-    job pai, nenhum job (F3.1 R3-02)."""
+    job pai, nenhum job (F3.1 R3-02). F5.3 (A-06): o job pai de uma troca de idioma leva todas as tarefas como pedido
+    manual (o usuário confirmou o custo na pergunta da troca)."""
     from ..config.defaults import SPECS
 
     with store.transaction():                            # A-13: a decisão de adiar e o job nascem juntos
         manual = cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
-        auto = bool(store.get(SPECS["llm.auto_tasks"]))
+        if target_language(store.jobs.get(parent_job_id)) is not None:
+            manual |= set(TASKS_AFTER_MEETING)
+            auto = False
+            log.info("reunião %s, job %s: troca de idioma; todas as tarefas da LLM entram como pedido manual (A-06)", meeting_id,
+                     parent_job_id)
+        else:
+            auto = bool(store.get(SPECS["llm.auto_tasks"]))
         if not auto and not manual:
             return None
         if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
@@ -247,6 +258,19 @@ def split_blocks(lines: Sequence[Line], max_tokens: int) -> list[tuple[Line, ...
     return blocks or [()]
 
 
+def estimate_steps(tokens: int, steps: Iterable[JobStep], price_of: Callable[[bool], Price | None]) -> dict[JobStep, float | None]:
+    """Custo estimado de cada tarefa pelos tokens da transcrição (R-5; `price_of(forte)` dá o preço do modelo da classe):
+    a conta do job antes de rodar e a da pergunta da troca de idioma (F5.3 A-05). None = sem preço cadastrado."""
+    out: dict[JobStep, float | None] = {}
+    for step in steps:
+        factor, fixed, out_tokens = ESTIMATE[step]
+        strong = TASK_CLASS[STEP_TASK[step]] == ModelClass.STRONG
+        if step == JobStep.REVISE:
+            out_tokens = int(tokens * 0.9)
+        out[step] = estimate_cost(int(tokens * factor) + fixed, out_tokens, price_of(strong))
+    return out
+
+
 def neighbourhood(lines: Sequence[Line], labels: set[str], radius: int = IDENTIFY_NEIGHBOURS) -> tuple[Line, ...]:
     """Só as falas dos pendentes com `radius` vizinhos de cada lado (as pistas estão perto, F3A-33)."""
     keep: set[int] = set()
@@ -292,14 +316,8 @@ def match_person(name: str | None, people: dict[int, dict[str, Any]]) -> int | N
     return first[0] if len(first) == 1 else None
 
 
-def resolve_language(output_language: str, meeting_language: str | None) -> str:
-    if output_language != "auto":
-        return output_language
-    lang = (meeting_language or "pt").lower()
-    return "pt-BR" if lang.startswith("pt") else lang
-
-
-def build_context(store: Store, meeting_id: int, parent_job_id: int, output_language: str) -> Context:
+def build_context(store: Store, meeting_id: int, parent_job_id: int) -> Context:
+    """O contexto que toda tarefa da LLM lê; o idioma das saídas é o da reunião (F5.3 A-02, pergunta 7)."""
     meeting: dict[str, Any] = dict(store.get_meeting(meeting_id) or {})
     segments = tuple(store.segments.list_segments(meeting_id, parent_job_id))
     clusters = tuple(store.segments.list_clusters(meeting_id, parent_job_id))
@@ -344,10 +362,25 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int, output_lang
     title = meeting.get("title") or meeting.get("title_llm")
     participants = meeting.get("expected_participants")
     ctx = MeetingCtx(str(title) if title else None, str(meeting.get("started_at") or "")[:10], str(participants) if participants else None,
-                     tuple(expected), markers, resolve_language(output_language, meeting.get("language")),
+                     tuple(expected), markers, output_code(meeting_language(store, meeting)),
                      str(meeting.get("glossary") or ""), tuple(speakers.values()))
     candidates = tuple(Person(pid, str(p["name"]), str(p.get("role") or ""), str(p.get("company") or "")) for pid, p in people.items())
     return Context(meeting, ctx, segments, clusters, people, tuple(lines), by_id, candidates, {m.id: m.note for m in markers})
+
+
+def estimate_meeting_usd(store: Store, meeting_id: int, steps: Sequence[JobStep] = TASKS_AFTER_MEETING) -> float | None:
+    """Custo estimado das tarefas sobre a transcrição vigente, sem chamar o provedor (tokens por caracteres): a pergunta da
+    troca de idioma (A-05, pergunta 9). None sem provedor ativo com modelo ou sem preço de algum modelo usado."""
+    cfg = LlmJobConfig.from_store(store)
+    parent = store.segments.current_job_id(meeting_id)
+    if not cfg.ready or parent is None:
+        return None
+    tokens = estimate_tokens(render_lines(build_context(store, meeting_id, parent).lines))
+    prices = store.providers.list_prices(cfg.provider_kind or None)
+    per_task = estimate_steps(tokens, steps, lambda strong: price_for(prices, cfg.provider_kind, cfg.model_for(strong)))
+    if any(est is None for est in per_task.values()):
+        return None
+    return round(sum(est or 0.0 for est in per_task.values()), 4)
 
 
 # ---------------------------------------------------------------- runner
@@ -429,7 +462,7 @@ class LlmJobRunner(BaseJobRunner):
         self._done_steps = {t for t in self.tasks if 0 in self.store.jobs.artifact_indexes(self.job_id, t)}
         self._prices = self.store.providers.list_prices(self.config.provider_kind or None)
         if any(t != JobStep.TEST for t in self.tasks):
-            self.ctx = build_context(self.store, self.meeting_id, self.parent_job_id, self.config.output_language)
+            self.ctx = build_context(self.store, self.meeting_id, self.parent_job_id)
             self._speakers = summary_gate.speakers_digest(self.store, self.meeting_id)   # R-02: os nomes que a ata usou
         asyncio.run(watched(self._run_tasks()))           # D-058: laço preso em código nativo não trava a fila
         failed = [o for o in self.outcomes.values() if not o.ok]
@@ -594,15 +627,8 @@ class LlmJobRunner(BaseJobRunner):
         """Estimativa prévia por tarefa (R-5); no job automático, acima do alerta as opcionais ficam de fora (P5)."""
         tokens = await self._transcript_tokens()
         self._transcript_token_count = tokens
-        total = 0.0
-        per_task: dict[JobStep, float | None] = {}
-        for step in self.tasks:
-            factor, fixed, out = ESTIMATE[step]
-            strong = TASK_CLASS[STEP_TASK[step]] == ModelClass.STRONG
-            out_tokens = int(tokens * 0.9) if step == JobStep.REVISE else out
-            est = estimate_cost(int(tokens * factor) + fixed, out_tokens, self._price(self.config.model_for(strong)))
-            per_task[step] = est
-            total += est or 0.0
+        per_task = estimate_steps(tokens, self.tasks, lambda strong: self._price(self.config.model_for(strong)))
+        total = sum(est or 0.0 for est in per_task.values())
         self.estimated_usd = round(total, 4)
         # F4 Q6: o alerta é da reunião; o que ela já gastou fora deste job (parcial ao vivo, glossário, chat) entra na conta
         # (as chamadas das tentativas anteriores deste job já estão na estimativa, por isso saem do gasto)

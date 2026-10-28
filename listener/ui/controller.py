@@ -38,7 +38,9 @@ Cancelar param o timer; Cancelar e sair cancelam a chamada em voo (sair espera u
 gravação só atualiza a janela dela.
 F5.1: o embedder local calcula no app com 1 thread (A-03); parar e cancelar a gravação rodam a varredura do índice, que
 completa os vetores que o local adiou durante a gravação (A-07); terminado o preparo da busca local com o local ativo, o
-app oferece "Reindexar agora/Depois" com os minutos (A-12), com as Configurações abertas ou não."""
+app oferece "Reindexar agora/Depois" com os minutos (A-12), com as Configurações abertas ou não.
+F5.3 L1: na abertura, o `llm.output_language = en` antigo vira `app.language = en` uma vez (A-03); a reunião nasce com o
+idioma do warm-up (A-01); um processamento de troca de idioma não promete a ata adiada (A-06)."""
 from __future__ import annotations
 
 import functools
@@ -56,6 +58,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIco
 
 from ..capture.clock import Clock, SessionClock
 from ..capture.recorder import RecordConfig, Recorder
+from ..config import language
 from ..config.defaults import SPECS
 from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
 from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
@@ -66,6 +69,7 @@ from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, Heal
                      SourceKind, SummaryKind)
 from ..store.jobs import HELD
 from ..pipeline import review, summary_gate
+from ..pipeline.reprocess import target_language
 from ..platform.common import process
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
@@ -258,6 +262,7 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- início
     def start(self) -> None:
+        self._adopt_legacy_language()
         interrupted = self.store.mark_interrupted()
         orphans = self.store.orphan_report()
         missing = self.store.missing_audio_files()
@@ -291,6 +296,14 @@ class Controller(QObject):
         self._queue_timer.start()
         QTimer.singleShot(PREWARM_AUDIO_MS, self, self._prewarm_audio)
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
+
+    def _adopt_legacy_language(self) -> None:
+        """A-03: o idioma das saídas da F3 em inglês vira o idioma padrão, uma vez; falhar não impede a abertura (fica o
+        padrão pt-BR)."""
+        try:
+            language.adopt_legacy(self.store)
+        except Exception as e:
+            log.warning("idioma padrão: não adotei o antigo llm.output_language: %s", e)
 
     def _scrub_orphan_people(self) -> None:
         """U-041 (A-08): vínculo com pessoa apagada que um processo gravou depois (o ao vivo, o worker) sai na abertura."""
@@ -468,13 +481,15 @@ class Controller(QObject):
         if errors:
             QMessageBox.warning(None, "listener-meet", "Configuração de captura inválida:\n" + "\n".join(errors))
             return False
+        lang = fields.get("language") or language.default_language(self.store)     # F5.3 (A-01): o combo do warm-up
         meeting_id = self.store.create_meeting(fields.get("title"), fields.get("platform"), fields.get("preset_id"),
                                                fields.get("participants"), fields.get("is_in_room", False),
-                                               glossary=fields.get("glossary"), expected_people_json=fields.get("expected_people_json"))
+                                               glossary=fields.get("glossary"), expected_people_json=fields.get("expected_people_json"),
+                                               language=lang)
         for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
             self.store.llm_calls.set_meeting(int(call_id), meeting_id)
-        log.info("gravação %s iniciada: mic=%s fonte=%s", meeting_id,
-                 cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.log_text())
+        log.info("gravação %s iniciada: mic=%s fonte=%s idioma=%s", meeting_id,
+                 cfg.mic_device.name if cfg.mic_device else "padrão", cfg.source.log_text(), language.whisper_code(lang))
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
         # o gravador chama `_before_system_loopback` antes de abrir o loopback do sistema inteiro por qualquer caminho: a
@@ -928,7 +943,7 @@ class Controller(QObject):
                 self._reviews[mid].reload()
         else:
             todo = self._pending_voices(mid)
-            waits = todo and self._summary_waits(mid)              # U-042: a regra do worker, não o evento (A-14)
+            waits = todo and self._summary_waits(mid, job)         # U-042: a regra do worker, não o evento (A-14)
             text = ("pronta para revisão de falantes; a ata sai depois que as vozes forem identificadas" if waits else
                     "pronta para revisão de falantes" if todo else "processada, sem voz a confirmar")
             self._notify_meeting(mid, f"{text}.")
@@ -939,10 +954,13 @@ class Controller(QObject):
         if mid in self._meetings:
             self._meetings[mid].reload()
 
-    def _summary_waits(self, meeting_id: int) -> bool:
+    def _summary_waits(self, meeting_id: int, job: Any = None) -> bool:
         """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas, há provedor com chave, a reunião
         ainda não tem ata (R-10: depois de reprocessar, a ata antiga fica e nada espera) e a revisão não foi concluída antes
-        (R-01): o mesmo critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído."""
+        (R-01): o mesmo critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído. F5.3 (A-06): depois
+        de uma troca de idioma nada espera (as tarefas vão como pedido manual)."""
+        if job is not None and target_language(job) is not None:
+            return False
         try:
             return (bool(self.store.get(SPECS["llm.auto_tasks"])) and self.store.providers.active_with_key("llm") is not None
                     and self.store.summaries.current(meeting_id, SummaryKind.MINUTES) is None

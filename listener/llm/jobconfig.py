@@ -1,6 +1,7 @@
 """`LlmJobConfig` (F3 item 15, F3A-21): snapshot do provedor, modelos, parâmetros e `llm.*` gravado em `config_json` do job
 `llm` no claim; jobs em curso terminam com o snapshot, o próximo usa o novo ativo. A chave nunca entra aqui: é lida de
-`providers` na hora da chamada (chave trocada vale já; apagada vira erro permanente). `retry(reset_config=True)` descarta."""
+`providers` na hora da chamada (chave trocada vale já; apagada vira erro permanente). `retry(reset_config=True)` descarta.
+F5.3 (A-02): o idioma saiu do snapshot (é o da reunião); um `config_json` antigo com `output_language` carrega sem ele."""
 from __future__ import annotations
 
 import json
@@ -23,7 +24,6 @@ class LlmJobConfig:
     fast_model: str = ""
     strong_model: str = ""
     params: dict[str, Any] = field(default_factory=dict)
-    output_language: str = "pt-BR"
     max_parallel: int = 2
     cost_alert_usd: float = 2.0
     audio_second_opinion: bool = False
@@ -51,10 +51,11 @@ class LlmJobConfig:
             fast = str(row.get("fast_model") or defaults[0])      # `model` é o de embeddings: nunca vira o rápido (F3.1 R3-09)
             strong = str(row.get("strong_model") or defaults[1] or fast)
         g = store.get
-        return cls(pid, kind, fast, strong, params, str(g(SPECS["llm.output_language"])), int(g(SPECS["llm.max_parallel"])),
-                   float(g(SPECS["llm.cost_alert_usd"])), bool(g(SPECS["llm.audio_second_opinion"])), bool(g(SPECS["llm.store_payloads"])),
-                   bool(g(SPECS["llm.auto_tasks"])), str(g(SPECS["llm.proxy_url"])), str(g(SPECS["llm.ca_bundle"])),
-                   bool(g(SPECS["llm.system_certs"])))
+        return cls(pid, kind, fast, strong, params, max_parallel=int(g(SPECS["llm.max_parallel"])),
+                   cost_alert_usd=float(g(SPECS["llm.cost_alert_usd"])), audio_second_opinion=bool(g(SPECS["llm.audio_second_opinion"])),
+                   store_payloads=bool(g(SPECS["llm.store_payloads"])), auto_tasks=bool(g(SPECS["llm.auto_tasks"])),
+                   proxy_url=str(g(SPECS["llm.proxy_url"])), ca_bundle=str(g(SPECS["llm.ca_bundle"])),
+                   system_certs=bool(g(SPECS["llm.system_certs"])))
 
     @classmethod
     def from_json(cls, text: str | None) -> Self:
@@ -64,7 +65,7 @@ class LlmJobConfig:
             data = {}
         if not isinstance(data, dict):
             data = {}
-        names = set(cls.__dataclass_fields__)
+        names = set(cls.__dataclass_fields__)          # o que não é campo (o `output_language` de antes da F5.3) fica de fora
         clean = {k: v for k, v in data.items() if k in names and k not in FORBIDDEN_KEYS}
         if isinstance(clean.get("params"), dict):
             clean["params"] = {k: v for k, v in clean["params"].items() if k not in FORBIDDEN_KEYS}

@@ -177,8 +177,9 @@ class Store:
     # ---------------------------------------------------------------- reuniões
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
-                       expected_people_json: str | None = None) -> int:
-        return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room, glossary, expected_people_json)
+                       expected_people_json: str | None = None, language: str | None = None) -> int:
+        return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room, glossary, expected_people_json,
+                                            language)
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         return self.meetings.get_meeting(meeting_id)

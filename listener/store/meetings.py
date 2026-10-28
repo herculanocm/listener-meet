@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, TypedDict, cast
 
+from ..config.language import whisper_code
 from ..log import get_logger
 from ..model import PIPELINE_JOB_KINDS, EventType, JobStatus, MeetingStatus
 from .core import Core, _now, audio_file_for, json_default
@@ -25,7 +26,7 @@ class MeetingRow(TypedDict, total=False):
     is_in_room: int
     notes: str | None
     audio_file: str | None
-    language: str | None
+    language: str | None               # F5.3: código do Whisper (pt ou en), escolhido no warm-up (A-01)
     glossary: str | None               # F3: termos prováveis do warm-up (LLM, editados pelo usuário)
     expected_people_json: str | None   # F3: ids de `people` casados com os participantes esperados
 
@@ -104,17 +105,18 @@ class MeetingsRepo:
     # ---------------------------------------------------------------- meetings
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
-                       expected_people_json: str | None = None) -> int:
+                       expected_people_json: str | None = None, language: str | None = None) -> int:
         """Cria a reunião já apontando para o arquivo de áudio do mês (criado e migrado aqui, antes do primeiro pedaço).
-        F3: `glossary` e `expected_people_json` vêm do warm-up (F3A-11)."""
+        F3: `glossary` e `expected_people_json` vêm do warm-up (F3A-11). F5.3 (A-01): `language` é o idioma escolhido no
+        warm-up, gravado como código do Whisper; sem ele, fica nulo e o runner usa o padrão."""
         started = _now()
         audio_file = audio_file_for(started)
         self.core.attach(audio_file)
         return self.core.insert(
             "INSERT INTO meetings(title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file, glossary, "
-            "expected_people_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "expected_people_json, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)), audio_file,
-             glossary, expected_people_json))
+             glossary, expected_people_json, whisper_code(language) if language else None))
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         rows = self.core.q("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
@@ -156,8 +158,23 @@ class MeetingsRepo:
                           (MeetingStatus.PROCESSED, meeting_id, MeetingStatus.REVIEWED, int(force)))
 
     def set_language(self, meeting_id: int, language: str | None) -> None:
-        """Idioma detectado na primeira janela com fala (D-013); só preenche se ainda não houver."""
+        """O idioma do processamento numa reunião que nasceu sem ele (anterior à F5.3: o padrão, A-01); só preenche se ainda
+        não houver. A troca pelo usuário é `change_language`."""
         self.core.execute("UPDATE meetings SET language = COALESCE(language, ?) WHERE id = ?", (language, meeting_id))
+
+    def change_language(self, meeting_id: int, language: str, author: str = "usuario") -> bool:
+        """F5.3 (A-05): o idioma trocado na reunião aberta, gravado no fim do reprocessamento (código do Whisper), com
+        `revisions`; False quando já era esse."""
+        m = self.get_meeting(meeting_id)
+        if m is None:
+            return False
+        before, after = m.get("language"), whisper_code(language)
+        if before == after:
+            return False
+        with self.core.transaction():
+            self.core.execute("UPDATE meetings SET language = ? WHERE id = ?", (after, meeting_id))
+            self.add_revision("meeting", meeting_id, "language", before, after, author)
+        return True
 
     def list_by_status(self, *statuses: MeetingStatus) -> list[MeetingRow]:
         marks = ",".join("?" * len(statuses))

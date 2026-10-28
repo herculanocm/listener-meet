@@ -216,7 +216,7 @@ def test_session_in_process_writes_captions_events_and_says_bye(tmp_path):
     assert 1300 <= r_cap["t_start_ms"] <= 1500 and r_cap["label"] is None and r_cap["person_id"] is None
     assert lines[1]["id"] == l_cap["id"] and lines[1]["latency_ms"] == l_cap["latency_ms"]
     calls = engines.transcribers[0].calls
-    assert calls[0][1] is None and calls[0][2] == "SRM, FIDC, Cotas"                 # glossário da reunião primeiro
+    assert calls[0][1] == "pt" and calls[0][2] == "SRM, FIDC, Cotas"                 # F5.3: o padrão desde a 1ª; glossário primeiro
     assert calls[1][2] == "SRM, FIDC, Cotas"                                         # a legenda anterior é do canal (R não tinha)
     bye = lines[-1]
     assert bye["captions"] == 2 and bye["app_dropped"] == 4 and bye["skipped"] == 0 and bye["model"] == "fake:small"

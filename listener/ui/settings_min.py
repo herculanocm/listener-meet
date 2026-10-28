@@ -1,6 +1,6 @@
 """Configurações mínimas da F1 (CP8 parcial): captura, atalhos (com estado do registro, F1.1 A13), presets,
 log em arquivo e nível (D-033), pasta do banco; F2: grupo "Processamento" gerado da tabela (`pipeline.*`) e o token do
-Hugging Face em `providers` (Q2, CP10); F3: grupo "LLM" gerado da tabela (`llm.*`, idioma das saídas como opção, P1) e as
+Hugging Face em `providers` (Q2, CP10); F3: grupo "LLM" gerado da tabela (`llm.*`; o idioma das saídas saiu na F5.3) e as
 sub-abas por provedor (`ProviderTabs`); o transcritor `llm` só habilita quando o modelo rápido do provedor ativo tem áudio.
 F4: grupo "Ao vivo" gerado da tabela (`live.*`) e o botão "Preparar modelos do ao vivo" (`ModelPreparer`, um download por
 vez no app inteiro, com progresso e o estado da pasta), desabilitado durante a gravação; o diálogo se desconecta do
@@ -18,6 +18,8 @@ e sem custo (A-05); terminado o preparo com o local ativo, o controlador oferece
 (`offer_local_reindex`, A-12).
 U-037 (D-053): o primeiro grupo é "Chaves de acesso" (`ui/keys.py`): a chave de cada provedor de LLM, com "Testar" e o
 estado, e o token do Hugging Face, que saiu do grupo "Processamento", cada um com onde conseguir.
+F5.3 L1 (U-044, A-03): logo depois, o grupo "Idioma e avisos", montado à mão, com o "Idioma padrão" (`app.language`), que
+grava o código pelo `itemData` do combo, não o texto exibido; o idioma das saídas da F3 (`llm.output_language`) saiu.
 Cada item mostra se aplica agora ou só na próxima gravação. Validação pela tabela `SPECS` (M-24) e pela gramática de
 atalhos da plataforma (M-25)."""
 from __future__ import annotations
@@ -30,8 +32,9 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
                                QLabel, QLineEdit, QListWidget, QMessageBox, QProgressBar, QPushButton, QScrollArea, QVBoxLayout,
                                QWidget)
 
-from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LIVE_KEYS, LLM_KEYS, LOG_LEVELS, OUTPUT_LANGUAGES,
-                               PIPELINE_KEYS, RAG_KEYS, SPECS, validate_setting)
+from ..config.defaults import (CAPTURE_KEYS, HF_PROVIDER_ID, HOTKEY_KEYS, LIVE_KEYS, LLM_KEYS, LOG_LEVELS, PIPELINE_KEYS, RAG_KEYS,
+                               SPECS, validate_setting)
+from ..config.language import LANGUAGES, SETTING, default_language, label
 from ..llm import local_embed
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
@@ -155,6 +158,7 @@ class SettingsDialog(QDialog):
         self.provider_tabs = ProviderTabs(store, on_launch)            # a chave de cada sub-aba vai para o primeiro grupo
         self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
         lay.addWidget(keys_group(self.provider_tabs, self.hf_token))     # U-037: o que se procura primeiro
+        lay.addWidget(self._language_group())                           # F5.3 (U-044): logo depois das chaves
 
         cap = QGroupBox("Captura")
         capf = QFormLayout(cap)
@@ -253,6 +257,21 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+
+    # ---------------------------------------------------------------- idioma e avisos (F5.3)
+    def _language_group(self) -> QGroupBox:
+        """"Idioma e avisos" (A-03): o idioma padrão das reuniões novas (o "Antes de gravar" já vem com ele) e do chat sobre
+        todas as reuniões; o L3 acrescenta aqui a duração do aviso."""
+        box = QGroupBox("Idioma e avisos")
+        form = QFormLayout(box)
+        self.language_combo = QComboBox()
+        for code in LANGUAGES:
+            self.language_combo.addItem(label(code), code)
+        self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(default_language(self.store))))
+        self.language_combo.setToolTip("O idioma das reuniões novas (transcrição, legenda ao vivo e tudo o que a LLM escreve) e do "
+                                       "chat sobre todas as reuniões. Cada reunião guarda o seu: a gravada não muda daqui.")
+        form.addRow(SPECS[SETTING].label, self._row(SETTING, field=self.language_combo))
+        return box
 
     # ---------------------------------------------------------------- busca (F5 L5)
     def _search_group(self) -> QGroupBox:
@@ -438,36 +457,12 @@ class SettingsDialog(QDialog):
             return f"falhou: {self.hotkey_errors[combo]}"
         return "registrado" if combo else ""
 
-    def _row(self, key: str, status: str = "") -> QWidget:
+    def _row(self, key: str, status: str = "", field: QWidget | None = None) -> QWidget:
+        """O campo da chave (o `field` montado à mão ou o gerado pela tabela) com o escopo e o estado ao lado."""
         box = QHBoxLayout()
         box.setContentsMargins(0, 0, 0, 0)
         spec = SPECS[key]
-        field: QWidget
-        if key == "llm.output_language":                                         # F3 P1: opções mais um código livre
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.addItems(list(OUTPUT_LANGUAGES))
-            combo.setCurrentText(self.store.get_setting(key))
-            combo.setToolTip("pt-BR, auto (segue o idioma detectado da reunião), en, es ou outro código, como fr")
-            self._combos[key] = combo
-            field = combo
-        elif spec.choices is not None and all(isinstance(c, str) for c in spec.choices):
-            combo = QComboBox()
-            for choice in sorted(spec.choices):
-                combo.addItem(choice)
-                if key == "pipeline.transcriber" and choice == "llm":                              # F3 item 9: só com áudio nativo
-                    if not self.audio_capable:
-                        combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
-                        combo.setToolTip("transcrição pela LLM: precisa de um provedor ativo com chave cujo modelo rápido aceite áudio")
-                    else:
-                        combo.setToolTip(f"transcrição pela LLM: {audio_cost_text(self.store)}")
-            combo.setCurrentText(self.store.get_setting(key))
-            self._combos[key] = combo
-            field = combo
-        else:
-            edit = QLineEdit(self.store.get_setting(key))
-            self._edits[key] = edit
-            field = edit
+        field = field if field is not None else self._field(key)
         scope = QLabel(SCOPE_TEXT.get(spec.scope, ""))
         scope.setStyleSheet("color: #888; font-size: 11px;")
         box.addWidget(field, 1)
@@ -479,6 +474,26 @@ class SettingsDialog(QDialog):
         holder = QWidget()
         holder.setLayout(box)
         return holder
+
+    def _field(self, key: str) -> QWidget:
+        """Combo para as opções em texto da tabela, campo de texto para o resto (guardados para validar e salvar)."""
+        spec = SPECS[key]
+        if spec.choices is not None and all(isinstance(c, str) for c in spec.choices):
+            combo = QComboBox()
+            for choice in sorted(spec.choices):
+                combo.addItem(choice)
+                if key == "pipeline.transcriber" and choice == "llm":                              # F3 item 9: só com áudio nativo
+                    if not self.audio_capable:
+                        combo.model().item(combo.count() - 1).setEnabled(False)  # type: ignore[attr-defined]
+                        combo.setToolTip("transcrição pela LLM: precisa de um provedor ativo com chave cujo modelo rápido aceite áudio")
+                    else:
+                        combo.setToolTip(f"transcrição pela LLM: {audio_cost_text(self.store)}")
+            combo.setCurrentText(self.store.get_setting(key))
+            self._combos[key] = combo
+            return combo
+        edit = QLineEdit(self.store.get_setting(key))
+        self._edits[key] = edit
+        return edit
 
     def _browse_log(self) -> None:
         f, _ = QFileDialog.getSaveFileName(self, "Arquivo de log", self.log_path.text(), "Log (*.log);;Todos (*)")
@@ -515,7 +530,14 @@ class SettingsDialog(QDialog):
             err = validate_setting(key, combo.currentText().strip())
             if err:
                 return err
+        err = validate_setting(SETTING, self.language_code())
+        if err:
+            return err
         return self.provider_tabs.validation_error()
+
+    def language_code(self) -> str:
+        """O código do "Idioma padrão" (`pt-BR` ou `en`), pelo `itemData`: o texto do combo é só o rótulo."""
+        return str(self.language_combo.currentData())
 
     def _save(self) -> None:
         from ..rag.index import embedder_status
@@ -534,6 +556,7 @@ class SettingsDialog(QDialog):
             self.store.set_setting(key, edit.text().strip())
         for key, combo in self._combos.items():
             self.store.set_setting(key, combo.currentText().strip())
+        self.store.set_setting(SETTING, self.language_code())
         self.store.set_setting("log.path", self.log_path.text().strip())
         self.store.set_setting("log.level", self.log_level.currentText())
         token = self.hf_token.text().strip()

@@ -94,10 +94,11 @@ def test_runner_end_to_end_two_speakers_in_r_and_user_in_l(platform, store):
     assert len(prof) == 1 and prof[0]["person_id"] == me and prof[0]["n_samples"] == 0        # fora do centroide
     rtf = json.loads(store.get_setting("pipeline.rtf_json"))
     assert "diarize:fake:tone" in rtf and "transcribe_r:fake:script" in rtf
-    # chamadas: idioma None só na primeira janela com fala; prompt com título e participantes; L também transcrito
+    # chamadas: o idioma desde a primeira janela (F5.3 A-01: o padrão, sem detecção); prompt com título e participantes; L
+    # também transcrito
     first = next(c for c in deps.scripted.calls if c[0] == "R")
-    assert first[2] is None and "Planejamento" in first[3] and "Ana, Bia" in first[3]
-    assert all(c[2] == "pt" for c in deps.scripted.calls[1:]) and "pessoal tudo" in deps.scripted.calls[2][3]   # contexto anterior
+    assert first[2] == "pt" and "Planejamento" in first[3] and "Ana, Bia" in first[3]
+    assert all(c[2] == "pt" for c in deps.scripted.calls) and "pessoal tudo" in deps.scripted.calls[2][3]      # contexto anterior
     assert {c[0] for c in deps.scripted.calls} == {"R", "L"}
     assert deps.tones.calls[0][1:] == (1, 3)                                                     # min 1, max n + 1
 

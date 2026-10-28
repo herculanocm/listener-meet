@@ -10,7 +10,8 @@ Threads: `live-stdin` lê os quadros, reamostra para 16 kHz, roda o VAD incremen
 (`vad.Segmenter`) numa fila única para os dois canais (sai primeiro a que fechou antes); a principal transcreve com um só
 `WhisperModel` int8 (`beam_size=1`, sem timestamps, temperatura 0), filtra (`no_speech` e logprob como na F2, compressão
 e alucinações comuns), grava a legenda em `captions` e só então emite a linha `caption`. Idioma: o de
-`meetings.language` ou automático até 2 detecções concordantes (`LanguageLock`). Degradação (máquina pura com relógio
+`meetings.language`, escolhido no warm-up, ou o padrão das Configurações, fixo desde a primeira janela (F5.3 A-01: sem
+detecção; o automático dobrava o custo do `small`, 25/10). Degradação (máquina pura com relógio
 injetado; o atraso é o da legenda, do fim da janela até o fim da transcrição): acima de 20 s por 30 s troca `small` por
 `base`; persistindo mais 30 s, pula as janelas pendentes menos a mais nova de cada canal; nunca volta sozinho. EOF:
 fecha as janelas em curso, transcreve a fila enquanto a próxima janela couber no prazo do `hello` (pela média do custo
@@ -61,6 +62,7 @@ from ..capture.align import estimate_offset
 from ..capture.audio import StreamResampler
 from ..config import bootstrap
 from ..config.defaults import HF_PROVIDER_ID, LIVE_MODELS, SPECS
+from ..config.language import meeting_language, whisper_code
 from ..log import attach_file, get_logger, log_versions, setup
 from ..model import EventType
 from ..pipeline.profiles import ProfileRef, expected_person_ids
@@ -675,7 +677,7 @@ class LiveSession:
         except ProtocolError as e:
             return self._fail(str(e), 2)
         model = self.hello.model if self.hello.model in LIVE_MODELS else LIVE_MODELS[0]
-        self.language = LanguageLock(meeting.get("language"))
+        self.language = LanguageLock(whisper_code(meeting_language(self.store, meeting)))     # F5.3 A-01: fixo, nunca detectado
         self.terms = glossary_terms(meeting.get("glossary"), self.store.get_setting("pipeline.glossary"))
         self.echo_corr_min = float(self.store.get(SPECS["capture.echo_corr_min"]))
         self.silence_rms = float(self.store.get(SPECS["capture.silence_rms"]))
@@ -693,10 +695,10 @@ class LiveSession:
         except Exception as e:
             log.exception("modelo %s do ao vivo não carregou", model)
             return self._fail(str(e), 1, retry=not isinstance(e, LiveError))
-        log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s)", self.meeting_id, self.transcriber.name,
-                 time.perf_counter() - t0, self.hello.threads, self.engines.name)
+        log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s, idioma %s)", self.meeting_id, self.transcriber.name,
+                 time.perf_counter() - t0, self.hello.threads, self.engines.name, self.language.language)
         self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": self.hello.names,
-                                             "engine": self.engines.name, "pid": os.getpid()})
+                                             "engine": self.engines.name, "pid": os.getpid(), "language": self.language.language})
         self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
         if embedder is not None:
             self._start_names(embedder)

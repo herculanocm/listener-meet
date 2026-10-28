@@ -8,12 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..model import SettingScope
+from .language import DEFAULT as DEFAULT_LANGUAGE, LANGUAGES
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 WHISPER_MODELS = ("large-v3-turbo", "small", "medium")       # F2 Q4: turbo padrão
 TRANSCRIBERS = ("whisper", "llm")                            # F3 item 9: "llm" habilitado quando o modelo rápido tem áudio
 HF_PROVIDER_ID = "huggingface"
-OUTPUT_LANGUAGES = ("pt-BR", "auto", "en", "es")             # F3 P1: opções fixas mais um código livre
 LIVE_MODELS = ("small", "base")                              # F4 Q4: `small` padrão, `base` na degradação
 LIVE_MIN_CORES = 8                                           # F4 Q1: ao vivo ligado por padrão só a partir daqui
 
@@ -82,21 +82,14 @@ def _default_live() -> bool:
     return (os.cpu_count() or 0) >= LIVE_MIN_CORES
 
 
-def _language(s: str) -> str:
-    """Código de idioma das saídas da LLM: `pt-BR`, `auto`, `en`, `es` ou outro código curto (`fr`, `de-CH`)."""
-    v = s.strip()
-    if not v:
-        raise ValueError("informe um idioma (pt-BR, auto, en, es ou um código como fr)")
-    if v != "auto" and not v.replace("-", "").isalpha():
-        raise ValueError(f"código de idioma inválido: {s!r}")
-    return v
-
-
 _NOW, _NEXT = SettingScope.NOW, SettingScope.NEXT_RECORDING
 _RATES = frozenset({8000, 16000, 22050, 24000, 32000, 44100, 48000})
 _MIC_RATES = frozenset({8000, 16000, 32000, 44100, 48000})
 
 SPECS: dict[str, SettingSpec] = {s.key: s for s in (
+    # F5.3 (U-044, A-03): o idioma padrão das reuniões novas e do chat sobre todas; no grupo "Idioma e avisos", montado à
+    # mão (o combo grava o código). Substitui o `llm.output_language` da F3, que só mudava a saída da LLM
+    SettingSpec("app.language", DEFAULT_LANGUAGE, _NOW, "Idioma padrão", _text, choices=frozenset(LANGUAGES), phase="F5.3"),
     SettingSpec("capture.chunk_seconds", 60.0, _NEXT, "Duração do pedaço de áudio (s)", float, low=5, high=600),
     SettingSpec("capture.target_rate", 16000, _NEXT, "Taxa de amostragem gravada (Hz)", int, choices=_RATES),
     SettingSpec("capture.mic_rate", 16000, _NEXT, "Taxa do microfone (Hz)", int, choices=_MIC_RATES),
@@ -144,7 +137,6 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),
     # F3 (item 12): camada de LLM; o job `llm` grava o snapshot em `config_json` (nunca a chave)
-    SettingSpec("llm.output_language", "pt-BR", _NOW, "Idioma das saídas (pt-BR, auto, en, es ou outro código)", _language, phase="F3"),
     SettingSpec("llm.auto_tasks", True, _NOW, "Gerar título, pré-resumo, identidade e ata ao processar", _bool, phase="F3"),
     SettingSpec("llm.cost_alert_usd", 2.0, _NOW, "Alerta de custo por reunião (US$)", float, low=0.0, high=1000.0, phase="F3"),
     SettingSpec("llm.max_parallel", 2, _NOW, "Chamadas simultâneas à LLM", int, low=1, high=8, phase="F3"),

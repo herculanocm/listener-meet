@@ -10,7 +10,8 @@ A conversa nasce na primeira pergunta (título = a pergunta cortada); pergunta e
 `meeting_id` nulo, `thread_id`, `citations_json` e o custo (a chamada do chat mais o vetor da consulta); `llm_calls` com
 `task = rag_chat`, reunião e job nulos e o erro redigido. `thread_html` desenha a conversa a partir das citações gravadas
 (sem recasar segmentos) e `rate_answer` guarda o "citação certa?" (U-027). Tudo síncrono por `run_async`: a tela chama numa
-`StreamTask` (`run_stream(partial(run_global_chat, store, thread_id, pergunta, filtros), ...)`)."""
+`StreamTask` (`run_stream(partial(run_global_chat, store, thread_id, pergunta, filtros), ...)`). F5.3 (A-02): a resposta
+sai no idioma padrão das Configurações (`app.language`): a conversa cruza reuniões de idiomas diferentes."""
 from __future__ import annotations
 
 import html
@@ -21,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
+from ..config.language import default_language
 from ..llm import chat_task, prompts, redact
 from ..llm.aio import run_async
 from ..llm.base import classify_exception
@@ -178,16 +180,6 @@ def _history(store: Store, rows: Sequence[Any]) -> list[tuple[str, str]]:
     return out
 
 
-def _language(store: Store, cfg: LlmJobConfig, blocks: Sequence[MeetingBlock]) -> str:
-    """`llm.output_language`; `auto` = o idioma da reunião mais relevante (R1), senão pt-BR."""
-    from ..pipeline.llm_steps import resolve_language
-
-    if cfg.output_language != "auto":
-        return cfg.output_language
-    top = store.get_meeting(blocks[0].meeting_id) if blocks else None
-    return resolve_language("auto", (top or {}).get("language"))
-
-
 # ---------------------------------------------------------------- pergunta
 def run_global_chat(store: Store, thread_id: int | None, question: str, filters: SearchFilters | None = None,
                     emit: Callable[[str], None] | None = None, cancelled: Callable[[], bool] | None = None) -> GlobalChatAnswer:
@@ -220,7 +212,7 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     search_ms = _ms(t0)
     if cancelled is not None and cancelled():
         return GlobalChatAnswer("", "", (), None, thread_id, None, None, None, None, True, found.hybrid, found.reason, aliases, len(picked))
-    ctx = RagChatCtx(blocks, _history(store, previous), question, _language(store, cfg, blocks))
+    ctx = RagChatCtx(blocks, _history(store, previous), question, default_language(store))
     req = Request(LlmTask.RAG_CHAT, cfg.fast_model, prompts.rag_chat.build(ctx), None, max_output_tokens=MAX_OUTPUT_TOKENS,
                   reasoning=TASK_REASONING[LlmTask.RAG_CHAT], timeout_s=120.0)
     with store.transaction():

@@ -292,7 +292,7 @@ def test_dead_worker_job_is_relaunched_by_the_app(qtbot, qapp, store, platform):
 
 
 def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
-    from listener.model import JobKind, JobStep
+    from listener.model import JobKind, JobStatus, JobStep
     from listener.ui.queue import QueueDialog, job_row_texts
 
     mid = store.create_meeting("Diretoria", "teams", None, None)
@@ -319,9 +319,14 @@ def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     dlg.retry_selected()
     assert store.jobs.get(j2)["status"] == "pendente" and launched == [1, 2, 1]
     dlg.table.selectRow(0)
-    dlg.reprocess_selected()
-    assert store.jobs.for_meeting(mid)[0]["kind"] == JobKind.REPROCESS and dlg.table.rowCount() == 3
-    assert "pendente(s)" in dlg.status_label.text()
+    assert dlg.reprocess_selected() is None and dlg.table.rowCount() == 2                         # F5.3 (A-05): nada atrás do ativo
+    assert "já tem um processamento em andamento" in dlg.message.text()
+    store.jobs.request_cancel(j2)
+    store.jobs.finish(j1, JobStatus.DONE)
+    dlg.table.selectRow(0)
+    rep = dlg.reprocess_selected()
+    assert rep is not None and store.jobs.get(rep)["kind"] == JobKind.REPROCESS and dlg.table.rowCount() == 3
+    assert "pendente(s)" in dlg.status_label.text() and f"job {rep}" in dlg.message.text() and launched[-1] == 1
 
 
 def ctl_specs():

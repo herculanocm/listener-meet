@@ -1,4 +1,4 @@
-"""Configurações e warm-up da F3 (L4): grupo LLM gerado da tabela (idioma como opção, P1), sub-abas por provedor (chave,
+"""Configurações e warm-up da F3 (L4): grupo LLM gerado da tabela (o idioma foi para a F5.3), sub-abas por provedor (chave,
 modelos listados, testar conexão numa Task, ativo para texto e embeddings, preços), transcritor `llm` por capacidade;
 glossário no warm-up com debounce, uma chamada em voo e resposta velha descartada; casamento local de participantes;
 `create_meeting` com glossário e religação da chamada; `build_prompt` com o glossário da LLM primeiro; desempate por ids."""
@@ -68,7 +68,7 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     monkeypatch.setenv("LISTENER_LLM", "fake")
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
-    assert "llm.output_language" in dlg._combos and "llm.cost_alert_usd" in dlg._edits and dlg.provider_tabs.tabs.count() == 3
+    assert "llm.output_language" not in dlg._combos and "llm.cost_alert_usd" in dlg._edits and dlg.provider_tabs.tabs.count() == 3
     assert not _item_enabled(dlg._combos["pipeline.transcriber"], "llm")                                # sem provedor com chave
     tab = dlg.provider_tabs.tab_by_id["gemini"]
     assert tab.key.text() == "" and tab.fast.currentText() == "gemini-3.8-flash" and tab.strong.currentText() == "gemini-3.1-pro-preview"
@@ -88,7 +88,6 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     tab.params.setText("{nao json")
     assert "parâmetros não são JSON" in (dlg.validation_error() or "")
     tab.params.setText('{"top_p": 0.9}')
-    dlg._combos["llm.output_language"].setCurrentText("fr")
     dlg._edits["llm.cost_alert_usd"].setText("5")
     dlg.provider_tabs.active_llm.setCurrentIndex(dlg.provider_tabs.active_llm.findData("openai"))
     dlg.provider_tabs.active_embed.setCurrentIndex(dlg.provider_tabs.active_embed.findData("gemini"))
@@ -103,7 +102,7 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     assert g["api_key"] == KEY and g["fast_model"] == "fake-fast" and g["params"] == '{"top_p": 0.9}'
     assert g["model"] == "gemini-embedding-001"
     assert store.providers.active_provider("llm")["id"] == "openai" and store.providers.active_provider("embed")["id"] == "gemini"
-    assert store.get_setting("llm.output_language") == "fr" and store.get_setting("llm.cost_alert_usd") == "5"
+    assert store.get_setting("llm.cost_alert_usd") == "5"
     prices = {p["model"]: p for p in store.providers.list_prices("gemini")}
     assert prices[tab.prices.item(0, 0).text()]["output_usd_m"] == 9.5 and prices["modelo-novo"]["input_usd_m"] == 1.0
     # com o gemini ativo e chave, o modelo rápido do cache tem áudio: o transcritor `llm` habilita
@@ -111,8 +110,6 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     dlg2 = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg2)
     assert _item_enabled(dlg2._combos["pipeline.transcriber"], "llm")
-    dlg2._combos["llm.output_language"].setCurrentText("12")
-    assert "idioma" in (dlg2.validation_error() or "").lower()
 
 
 def test_warmup_glossary_debounce_stale_and_no_key(qtbot, store, platform, monkeypatch):

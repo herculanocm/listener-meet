@@ -360,8 +360,6 @@ def test_pure_helpers_blocks_revision_guard_and_config():
     people = {1: {"name": "Ana Souza"}, 2: {"name": "Rodrigo Lima"}, 3: {"name": "Ana Paula"}}
     assert llm_steps.match_person("rodrigo lima", people) == 2 and llm_steps.match_person("Rodrigo", people) == 2
     assert llm_steps.match_person("Ana", people) is None and llm_steps.match_person("", people) is None
-    assert llm_steps.resolve_language("auto", "pt") == "pt-BR" and llm_steps.resolve_language("auto", "en") == "en"
-    assert llm_steps.resolve_language("es", "pt") == "es" and llm_steps.resolve_language("auto", None) == "pt-BR"
     raw = '{"provider_id": "gemini", "provider_kind": "gemini", "fast_model": "f", "api_key": "x", "params": {"key": "y", "top_p": 1}}'
     cfg = LlmJobConfig.from_json(raw)
     assert cfg.ready and cfg.params == {"top_p": 1} and "api_key" not in cfg.to_json() and LlmJobConfig.from_json("lixo") == LlmJobConfig()

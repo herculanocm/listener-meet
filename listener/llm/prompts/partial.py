@@ -1,7 +1,7 @@
 """Resumo parcial ao vivo (F4 item 7): o parcial anterior (JSON) e as legendas novas desde ele (`#<caption_id> [mm:ss]
 rótulo: texto`, automáticas e com nomes possivelmente errados) viram o parcial atualizado da reunião inteira até ali: um
 resumo curto e as possíveis decisões e ações, cada item com o `caption_id` da legenda de apoio (o projeto converte em
-`t_ms`; id desconhecido vira nulo, como a evidência da F3). Modelo rápido; idioma de `llm.output_language`."""
+`t_ms`; id desconhecido vira nulo, como a evidência da F3). Modelo rápido; no idioma da reunião (F5.3 A-02)."""
 from __future__ import annotations
 
 from collections.abc import Sequence

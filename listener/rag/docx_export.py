@@ -10,7 +10,10 @@ caracteres, o limite do python-docx (o título da reunião não tem limite).
 
 O `python-docx` (extra `docx`) só é importado dentro de `meeting_docx`, que roda numa `Task` da reunião aberta: o app abre
 sem o extra, e sem ele o item do menu fica desabilitado com a dica (`docx_available`, que procura sem importar). O
-documento sai em bytes; a escrita é a atômica do .md (`export.write_atomic`)."""
+documento sai em bytes; a escrita é a atômica do .md (`export.write_atomic`).
+
+F5.3 (A-07, pergunta 8): os títulos das seções no idioma da ata (os textos do .md, `export.TEXTS`) e o idioma padrão do
+texto, que guia a revisão ortográfica do Word, em `pt-BR` ou `en-US` (`config.language.docx_code`)."""
 from __future__ import annotations
 
 import importlib.util
@@ -19,6 +22,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING
 
+from ..config.language import docx_code
 from ..llm.prompts.common import stamp
 from . import export
 from .export import ExportMeeting
@@ -28,7 +32,6 @@ if TYPE_CHECKING:
     from docx.document import Document
     from docx.text.paragraph import Paragraph
 
-DOC_LANGUAGE = "pt-BR"           # a revisão ortográfica do Word em português (o modelo padrão vem em inglês)
 AUTHOR = "listener-meet"         # o modelo padrão do python-docx assina "python-docx"
 CORE_PROPERTY_MAX = 255          # o python-docx recusa propriedade do arquivo maior que isto
 BULLET_STYLES = ("List Bullet", "List Bullet 2", "List Bullet 3")
@@ -75,14 +78,15 @@ def meeting_docx(m: ExportMeeting) -> bytes:
         p = doc.add_paragraph()
         _run(p, f"{label}: ", bold=True)
         _run(p, value)
-    for title, md in (("Ata", m.minutes_md), ("Resumo executivo", m.executive), ("Pré-resumo", m.pre_summary)):
+    t = m.texts
+    for title, md in ((t.minutes, m.minutes_md), (t.executive, m.executive), (t.pre_summary, m.pre_summary)):
         if md.strip():
             _heading(doc, title, SECTION_LEVEL)
             _markdown(doc, md)
-    _list_section(doc, "Ações", [export.action_text(a) for a in m.actions])
-    _list_section(doc, "Marcadores", [export.marker_text(t, note) for t, note in m.markers])
+    _list_section(doc, t.actions, [export.action_text(a, m.language) for a in m.actions])
+    _list_section(doc, t.markers, [export.marker_text(time, note, m.language) for time, note in m.markers])
     if m.transcript:
-        _heading(doc, "Transcrição", SECTION_LEVEL)
+        _heading(doc, t.transcript, SECTION_LEVEL)
         for line in m.transcript:
             p = doc.add_paragraph()
             _run(p, f"[{stamp(line.t_ms)}] ")
@@ -94,7 +98,8 @@ def meeting_docx(m: ExportMeeting) -> bytes:
 
 
 def _properties(doc: Document, m: ExportMeeting) -> None:
-    """Título, autor e datas do arquivo (o modelo padrão traz "python-docx" e 2013) e o idioma padrão do texto."""
+    """Título, autor e datas do arquivo (o modelo padrão traz "python-docx" e 2013) e o idioma padrão do texto, o da ata
+    (a revisão ortográfica do Word; o modelo padrão vem em inglês dos EUA)."""
     from docx.oxml.ns import qn
 
     props = doc.core_properties
@@ -104,7 +109,7 @@ def _properties(doc: Document, m: ExportMeeting) -> None:
     props.created = props.modified = now
     lang = doc.styles.element.find(f"{qn('w:docDefaults')}/{qn('w:rPrDefault')}/{qn('w:rPr')}/{qn('w:lang')}")
     if lang is not None:
-        lang.set(qn("w:val"), DOC_LANGUAGE)
+        lang.set(qn("w:val"), docx_code(m.language))
 
 
 def _list_section(doc: Document, title: str, items: list[str]) -> None:

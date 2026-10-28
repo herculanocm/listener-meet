@@ -8,7 +8,10 @@ Exportar só por ação do usuário (D-012: não fere a CP9).
 
 F5.1 (U-011, A-18): a ficha, a linha da ação e a do marcador saem de funções que o .md e o .docx dividem; o parser puro do
 Markdown da ata e dos resumos (`parse_markdown`, em `rag/markdown.py`) aparece aqui também; o escritor do .docx é o
-`rag/docx_export.py`."""
+`rag/docx_export.py`.
+
+F5.3 (A-07, pergunta 8): os textos fixos do .md e do .docx (seções, ficha, rótulos da ação, estados, marcas de vazio) saem
+no idioma da ata (`summaries.language`; sem ata, o da reunião), pela tabela `TEXTS`."""
 from __future__ import annotations
 
 import contextlib
@@ -22,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..config.language import EN, PT, meeting_language, output_code
 from ..llm.prompts.common import stamp
 from ..model import ActionStatus, SummaryKind
 from . import citations
@@ -30,11 +34,41 @@ from .markdown import MdBlock, MdRun, parse_inline, parse_markdown
 if TYPE_CHECKING:
     from ..store import Store
 
-ACTION_STATUS_TEXT: dict[str, str] = {ActionStatus.OPEN: "aberta", ActionStatus.DONE: "feita", ActionStatus.DISCARDED: "descartada"}
 INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))})
 NAME_MAX = 120                   # o nome sem a extensão: caminhos longos do Windows ainda cabem em pastas fundas
 HEADING_RE = re.compile(r"^(#{1,5})(\s)", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class ExportTexts:
+    """Os textos fixos do .md e do .docx num idioma (F5.3 A-07)."""
+    minutes: str
+    executive: str
+    pre_summary: str
+    actions: str
+    markers: str
+    transcript: str
+    date: str
+    duration: str
+    participants: str
+    owner: str
+    due: str
+    no_note: str
+    no_minutes: str
+    no_transcript: str
+    meeting: str                  # "Reunião 7" quando não há título
+    status: Mapping[str, str]     # estado da ação
+
+
+TEXTS: dict[str, ExportTexts] = {
+    PT: ExportTexts("Ata", "Resumo executivo", "Pré-resumo", "Ações", "Marcadores", "Transcrição", "Data", "Duração", "Participantes",
+                    "dono", "prazo", "(sem nota)", "_(ata ainda não gerada)_", "_(sem transcrição)_", "Reunião",
+                    {ActionStatus.OPEN: "aberta", ActionStatus.DONE: "feita", ActionStatus.DISCARDED: "descartada"}),
+    EN: ExportTexts("Minutes", "Executive summary", "Pre-summary", "Actions", "Markers", "Transcript", "Date", "Duration",
+                    "Participants", "owner", "due", "(no note)", "_(minutes not generated yet)_", "_(no transcript)_", "Meeting",
+                    {ActionStatus.OPEN: "open", ActionStatus.DONE: "done", ActionStatus.DISCARDED: "discarded"}),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,10 +99,19 @@ class ExportMeeting:
     actions: tuple[ExportAction, ...] = ()
     markers: tuple[tuple[int, str], ...] = ()
     transcript: tuple[ExportLine, ...] = ()
+    language: str = PT           # F5.3 (A-07): o idioma da ata, que escolhe os textos fixos e o `w:lang` do .docx
+
+    @property
+    def texts(self) -> ExportTexts:
+        return texts_for(self.language)
 
     @property
     def shown_title(self) -> str:
-        return self.title or f"Reunião {self.meeting_id}"
+        return self.title or f"{self.texts.meeting} {self.meeting_id}"
+
+
+def texts_for(language: str | None) -> ExportTexts:
+    return TEXTS[output_code(language)]
 
 
 # ---------------------------------------------------------------- formatos
@@ -118,6 +161,8 @@ def gather(store: Store, meeting_id: int, prefer_llm: bool = True) -> ExportMeet
         return None
     people = {int(p["id"]): str(p["name"]) for p in store.people.list_people()}
     minutes = store.summaries.current(meeting_id, SummaryKind.MINUTES)
+    language = output_code(str((minutes or {}).get("language") or "") or meeting_language(store, m))
+    texts = texts_for(language)
     actions: list[ExportAction] = []
     if minutes is not None:
         for a in store.actions.list_for_meeting(meeting_id, summary_id=int(minutes["id"])):
@@ -125,21 +170,22 @@ def gather(store: Store, meeting_id: int, prefer_llm: bool = True) -> ExportMeet
             owner = people.get(int(pid), "") if pid is not None else str(a.get("owner_text") or "")
             status = str(a.get("status") or ActionStatus.OPEN)
             actions.append(ExportAction(_clean(str(a.get("text") or "")), owner, str(a.get("due") or ""),
-                                        ACTION_STATUS_TEXT.get(status, status)))
+                                        texts.status.get(status, status)))
     rows = review.transcript_rows(store, meeting_id, prefer_llm)
     lines = tuple(ExportLine(r.t_start_ms, f"{r.name} — {r.role}" if r.role else r.name, _clean(r.shown_text)) for r in rows)
     return ExportMeeting(int(meeting_id), str(m.get("title") or m.get("title_llm") or ""), str(m.get("started_at") or ""),
                          m.get("duration_ms"), tuple(review.participants(store, meeting_id)), store.summaries.display_text(minutes),
                          store.summaries.display_text(store.summaries.current(meeting_id, SummaryKind.EXECUTIVE)),
                          store.summaries.display_text(store.summaries.current(meeting_id, SummaryKind.PRE_SUMMARY)), tuple(actions),
-                         tuple((int(k["t_ms"]), str(k.get("note") or "")) for k in store.list_markers(meeting_id)), lines)
+                         tuple((int(k["t_ms"]), str(k.get("note") or "")) for k in store.list_markers(meeting_id)), lines, language)
 
 
 # ---------------------------------------------------------------- Markdown
 def header_facts(m: ExportMeeting) -> list[tuple[str, str]]:
     """A ficha da reunião (data e hora, duração, participantes), só o que existe: a mesma no .md e no .docx."""
-    facts = [("Data", fmt_datetime(m.started_at)), ("Duração", fmt_duration(m.duration_ms)),
-             ("Participantes", ", ".join(m.participants))]
+    t = m.texts
+    facts = [(t.date, fmt_datetime(m.started_at)), (t.duration, fmt_duration(m.duration_ms)),
+             (t.participants, ", ".join(m.participants))]
     return [(label, value) for label, value in facts if value]
 
 
@@ -155,18 +201,19 @@ def _section(title: str, body: str) -> str:
     return f"## {title}\n\n{body}\n" if body else ""
 
 
-def action_text(a: ExportAction) -> str:
+def action_text(a: ExportAction, language: str = PT) -> str:
     """"Mandar a planilha · dono: Bia · prazo: 2026-10-31 · aberta" (a linha da ação no .md e no .docx)."""
-    tail = "".join(f" · {label}: {value}" for label, value in (("dono", a.owner), ("prazo", a.due)) if value)
+    t = texts_for(language)
+    tail = "".join(f" · {label}: {value}" for label, value in ((t.owner, a.owner), (t.due, a.due)) if value)
     return f"{a.text}{tail} · {a.status}"
 
 
-def marker_text(t_ms: int, note: str) -> str:
-    return f"[{stamp(t_ms)}] {_clean(note) or '(sem nota)'}"
+def marker_text(t_ms: int, note: str, language: str = PT) -> str:
+    return f"[{stamp(t_ms)}] {_clean(note) or texts_for(language).no_note}"
 
 
-def actions_markdown(actions: Sequence[ExportAction]) -> str:
-    return "\n".join(f"- {action_text(a)}" for a in actions)
+def actions_markdown(actions: Sequence[ExportAction], language: str = PT) -> str:
+    return "\n".join(f"- {action_text(a, language)}" for a in actions)
 
 
 def transcript_lines(lines: Sequence[ExportLine]) -> str:
@@ -176,26 +223,28 @@ def transcript_lines(lines: Sequence[ExportLine]) -> str:
 
 def minutes_markdown(m: ExportMeeting) -> str:
     """"Copiar ata": a ficha e a ata exibida (os títulos dela um nível abaixo)."""
-    parts = [header_markdown(m), _section("Ata", shift_headings(m.minutes_md) if m.minutes_md.strip() else "_(ata ainda não gerada)_")]
+    t = m.texts
+    parts = [header_markdown(m), _section(t.minutes, shift_headings(m.minutes_md) if m.minutes_md.strip() else t.no_minutes)]
     return "\n".join(p for p in parts if p)
 
 
 def transcript_markdown(m: ExportMeeting) -> str:
     """"Copiar transcrição": a ficha e as falas."""
-    body = transcript_lines(m.transcript) or "_(sem transcrição)_"
-    return "\n".join((header_markdown(m), _section("Transcrição", body)))
+    body = transcript_lines(m.transcript) or m.texts.no_transcript
+    return "\n".join((header_markdown(m), _section(m.texts.transcript, body)))
 
 
 def meeting_markdown(m: ExportMeeting) -> str:
     """O arquivo .md inteiro, determinístico (mesmos dados, mesmo texto): ficha, ata, resumos, ações, marcadores e
     transcrição."""
+    t = m.texts
     parts = [header_markdown(m),
-             _section("Ata", shift_headings(m.minutes_md)),
-             _section("Resumo executivo", shift_headings(m.executive)),
-             _section("Pré-resumo", shift_headings(m.pre_summary)),
-             _section("Ações", actions_markdown(m.actions)),
-             _section("Marcadores", "\n".join(f"- {marker_text(t, note)}" for t, note in m.markers)),
-             _section("Transcrição", transcript_lines(m.transcript))]
+             _section(t.minutes, shift_headings(m.minutes_md)),
+             _section(t.executive, shift_headings(m.executive)),
+             _section(t.pre_summary, shift_headings(m.pre_summary)),
+             _section(t.actions, actions_markdown(m.actions, m.language)),
+             _section(t.markers, "\n".join(f"- {marker_text(time, note, m.language)}" for time, note in m.markers)),
+             _section(t.transcript, transcript_lines(m.transcript))]
     return "\n".join(p for p in parts if p)
 
 
@@ -270,7 +319,7 @@ def quote_answer(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mappin
     return plain, html.escape(plain).replace("\n", "<br>")
 
 
-__all__ = ["ExportAction", "ExportLine", "ExportMeeting", "MdBlock", "MdRun", "action_text", "default_filename", "fmt_date",
-           "fmt_datetime", "fmt_duration", "gather", "header_facts", "header_markdown", "marker_text", "meeting_markdown",
+__all__ = ["TEXTS", "ExportAction", "ExportLine", "ExportMeeting", "ExportTexts", "MdBlock", "MdRun", "action_text", "default_filename",
+           "fmt_date", "fmt_datetime", "fmt_duration", "gather", "header_facts", "header_markdown", "marker_text", "meeting_markdown",
            "minutes_markdown", "parse_inline", "parse_markdown", "quote", "quote_answer", "safe_filename", "shift_headings",
-           "transcript_markdown", "write_atomic"]
+           "texts_for", "transcript_markdown", "write_atomic"]

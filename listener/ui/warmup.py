@@ -9,7 +9,9 @@ nulo, senão `live.enabled` e `live.names`; "Salvar como preset" grava as duas; 
 lado, com link para as Configurações, sem bloquear a gravação (o controlador grava sem ao vivo).
 U-037 (D-053): sem o token do Hugging Face ou sem a chave da LLM ativa, um aviso acima do "Gravar" diz o que não vai sair
 e leva às Chaves de acesso; some quando nada falta, sem bloquear a gravação.
-U-043 (F5.2): a cada 2 s, um fone conectado ou removido com o warm-up aberto entra ou sai do combo (`ui/devices.py`)."""
+U-043 (F5.2): a cada 2 s, um fone conectado ou removido com o warm-up aberto entra ou sai do combo (`ui/devices.py`).
+U-045 (F5.3 L1, A-01): "Idioma da reunião", com o padrão das Configurações; vai no resultado como o glossário e a reunião
+nasce com ele (transcrição, legenda e LLM). O glossário é pedido no idioma do combo; trocar o combo depois não o refaz."""
 from __future__ import annotations
 
 import functools
@@ -29,6 +31,7 @@ from ..capture.align import estimate_offset
 from ..capture.audio import resample, rms, to_mono
 from ..capture.recorder import RecordConfig
 from ..config.defaults import SPECS
+from ..config.language import LANGUAGES, default_language, label
 from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glossary, request_glossary, split_names
 from ..log import get_logger
 from ..model import SourceKind
@@ -134,6 +137,12 @@ class WarmupDialog(QDialog):
         self.title_edit.setPlaceholderText("título da reunião")
         self.participants_edit = QLineEdit()
         self.participants_edit.setPlaceholderText("participantes esperados, separados por vírgula")
+        self.language_combo = QComboBox()                # U-045: o código vai no `itemData`; o texto é só o rótulo
+        for code in LANGUAGES:
+            self.language_combo.addItem(label(code), code)
+        self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(default_language(store))))
+        self.language_combo.setToolTip("O idioma falado na reunião: vale para a transcrição, a legenda ao vivo e tudo o que a LLM "
+                                       "escrever (o padrão fica nas Configurações, Idioma e avisos).")
         self.room_check = QCheckBox("Sala de reunião presencial (o microfone ouve outras pessoas)")
         self.live_check = QCheckBox("Legenda ao vivo")
         self.live_check.setToolTip("Legenda de quem fala durante a gravação, com 5 a 10 s de atraso (Configurações, grupo Ao vivo).")
@@ -159,6 +168,7 @@ class WarmupDialog(QDialog):
         fl.addRow("Preset", prow)
         fl.addRow("Título", self.title_edit)
         fl.addRow("Participantes", self.participants_edit)
+        fl.addRow("Idioma da reunião", self.language_combo)
         fl.addRow("Termos prováveis", self.glossary_edit)
         fl.addRow("", self.glossary_status)
         fl.addRow("", self.room_check)
@@ -264,7 +274,8 @@ class WarmupDialog(QDialog):
         self.glossary_requests += 1
         self.glossary_status.setText("pedindo termos prováveis à LLM…")
         stop = threading.Event()                           # a saída do app cancela a chamada presa na rede (R8-04)
-        run_task(functools.partial(request_glossary, self.store, title or None, participants or None, should_stop=stop.is_set),
+        run_task(functools.partial(request_glossary, self.store, title or None, participants or None,
+                                   language=self.meeting_language(), should_stop=stop.is_set),
                  self.store, functools.partial(self._on_glossary, self._glossary_seq), cancel=stop)
 
     def _on_glossary(self, seq: int, result: Any) -> None:
@@ -562,6 +573,10 @@ class WarmupDialog(QDialog):
         self.store.set_setting("warmup.last_in_room", "1" if self.room_check.isChecked() else "0")
 
     # ---------------------------------------------------------------- resultado
+    def meeting_language(self) -> str:
+        """O código do combo "Idioma da reunião" (`pt-BR` ou `en`)."""
+        return str(self.language_combo.currentData())
+
     def result_config(self) -> tuple[RecordConfig, dict[str, Any]]:
         cfg = RecordConfig.from_settings(self.store, self._selected_device(), self.sources.selected_spec())
         spec = cfg.source
@@ -580,6 +595,7 @@ class WarmupDialog(QDialog):
             "glossary": self.glossary_edit.text().strip() or None,
             "expected_people_json": json.dumps(sorted(ids)) if ids else None,
             "glossary_call_ids": list(self.glossary_call_ids),
+            "language": self.meeting_language(),                          # F5.3 (A-01): a reunião nasce com ele
             "live_enabled": self.live_check.isChecked(),                  # F4: o controlador lê as duas (CP6)
             "live_names": self.names_check.isChecked(),
         }

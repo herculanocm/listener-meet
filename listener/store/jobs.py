@@ -98,6 +98,13 @@ class JobsRepo:
         rows = self.core.q("SELECT * FROM processing_jobs WHERE id = ?", (job_id,))
         return cast(JobRow, dict(rows[0])) if rows else None
 
+    def set_params(self, job_id: int, params: dict[str, Any]) -> bool:
+        """Troca o `params_json` de um job ainda pendente (F5.3 A-05: o idioma de um processamento na fila); False quando ele
+        já saiu de `pendente`."""
+        payload = json.dumps(params, ensure_ascii=False, default=json_default)
+        return self.core.execute("UPDATE processing_jobs SET params_json = ? WHERE id = ? AND status = ?",
+                                 (payload, job_id, JobStatus.PENDING)) > 0
+
     def list_jobs(self, limit: int = 50, *, kinds: Iterable[JobKind | str] | None = None,
                   exclude_kinds: Iterable[JobKind | str] | None = None, statuses: Iterable[JobStatus | str] | None = None) -> list[JobRow]:
         """Ativos primeiro (na ordem da fila), depois os terminados mais recentes; `kinds`, `exclude_kinds` e `statuses` filtram

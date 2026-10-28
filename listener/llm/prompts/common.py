@@ -56,7 +56,7 @@ class MeetingCtx:
     participants_text: str | None
     expected: tuple[Person, ...]  # participantes esperados casados com `people`
     markers: tuple[Marker, ...]
-    output_language: str          # "pt-BR", "en"... (já resolvido: `auto` vira o idioma da reunião)
+    output_language: str          # "pt-BR" ou "en": o idioma da reunião (F5.3 A-02); o chat global usa o padrão
     glossary: str = ""
     speakers: tuple[Person, ...] = ()   # U-041 (A-10): quem fala, identificado, com cargo e empresa (nunca o e-mail)
 

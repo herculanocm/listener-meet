@@ -119,7 +119,7 @@ def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platfor
     voices = _voices(store, mid)
     ana = review.create_person(store, voices["SPK_0"]["id"], "Ana", "CFO", "Empresa X", CANARY)
     review.create_person(store, voices["SPK_1"]["id"], "Bia", email=CANARY)
-    ctx = llm_steps.build_context(store, mid, parent, "pt-BR")
+    ctx = llm_steps.build_context(store, mid, parent)
     speakers = {p.name: (p.role, p.company) for p in ctx.meeting_ctx.speakers}
     assert speakers == {"Eu": ("Gerente", "Empresa Y"), "Ana": ("CFO", "Empresa X"), "Bia": ("", "")}
     assert any(ln.speaker == "Ana (CFO)" for ln in ctx.lines) and any(ln.speaker == "Eu (Gerente)" for ln in ctx.lines)

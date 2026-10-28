@@ -288,7 +288,7 @@ def test_controller_live_window_marks_caption_and_partial_item_and_minutes_read_
         c.stop_recording()
         assert win.finished and c.mark_caption(row)[0] is False
         qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=10000)
-        ctx = build_context(store, rec.meeting_id, 0, "pt-BR")                                     # a ata da F3 lê os marcadores
+        ctx = build_context(store, rec.meeting_id, 0)                                              # a ata da F3 lê os marcadores
         assert {m.note for m in ctx.meeting_ctx.markers} == set(markers) and "Decisão: Cortar 8%" in header(ctx.meeting_ctx)
         win.close()
         assert c.live_window is None

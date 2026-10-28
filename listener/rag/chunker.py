@@ -23,7 +23,6 @@ from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from ..llm.evidence import NO_EVIDENCE
 from ..llm.render import HEADINGS
 from ..model import ChunkKind
 
@@ -36,7 +35,8 @@ SEP = "\x1f"
 
 SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 STAMP_RE = re.compile(r"\s*\[(?:(\d{1,2}):)?(\d{1,3}):(\d{2})\]\s*$")
-NO_EVIDENCE_RE = re.compile(r"\s*_?\(\s*" + re.escape(NO_EVIDENCE) + r"\s*\)_?\s*$", re.IGNORECASE)
+NO_EVIDENCE_RE = re.compile(r"\s*_?\(\s*(?:" + "|".join(re.escape(h[8]) for h in HEADINGS.values()) + r")\s*\)_?\s*$",
+                            re.IGNORECASE)                                  # a marca em qualquer idioma da ata (F5.3 A-07)
 LIST_RE = re.compile(r"^\s*(?:[-*+•]|\d{1,3}[.)])\s+(.*)$")
 HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.*?)\s*#*\s*$")
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")

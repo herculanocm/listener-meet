@@ -10,7 +10,7 @@ com `t_until_ms` = fim da última legenda usada, `call_id`, `data_json` (resumo,
 citada) e `text_llm` em Markdown. Antes da chamada, o orçamento (Q6): com o custo de LLM da reunião em
 `PARTIAL_BUDGET_SHARE` do `llm.cost_alert_usd` ou mais, não chama e devolve `budget` (o controlador para o parcial nessa
 reunião: o resto fica para a ata). Reunião apagada durante a chamada (Cancelar): a chamada fica em `llm_calls` sem
-reunião (o custo do mês continua certo) e nada mais é gravado."""
+reunião (o custo do mês continua certo) e nada mais é gravado. F5.3 (A-02): no idioma da reunião."""
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +23,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..config.defaults import SPECS
+from ..config.language import meeting_language, output_code
 from ..log import get_logger
 from ..model import LlmCallStatus, SummaryKind
 from ..store.captions import CaptionRow
@@ -126,10 +127,9 @@ def _speaker(row: CaptionRow, me: str) -> str:
     return label or (me if row.get("channel") == "L" else "Participante")
 
 
-def meeting_ctx(store: Store, meeting: Mapping[str, Any], output_language: str) -> MeetingCtx:
-    """Contexto da reunião para o parcial: título, data, participantes esperados e glossário (sem marcadores)."""
-    from ..pipeline.llm_steps import resolve_language
-
+def meeting_ctx(store: Store, meeting: Mapping[str, Any]) -> MeetingCtx:
+    """Contexto da reunião para o parcial: título, data, participantes esperados, glossário (sem marcadores) e o idioma
+    dela (F5.3 A-02)."""
     people = {int(p["id"]): p for p in store.people.list_people()}
     expected: list[Person] = []
     with suppress(ValueError, TypeError):
@@ -140,7 +140,7 @@ def meeting_ctx(store: Store, meeting: Mapping[str, Any], output_language: str) 
     title = meeting.get("title") or meeting.get("title_llm")
     participants = meeting.get("expected_participants")
     return MeetingCtx(str(title) if title else None, str(meeting.get("started_at") or "")[:10], str(participants) if participants else None,
-                      tuple(expected), (), resolve_language(output_language, meeting.get("language")), str(meeting.get("glossary") or ""))
+                      tuple(expected), (), output_code(meeting_language(store, meeting)), str(meeting.get("glossary") or ""))
 
 
 def normalize(raw: Mapping[str, Any], times: Mapping[int, int]) -> dict[str, Any]:
@@ -213,7 +213,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     me = str(me_row["name"]) if me_row else "Usuário"
     lines = [Line(int(r["id"]), int(r["t_start_ms"] or 0), _speaker(r, me), " ".join(str(r.get("text") or "").split())[:MAX_CAPTION_CHARS])
              for r in used]
-    ctx = meeting_ctx(store, meeting, cfg.output_language)
+    ctx = meeting_ctx(store, meeting)
     previous_json: str | None = None
     if previous:                                           # só o que a LLM devolve: sem `t_ms` nem os metadados do projeto
         prev = {"summary": previous.get("summary") or ""}

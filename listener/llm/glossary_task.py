@@ -2,7 +2,8 @@
 (casefold, `difflib`, nome inteiro ou primeiro nome único) e pede à LLM os termos prováveis e o mapeamento do que sobrou,
 numa única chamada feita numa `Task` do app (`run_async` com cliente próprio). `llm_calls.meeting_id` fica nulo até a
 reunião existir (o controlador religa). Sem provedor com chave: `GlossaryResult.error` e o warm-up segue sem glossário.
-F5 R8-04: `should_stop` (a saída do app, pelo cancelamento da `Task`) cancela a chamada presa na rede em até 0,2 s."""
+F5 R8-04: `should_stop` (a saída do app, pelo cancelamento da `Task`) cancela a chamada presa na rede em até 0,2 s.
+F5.3 (A-02): pedido no idioma do combo "Idioma da reunião" do warm-up (sem ele, o padrão das Configurações)."""
 from __future__ import annotations
 
 import difflib
@@ -12,6 +13,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..config.language import default_language, output_code
 from ..log import get_logger
 from ..model import LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
@@ -101,10 +103,11 @@ def merge_glossary(llm_terms: Sequence[str], user_text: str) -> str:
     return ", ".join(out)
 
 
-def request_glossary(store: Store, title: str | None, participants: str | None,
+def request_glossary(store: Store, title: str | None, participants: str | None, language: str | None = None,
                      should_stop: Callable[[], bool] | None = None) -> GlossaryResult:
     """Chamada síncrona (roda numa `Task`): casa localmente, pergunta à LLM o resto e grava em `llm_calls` (reunião nula).
-    `should_stop()` verdadeiro durante a espera cancela a chamada (R8-04): erro "cancelado", sem termos."""
+    `language` é o idioma da reunião (qualquer código); `should_stop()` verdadeiro durante a espera cancela a chamada
+    (R8-04): erro "cancelado", sem termos."""
     from ..config.defaults import SPECS
 
     people: list[dict[str, Any]] = [dict(p) for p in store.people.list_people()]
@@ -116,7 +119,8 @@ def request_glossary(store: Store, title: str | None, participants: str | None,
     cfg = LlmJobConfig.from_store(store)
     known = tuple(Person(int(p["id"]), str(p["name"]), str(p.get("role") or ""), str(p.get("company") or "")) for p in people)
     fixed = str(store.get(SPECS["pipeline.glossary"]))
-    ctx = prompts.glossary.GlossaryCtx(title, participants, unresolved, known, fixed, cfg.output_language)
+    lang = output_code(language) if language else default_language(store)
+    ctx = prompts.glossary.GlossaryCtx(title, participants, unresolved, known, fixed, lang)
     req = Request(LlmTask.GLOSSARY, cfg.fast_model, prompts.glossary.build(ctx), prompts.glossary.SCHEMA, max_output_tokens=1024,
                   reasoning=TASK_REASONING[LlmTask.GLOSSARY], timeout_s=30.0)
 

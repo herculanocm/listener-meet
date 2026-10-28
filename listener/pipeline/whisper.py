@@ -1,9 +1,11 @@
 """`FasterWhisperTranscriber` (F2 item 5, D-028): faster-whisper em CPU int8 com `word_timestamps`, VAD, `beam_size=5`,
 `condition_on_previous_text=False` e `hallucination_silence_threshold=2.0`; segmentos com `no_speech_prob > 0,6` ou
-`avg_logprob < -1,0` são descartados; idioma detectado quando `language=None`. Opção "alta precisão" realinha as palavras
-com wav2vec2 pelo WhisperX quando instalado (`pipeline-hq`), caindo nos tempos do próprio Whisper em qualquer falha.
-Importações preguiçosas: o módulo carrega sem torch; só o worker instancia. Escrito às cegas no WSL seguindo
-`scripts/medir.py`; verificado no Windows com os modelos (B4)."""
+`avg_logprob < -1,0` são descartados; o idioma vem da reunião (F5.3 A-01: o runner nunca pede detecção). Opção "alta
+precisão" realinha as palavras com wav2vec2 pelo WhisperX quando instalado (`pipeline-hq`), caindo nos tempos do próprio
+Whisper em qualquer falha. Idioma sem modelo de alinhamento (o inglês, A-04): os tempos do Whisper, com uma linha no log
+por job e sem desligar a opção no processo (antes, o `en` caía na pasta de modelos, falhava e desligava a alta precisão
+das reuniões seguintes do mesmo worker). Importações preguiçosas: o módulo carrega sem torch; só o worker instancia.
+Escrito às cegas no WSL seguindo `scripts/medir.py`; verificado no Windows com os modelos (B4)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,6 +38,8 @@ class FasterWhisperTranscriber:
         self._model: Any = None
         self._align: dict[str, tuple[Any, Any]] = {}
         self._align_failed = False
+        self._unaligned: set[str] = set()                # A-04: idiomas sem wav2vec2 já avisados nesta passada
+        self._last_r_t0 = -1
 
     # ---------------------------------------------------------------- carga
     def _load(self) -> Any:
@@ -62,6 +66,7 @@ class FasterWhisperTranscriber:
 
     # ---------------------------------------------------------------- transcrição
     def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
+        self._new_pass(window)
         model = self._load()
         samples = np.ascontiguousarray(window.samples, dtype=np.float32)
         segments, info = model.transcribe(
@@ -96,17 +101,34 @@ class FasterWhisperTranscriber:
         return tuple(out)
 
     # ---------------------------------------------------------------- alta precisão (opcional)
+    def _new_pass(self, window: AudioWindow) -> None:
+        """O transcritor vive no worker de um job para o outro; o runner transcreve o R primeiro, em janelas de início
+        crescente: uma janela do R que não começa depois da anterior abre outro job (ou outra tentativa) e os avisos do
+        A-04 voltam a valer (uma linha por job, não uma por janela)."""
+        if window.channel != "R":
+            return
+        if window.t0_ms <= self._last_r_t0:
+            self._unaligned.clear()
+        self._last_r_t0 = window.t0_ms
+
     def _align_hq(self, segments: list[Any], words: tuple[Word, ...], samples: np.ndarray, window: AudioWindow,
                   language: str | None) -> tuple[Word, ...]:
-        """Realinha com wav2vec2 (WhisperX). Qualquer falha devolve as palavras do Whisper e desliga a opção no processo."""
+        """Realinha com wav2vec2 (WhisperX). Idioma sem modelo de alinhamento: as palavras do Whisper, sem desligar a opção
+        (A-04). Qualquer falha devolve as palavras do Whisper e desliga a opção no processo."""
         if self._align_failed or not language:
+            return words
+        if language not in ALIGN_MODELS:
+            if language not in self._unaligned:
+                self._unaligned.add(language)
+                log.info("alta precisão: sem modelo de alinhamento para %s; ficam os tempos do Whisper (a opção segue ligada)",
+                         language)
             return words
         try:
             import whisperx
 
             if language not in self._align:
-                local = self.model_dir.parent / ALIGN_MODELS.get(language, "").rsplit("/", 1)[-1]
-                kw = {"model_name": str(local)} if local.exists() and local.name else {}
+                local = self.model_dir.parent / ALIGN_MODELS[language].rsplit("/", 1)[-1]
+                kw = {"model_name": str(local)} if local.exists() else {}
                 self._align[language] = whisperx.load_align_model(language_code=language, device="cpu", **kw)
             model, meta = self._align[language]
             segs = [{"start": float(s.start), "end": float(s.end), "text": str(s.text)} for s in segments]

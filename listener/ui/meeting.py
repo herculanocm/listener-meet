@@ -11,7 +11,10 @@ HTML (R7-07).
 
 F5.1: a aba "Linha do tempo" entre Marcadores e Chat (U-008, A-15; `ui/timeline.py`), o destaque da fala que toca na
 Transcrição e o cursor da linha do tempo pelo mesmo `PlaybackFollower` (U-025) e "Salvar .docx…" no Exportar (U-011,
-A-18; `ui/docx_save.py`)."""
+A-18; `ui/docx_save.py`).
+
+F5.3 (U-046): "Idioma: pt-BR" no cabeçalho, com a troca pelo outro idioma que reprocessa a reunião (`ui/meeting_language.py`);
+a exportação sai no idioma da ata."""
 from __future__ import annotations
 
 from collections import deque
@@ -34,6 +37,7 @@ from .chat import ChatPanel
 from .common import clamp_to_screens, copy_rich, markdown_html
 from .docx_save import DocxSaver
 from .llm_tabs import LlmTabsGroup
+from .meeting_language import MeetingLanguage
 from .player import PlayerBar
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
@@ -146,12 +150,14 @@ class MeetingWindow(QWidget):
         self.message.setTextFormat(Qt.TextFormat.PlainText)     # o caminho salvo leva o título
         self.message.setWordWrap(True)
         self.message.setVisible(False)
+        self.language_bar = MeetingLanguage(store, meeting_id, on_launch=on_launch, on_message=self.show_message, parent=self)
         top = QHBoxLayout()
         top.addWidget(self.llm.title_tab, 1)
         top.addWidget(self.btn_review)
         top.addWidget(self.btn_export)
         facts = QHBoxLayout()
         facts.addWidget(self.info, 1)
+        facts.addWidget(self.language_bar)
         facts.addWidget(self.llm.cost)
 
         # --- abas ---
@@ -220,6 +226,7 @@ class MeetingWindow(QWidget):
         facts = [export.fmt_datetime(m.get("started_at")), export.fmt_duration(m.get("duration_ms")),
                  f"Participantes: {', '.join(people)}" if people else ""]
         self.info.setText(" · ".join(f for f in facts if f))
+        self.language_bar.reload()
 
     def reload(self) -> None:
         """Um job da reunião terminou (LLM ou índice): recarrega sem roubar o foco nem mexer na rolagem da transcrição."""

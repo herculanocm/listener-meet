@@ -6,6 +6,9 @@ retomada, os `idx` presentes são pulados (perda máxima: uma janela). Entre jan
 a lease da gravação (Q7). Nunca há transação em volta de computação. Preset sala (U-015): L segue o caminho do R; senão
 L é o usuário (`attribution = canal`) e reforça o perfil dele com `source = automatico` (P3). Reprocessar escreve com o
 `job_id` novo e, no último passo, transporta as decisões humanas por cosseno e troca numa só transação (item 12, CP3).
+F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o idioma pedido pela troca na reunião
+aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (gravado quando a reunião
+não tinha). A troca só vale com o job concluído: `meetings.language` muda com `revisions` na transação da troca.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ from typing import Any, override
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from ..config.language import meeting_language, whisper_code
 from ..log import get_logger
 from ..model import Attribution, ClusterStatus, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SegmentSource
 from ..store import Store
@@ -28,6 +32,7 @@ from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
 from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids
+from .reprocess import target_language
 from .stitch import stitch
 from .types import (AudioWindow, DiarizationWindow, JobConfig, TranscriptWindow, Turn, Word, decode_diarization, decode_transcript,
                     encode_diarization, encode_transcript, pack_artifact, unpack_artifact)
@@ -45,7 +50,6 @@ STITCH_ARTIFACT = "stitch"        # artefatos auxiliares (não são JobStep)
 EMBED_L_ARTIFACT = "embed_l"
 TRANSPORT_MIN_COS = 0.8
 USER_CLUSTER = "L"
-MIN_LANGUAGE_PROB = 0.5
 __all__ = ["JobCancelledError", "JobRunner", "StepTiming", "build_prompt", "update_rtf"]    # nomes da F2 continuam aqui
 
 
@@ -93,7 +97,8 @@ class JobRunner(BaseJobRunner):
         self.deps = deps
         self.config = config or JobConfig.from_json(job.get("config_json"))
         self.me: dict[str, Any] | None = None
-        self.language: str | None = None
+        self.language: str | None = None                 # código do Whisper deste job (A-01)
+        self.target_language = target_language(job)      # A-05: a troca de idioma pedida na reunião aberta
 
     @property
     @override
@@ -106,7 +111,7 @@ class JobRunner(BaseJobRunner):
         if meeting is None:
             return self._fail(PermanentError("a reunião deste job não existe mais"), permanent=True)
         self.meeting = dict(meeting)
-        self.language = self.meeting.get("language")
+        self.language = self.target_language or whisper_code(meeting_language(self.store, self.meeting))
         self.me = dict(self.store.get_me() or {}) or None
         if self.kind == JobKind.EMBED_RANGE:
             return self._fail(PermanentError("perfil de trecho livre entra na F6"), permanent=True)
@@ -126,7 +131,8 @@ class JobRunner(BaseJobRunner):
     def _execute(self) -> JobStatus:
         self.store.add_event(self.meeting_id, None, EventType.JOB_START,
                              {"job_id": self.job_id, "kind": str(self.kind), "attempts": self.job.get("attempts", 0),
-                              "config": self.config.to_dict()})
+                              "config": self.config.to_dict(), "language": self.language})
+        self._log_language()
         self._prepare()
         channels = ["R", "L"] if self.meeting.get("is_in_room") else ["R"]
         clusters_by_channel: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]] = {}
@@ -140,6 +146,17 @@ class JobRunner(BaseJobRunner):
         transcripts = {"R": self._transcribe("R", JobStep.TRANSCRIBE_R), "L": self._transcribe("L", JobStep.TRANSCRIBE_L)}
         self._segments(transcripts, clusters_by_channel)
         return self._finish_ok()
+
+    def _log_language(self) -> None:
+        """A-01: de onde veio o idioma deste job; a reunião sem idioma (anterior à F5.3) fica com o padrão já aqui."""
+        if self.target_language is not None:
+            source = "troca pedida na reunião; grava ao concluir"
+        elif self.meeting.get("language"):
+            source = "o da reunião"
+        else:
+            source = "o padrão das Configurações"
+            self.store.meetings.set_language(self.meeting_id, self.language)
+        log.info("job %s: transcrição em %s (%s)", self.job_id, self.language, source)
 
     def _pending_voices(self) -> bool:
         """Há voz do job por decidir (fora o `L` do usuário)? Decide se uma reunião `revisada` volta a `processada` (R2-11)."""
@@ -158,8 +175,11 @@ class JobRunner(BaseJobRunner):
                 # processamento "Concluir" com voz sem nome é decisão do usuário e a reunião fica `revisada`
                 downgrade = self.kind == JobKind.REPROCESS and self._pending_voices()
                 self.store.segments.swap_job(self.meeting_id, self.job_id, MeetingStatus.PROCESSED, downgrade_reviewed=downgrade)
+                self._apply_language_change()
         else:
-            self.store.meetings.mark_processed(self.meeting_id, force=False)
+            with self.store.transaction():
+                self.store.meetings.mark_processed(self.meeting_id, force=False)
+                self._apply_language_change()
         self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.DONE, timings=self._timings_dict())
         self.store.set_setting("pipeline.rtf_json", update_rtf(self.store.get_setting("pipeline.rtf_json"), self.timings))
@@ -170,6 +190,15 @@ class JobRunner(BaseJobRunner):
         self._enqueue_llm()
         self._index_after_pipeline()
         return JobStatus.DONE
+
+    def _apply_language_change(self) -> None:
+        """A-05: o idioma trocado na reunião aberta vale só agora, na transação da troca dos segmentos, com `revisions`;
+        cancelado ou com erro, a reunião fica com o antigo."""
+        if self.target_language is None:
+            return
+        if self.store.meetings.change_language(self.meeting_id, self.target_language, "usuario"):
+            log.info("job %s: idioma da reunião %s: %s -> %s", self.job_id, self.meeting_id, self.meeting.get("language"),
+                     self.target_language)
 
     def _index_after_pipeline(self) -> None:
         """F5A-03: trechos e FTS na hora (a busca por palavra acha a reunião antes da ata) e o job `index`, que pede os vetores
@@ -421,8 +450,6 @@ class JobRunner(BaseJobRunner):
                 tw = saved[w.idx]
                 out.append(tw)
                 previous = tw.words
-                if self.language is None and tw.language and tw.language_prob >= MIN_LANGUAGE_PROB:
-                    self.language = tw.language
                 continue
             self._between_windows()
             if not w.has_speech:
@@ -437,9 +464,6 @@ class JobRunner(BaseJobRunner):
                 timing.wall_s += time.perf_counter() - t0
                 timing.audio_s += w.duration_ms / 1000
                 timing.speech_s += tw.speech_ms / 1000
-                if self.language is None and tw.language and tw.language_prob >= MIN_LANGUAGE_PROB:
-                    self.language = tw.language                          # D-013: detectado uma vez, fixo depois
-                    self.store.meetings.set_language(self.meeting_id, tw.language)
                 previous = tw.words
             self.store.jobs.put_artifact(self.job_id, step, w.idx, encode_transcript(tw))
             out.append(tw)

@@ -3,7 +3,7 @@ depois o histórico curto e a pergunta; resposta em streaming (`StreamTask`); ca
 segmento mais próximo (até 5 s) como link `listener://play?seg=<id>` ou fica como texto quando não há segmento; tudo em
 `chat_messages` (com `citations_json` e custo) e `llm_calls`. Roda fora da thread do Qt com `run_async` e cliente próprio.
 F5 R7-03: o cancelamento vale também antes do primeiro pedaço (conferido a cada `POLL_S` enquanto espera a rede, no padrão
-do resumo parcial): a saída do app não espera a rede presa."""
+do resumo parcial): a saída do app não espera a rede presa. F5.3 (A-02): a resposta sai no idioma da reunião."""
 from __future__ import annotations
 
 import asyncio
@@ -134,7 +134,7 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
     if store.providers.active_with_key("llm") is None:
         raise ValueError("nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso")
     cfg = LlmJobConfig.from_store(store)
-    ctx = build_context(store, meeting_id, parent, cfg.output_language)
+    ctx = build_context(store, meeting_id, parent)
     history = [(str(m["role"]), str(m["text"])) for m in store.chat.list_for_meeting(meeting_id, HISTORY_TURNS)]
     chat_ctx = prompts.chat.ChatCtx(ctx.meeting_ctx, ctx.lines, history, question)
     req = Request(LlmTask.CHAT, cfg.fast_model, prompts.chat.build(chat_ctx), None, max_output_tokens=2048,
@@ -189,7 +189,7 @@ def transcript_lines(store: Store, meeting_id: int) -> tuple[Line, ...]:
     parent = store.segments.current_job_id(meeting_id)
     if parent is None:
         return ()
-    return build_context(store, meeting_id, parent, "pt-BR").lines
+    return build_context(store, meeting_id, parent).lines
 
 
 def citation_segment(link: str) -> int | None:
