@@ -224,7 +224,6 @@ def test_recording_surfaces_follow_the_theme(qtbot, qapp, tmp_path, restore_them
     popup, toast = MarkerPopup(3.0), Toast(Notice(NoticeKind.INFO, "texto"), 1000)
     qtbot.addWidget(popup)
     qtbot.addWidget(toast)
-    assert not w.property(theme.SURFACE_PROP) and not popup.property(theme.SURFACE_PROP) and not toast.property(theme.SURFACE_PROP)
     assert theme.surface_tokens(w.status_label) is LIGHT and theme.surface_tokens(popup.edit) is LIGHT
     assert (_text_color(w.status_label), _text_color(w.live_badge), _text_color(toast.hint)) == (LIGHT.danger, LIGHT.danger,
                                                                                                    LIGHT.secondary)
@@ -255,22 +254,20 @@ def test_tone_role_and_note_set_the_text_color_and_font_and_reset(qtbot):
         theme.role(label, "titulo")
 
 
-def test_the_theme_change_sweeps_the_tones_and_keeps_the_surfaces(qtbot, qapp, tmp_path, restore_theme):
+def test_the_theme_change_sweeps_the_tones(qtbot, qapp, tmp_path, restore_theme):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QLabel, QVBoxLayout
 
-    plain, dark_win = QLabel("nota"), QWidget()
+    plain, win = QLabel("nota"), QWidget()
     theme.tone(plain, Tone.SECONDARY)
-    theme.surface(dark_win, DARK)
-    inner = QLabel("no widget")
-    QVBoxLayout(dark_win).addWidget(inner)
-    theme.tone(inner, Tone.DANGER)                                      # nasceu fora da janela escura? `retone` resolve
-    theme.retone(dark_win)
-    for w in (plain, dark_win):
+    inner = QLabel("na janela")
+    QVBoxLayout(win).addWidget(inner)
+    theme.tone(inner, Tone.DANGER)
+    for w in (plain, win):
         qtbot.addWidget(w)
-    assert (_text_color(plain), _text_color(inner)) == (LIGHT.secondary, DARK.danger)
+    assert (_text_color(plain), _text_color(inner)) == (LIGHT.secondary, LIGHT.danger)
     theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Dark)
-    assert (_text_color(plain), _text_color(inner)) == (DARK.secondary, DARK.danger)       # a superfície fica no seu esquema
+    assert (_text_color(plain), _text_color(inner)) == (DARK.secondary, DARK.danger)
 
 
 def test_primary_kind_invalid_and_qcolor(qtbot):

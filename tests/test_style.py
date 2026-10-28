@@ -1,7 +1,6 @@
 """F5.4 L1b (A-02, A-04, A-05, A-06; Aceite 3, U-055, U-056, U-058): a pintura do `ThemeStyle` sobre o Fusion do offscreen,
 conferida nos pixels: primário e destrutivo preenchidos, a linha selecionada em `selected` com o tom do item vindo do tema, o
-anel de foco só pelo teclado, a borda de erro, as abas sublinhadas, o grupo como cartão, as alturas mínimas do `polish` e os
-botões planos de uma superfície escura (`theme.surface`; o widget de gravação a usou até o L2)."""
+anel de foco só pelo teclado, a borda de erro, as abas sublinhadas, o grupo como cartão e as alturas mínimas do `polish`."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -14,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QGroupBox, QHBoxLayout, QLa
                                QStyleOption, QTabBar, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from listener.ui import theme
-from listener.ui.style import POLISHED_PROP, TITLE_INSET, ThemeStyle, flat_fill, kind_fill
+from listener.ui.style import POLISHED_PROP, TITLE_INSET, ThemeStyle, kind_fill
 from listener.ui.theme import DARK, LIGHT, TONE_ROLE, Tone
 from tests.fake_platform import FakePlatform
 
@@ -68,23 +67,6 @@ def test_fill_follows_the_state_and_disabled_goes_flat():
     assert kind_fill(LIGHT, theme.DANGER, St.State_Enabled) == LIGHT.danger
     assert kind_fill(LIGHT, theme.DANGER, St.State_Enabled | St.State_MouseOver) != LIGHT.danger
     assert kind_fill(LIGHT, theme.PRIMARY, St.State_None) == LIGHT.stroke                   # apagado
-    assert flat_fill(DARK, St.State_Enabled) == DARK.stroke and flat_fill(DARK, St.State_On) == DARK.danger
-
-
-def test_buttons_of_a_dark_surface_are_flat_in_its_tokens(qtbot):
-    win = QWidget()
-    theme.surface(win, DARK)
-    lay = QHBoxLayout(win)
-    push, tool = QPushButton("Usar"), QToolButton()
-    tool.setText("M")
-    tool.setCheckable(True)
-    tool.setChecked(True)
-    lay.addWidget(push)
-    lay.addWidget(tool)
-    img = shown(qtbot, win)
-    assert near(img.pixelColor(inside(push)), DARK.stroke) and near(img.pixelColor(inside(tool, 3)), DARK.danger)
-    lightest = max(QColor(c).lightness() for c in colors_in(img, push.geometry().adjusted(6, 6, -6, -6)))
-    assert lightest > 200 > QColor(DARK.stroke).lightness()                                  # o texto claro no tema claro
 
 
 def test_a_toned_button_gets_the_tone_in_its_label(qtbot):

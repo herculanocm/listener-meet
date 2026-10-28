@@ -19,8 +19,8 @@ dos testes) que pinta o que a paleta não alcança, com os tokens do tema (`ui/t
 - `polish(widget)`: as alturas mínimas (Aceite 3), só nos controles medidos (`SIZED`; o resto sai sem chamada ao C++):
   botão, campo, combo e spin com 32 px e botão com 32 de largura; caixa de seleção e rádio com 24 (o `pequenos` da sonda
   acusou 422 controles de 29 px). As peças internas do Qt (o botão de limpar do campo, as setas das abas) ficam como estão.
-- Superfície noutro esquema (`theme.surface`; no L1b, o widget de gravação, o marcador e os avisos, no tema desde o L2): [fato]
-  o `windows11` pinta botão e campo dela no esquema do app e ignora a paleta herdada; aqui saem planos, nos tokens dela."""
+- Todas as janelas pintam nos tokens vigentes (`tokens`): a superfície noutro esquema do L1b (o widget de gravação, o
+  marcador e os avisos) saiu quando eles passaram a seguir o tema, no L2."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QCheckBox, Q
                                QPushButton, QRadioButton, QScrollBar, QStyle, QStyleOption, QStyleOptionButton, QStyleOptionComplex,
                                QStyleOptionToolButton, QStyleOptionViewItem, QTabBar, QToolButton, QWidget)
 
-from .theme import DANGER, INVALID_PROP, KIND_PROP, PRIMARY, SCHEMES, SURFACE_PROP, TONE_PROP, TONE_ROLE, Tokens, Tone, mix, qcolor
+from .theme import DANGER, INVALID_PROP, KIND_PROP, PRIMARY, TONE_PROP, TONE_ROLE, Tokens, Tone, mix, qcolor
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QObject
@@ -66,14 +66,6 @@ def kind_fill(t: Tokens, kind: str, state: QStyle.StateFlag) -> str:
     return mix(t.danger, t.text, 0.2 if sunken else 0.1 if hover else 0.0)
 
 
-def flat_fill(t: Tokens, state: QStyle.StateFlag) -> str:
-    """O fundo de um botão plano numa superfície (o widget de gravação): ligado (o mudo) em perigo."""
-    if state & St.State_On:
-        return t.danger
-    sunken, hover = bool(state & St.State_Sunken), bool(state & St.State_MouseOver)
-    return mix(t.stroke, t.text, 0.2 if sunken else 0.1 if hover else 0.0)
-
-
 def _with_text(option: QStyleOption, color: str) -> None:
     """A cor do texto do botão na própria opção (o `windows11` só segue o `ButtonText` posto nela), ativo e inativo."""
     pal = QPalette(option.palette)
@@ -90,15 +82,6 @@ class ThemeStyle(QProxyStyle):
         self.base_name = base
         self.tokens = tokens
 
-    # ---------------------------------------------------------------- tokens de quem pinta
-    def _tokens(self, widget: QWidget | None) -> Tokens:
-        scheme = widget.window().property(SURFACE_PROP) if widget is not None else None
-        return SCHEMES.get(str(scheme), self.tokens) if scheme else self.tokens
-
-    @staticmethod
-    def _on_surface(widget: QWidget | None) -> bool:
-        return widget is not None and bool(widget.window().property(SURFACE_PROP))
-
     @staticmethod
     def _kind(option: QStyleOption, widget: QWidget | None) -> str | None:
         source: QObject | None = option.styleObject or widget
@@ -110,39 +93,30 @@ class ThemeStyle(QProxyStyle):
     def drawPrimitive(self, element: QStyle.PrimitiveElement, option: QStyleOption, painter: QPainter,
                       widget: QWidget | None = None) -> None:
         if element == PE.PE_FrameFocusRect:
-            self._focus_ring(option, painter, widget)
-            return
-        if element == PE.PE_PanelButtonTool and self._on_surface(widget):
-            idle = option.state & St.State_AutoRaise and not option.state & (St.State_MouseOver | St.State_Sunken | St.State_On)
-            if not idle:                                    # o botão sem moldura (o "✕" do aviso) só ganha fundo sob o mouse
-                rounded(painter, QRectF(option.rect), self.tokens.metrics.radius, flat_fill(self._tokens(widget), option.state))
+            self._focus_ring(option, painter)
             return
         if (element == PE.PE_PanelLineEdit and widget is not None and widget.property(FLAT_PROP)
                 and not option.state & (St.State_HasFocus | St.State_MouseOver)):
             return                                          # U-078: o título da reunião, sem moldura até o foco
-        if element == PE.PE_PanelLineEdit and self._on_surface(widget):
-            t = self._tokens(widget)
-            rounded(painter, QRectF(option.rect), t.metrics.radius, t.input, t.stroke_strong)
-            return
         if element == PE.PE_PanelItemViewRow and option.state & St.State_Selected and isinstance(option, QStyleOptionViewItem):
             opt = QStyleOptionViewItem(option)
-            painter.fillRect(opt.rect, qcolor(self._tokens(widget).selected))
+            painter.fillRect(opt.rect, qcolor(self.tokens.selected))
             opt.state &= ~St.State_Selected
             super().drawPrimitive(element, opt, painter, widget)
             return
         super().drawPrimitive(element, option, painter, widget)
         if element == PE.PE_PanelLineEdit and widget is not None and widget.property(INVALID_PROP):
-            self._invalid_border(option.rect, painter, widget)
+            self._invalid_border(option.rect, painter)
 
-    def _focus_ring(self, option: QStyleOption, painter: QPainter, widget: QWidget | None) -> None:
+    def _focus_ring(self, option: QStyleOption, painter: QPainter) -> None:
         """U-055: o anel de 2 px só quando o foco veio do teclado (o clique não acende)."""
         if not option.state & St.State_KeyboardFocusChange:
             return
-        t = self._tokens(widget)
+        t = self.tokens
         rounded(painter, QRectF(option.rect), t.metrics.radius, None, t.focus, t.metrics.focus_w)
 
-    def _invalid_border(self, rect: QRect, painter: QPainter, widget: QWidget) -> None:
-        t = self._tokens(widget)
+    def _invalid_border(self, rect: QRect, painter: QPainter) -> None:
+        t = self.tokens
         rounded(painter, QRectF(rect), t.metrics.radius, None, t.danger, 1.5)
 
     # ---------------------------------------------------------------- controles
@@ -158,11 +132,11 @@ class ThemeStyle(QProxyStyle):
         elif element == CE.CE_ToolButtonLabel and isinstance(option, QStyleOptionToolButton):
             self._button_label(element, QStyleOptionToolButton(option), painter, widget)
         elif element == CE.CE_TabBarTabShape:
-            self._tab_shape(option, painter, widget)
+            self._tab_shape(option, painter)
         else:
             super().drawControl(element, option, painter, widget)
             if element == CE.CE_ShapedFrame and widget is not None and widget.property(INVALID_PROP):
-                self._invalid_border(option.rect, painter, widget)      # R-09: a tabela de preços com erro
+                self._invalid_border(option.rect, painter)      # R-09: a tabela de preços com erro
 
     def _item(self, option: QStyleOptionViewItem, painter: QPainter, widget: QWidget | None) -> None:
         """A-05: a linha selecionada em `selected` (cada célula pinta a sua parte) e o tom do item na cor do texto; a célula
@@ -172,7 +146,7 @@ class ThemeStyle(QProxyStyle):
             super().drawControl(CE.CE_ItemViewItem, option, painter, widget)
             return
         opt = QStyleOptionViewItem(option)
-        t = self._tokens(widget)
+        t = self.tokens
         selected = bool(opt.state & St.State_Selected)
         color = t.tone(Tone(str(name))) if name else None
         if selected and opt.backgroundBrush.style() == Qt.BrushStyle.NoBrush:      # o fundo do item fica por cima da seleção
@@ -189,13 +163,12 @@ class ThemeStyle(QProxyStyle):
 
     def _bevel(self, option: QStyleOptionButton, painter: QPainter, widget: QWidget | None) -> None:
         kind = self._kind(option, widget)
-        if kind is None and not self._on_surface(widget):
+        if kind is None:
             super().drawControl(CE.CE_PushButtonBevel, option, painter, widget)
             return
-        t = self._tokens(widget)
-        fill = kind_fill(t, kind, option.state) if kind else flat_fill(t, option.state)
+        t = self.tokens
         edge = t.disabled if t.outline and not option.state & St.State_Enabled else None
-        rounded(painter, QRectF(option.rect), t.metrics.radius, fill, edge)
+        rounded(painter, QRectF(option.rect), t.metrics.radius, kind_fill(t, kind, option.state), edge)
 
     def _button_label(self, element: QStyle.ControlElement, opt: QStyleOptionButton | QStyleOptionToolButton, painter: QPainter,
                       widget: QWidget | None) -> None:
@@ -205,19 +178,16 @@ class ThemeStyle(QProxyStyle):
         super().drawControl(element, opt, painter, widget)
 
     def _label_color(self, opt: QStyleOption, widget: QWidget | None) -> str | None:
-        """A cor do texto do botão: `on_accent` no primário, no destrutivo e no ligado de uma superfície; o tom do botão
-        (`theme.tone`); o texto da superfície; nenhuma (a da base) no resto."""
-        t, on_surface = self._tokens(widget), self._on_surface(widget)
-        if self._kind(opt, widget) is not None or (on_surface and opt.state & St.State_On):
-            return t.on_accent
+        """A cor do texto do botão: `on_accent` no primário e no destrutivo; o tom do botão (`theme.tone`); nenhuma (a da
+        base) no resto."""
+        if self._kind(opt, widget) is not None:
+            return self.tokens.on_accent
         name = widget.property(TONE_PROP) if widget is not None else None
-        if name:
-            return t.tone(Tone(str(name)))
-        return t.text if on_surface else None
+        return self.tokens.tone(Tone(str(name))) if name else None
 
-    def _tab_shape(self, option: QStyleOption, painter: QPainter, widget: QWidget | None) -> None:
+    def _tab_shape(self, option: QStyleOption, painter: QPainter) -> None:
         """A aba sublinhada: o traço em `accent` embaixo da selecionada e o fundo `hover` sob o mouse; sem moldura."""
-        t = self._tokens(widget)
+        t = self.tokens
         r = QRectF(option.rect)
         if option.state & St.State_Selected:
             rounded(painter, QRectF(r.left() + 8, r.bottom() - 3, max(0.0, r.width() - 16), 3), 1.5, t.accent)
@@ -233,12 +203,12 @@ class ThemeStyle(QProxyStyle):
             return
         super().drawComplexControl(control, option, painter, widget)
         if control in (CC.CC_ComboBox, CC.CC_SpinBox) and widget is not None and widget.property(INVALID_PROP):
-            self._invalid_border(option.rect, painter, widget)
+            self._invalid_border(option.rect, painter)
 
     def _group_box(self, option: QStyleOptionComplex, painter: QPainter, widget: QWidget | None) -> None:
         """O grupo como cartão: o retângulo inteiro preenchido em `card` com a borda `stroke_card` e o título dentro, em
         semibold (o `polish` abre o espaço dele no layout)."""
-        t = self._tokens(widget)
+        t = self.tokens
         rounded(painter, QRectF(option.rect), t.metrics.radius_card, t.card, t.stroke_card)
         text = getattr(option, "text", "")
         if text:
@@ -309,4 +279,4 @@ def _card_room(box: QGroupBox) -> None:
     lay.setContentsMargins(max(m.left(), TITLE_INSET + 2), m.top() + TITLE_INSET, max(m.right(), TITLE_INSET + 2), m.bottom())
 
 
-__all__ = ["FLAT_PROP", "POLISHED_PROP", "ThemeStyle", "flat_fill", "kind_fill", "min_size", "rounded"]
+__all__ = ["FLAT_PROP", "POLISHED_PROP", "ThemeStyle", "kind_fill", "min_size", "rounded"]

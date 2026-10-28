@@ -9,9 +9,9 @@
 - Widgets (A-02, A-10, passo 5 do A-21): `tone(w, Tone)` põe a cor do texto e `role(w, papel)` a fonte de um papel
   (`caption`, `body`, `body_strong`, `subtitle`, `clock`); `note(w)` é a nota (legenda no secundário); `set_kind` e `primary`
   marcam o primário (o padrão do Enter; o Enter num botão com foco aciona esse botão, R-02) e o destrutivo, `set_invalid`
-  o campo com erro, `surface` uma janela inteira noutro esquema (no L1b, o widget de gravação, o marcador e os avisos;
-  desde o L2 eles seguem o tema); `qcolor` é o único caminho (com os ícones) para um `QColor` (A-12). Itens de lista e
-  tabela guardam o tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura.
+  o campo com erro; `qcolor` é o único caminho (com os ícones) para um `QColor` (A-12). Itens de lista e tabela guardam o
+  tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura. Todas as janelas seguem o tema vigente: a superfície noutro esquema
+  do L1b (o widget de gravação, o marcador e os avisos) saiu quando eles passaram a seguir o tema, no L2.
 - Troca de tema (A-10): `app.setPalette` não alcança o que o tema pôs em cada widget; a varredura de `allWidgets()`, só na
   troca, repinta os tons (`theme_tone`), os ícones (`theme_icon`) e chama `retheme()` de quem pinta ou desenha HTML; depois
   `notifier().changed` avisa os tokens novos (ligado a métodos, nunca a lambda que capture widget).
@@ -43,11 +43,10 @@ if TYPE_CHECKING:
 log = get_logger("ui.theme")
 
 FALLBACK_FAMILY = "Segoe UI"                    # sem a Segoe UI Variable (Windows 10, offscreen dos testes)
-TONE_PROP, FONT_PROP, SURFACE_PROP = "theme_tone", "theme_font", "theme_surface"
+TONE_PROP, FONT_PROP = "theme_tone", "theme_font"
 KIND_PROP, INVALID_PROP = "kind", "invalid"     # lidas pelo `ThemeStyle` na pintura (A-02, A-06)
 PRIMARY, DANGER = "primary", "danger"           # os valores de `kind`
 TONE_ROLE = Qt.ItemDataRole.UserRole + 0x7454   # o tom (`Tone.value`) do texto de um item de lista ou tabela (A-05)
-SCHEMES = {LIGHT.scheme: LIGHT, DARK.scheme: DARK}
 
 
 # ---------------------------------------------------------------- fonte
@@ -124,23 +123,15 @@ def _system_palette(app: QApplication) -> QPalette:
 
 
 # ---------------------------------------------------------------- widgets (A-02, A-10)
-def surface_tokens(w: QWidget | None) -> Tokens:
-    """Os tokens da janela de `w`: os do esquema marcado por `surface` ou os do tema vigente."""
-    win = w.window() if w is not None else None
-    return SCHEMES.get(str(win.property(SURFACE_PROP) or ""), _STATE.tokens) if win is not None else _STATE.tokens
-
-
-def surface(w: QWidget, t: Tokens) -> None:
-    """A janela `w` inteira nos tokens `t`, fora do tema vigente: a paleta própria e a marca `theme_surface`, que o
-    `ThemeStyle`, `tone` e os ícones leem (F5.4 L1b: o widget de gravação, o marcador e os avisos, que seguem o tema desde o
-    L2)."""
-    w.setProperty(SURFACE_PROP, t.scheme)
-    w.setPalette(build_palette(t))
+def surface_tokens(_w: QWidget | None) -> Tokens:
+    """Os tokens com que `w` pinta: os do tema vigente, em todas as janelas (quem pinta pede pelos seus; a superfície noutro
+    esquema do L1b saiu no L2)."""
+    return _STATE.tokens
 
 
 def tone(w: QWidget, value: Tone | None) -> None:
     """A cor do texto de `w` (`WindowText` e `Text`, ativos e inativos; o desabilitado segue em `disabled`) no tom dos
-    tokens da janela dele; None volta à herdada. O tom fica na propriedade `theme_tone` (a troca de tema repinta; num
+    tokens vigentes; None volta à herdada. O tom fica na propriedade `theme_tone` (a troca de tema repinta; num
     botão, o `ThemeStyle` o põe no texto, que o `windows11` só lê da própria opção)."""
     w.setProperty(TONE_PROP, value.value if value is not None else None)
     _paint_tone(w)
@@ -157,13 +148,6 @@ def _paint_tone(w: QWidget) -> None:
         for role_id in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text):
             pal.setColor(group, role_id, color)
     w.setPalette(pal)
-
-
-def retone(root: QWidget) -> None:
-    """Os tons de `root` e dos filhos de novo, nos tokens da janela de cada um (quem foi montado antes de entrar nela)."""
-    for w in (root, *root.findChildren(QWidget)):
-        if w.property(TONE_PROP):
-            _paint_tone(w)
 
 
 def role(w: QWidget, role_name: str) -> None:
@@ -353,5 +337,5 @@ __all__ = ["BLACK", "CONTRAST_PAIRS", "CONTRAST_SCHEME", "DANGER", "DARK", "FONT
            "KIND_PROP", "LIGHT", "METRICS", "PRIMARY", "SPEAKER_SURFACES", "STATUS_TONES", "TEXT_MIN", "TONE_ROLE", "WHITE",
            "FontToken", "Fonts", "Metrics", "ThemeNotifier", "Tokens", "Tone", "apply", "build_palette", "contrast", "contrast_tokens",
            "font_for", "html_css", "luminance", "make_font", "mix", "note", "notifier", "primary", "qcolor", "reduced_motion",
-           "release", "retone", "role", "set_invalid", "set_kind", "surface", "surface_tokens", "system_tokens", "text_on",
+           "release", "role", "set_invalid", "set_kind", "surface_tokens", "system_tokens", "text_on",
            "text_scale", "tokens", "tokens_for", "tone"]
