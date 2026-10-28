@@ -236,7 +236,7 @@ def test_a_meeting_without_speech_shows_the_notice_and_still_plays_a_point(qtbot
 
     from listener.ui.meeting import MeetingWindow
     from listener.ui.player import Player
-    from listener.ui.timeline_view import EMPTY_TEXT, NO_PLAYER_TEXT, TimelineTab
+    from listener.ui.timeline_view import CLICK_TEXT, EMPTY_TEXT, NO_PLAYER_TEXT, TimelineTab
 
     mid = store.create_meeting("Sem falas", None, None, None)
     store.finish_meeting(mid, 120_000)
@@ -250,7 +250,9 @@ def test_a_meeting_without_speech_shows_the_notice_and_still_plays_a_point(qtbot
         win.show_tab("linha")
         qtbot.waitExposed(win)
         view = win.timeline.view
-        assert view.lanes == [] and win.timeline.note.text() == EMPTY_TEXT and view.duration_ms == 120_000
+        # F5.4 L4 (U-034): o "sem falas" fica no meio da vista; com áudio, o rodapé ensina o clique, sem repetir o aviso
+        assert view.lanes == [] and view.duration_ms == 120_000
+        assert win.timeline.note.text() == CLICK_TEXT and win.timeline.note.text() != EMPTY_TEXT
         qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(round(view.x_of(60_000)), 80))
         assert abs(player.requests[-1].t_ms - 60_000) <= 500
         bare = TimelineTab(store, mid, rows=list)                                  # sem player: o clique avisa

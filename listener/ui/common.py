@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING
 
 from ..model import AppState, Health, JobStatus
@@ -203,7 +203,25 @@ def markdown_html(md: str) -> str:
     return doc.toHtml()
 
 
+_ALIVE: dict[int, QWidget] = {}              # as janelas sem pai seguras até o Qt apagá-las (`keep_until_destroyed`)
+
+
+def keep_until_destroyed(w: QWidget) -> None:
+    """F5.4 L4 (R-06): a janela sem pai fica viva no Python até o Qt apagá-la (o `deleteLater` do controlador, a saída do
+    app, o fim de um teste). [fato, 28/10] com os sinais ligados a métodos (sem as lambdas, que prendiam a janela pelo C++),
+    a reunião, a revisão e o Histórico ficam num ciclo só do Python (a janela, as abas e os retornos entre elas), e a coleta
+    de ciclos os apagava em qualquer ponto, até no meio de uma pintura (acesso inválido nos testes). O registro some no
+    `destroyed`, por um `partial` com o id: nada prende a janela pelo C++."""
+    key = id(w)
+    _ALIVE[key] = w
+    w.destroyed.connect(partial(_forget_window, key))
+
+
+def _forget_window(key: int, *_args: object) -> None:
+    _ALIVE.pop(key, None)
+
+
 __all__ = ["BAND_OPACITY", "BLACK", "HEALTH_TEXT", "HEALTH_TONES", "JOB_STATUS_COLOR_NAMES", "JOB_STATUS_HATCHED", "JOB_STATUS_TONES",
            "NOTICE_TONES", "QT_LOCALE", "STATE_TONES", "TRACK_MIX", "WHITE", "BarColors", "Box", "bar_colors", "clamp_to_screens",
            "contrast", "copy_rich", "fit_rect", "fit_to_screen", "health_color", "human_size", "install_translations",
-           "job_status_color", "level_fraction", "luminance", "markdown_html", "mix", "state_color", "text_on"]
+           "job_status_color", "keep_until_destroyed", "level_fraction", "luminance", "markdown_html", "mix", "state_color", "text_on"]

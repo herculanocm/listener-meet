@@ -247,7 +247,8 @@ def test_history_open_actions_mark_done_and_open_the_evidence(qtbot, store, clea
     assert texts[0][1:3] == ["Bia", "10/01/2020 (atrasada)"] and texts[1][2] == "31/12/2099" and texts[0][3].startswith("Orçamento 2027 — ")
     from listener.ui.theme import TONE_ROLE, Tone
 
-    assert page.action_table.item(0, 0).data(TONE_ROLE) == Tone.DANGER and "1 atrasada" in page.actions_note.text()
+    # F5.4 L4 (U-080): a atrasada leva o prazo num selo vermelho (o tom no `TONE_ROLE` da célula do prazo)
+    assert page.action_table.item(0, 2).data(TONE_ROLE) == Tone.DANGER and "1 atrasada" in page.actions_note.text()
     page.action_table.selectRow(0)
     page.action_table.activated.emit(page.action_table.model().index(0, 0))
     assert opened[-1] == (mid, "transcricao", 200_000, False)                        # a evidência da ação

@@ -9,7 +9,8 @@ sem travar). Ampliada, a vista vira a página atrás do cursor, salvo nos 5 s de
 duração ainda (gravando, sem falas), o cursor só é guardado. A aba lê as falas da aba Transcrição (`transcript.model.rows`,
 as mesmas na mesma ordem), os marcadores e as pausas da gravação (`pause_intervals`) a cada recarga (A-15); sem falas, o
 aviso "sem falas"; sem player, o clique avisa. As faixas e as contas puras ficam em `ui/timeline.py`. F5.4 (A-11): as
-faixas nas cores dos falantes, o cursor e o marcador em tons dos tokens do tema, lidos na pintura."""
+faixas nas cores dos falantes, lidas na pintura; L4 (U-082) o cursor em `accent` e o marcador em `text` com a bandeira no
+eixo; (U-034) sem falas, o rodapé não repete o aviso do meio da vista: com áudio, ensina o clique."""
 from __future__ import annotations
 
 import math
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QToolTip, QVBoxLayout
 from ..llm.prompts.common import stamp
 from ..pipeline.review import PLAY_LEAD_MS
 from ..rag.export import fmt_duration
+from . import icons
 from .player import pause_intervals
 from .theme import Tone, note, qcolor, tokens
 from .timeline import BAR_MIN_PX, Lane, bar_at, build_lanes, merge_spans, opening, tick_step_ms, visible_slice
@@ -44,9 +46,9 @@ FOLLOW_PAUSE_S = 5.0             # A-19 e Q2: depois de o usuário rolar ou ampl
 FOLLOW_MARGIN_PX, FOLLOW_LEAD = 24, 0.1      # vira a página perto da borda; o cursor volta a 10 % da largura
 CURSOR_HALO = 7                  # a faixa repintada em volta do cursor (a cabeça tem 5 px para cada lado)
 WHEEL_PX = 60                    # rolagem horizontal por dente da roda
-CURSOR_TONE, MARKER_TONE = Tone.DANGER, Tone.WARNING      # o L4 (U-082) os leva a `accent` e `text` com bandeira
+CURSOR_TONE, MARKER_TONE, FLAG_PX = Tone.ACCENT, Tone.TEXT, 14     # U-082: o cursor, o marcador e a bandeira dele no eixo
 HATCH_ALPHA = 110 / 255           # as pausas hachuradas na cor do texto, um pouco transparentes
-EMPTY_TEXT = "Sem falas nesta reunião."
+EMPTY_TEXT, CLICK_TEXT = "Sem falas nesta reunião.", "Clique na linha do tempo para ouvir daquele ponto."
 NO_PLAYER_TEXT = "Reprodução indisponível nesta janela."
 
 
@@ -310,11 +312,11 @@ class TimelineView(QAbstractScrollArea):
             p.drawLine(QPointF(x, AXIS_H - 5), QPointF(x, AXIS_H))
             p.drawText(QPointF(x + 3, AXIS_H - 10), stamp(t))
             t += step
-        p.setBrush(qcolor(tokens().tone(MARKER_TONE)))
+        flag = icons.pixmap("flag", tokens().tone(MARKER_TONE), FLAG_PX, self.devicePixelRatioF())    # o mastro a 1/4 da largura
         for mt, _note in self.markers:
             if t0 <= mt <= t1:
-                x = self.x_of(mt)
-                p.drawPolygon(QPolygonF([QPointF(x - 4, AXIS_H - 7), QPointF(x + 4, AXIS_H - 7), QPointF(x, AXIS_H - 1)]))
+                p.fillRect(QRectF(self.x_of(mt) - FLAG_PX / 4, AXIS_H - FLAG_PX, FLAG_PX, FLAG_PX - 1), pal.window())   # sobre o rótulo
+                p.drawPixmap(QPointF(self.x_of(mt) - FLAG_PX / 4, AXIS_H - FLAG_PX), flag)
         p.restore()
         p.setPen(pal.color(QPalette.ColorRole.Mid))
         p.drawLine(self._label_w, AXIS_H, self.viewport().width(), AXIS_H)
@@ -381,7 +383,7 @@ class TimelineTab(QWidget):
         lanes = build_lanes(rows, int(me["id"]) if me else None)
         self.view.set_data(rows, lanes, markers, [(a, duration if b is None else b) for a, b in spans], duration)
         self.note.setText(f"{len(lanes)} falante(s), {len(rows)} fala(s). Clique para ouvir daquele ponto; Ctrl + roda do mouse "
-                          f"amplia até {ZOOM_MAX:.0f} vezes." if rows else EMPTY_TEXT)
+                          f"amplia até {ZOOM_MAX:.0f} vezes." if rows else CLICK_TEXT if duration > 0 else "")
 
     def set_cursor(self, t_ms: int | None) -> None:
         self.view.set_cursor(t_ms)
@@ -393,4 +395,4 @@ class TimelineTab(QWidget):
         self.play_fn(t_ms)
 
 
-__all__ = ["EMPTY_TEXT", "NO_PLAYER_TEXT", "TimelineTab", "TimelineView"]
+__all__ = ["CLICK_TEXT", "EMPTY_TEXT", "NO_PLAYER_TEXT", "TimelineTab", "TimelineView"]

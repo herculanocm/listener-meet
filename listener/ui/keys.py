@@ -57,8 +57,8 @@ WIZARD_HELP = {"gemini": LLM_HELP["gemini"],
                "openai": f"{KEY_WHERE['openai']}: ata, resumo, título, chat e busca por sentido.",
                "anthropic": (f"{KEY_WHERE['anthropic']}: ata, resumo, título e chat. O Claude não faz a busca por sentido: ela "
                              "fica na busca local, sem custo (prepare em Configurações, Busca, 135 MB).")}
-WIZARD_NOTE = ("Tudo opcional: pule e cole depois em Configurações, Chaves de acesso. Ficam no banco do app, em texto aberto "
-               "(CP10).")
+WIZARD_NOTE = ("Tudo opcional: pule e cole depois em Configurações, Chaves de acesso. Ficam no banco do app, em texto "
+               "aberto.")                     # F5.4 L4: sem o jargão interno (U-076) também no assistente
 STORAGE_NOTE = ("Ficam no banco do app, em texto aberto: mantenha a pasta do banco fora do OneDrive e do git. Qual LLM faz o "
                 "quê fica na página LLM.")
 HF_MISSING, HF_SET = "Falta o token", "Informado"   # U-075: o token não tem teste aqui; o selo diz só se foi informado

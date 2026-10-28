@@ -16,7 +16,12 @@ por `bisect` com 150 ms de antecedência (a fala clicada toca da primeira palavr
 variáveis cada `dataChanged` refaz o layout da lista inteira (200 a 360 ms com 3.000 falas, no Windows em 26/10); pelo
 mesmo motivo não há negrito, que mudaria a quebra das linhas sem o layout refeito. Recarregar reaplica o destaque; pausado,
 fica; parado ou com outra reunião tocando, some. F5.4 (A-11): a faixa no tom de aviso e o fundo no fundo dele, dos tokens do
-tema vigente (claro e escuro), refeitos quando o tema muda."""
+tema vigente (claro e escuro), refeitos quando o tema muda.
+
+F5.4 L4: a fala pelo `SpeechDelegate` (U-081: o [mm:ss] em legenda e o ponto na cor da faixa do falante na linha do tempo,
+o nome em negrito), a voz sem pessoa como "Voz N" (U-035, `ui/voices.py`; o `DisplayRole` leva o mesmo nome) e, sem falas,
+o estado vazio (U-059). A barra de rolagem fica sempre à vista: a largura das falas não muda quando ela aparece, e a altura
+de cada uma é medida uma vez só."""
 from __future__ import annotations
 
 import bisect
@@ -27,16 +32,21 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QTimer
-from PySide6.QtGui import QBrush, QGradient, QKeyEvent, QLinearGradient
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QListView, QMenu, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QBrush, QGradient, QKeyEvent, QLinearGradient, QShowEvent
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QListView, QMenu, QPushButton, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from ..log import get_logger
 from ..model import JobStep
 from ..pipeline import review
 from ..rag import export
 from .common import copy_rich
+from .components import EmptyState
 from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
+from .speech_delegate import COLOR_ROLE, ROLE_ROLE, SPEAKER_ROLE, STAMP_ROLE, TEXT_ROLE, SpeechDelegate
 from .theme import Tokens, Tone, note, qcolor, tokens
+from .timeline import build_lanes, lane_of_rows
+from .voices import voice_names
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -48,6 +58,8 @@ FOLLOW_PAUSE_S = 5.0             # Q2: o destaque não rola nos 5 s seguintes a 
 NAV_KEYS = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End})
 PLAYING_TONE = Tone.WARNING              # âmbar: o fundo dele é legível com o texto nos dois temas e diferente da seleção
 PLAYING_ACCENT_SPAN = 0.005              # da largura da linha (~5 px numa lista de 1.000 px)
+EMPTY_TEXT = "Sem falas nesta reunião: a transcrição aparece quando o processamento terminar."
+SPEECH_ROLES = {STAMP_ROLE: "t_start_ms", SPEAKER_ROLE: "name", ROLE_ROLE: "role", TEXT_ROLE: "shown_text"}
 
 
 def playing_brush(t: Tokens) -> QBrush:
@@ -61,10 +73,13 @@ def playing_brush(t: Tokens) -> QBrush:
 
 
 class SegmentsModel(QAbstractListModel):
-    def __init__(self, rows: list[review.TranscriptRow], parent: Any = None):
+    """As falas (com o nome da tela, U-035) e a cor de cada uma (o índice da faixa do falante, U-081)."""
+
+    def __init__(self, rows: list[review.TranscriptRow], parent: Any = None, *, me_id: int | None = None):
         super().__init__(parent)
         self.highlight: int | None = None                 # U-025: a linha da fala que toca (papel `BackgroundRole`)
         self._brush: tuple[Tokens, QBrush] | None = None  # F5.4: refeito quando os tokens do tema mudam
+        self.me_id = me_id
         self.rows = rows
         self._index()
 
@@ -73,6 +88,7 @@ class SegmentsModel(QAbstractListModel):
         self.starts = [r.t_start_ms for r in self.rows]
         self.ends = [max(r.t_end_ms, r.t_start_ms) for r in self.rows]
         self.reach = list(itertools.accumulate(self.ends, max))
+        self.colors = lane_of_rows(build_lanes(self.rows, self.me_id), len(self.rows))
 
     @override
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
@@ -90,7 +106,10 @@ class SegmentsModel(QAbstractListModel):
             return f"canal {row.channel} · {span} · clique para ouvir daqui"
         if role == Qt.ItemDataRole.BackgroundRole and index.row() == self.highlight:
             return self._playing_brush()
-        return None
+        if role == COLOR_ROLE:
+            return self.colors[index.row()]
+        attr = SPEECH_ROLES.get(role)                     # os papéis do `SpeechDelegate` (U-081)
+        return getattr(row, attr) if attr is not None else None
 
     def _playing_brush(self) -> QBrush:
         t = tokens()
@@ -143,9 +162,12 @@ class TranscriptTab(QWidget):
         self.prefer_llm = True
         self.playing_ms: int | None = None                # U-025: onde o som desta reunião está (None: parado)
         self._user_scroll_at = float("-inf")
-        self.model = SegmentsModel(review.transcript_rows(store, meeting_id, True), self)
+        me = store.get_me()
+        self.model = SegmentsModel(self._rows(), self, me_id=int(me["id"]) if me else None)
         self.view = QListView()
         self.view.setModel(self.model)
+        self.view.setItemDelegate(SpeechDelegate(self.view))
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.view.setWordWrap(True)
         self.view.setUniformItemSizes(False)
         self.view.setAlternatingRowColors(True)
@@ -171,22 +193,51 @@ class TranscriptTab(QWidget):
         bottom.addWidget(self.toggle)
         bottom.addStretch(1)
         bottom.addWidget(self.btn_revise)
+        self._empty: EmptyState | None = None                            # U-059: sem falas, o estado vazio (sob demanda)
+        self._deferred = False
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.view)
         lay = QVBoxLayout(self)
-        lay.addWidget(self.view, 1)
+        lay.addWidget(self.stack, 1)
         lay.addWidget(self.status)
         lay.addWidget(self.llm_note)
         lay.addLayout(bottom)
         self._update_status()
+
+    @property
+    def empty(self) -> EmptyState:
+        if self._empty is None:
+            self._empty = EmptyState("document", EMPTY_TEXT)
+            self.stack.addWidget(self._empty)
+        return self._empty
+
+    def _page(self) -> None:
+        """A lista ou o estado vazio; o vazio de uma aba escondida nasce quando ela aparece (a abertura não o cria)."""
+        rows = self.model.rowCount() > 0
+        self._deferred = not rows and self._empty is None and not self.isVisible()
+        if not self._deferred:
+            self.stack.setCurrentWidget(self.view if rows else self.empty)
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if self._deferred:
+            self._page()
 
     # ---------------------------------------------------------------- leitura
     def set_prefer_llm(self, on: bool) -> None:
         self.prefer_llm = bool(on)
         self.reload(force=True)
 
+    def _rows(self) -> list[review.TranscriptRow]:
+        """As falas com o nome da tela: "Voz N" no lugar do rótulo interno da voz sem pessoa (U-035)."""
+        rows = review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
+        return voice_names(self.store, self.meeting_id).rows(rows)
+
     def reload(self, force: bool = False) -> bool:
         """Relê as falas; sem mudança, a lista fica como está (seleção e rolagem); com mudança, refaz e devolve as duas. True
         quando refez (o `modelReset` já avisou quem segue as falas, como a linha do tempo)."""
-        rows = review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
+        rows = self._rows()
         changed = force or rows != self.model.rows
         if changed:
             current = self.current_row()
@@ -207,6 +258,8 @@ class TranscriptTab(QWidget):
         revised = sum(1 for r in self.model.rows if r.text_llm)
         mode = "revisada" if self.prefer_llm else "original"
         self.toggle.setEnabled(revised > 0)
+        self._page()
+        self.status.setVisible(self.model.rowCount() > 0)        # sem falas, o estado vazio já diz (o texto fica)
         self.status.setText(f"{self.model.rowCount()} fala(s), {revised} revisada(s) pela LLM; mostrando a {mode}. "
                             "Clique numa fala para ouvir daquele ponto.")
         busy = llm_job_active(self.store, self.meeting_id)
@@ -267,9 +320,10 @@ class TranscriptTab(QWidget):
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._viewport and event.type() == QEvent.Type.Wheel:
+        # pelo `__dict__`: a coleta de ciclos pode limpar os atributos antes de o Qt apagar a janela (veja a revisão)
+        if watched is self.__dict__.get("_viewport") and event.type() == QEvent.Type.Wheel:
             self.user_scrolled()
-        elif watched is self.view and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
+        elif watched is self.__dict__.get("view") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
             if event.key() in NAV_KEYS:
                 self.user_scrolled()
             elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):

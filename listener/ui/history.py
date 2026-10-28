@@ -23,45 +23,48 @@ na rede (um `threading.Event` ligado ao `shutdown`, R7-03) e espera as `Task`s a
 F5.1 (A-11): com o embedder local ativo e pronto, abrir o Histórico abre a sessão do e5 numa `Task` (a primeira busca por
 sentido não espera a carga; a saída espera a `Task`), e um `QTimer` a solta depois de 10 min sem uso.
 F5.3 (A-12): a resposta (ou a falha) de "Perguntar às reuniões" que chega com o Histórico fora de foco, ou escondido, chama
-`on_answer(ok)` (o aviso do controlador, cujo clique abre o Histórico); a pergunta cancelada não."""
+`on_answer(ok)` (o aviso do controlador, cujo clique abre o Histórico); a pergunta cancelada não.
+F5.4 L4 (U-084, U-085, U-080): a busca com a lupa, a cobertura do índice na linha das abas, o Estado da reunião em selo e o
+custo à direita; o estado da busca num selo; nas ações abertas, a Ação estica e quebra a linha e o prazo vencido vai num selo
+vermelho; os trechos e as respostas em HTML por classes (cores dos tokens). As funções puras e o modelo da lista moram em
+`ui/history_data.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17)."""
 from __future__ import annotations
 
 import functools
 import html
 import json
-import re
 import threading
 from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast, override
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Any, override
 
-from PySide6 import QtGui
-from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QThread, QTimer, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QContextMenuEvent, QFont, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, \
-    QResizeEvent, QShortcut, QShowEvent
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStackedWidget,
-                               QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QCloseEvent, QContextMenuEvent, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, QResizeEvent, \
+    QShortcut, QShowEvent
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QSizePolicy,
+                               QStackedWidget, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
-from ..llm.prompts.common import stamp
 from ..log import get_logger
-from ..model import ActionStatus, ChatRole, ChunkKind, MeetingStatus
+from ..model import ActionStatus, ChatRole
 from ..rag import chat_global, citations, export
 from ..rag import search as rag_search
-from ..store.rag import SearchFilters
-from ..store.segments import ClusterRow, resolve_person
-from .common import clamp_to_screens, copy_rich
+from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed
+from .components import Badge, BadgeDelegate, HtmlView
+from .history_data import (ACTION_COLUMNS, DUE_COL, HIT_SCHEME, KIND_TAB, MEETING_COLUMNS, MEETING_SCHEME, PERIODS, STATUS_COL, STATUS_TEXT,
+                           ActionLine, MeetingLine, MeetingsModel, coverage_text, fmt_int, friendly_reason, hit_link, hit_quote,
+                           hit_target, is_overdue, load_actions, load_meetings, period_range, results_html, search_filters)
+from .icons import tone_icon
 from .tasks import StreamTask, run_stream, run_task, wait_before_close
-from .components import HtmlView
-from .theme import TONE_ROLE, Tone, note, tone
+from .theme import METRICS, TONE_ROLE, Tone, note, surface_tokens, tone
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
     from ..rag.search import SearchHit, SearchResult
     from ..store import Store
+    from ..store.rag import SearchFilters
 
 log = get_logger("ui.history")
 
@@ -70,17 +73,6 @@ VECTOR_DELAY_MS = 600            # o vetor da consulta (pago) no Enter ou depois
 TASK_WAIT_MS = 3000              # saída do app: espera cada busca ou pergunta em voo até isto
 LOCAL_IDLE_S = 600.0             # F5.1 (A-11): a sessão do e5 local é solta depois de 10 min sem uso
 LOCAL_RELEASE_TICK_MS = 60_000   # ...conferido a cada minuto
-PERIODS: tuple[tuple[str, str], ...] = (("all", "Qualquer data"), ("7", "Últimos 7 dias"), ("30", "Últimos 30 dias"),
-                                        ("90", "Últimos 90 dias"), ("year", "Este ano"))
-MEETING_COLUMNS = ("Data", "Título", "Duração", "Participantes", "Estado", "Custo")
-ACTION_COLUMNS = ("Ação", "Dono", "Prazo", "Reunião")
-STATUS_TEXT: dict[str, str] = {MeetingStatus.RECORDING: "gravando", MeetingStatus.PAUSED: "pausada", MeetingStatus.RECORDED: "gravada",
-                               MeetingStatus.CANCELLED: "cancelada", MeetingStatus.INTERRUPTED: "interrompida",
-                               MeetingStatus.PROCESSED: "falantes a revisar", MeetingStatus.REVIEWED: "revisada"}
-KIND_TAB: dict[str, str] = {ChunkKind.EXECUTIVE: "resumo", ChunkKind.ACTION: "acoes", ChunkKind.DECISION: "ata", ChunkKind.HIGHLIGHT: "ata",
-                            ChunkKind.PENDING: "ata", ChunkKind.NEXT_STEP: "ata", ChunkKind.MINUTES: "ata"}
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-HIT_SCHEME, MEETING_SCHEME = "listener://hit?c=", "listener://meeting?m="
 CHAT_EMPTY = ("<p class='note'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
               "numa citação abre a reunião naquele ponto e toca. Os filtros de pessoa e período valem aqui também.</p>")
 OVERDUE_TONE = Tone.DANGER       # F5.4 (A-11): a ação atrasada e a busca que falhou, no tom de perigo do tema
@@ -90,236 +82,13 @@ type OpenMeeting = Callable[..., Any]          # on_open(meeting_id, tab=None, t
 type ContextActions = Callable[[QPoint, str], list[tuple[str, Callable[[], Any]]]]
 
 
-# ---------------------------------------------------------------- funções puras
-def period_range(key: str, today: date) -> tuple[str | None, str | None]:
-    """(desde, até) em `AAAA-MM-DD` para o período escolhido; "últimos 7 dias" inclui hoje e os 6 anteriores."""
-    match key:
-        case "7" | "30" | "90":
-            return (today - timedelta(days=int(key) - 1)).isoformat(), None
-        case "year":
-            return f"{today.year:04d}-01-01", None
-        case _:
-            return None, None
-
-
-def search_filters(person_id: int | None, period: str, today: date) -> SearchFilters:
-    date_from, date_to = period_range(period, today)
-    return SearchFilters(person_ids=(int(person_id),) if person_id is not None else (), date_from=date_from, date_to=date_to)
-
-
-def friendly_reason(reason: str) -> str:
-    """O motivo da busca só por palavras em texto para o usuário (sem "embedding", modelo nem detalhe técnico)."""
-    low = (reason or "").strip().lower()
-    if not low or low == rag_search.NO_QUERY_VECTOR:
-        return "busca por sentido indisponível agora"
-    rules = (("índice ainda sem vetores", "o índice da busca por sentido ainda está vazio"),
-             ("trechos filtrados sem vetor", "os trechos filtrados ainda não têm busca por sentido"),
-             ("modelo de embeddings mudou", "o modelo da busca por sentido mudou: busque de novo"),
-             ("nenhum provedor ativo", "escolha um provedor para a busca por sentido (Configurações, LLM)"),
-             ("busca local não baixada", "a busca local ainda não foi baixada: prepare em Configurações (Busca)"),     # F5.1 (A-02)
-             ("extra local", "a busca local precisa do extra local instalado (pip install -e .[local])"),
-             ("falhou ao calcular", "a busca local falhou nesta busca (memória?): tente de novo; se repetir, veja o log"),
-             ("busca local", "a busca local não abriu o modelo: prepare de novo em Configurações (Busca)"),
-             ("anthropic", "o provedor escolhido não faz busca por sentido: escolha Gemini, OpenAI ou Local (Configurações, LLM)"),
-             ("não tem modelo", "falta o modelo da busca por sentido no provedor (Configurações, LLM)"),
-             ("sem chave", "falta a chave do provedor da busca por sentido (Configurações, Chaves de acesso)"),
-             ("sem rede", "sem rede"), ("tempo esgotado", "o provedor não respondeu a tempo"), ("consulta vazia", "consulta vazia"),
-             ("dimens", "o índice da busca por sentido é de outro modelo: reindexe nas Configurações"),
-             ("assinatura", "o índice da busca por sentido é de outro modelo: reindexe nas Configurações"))
-    return next((text for key, text in rules if key in low), "busca por sentido indisponível agora")
-
-
-def fmt_int(n: int) -> str:
-    """Milhar com ponto (pt-BR): 3120 -> "3.120"."""
-    return f"{int(n):,}".replace(",", ".")
-
-
-def coverage_text(cov: dict[str, int], processed: int) -> str:
-    """"Índice: 42 de 45 reuniões processadas · 3.120 trechos (2.980 com busca por sentido)"."""
-    chunks = int(cov.get("chunks") or 0)
-    text = f"Índice: {int(cov.get('meetings') or 0)} de {processed} reuniões processadas · {fmt_int(chunks)} trechos"
-    if "vectors" in cov and chunks:
-        text += f" ({fmt_int(min(int(cov['vectors']), chunks))} com busca por sentido)"
-    return text
-
-
-def hit_link(hit: SearchHit) -> str:
-    return f"{HIT_SCHEME}{hit.chunk_id}"
-
-
-def results_html(result: SearchResult) -> str:
-    """Os trechos achados agrupados por reunião (U-024), na ordem do melhor trecho de cada uma. O destaque (`snippet_html`)
-    já vem escapado; título e falantes vêm crus e são escapados aqui."""
-    if not result.hits:
-        return "<p class='note'>Nada encontrado com essas palavras e filtros.</p>"
-    parts: list[str] = []
-    for g in rag_search.group_by_meeting(result.hits):
-        n = len(g.hits)
-        title = html.escape(g.title or "Reunião sem título")
-        parts.append(f"<p style='margin-top:12px; margin-bottom:2px'><a href='{MEETING_SCHEME}{g.meeting_id}'><b>{title}</b></a>"
-                     f" <span class='note'>· {export.fmt_date(g.date)} · {n} {'trecho' if n == 1 else 'trechos'}</span></p>")
-        for h in g.hits:
-            when = f"▶ {stamp(h.t_start_ms)}" if h.t_start_ms is not None else "abrir"
-            meta = " · ".join(x for x in (h.kind_label, html.escape(h.speakers)) if x)
-            snippet = h.snippet_html or html.escape(" ".join(h.text.split())[:200])
-            parts.append(f"<p style='margin-top:0; margin-bottom:6px; margin-left:16px'><a href='{hit_link(h)}'>{when}</a> "
-                         f"<span class='note'>{meta}</span><br>{snippet}</p>")
-    return "".join(parts)
-
-
-def hit_target(hit: SearchHit) -> tuple[str | None, int | None, bool]:
-    """(aba, tempo, tocar) do clique num trecho: com tempo, a transcrição naquele ponto tocando; sem tempo, a aba do tipo
-    (resumo executivo, ações, ata) ou a primeira da reunião."""
-    if hit.t_start_ms is not None:
-        return "transcricao", int(hit.t_start_ms), True
-    return KIND_TAB.get(hit.kind), None, False
-
-
-def hit_quote(hit: SearchHit) -> tuple[str, str]:
-    """U-029 de um trecho achado: o texto do trecho, quem fala, a reunião, a data e o [mm:ss]."""
-    return export.quote(hit.text, hit.speakers, hit.meeting_title or "Reunião sem título", hit.meeting_date, hit.t_start_ms)
-
-
-def is_overdue(due: str | None, today: date) -> bool:
-    d = str(due or "")
-    return bool(DATE_RE.match(d)) and d < today.isoformat()
-
-
-@dataclass(frozen=True, slots=True)
-class MeetingLine:
-    meeting_id: int
-    started_at: str
-    title: str
-    duration_ms: int | None
-    participants: tuple[str, ...]
-    status: str
-    cost_usd: float | None
-
-    def texts(self) -> tuple[str, ...]:
-        people = ", ".join(self.participants)
-        return (export.fmt_datetime(self.started_at), self.title, export.fmt_duration(self.duration_ms),
-                people if len(people) <= 60 else people[:59].rstrip(", ") + "…", STATUS_TEXT.get(self.status, self.status),
-                fmt_usd(self.cost_usd) if self.cost_usd is not None else "")
-
-
-def load_meetings(store: Store, person_id: int | None = None, date_from: str | None = None,
-                  date_to: str | None = None) -> list[MeetingLine]:
-    """A lista do Histórico: as reuniões do período, com os participantes pelos clusters decididos do job vigente (auto ou
-    confirmado, seguindo as mesclas; mais fala primeiro; sem processamento, os esperados) e o custo; com `person_id`, só as
-    reuniões em que a pessoa fala. Quatro consultas, qualquer que seja o número de reuniões (mais uma por reunião só quando ela
-    tem falas com pessoa e nenhum cluster); roda numa `Task`."""
-    rows = store.meetings.overview(date_from, date_to)
-    names = {int(p["id"]): str(p["name"]) for p in store.people.list_people()}
-    clusters: dict[int, list[dict[str, Any]]] = {}
-    for c in store.segments.light_clusters([int(r["id"]) for r in rows]) if rows else ():
-        clusters.setdefault(int(c["meeting_id"]), []).append(c)
-    out: list[MeetingLine] = []
-    for r in rows:
-        mid, job = int(r["id"]), r.get("job_id")
-        mine = [c for c in clusters.get(mid, ()) if job is not None and c.get("job_id") == job]
-        by_id = {int(c["id"]): cast(ClusterRow, c) for c in mine}
-        speech: dict[int, int] = {}
-        for c in mine:
-            pid = resolve_person(cast(ClusterRow, c), by_id)
-            if pid is not None:
-                speech[pid] = speech.get(pid, 0) + int(c.get("speech_ms") or 0)
-        if not mine and job is not None:                 # falas com pessoa e sem clusters (importadas): quem fala, na ordem
-            for i, sp in enumerate(store.segments.speakers(mid, int(job))):
-                if sp.get("person_id") is not None:
-                    speech.setdefault(int(sp["person_id"]), -i)
-        if person_id is not None and int(person_id) not in speech:
-            continue
-        people = tuple(names[p] for p in sorted(speech, key=lambda p: (-speech[p], names.get(p, ""))) if p in names)
-        if not people and r.get("expected_participants"):
-            people = tuple(p.strip() for p in str(r["expected_participants"]).replace(";", ",").split(",") if p.strip())
-        cost = r.get("cost_usd")
-        out.append(MeetingLine(mid, str(r.get("started_at") or ""), str(r.get("title") or r.get("title_llm") or f"Reunião {mid}"),
-                               r.get("duration_ms"), people, str(r.get("status") or ""), float(cost) if cost is not None else None))
-    return out
-
-
-@dataclass(frozen=True, slots=True)
-class ActionLine:
-    action_id: int
-    meeting_id: int
-    text: str
-    owner: str
-    due: str
-    t_ms: int | None
-    meeting_title: str
-    meeting_date: str
-    overdue: bool
-
-    def texts(self) -> tuple[str, ...]:
-        due = f"{export.fmt_date(self.due) or self.due} (atrasada)" if self.overdue else (export.fmt_date(self.due) or self.due)
-        return self.text, self.owner, due, f"{self.meeting_title} — {export.fmt_date(self.meeting_date)}"
-
-
-def load_actions(store: Store, person_id: int | None, date_from: str | None, date_to: str | None, today: date) -> list[ActionLine]:
-    """As ações abertas da ata atual de cada reunião (U-026), com o dono (pessoa casada ou o texto livre) e a reunião."""
-    out: list[ActionLine] = []
-    for a in store.actions.list_open(person_id, date_from, date_to):
-        mid = int(a["meeting_id"])
-        owner = str(a.get("owner_name") or a.get("owner_text") or "")
-        out.append(ActionLine(int(a["id"]), mid, " ".join(str(a.get("text") or "").split()), owner, str(a.get("due") or ""), a.get("t_ms"),
-                              str(a.get("meeting_title") or a.get("meeting_title_llm") or f"Reunião {mid}"),
-                              str(a.get("started_at") or ""), is_overdue(a.get("due"), today)))
-    return out
-
-
-# ---------------------------------------------------------------- widgets
-class MeetingsModel(QAbstractTableModel):
-    """A lista de reuniões do Histórico (milhares de linhas sem milhares de widgets), ordenável por coluna."""
-
-    def __init__(self, parent: QObject | None = None):
-        super().__init__(parent)
-        self.lines: list[MeetingLine] = []
-
-    @override
-    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
-        return 0 if parent.isValid() else len(self.lines)
-
-    @override
-    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
-        return 0 if parent.isValid() else len(MEETING_COLUMNS)
-
-    @override
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        if not index.isValid() or index.row() >= len(self.lines):
-            return None
-        line = self.lines[index.row()]
-        if role == Qt.ItemDataRole.DisplayRole:
-            return line.texts()[index.column()]
-        if role == Qt.ItemDataRole.ToolTipRole:
-            # a dica do Qt é AutoText: o texto puro vira um parágrafo com o HTML escapado, e o que aparece é o título e os
-            # nomes como estão ("<b>" não vira negrito, R7-07, e "S&OP" não vira "S&amp;OP", R8-02)
-            text = ", ".join(line.participants) if index.column() == 3 else line.title
-            return QtGui.Qt.convertFromPlainText(text, Qt.WhiteSpaceMode.WhiteSpaceNormal)
-        if role == Qt.ItemDataRole.UserRole:
-            return line.meeting_id
-        return None
-
-    @override
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal and 0 <= section < len(MEETING_COLUMNS):
-            return MEETING_COLUMNS[section]
-        return None
-
-    @override
-    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
-        keys: tuple[Callable[[MeetingLine], Any], ...] = (
-            lambda m: m.started_at, lambda m: m.title.casefold(), lambda m: m.duration_ms or 0,
-            lambda m: ", ".join(m.participants).casefold(), lambda m: m.status, lambda m: m.cost_usd or 0.0)
-        if not 0 <= column < len(keys):
-            return
-        self.layoutAboutToBeChanged.emit()
-        self.lines.sort(key=keys[column], reverse=order == Qt.SortOrder.DescendingOrder)
-        self.layoutChanged.emit()
-
-    def replace(self, lines: list[MeetingLine]) -> None:
-        self.beginResetModel()
-        self.lines = list(lines)
-        self.endResetModel()
+def _table_look(table: QTableView) -> None:
+    """U-058: o cabeçalho à esquerda, sem o número de linha, as linhas de 32 px no mínimo e a zebra."""
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    table.verticalHeader().setVisible(False)
+    table.verticalHeader().setMinimumSectionSize(METRICS.control_h)
+    table.verticalHeader().setDefaultSectionSize(METRICS.control_h)
+    table.setAlternatingRowColors(True)
 
 
 class LinkBrowser(HtmlView):
@@ -381,16 +150,20 @@ class HistoryPage(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.setToolTip("Palavras de qualquer reunião (sem acento e sem maiúsculas). Enter também busca pelo sentido.")
         self.search.installEventFilter(self)
+        self.search_icon = self.search.addAction(tone_icon("search", Tone.SECONDARY), QLineEdit.ActionPosition.LeadingPosition)
         self.person = QComboBox()
         self.person.setToolTip("Só trechos, reuniões e ações desta pessoa")
         self.period = QComboBox()
         for key, label in PERIODS:
             self.period.addItem(label, key)
-        self.badge = QLabel("")                         # F5.4 (A-10): o estado no tom e a contagem ao lado, sem HTML
-        self.badge.setTextFormat(Qt.TextFormat.PlainText)
+        self.badge = Badge("", Tone.NEUTRAL)            # U-084: o estado da busca num selo, a contagem ao lado
+        self.badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.badge.hide()
         self.badge_count = QLabel("")
         self.badge_count.setTextFormat(Qt.TextFormat.PlainText)
-        self.coverage = QLabel("")
+        note(self.badge_count)
+        self.badge_count.hide()                         # sem busca, a linha do estado some (nada entre a busca e as abas)
+        self.coverage = QLabel("")                      # U-084: a cobertura do índice na linha das abas
         self.coverage.setTextFormat(Qt.TextFormat.PlainText)
         note(self.coverage)
         top = QHBoxLayout()
@@ -402,7 +175,6 @@ class HistoryPage(QWidget):
         state = QHBoxLayout()
         state.addWidget(self.badge)
         state.addWidget(self.badge_count, 1)
-        state.addWidget(self.coverage)
 
         # --- Reuniões ---
         self.model = MeetingsModel(self)
@@ -416,8 +188,8 @@ class HistoryPage(QWidget):
         header.setSortIndicator(0, Qt.SortOrder.DescendingOrder)
         for col in range(len(MEETING_COLUMNS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch if col in (1, 3) else QHeaderView.ResizeMode.ResizeToContents)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
+        _table_look(self.table)
+        self.table.setItemDelegateForColumn(STATUS_COL, BadgeDelegate(self.table))     # U-084: o Estado em selo
         self.table.activated.connect(self._meeting_activated)
         self.results = LinkBrowser(self._hit_actions)
         self.results.anchorClicked.connect(self._results_link)
@@ -440,9 +212,11 @@ class HistoryPage(QWidget):
         for col in range(len(ACTION_COLUMNS)):
             self.action_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch if col == 0 else QHeaderView.ResizeMode.ResizeToContents)
-        self.action_table.setAlternatingRowColors(True)
-        self.action_table.verticalHeader().setVisible(False)
-        self.action_table.activated.connect(lambda _i: self.open_action())
+        _table_look(self.action_table)
+        self.action_table.setWordWrap(True)                                   # U-080: a Ação estica e quebra a linha
+        self.action_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.action_table.setItemDelegateForColumn(DUE_COL, BadgeDelegate(self.action_table))   # o prazo vencido em selo
+        self.action_table.activated.connect(self._action_activated)
         self.action_lines: list[ActionLine] = []
         self.btn_done = QPushButton("Marcar feita")
         self.btn_done.setToolTip("Marca as ações selecionadas como feitas (fica no histórico de edições)")
@@ -504,6 +278,7 @@ class HistoryPage(QWidget):
         self.tabs.addTab(meetings, "Reuniões")
         self.tabs.addTab(actions, "Ações abertas")
         self.tabs.addTab(chat, "Perguntar às reuniões")
+        self.tabs.setCornerWidget(self.coverage, Qt.Corner.TopRightCorner)
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addLayout(state)
@@ -512,11 +287,11 @@ class HistoryPage(QWidget):
         self._words_timer = QTimer(self)
         self._words_timer.setSingleShot(True)
         self._words_timer.setInterval(WORDS_DELAY_MS)
-        self._words_timer.timeout.connect(lambda: self.run_search(with_vector=False))
+        self._words_timer.timeout.connect(self._search_words)                 # R-06: métodos, não lambdas com `self`
         self._vector_timer = QTimer(self)
         self._vector_timer.setSingleShot(True)
         self._vector_timer.setInterval(VECTOR_DELAY_MS)
-        self._vector_timer.timeout.connect(lambda: self.run_search(with_vector=True))
+        self._vector_timer.timeout.connect(self._search_vector)
         self._local_timer = QTimer(self)                          # F5.1 (A-11): solta a sessão do e5 parada há 10 min
         self._local_timer.setInterval(LOCAL_RELEASE_TICK_MS)
         self._local_timer.timeout.connect(self._release_local)
@@ -531,6 +306,19 @@ class HistoryPage(QWidget):
         self._load_threads()
         self._render_thread()
         self._update_chat_note()
+
+    def retheme(self) -> None:
+        """A troca de tema (A-10): a lupa da busca nos tokens novos (o ícone de uma ação não é varrido pelo tema)."""
+        self.search_icon.setIcon(tone_icon("search", Tone.SECONDARY, surface_tokens(self)))
+
+    def _action_activated(self, _index: QModelIndex) -> None:
+        self.open_action()
+
+    def _search_words(self) -> None:
+        self.run_search(with_vector=False)
+
+    def _search_vector(self) -> None:
+        self.run_search(with_vector=True)
 
     # ---------------------------------------------------------------- filtros
     def _fill_people(self) -> None:
@@ -718,7 +506,8 @@ class HistoryPage(QWidget):
             def fn() -> SearchResult:
                 return rag_search.search(store, query, filters)
         if with_vector and self.result is not None and self.result.query == query:
-            self.badge_count.setText("· buscando por sentido…")
+            self.badge_count.setText("buscando por sentido…")
+            self.badge_count.show()
         log.debug("busca %d: %d caractere(s), %s", gen, len(query), "palavras e sentido" if with_vector else "palavras")
         self._start(fn, functools.partial(self._on_search, gen))
         if with_vector:
@@ -784,7 +573,7 @@ class HistoryPage(QWidget):
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.search and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
+        if watched is self.__dict__.get("search") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
             if event.key() == Qt.Key.Key_Escape and self.search.text():
                 self.search.clear()                      # Esc limpa a busca e volta à lista
                 return True
@@ -806,18 +595,14 @@ class HistoryPage(QWidget):
             return
         self.action_lines = lines
         self.action_table.setRowCount(len(lines))
-        bold = QFont()
-        bold.setBold(True)
         for r, line in enumerate(lines):
             for c, text in enumerate(line.texts()):
                 item = QTableWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, line.action_id)
                 if c == 3:
                     item.setToolTip("Enter ou duplo clique abre a reunião na evidência da ação")
-                if line.overdue:
-                    item.setData(TONE_ROLE, OVERDUE_TONE.value)      # a cor sai do tema na pintura (A-05)
-                    if c == 2:
-                        item.setFont(bold)
+                if line.overdue and c == DUE_COL:
+                    item.setData(TONE_ROLE, OVERDUE_TONE.value)      # U-080: o selo vermelho, no tom do tema (A-05)
                 self.action_table.setItem(r, c, item)
         overdue = sum(1 for line in lines if line.overdue)
         filt = self.filters_text()
@@ -981,10 +766,12 @@ class HistoryPage(QWidget):
         tone(self.chat_status, value)
 
     def _set_badge(self, text: str, value: Tone | None = None, count: str = "") -> None:
-        """O estado da busca no tom (verde híbrida, âmbar só palavras, vermelho falhou) e a contagem ao lado, em dois rótulos."""
+        """O estado da busca num selo (verde híbrida, âmbar só palavras, vermelho falhou) e a contagem ao lado (U-084)."""
         self.badge.setText(text)
-        tone(self.badge, value)
-        self.badge_count.setText(f"· {count}" if text and count else count)
+        self.badge.set_tone(value if value is not None else Tone.NEUTRAL)
+        self.badge.setVisible(bool(text))
+        self.badge_count.setText(count)
+        self.badge_count.setVisible(bool(count))
 
     def stop_chat(self) -> None:
         if self.chat_task is not None:
@@ -1075,6 +862,12 @@ class HistoryWindow(QWidget):
         self._restoring = True
         self._restore_geometry()
         self._restoring = False
+        keep_until_destroyed(self)                       # R-06: a coleta de ciclos não a apaga antes do Qt
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        fit_to_screen(self)                              # A-17: a janela inteira, com a moldura, na área livre
 
     def _restore_geometry(self) -> None:
         raw = self.store.get_setting("ui.history_geometry")
@@ -1115,5 +908,7 @@ class HistoryWindow(QWidget):
         super().closeEvent(event)
 
 
-__all__ = ["ActionLine", "HistoryPage", "HistoryWindow", "LinkBrowser", "MeetingLine", "MeetingsModel", "coverage_text", "friendly_reason",
-           "hit_quote", "hit_target", "is_overdue", "load_actions", "load_meetings", "period_range", "results_html", "search_filters"]
+__all__ = ["ACTION_COLUMNS", "CHAT_EMPTY", "KIND_TAB", "LOCAL_IDLE_S", "MEETING_COLUMNS", "PERIODS", "STATUS_TEXT", "ActionLine",
+           "HistoryPage", "HistoryWindow", "LinkBrowser", "MeetingLine", "MeetingsModel", "coverage_text", "fmt_int", "friendly_reason",
+           "hit_link", "hit_quote", "hit_target", "is_overdue", "load_actions", "load_meetings", "period_range", "results_html",
+           "search_filters"]

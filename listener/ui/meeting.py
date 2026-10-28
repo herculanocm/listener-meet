@@ -15,7 +15,11 @@ A-18; `ui/docx_save.py`).
 
 F5.3 (U-046): "Idioma: pt-BR" no cabeçalho, com a troca pelo outro idioma que reprocessa a reunião (`ui/meeting_language.py`);
 a exportação sai no idioma da ata. (A-12) A resposta do chat com a janela fora de foco chama `on_chat_answer(ok)` (o aviso do
-controlador, cujo clique volta à aba Chat)."""
+controlador, cujo clique volta à aba Chat).
+
+F5.4 L4: o título em 20 px sem moldura até o foco, os fatos em legenda e o "Exportar" com a seta inteira (U-078); o aviso
+numa faixa (U-057); a ata, o executivo e o pré-resumo formatados (U-079, `ui/minutes_view.py`); os marcadores e o "Resumo"
+em `ui/meeting_parts.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17)."""
 from __future__ import annotations
 
 from collections import deque
@@ -25,25 +29,25 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence, QMoveEvent, QResizeEvent, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                               QPushButton, QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence, QMoveEvent, QResizeEvent, QShortcut, QShowEvent
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
-from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import SummaryKind
 from ..pipeline import review
 from ..rag import export
 from .chat import ChatPanel
-from .common import clamp_to_screens, copy_rich, markdown_html
+from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed, markdown_html
+from .components import InfoBar
 from .docx_save import DocxSaver
 from .llm_tabs import LlmTabsGroup
 from .meeting_language import MeetingLanguage
-from .player import PlayerBar
+from .meeting_parts import MarkersTab, SummaryTab, menu_button
+from .player_bar import PlayerBar
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
-from .theme import Tone, note, tone
+from .theme import note
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -58,44 +62,6 @@ DEFAULT_SIZE = (1040, 720)
 MIN_SIZE = (640, 420)
 SAVE_DELAY_MS = 600
 CASCADE_PX = 28                  # cada janela de reunião a mais nasce um pouco abaixo e à direita da anterior
-
-
-class MarkersTab(QWidget):
-    """Os marcadores da gravação ("[mm:ss] nota"); o clique ou Enter toca daquele ponto."""
-
-    def __init__(self, store: Store, meeting_id: int, *, play: Callable[[int], Any] | None = None, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.store = store
-        self.meeting_id = meeting_id
-        self.play = play
-        self.list = QListWidget()
-        self.list.itemClicked.connect(self._activated)
-        self.list.itemActivated.connect(self._activated)
-        self.note = QLabel("")
-        note(self.note)
-        lay = QVBoxLayout(self)
-        lay.addWidget(self.list, 1)
-        lay.addWidget(self.note)
-        self.reload()
-
-    def reload(self) -> None:
-        markers = self.store.list_markers(self.meeting_id)
-        current = self.list.currentRow()
-        self.list.clear()
-        for mk in markers:
-            item = QListWidgetItem(f"[{stamp(int(mk['t_ms']))}] {mk.get('note') or '(sem nota)'}")
-            item.setData(Qt.ItemDataRole.UserRole, int(mk["t_ms"]))
-            item.setToolTip("clique para ouvir deste ponto")
-            self.list.addItem(item)
-        if 0 <= current < self.list.count():
-            self.list.setCurrentRow(current)
-        self.note.setText(f"{len(markers)} marcador(es); clique num para ouvir deste ponto." if markers
-                          else "Nenhum marcador nesta reunião.")
-
-    def _activated(self, item: QListWidgetItem) -> None:
-        t = item.data(Qt.ItemDataRole.UserRole)
-        if t is not None and self.play is not None:
-            self.play(int(t))
 
 
 class MeetingWindow(QWidget):
@@ -118,7 +84,7 @@ class MeetingWindow(QWidget):
         # --- cabeçalho ---
         self.btn_review = QPushButton("Revisar falantes…")
         self.btn_review.setToolTip("Confirmar quem é cada voz desta reunião")
-        self.btn_review.clicked.connect(lambda: self.on_review(self.meeting_id) if self.on_review else None)
+        self.btn_review.clicked.connect(self._review_clicked)
         self.btn_review.setEnabled(on_review is not None)
         self.act_copy_minutes = QAction("Copiar ata", self)
         self.act_copy_transcript = QAction("Copiar transcrição", self)
@@ -135,22 +101,16 @@ class MeetingWindow(QWidget):
         menu.addSeparator()
         menu.addAction(self.act_save)
         menu.addAction(self.docx.action)
-        self.btn_export = QToolButton()
-        self.btn_export.setText("Exportar")              # a seta do menu é do próprio Qt (com "▾" no texto saíam duas)
-        self.btn_export.setToolTip("Copiar para a área de transferência ou salvar um arquivo .md ou .docx")
-        self.btn_export.setMenu(menu)
-        self.btn_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_export = menu_button("Exportar", "Copiar para a área de transferência ou salvar um arquivo .md ou .docx", menu)
         self.info = QLabel("")
         self.info.setObjectName("meetingInfo")
-        tone(self.info, Tone.SECONDARY)
+        note(self.info)                                         # U-078: os fatos em legenda
         self.info.setTextFormat(Qt.TextFormat.PlainText)        # participantes: nomes do usuário (R7-07)
         self.info.setWordWrap(True)
-        self.message = QLabel("")
+        self.message_bar = InfoBar("info")                      # U-057: o aviso numa faixa (o caminho salvo leva o título:
+        self.message = self.message_bar.label                   # texto puro, como a faixa)
         self.message.setObjectName("meetingMessage")
-        tone(self.message, Tone.WARNING)
-        self.message.setTextFormat(Qt.TextFormat.PlainText)     # o caminho salvo leva o título
-        self.message.setWordWrap(True)
-        self.message.setVisible(False)
+        self.message_bar.setVisible(False)
         self.language_bar = MeetingLanguage(store, meeting_id, on_launch=on_launch, on_message=self.show_message, parent=self)
         top = QHBoxLayout()
         top.addWidget(self.llm.title_tab, 1)
@@ -168,13 +128,7 @@ class MeetingWindow(QWidget):
                                     play=self._play_point if player is not None else None)
         self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)
         self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text, on_answer=on_chat_answer)
-        summary = QSplitter(Qt.Orientation.Vertical)
-        for kind, label in ((SummaryKind.EXECUTIVE, "Resumo executivo"), (SummaryKind.PRE_SUMMARY, "Pré-resumo")):
-            box = QGroupBox(label)
-            inner = QVBoxLayout(box)
-            inner.setContentsMargins(4, 4, 4, 4)
-            inner.addWidget(self.llm.text_tabs[str(kind)])
-            summary.addWidget(box)
+        summary = SummaryTab(self.llm.text_tabs)
         self.tabs = QTabWidget()
         for widget, title in zip((self.llm.text_tabs[str(SummaryKind.MINUTES)], summary, self.llm.actions_tab, self.transcript,
                                   self.markers, self.timeline, self.chat), TAB_TITLES, strict=True):
@@ -185,7 +139,7 @@ class MeetingWindow(QWidget):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addLayout(facts)
-        lay.addWidget(self.message)
+        lay.addWidget(self.message_bar)
         lay.addWidget(self.tabs, 1)
         if self.bar is not None:
             lay.addWidget(self.bar)
@@ -201,6 +155,7 @@ class MeetingWindow(QWidget):
         self.llm.reload()
         self.reload_header()
         self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() else self.llm.text_tabs[str(SummaryKind.MINUTES)])
+        keep_until_destroyed(self)                       # R-06: a coleta de ciclos não a apaga antes do Qt
 
     def _follow(self, player: Player | None) -> PlaybackFollower | None:
         """U-025: o destaque da Transcrição e o cursor da linha do tempo seguem o som desta reunião (o mesmo sinal)."""
@@ -243,7 +198,11 @@ class MeetingWindow(QWidget):
 
     def show_message(self, text: str) -> None:
         self.message.setText(text)
-        self.message.setVisible(bool(text))
+        self.message_bar.setVisible(bool(text))
+
+    def _review_clicked(self) -> None:
+        if self.on_review is not None:
+            self.on_review(self.meeting_id)
 
     def _edited(self) -> None:
         if self.on_edited is not None:
@@ -362,6 +321,11 @@ class MeetingWindow(QWidget):
         g = self.geometry()
         with suppress(Exception):                        # banco já fechado na saída do app: a posição anterior fica
             self.store.set_setting("ui.meeting_geometry", f"{g.x()},{g.y()},{g.width()},{g.height()}")
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        fit_to_screen(self)                              # A-17: a janela inteira, com a moldura, na área livre
 
     @override
     def moveEvent(self, event: QMoveEvent) -> None:

@@ -6,15 +6,14 @@ legendas rolando com tempo, rótulo e texto: ao abrir, carrega do banco; a cada 
 (`after_id`), na ordem do tempo, e só rola sozinha quando já estava no fim. Clique numa legenda cria um marcador no
 instante dela com o texto (U-022), uma vez por legenda. Abre pelo clique no widget e pela bandeja, nunca sozinha (Q5);
 depois de Parar ou Cancelar fica só para leitura até o usuário fechar. Marcar e atualizar passam pelo controlador
-(callbacks): a janela não conhece o gravador."""
+(callbacks): a janela não conhece o gravador. F5.4 L4 (U-081): as legendas pelo `SpeechDelegate` da Transcrição (o [mm:ss] em
+legenda, o falante em negrito com o ponto na cor dele, na ordem em que apareceu; a marcada com a bandeira); os textos em
+`ui/live_text.py`."""
 from __future__ import annotations
 
 import bisect
-import html
-import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import suppress
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QTimer, QUrl, Qt, Signal
@@ -28,104 +27,19 @@ from ..log import get_logger
 from ..model import SummaryKind
 from .common import clamp_to_screens
 from .components import HtmlView
-from .theme import TONE_ROLE, Tone, note, role, tone
+from .live_text import (KIND_PREFIX, KIND_TITLE, NOTE_MAX, STATE_TEXT, MarkCaption, MarkItem, Refresh, caption_key, caption_line,
+                        caption_note, clip, hhmm, item_key, item_note, partial_data, partial_html, speaker_parts)
+from .speech_delegate import FLAG_ROLE, SpeechDelegate, speech_roles
+from .theme import Tone, note, role, tone
 from .widget import LIVE_BADGES, _screen_rects
 
 if TYPE_CHECKING:
     from ..store import Store
 
 log = get_logger("ui.live")
-
-NOTE_MAX = 300                    # nota do marcador criado de uma legenda ou de um item do parcial
 DEFAULT_SIZE = (460, 600)
 MIN_SIZE = (320, 320)
 SAVE_DELAY_MS = 600
-KIND_PREFIX = {"decisions": "Decisão", "actions": "Ação"}
-KIND_TITLE = {"decisions": "Possíveis decisões", "actions": "Possíveis ações"}
-STATE_TEXT = {"off": "legenda ao vivo desligada nesta gravação", "unavailable": "legenda ao vivo indisponível nesta gravação",
-              "stopping": "gravação parada: terminando as últimas legendas", "stopped": "ao vivo encerrado"}
-
-type MarkCaption = Callable[[Mapping[str, Any]], tuple[bool, str]]
-type MarkItem = Callable[[str, Mapping[str, Any], int | None], tuple[bool, str]]
-type Refresh = Callable[[], str]
-
-
-def clip(text: str, limit: int = NOTE_MAX) -> str:
-    """Espaços simples e no máximo `limit` caracteres (com reticências)."""
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
-
-
-def caption_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Identidade de uma legenda para não marcar duas vezes: o id do banco ou, sem ele, canal e tempo."""
-    if row.get("id") is not None:
-        return ("id", int(row["id"]))
-    return ("t", str(row.get("channel") or ""), int(row.get("t_start_ms") or 0))
-
-
-def caption_note(row: Mapping[str, Any]) -> str:
-    """Nota do marcador de uma legenda (U-022): "Ana — CFO: texto" cortado em ~300 caracteres."""
-    label, text = row.get("label"), str(row.get("text") or "")
-    return clip(f"{label}: {text}" if label else text)
-
-
-def caption_line(row: Mapping[str, Any]) -> str:
-    label = row.get("label")
-    text = " ".join(str(row.get("text") or "").split())
-    return f"[{stamp(int(row.get('t_start_ms') or 0))}] " + (f"{label}: {text}" if label else text)
-
-
-def item_key(kind: str, item: Mapping[str, Any]) -> tuple[str, str]:
-    return kind, " ".join(str(item.get("text") or "").casefold().split())
-
-
-def item_note(kind: str, item: Mapping[str, Any]) -> str:
-    """"Decisão: ..." ou "Ação: ... (dono)" cortado em ~300 caracteres (U-023)."""
-    owner = str(item.get("owner") or "").strip() if kind == "actions" else ""
-    return clip(f"{KIND_PREFIX.get(kind, 'Item')}: {str(item.get('text') or '').strip()}" + (f" ({owner})" if owner else ""))
-
-
-def partial_data(row: Mapping[str, Any] | None) -> dict[str, Any]:
-    """`data_json` do parcial (resumo, decisões e ações); vazio quando ilegível."""
-    if not row:
-        return {}
-    try:
-        data = json.loads(str(row.get("data_json") or "{}"))
-    except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def partial_html(data: Mapping[str, Any], marked: set[tuple[str, str]], can_mark: bool) -> str:
-    """O parcial como HTML: resumo e as listas com "marcar" (link `mark:<espécie>:<índice>`) ou "marcado"."""
-    parts = [f"<p>{html.escape(str(data.get('summary') or '')).replace(chr(10), '<br>') or '<i>(sem texto)</i>'}</p>"]
-    for kind, title in KIND_TITLE.items():
-        items = [it for it in data.get(kind) or () if isinstance(it, Mapping)]
-        if not items:
-            continue
-        parts.append(f"<p><b>{title}</b></p><ul>")
-        for i, it in enumerate(items):
-            t = it.get("t_ms")
-            when = f"[{stamp(int(t))}] " if isinstance(t, int | float) else ""
-            owner = f" <i>({html.escape(str(it['owner']))})</i>" if kind == "actions" and it.get("owner") else ""
-            if item_key(kind, it) in marked:
-                tail = ' · <span class="success">marcado ✓</span>'
-            elif can_mark:
-                tail = f' · <a href="mark:{kind}:{i}">marcar</a>'
-            else:
-                tail = ""
-            parts.append(f"<li>{when}{html.escape(str(it.get('text') or ''))}{owner}{tail}</li>")
-        parts.append("</ul>")
-    return "".join(parts)
-
-
-def hhmm(iso: str | None) -> str:
-    try:
-        return datetime.fromisoformat(str(iso)).strftime("%H:%M")
-    except (TypeError, ValueError):
-        return "?"
-
-
 class LiveWindow(QWidget):
     closed = Signal()
 
@@ -151,7 +65,8 @@ class LiveWindow(QWidget):
         self.setMinimumSize(*MIN_SIZE)
 
         # --- resumo parcial ---
-        self.partial_title = QLabel("<b>Resumo parcial</b>")
+        self.partial_title = QLabel("Resumo parcial")
+        role(self.partial_title, "body_strong")
         self.partial_when = QLabel("")
         note(self.partial_when)
         self.refresh_btn = QPushButton("Atualizar resumo agora")
@@ -176,7 +91,10 @@ class LiveWindow(QWidget):
         self.live_label = QLabel("")
         self.live_label.setTextFormat(Qt.TextFormat.PlainText)
         role(self.live_label, "caption")
+        self.speakers: dict[str, int] = {}                # U-081: a cor de cada falante, na ordem em que apareceu
         self.list = QListWidget()
+        self.list.setItemDelegate(SpeechDelegate(self.list, flags=True))
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.list.setWordWrap(True)
         self.list.setUniformItemSizes(False)
         self.list.itemClicked.connect(self._caption_clicked)
@@ -253,14 +171,16 @@ class LiveWindow(QWidget):
         delay = f" · atraso {int(latency) / 1000:.1f} s".replace(".", ",") if latency is not None else ""   # vírgula (U-032)
         tip = f"canal {row.get('channel') or '?'}{delay}"
         item.setToolTip(f"{tip}\nclique: marcador neste instante com o texto da legenda")
+        name, job = speaker_parts(row.get("label"))
+        color = self.speakers.setdefault(name, len(self.speakers)) if name else None
+        speech_roles(item, int(row.get("t_start_ms") or 0), name, job, " ".join(str(row.get("text") or "").split()), color)
         self._paint(item, row)
         self.list.insertItem(pos, item)
 
     def _paint(self, item: QListWidgetItem, row: Mapping[str, Any]) -> None:
         marked = caption_key(row) in self.marked_captions
-        item.setText(("⚑ " if marked else "") + caption_line(row))
-        if marked:
-            item.setData(TONE_ROLE, Tone.ACCENT.value)         # F5.4 (A-05, A-11): a legenda marcada no destaque do tema
+        item.setText(("⚑ " if marked else "") + caption_line(row))     # o texto para o leitor de tela (e os testes)
+        item.setData(FLAG_ROLE, marked)                       # F5.4 L4: a bandeira no destaque do tema, desenhada
 
     @property
     def captions(self) -> list[dict[str, Any]]:
@@ -413,3 +333,7 @@ class LiveWindow(QWidget):
         self.save_geometry()
         super().closeEvent(event)
         self.closed.emit()
+
+
+__all__ = ["KIND_PREFIX", "NOTE_MAX", "LiveWindow", "MarkCaption", "MarkItem", "Refresh", "caption_key", "caption_line", "caption_note",
+           "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html"]

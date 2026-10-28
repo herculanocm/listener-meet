@@ -7,7 +7,9 @@ chama `on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reuniã
 hora). F5 L4: as abas da LLM vêm do `LlmTabsGroup` (o mesmo da reunião aberta, F5A-26) e os 5 s passam pelo player único
 do app (um som por vez; o aviso de reprodução aparece no cabeçalho).
 U-041 (F5.2): N abre a ficha (nome, cargo, empresa, e-mail; nome repetido pergunta "é ela?"); O lista "Nome — Cargo ·
-Empresa" pelo id; E edita a ficha da pessoa da voz confirmada e tem "Apagar pessoa…" (LGPD; confirmação, CP3)."""
+Empresa" pelo id; E edita a ficha da pessoa da voz confirmada e tem "Apagar pessoa…" (LGPD; confirmação, CP3).
+F5.4 L4 (U-086, U-035; `ui/review_cards.py`): cada voz num cartão ("Voz 2", com o estado num selo), as ações numa coluna
+com a tecla num selo e o primário seguindo a etapa (com voz pendente, "Confirmar pyannote"; sem nenhuma, "Concluir")."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -15,41 +17,27 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-                               QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListView, QListWidget, QListWidgetItem, QMessageBox,
+                               QPushButton, QTabWidget, QVBoxLayout, QWidget)
 
 from ..log import get_logger
-from ..model import ClusterStatus, JobStep, SummaryKind
+from ..model import JobStep, SummaryKind
 from ..pipeline import review, summary_gate
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
-from .person import DELETE, PersonData, PersonDialog
+from .common import keep_until_destroyed
 from .player import ERROR, PlayerState
-from .theme import TONE_ROLE, Tone
+from .review_cards import KeyButton, VoiceCardDelegate, card_item, stage_primary
+from .review_person import PersonActionsMixin
+from .voices import VoiceNames, voice_names
 
 if TYPE_CHECKING:
     from ..store import Store
     from .player import Player
 
 log = get_logger("ui.review")
-DELETE_TEXT = ("Apagar {name}?\n\nSaem a ficha, o perfil de voz e o vínculo com as falas, as legendas e as ações em todas as "
-               "reuniões; as vozes dela voltam a \"sem nome\". O áudio e as falas ficam.\n\nAtas, resumos, respostas do chat e o "
-               "histórico das chamadas à LLM já gerados não mudam: use \"Gerar de novo\" para refazê-los sem o nome.")
-EDITABLE = (ClusterStatus.CONFIRMED, ClusterStatus.AUTO)         # U-041 (A-12): só voz com pessoa decidida tem ficha a editar
-PENDING_TONE = Tone.DANGER       # F5.4 (A-11): a voz pendente no tom de perigo do tema (antes, o `darkRed` fixo)
 
 
-def person_data(row: Any) -> PersonData:
-    return PersonData(str(row["name"]), str(row.get("role") or ""), str(row.get("company") or ""), str(row.get("email") or ""))
-
-
-def person_labels(people: list[Any]) -> list[str]:
-    """"Nome — Cargo · Empresa" de cada pessoa, na ordem; homônimos iguais até no cargo ganham o id (A-11: a escolha vai
-    pelo id, nunca pelo nome)."""
-    labels = [person_data(p).label() for p in people]
-    return [f"{lab} (#{p['id']})" if labels.count(lab) > 1 else lab for lab, p in zip(labels, people, strict=True)]
-
-
-class ReviewDialog(QDialog):
+class ReviewDialog(PersonActionsMixin, QDialog):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None,
                  player: Player | None = None):
@@ -61,6 +49,7 @@ class ReviewDialog(QDialog):
         self.on_edited = on_edited                         # F5: `on_edited(meeting_id, motivo, now=False)` reindexa a reunião
         self.player = player                               # F5: o player único do app (None = sem som nesta janela)
         self.items: list[review.ReviewItem] = []
+        self.names = VoiceNames()                          # U-035: "Voz 2" no lugar do rótulo interno
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
         self.reloads = 0
         m = store.get_meeting(meeting_id) or {}
@@ -71,19 +60,25 @@ class ReviewDialog(QDialog):
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.list.installEventFilter(self)                 # Enter, Espaço e letras valem com o foco na lista
-        self.btn_confirm = QPushButton("Confirmar pyannote (Enter)")
-        self.btn_llm = QPushButton("Aceitar LLM (L)")
-        self.btn_other = QPushButton("Outra pessoa (O)")
-        self.btn_new = QPushButton("Nova pessoa (N)")
-        self.btn_merge = QPushButton("É a mesma que… (M)")
-        self.btn_ignore = QPushButton("Ignorar (I)")
-        self.btn_play = QPushButton("Ouvir 5 s (Espaço)")
-        self.btn_edit = QPushButton("Editar pessoa (E)")                    # U-041: a ficha da pessoa desta voz
+        self.list.setItemDelegate(VoiceCardDelegate(self.list))    # U-086: cada voz num cartão
+        self.list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.list.setSpacing(2)
+        self.btn_confirm = KeyButton("Confirmar pyannote", "Enter")
+        self.btn_llm = KeyButton("Aceitar LLM", "L")
+        self.btn_other = KeyButton("Outra pessoa", "O")
+        self.btn_new = KeyButton("Nova pessoa", "N")
+        self.btn_merge = KeyButton("É a mesma que…", "M")
+        self.btn_ignore = KeyButton("Ignorar", "I")
+        self.btn_play = KeyButton("Ouvir 5 s", "Espaço")
+        self.btn_edit = KeyButton("Editar pessoa", "E")                     # U-041: a ficha da pessoa desta voz
         self.btn_edit.clicked.connect(self.edit_current)
         self.btn_transcript = QPushButton("Ver transcrição")
         self.btn_finish = QPushButton("Concluir")
         self.btn_identify = QPushButton("Identidade por contexto de novo")     # F3.1 R3-05: `identify` sob demanda
-        self.btn_identify.clicked.connect(lambda: self.regenerate(JobStep.IDENTIFY))
+        self.btn_identify.clicked.connect(self._identify_clicked)
+        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore, self.btn_play,
+                  self.btn_edit, self.btn_transcript, self.btn_finish, self.btn_identify):
+            b.setAutoDefault(False)                        # U-086: o Enter fica com a lista (U-006); nenhum vira o padrão sozinho
         self.btn_confirm.clicked.connect(self._confirm_clicked)
         self.btn_llm.clicked.connect(self.accept_llm_current)
         self.btn_other.clicked.connect(self.ask_other_person)
@@ -93,20 +88,24 @@ class ReviewDialog(QDialog):
         self.btn_play.clicked.connect(self.play_current)
         self.btn_transcript.clicked.connect(self._open_transcript)
         self.btn_finish.clicked.connect(self.finish)
-        row1, row2 = QHBoxLayout(), QHBoxLayout()
-        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore):
-            row1.addWidget(b)
-        row2.addWidget(self.btn_play)
-        row2.addWidget(self.btn_edit)
-        row2.addWidget(self.btn_identify)
-        row2.addStretch(1)
-        row2.addWidget(self.btn_transcript)
-        row2.addWidget(self.btn_finish)
+        column = QVBoxLayout()                             # U-086: as ações da voz numa coluna, a tecla em selo
+        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore, self.btn_play,
+                  self.btn_edit):
+            column.addWidget(b)
+        column.addSpacing(12)
+        column.addWidget(self.btn_identify)
+        column.addStretch(1)
+        body = QHBoxLayout()
+        body.addWidget(self.list, 1)
+        body.addLayout(column)
+        foot = QHBoxLayout()
+        foot.addWidget(self.btn_transcript)
+        foot.addStretch(1)
+        foot.addWidget(self.btn_finish)
         voices = QWidget()
         vlay = QVBoxLayout(voices)
-        vlay.addWidget(self.list, 1)
-        vlay.addLayout(row1)
-        vlay.addLayout(row2)
+        vlay.addLayout(body, 1)
+        vlay.addLayout(foot)
         self.tabs = QTabWidget()
         self.tabs.addTab(voices, "Vozes")
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._text_edited, on_message=self.header.setText,
@@ -124,11 +123,12 @@ class ReviewDialog(QDialog):
         lay.addWidget(self.header)
         lay.addWidget(self.cost)
         lay.addWidget(self.tabs, 1)
-        self.list.itemDoubleClicked.connect(lambda _item: self.play_current())
-        self.list.currentRowChanged.connect(lambda _row: self._update_edit_button())
+        self.list.itemDoubleClicked.connect(self._double_clicked)          # R-06: métodos, não lambdas com `self`
+        self.list.currentRowChanged.connect(self._row_changed)
         if player is not None:
             player.state_changed.connect(self._on_player)
         self.reload(focus=True)
+        keep_until_destroyed(self)                         # R-06: a coleta de ciclos não a apaga antes do Qt
 
     # ---------------------------------------------------------------- índice da busca (F5)
     def _edited(self, now: bool = False) -> None:
@@ -150,6 +150,15 @@ class ReviewDialog(QDialog):
             if self.on_launch is not None:
                 self.on_launch(True)
         return job_id
+
+    def _identify_clicked(self) -> None:
+        self.regenerate(JobStep.IDENTIFY)
+
+    def _double_clicked(self, _item: QListWidgetItem) -> None:
+        self.play_current()
+
+    def _row_changed(self, _row: int) -> None:
+        self._update_edit_button()
 
     def _text_edited(self) -> None:
         if self.on_edited is not None:
@@ -177,14 +186,12 @@ class ReviewDialog(QDialog):
         self.reloads += 1
         current = keep if keep is not None else self.current_cluster_id()
         self.items = review.review_items(self.store, self.meeting_id)
+        self.names = voice_names(self.store, self.meeting_id)
         self.list.clear()
         for it in self.items:
-            item = QListWidgetItem(f"{it.title} · {it.minutes_text} · {it.summary()}")
-            item.setData(Qt.ItemDataRole.UserRole, it.cluster_id)
-            if it.pending and it.merged_into is None:
-                item.setData(TONE_ROLE, PENDING_TONE.value)  # F5.4 (A-05): a cor sai do tema na pintura
-            self.list.addItem(item)
+            self.list.addItem(card_item(it, self.names))   # U-086: o cartão com o estado em selo
         waiting = review.pending(self.items)
+        stage_primary(self.btn_confirm if waiting else self.btn_finish, (self.btn_confirm, self.btn_finish))
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else
                             f"{len(waiting)} voz(es) para confirmar. Enter aceita o pyannote, L a LLM; setas navegam.")
         self.btn_transcript.setEnabled(self.store.segments.count_segments(self.meeting_id) > 0)
@@ -249,121 +256,12 @@ class ReviewDialog(QDialog):
         self._next_pending()
         return True
 
-    def ask_other_person(self) -> None:
-        """"Outra pessoa": a lista mostra "Nome — Cargo · Empresa" e a escolha vai pelo id (homônimos, A-11)."""
-        people = self.store.people.list_people()
-        if not people:
-            self.ask_new_person()
-            return
-        labels = person_labels(people)
-        choice, ok = QInputDialog.getItem(self, "Outra pessoa", "Quem é esta voz?", labels, 0, False)
-        if ok and choice in labels:
-            self.confirm_current(int(people[labels.index(choice)]["id"]))
-
-    def ask_new_person(self) -> None:
-        """U-041: a ficha da pessoa (nome obrigatório; cargo, empresa e e-mail opcionais)."""
-        if self.current_item() is None:
-            return
-        dlg = PersonDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            data = dlg.data()
-            self.create_person(data.name, data.role, data.company, data.email)
-
-    def create_person(self, name: str, role: str = "", company: str = "", email: str = "") -> bool:
-        """Confirma a voz com a pessoa da ficha. Nome que já existe pergunta "é ela?" (pergunta 2 da F5.2): sim confirma a
-        existente; não cria outra pessoa com o mesmo nome; cancelar não faz nada."""
-        it = self.current_item()
-        if it is None:
-            return False
-        for twin in self.store.people.find_all_by_name(name):
-            answer = QMessageBox.question(self, "Nova pessoa", f"Já existe {person_data(twin).label()}. É ela?",
-                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                                          | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
-            if answer == QMessageBox.StandardButton.Yes:
-                log.info("revisão da reunião %s: o nome da ficha já existia; o usuário escolheu a pessoa %s",
-                         self.meeting_id, twin["id"])
-                return self.confirm_current(int(twin["id"]))
-            if answer != QMessageBox.StandardButton.No:
-                return False
-        try:
-            review.create_person(self.store, it.cluster_id, name, role, company, email)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._edited()
-        self._next_pending()
-        return True
-
-    # ---------------------------------------------------------------- ficha (U-041)
-    def editable_person(self) -> int | None:
-        """A pessoa da voz atual quando a voz já tem pessoa decidida (confirmada ou automática, A-12); senão None."""
-        it = self.current_item()
-        if it is None or it.person_id is None or it.status not in EDITABLE:
-            return None
-        return int(it.person_id)
-
-    def _update_edit_button(self) -> None:
-        pid = self.editable_person()
-        self.btn_edit.setEnabled(pid is not None)
-        self.btn_edit.setToolTip("editar a ficha (nome, cargo, empresa, e-mail) ou apagar a pessoa" if pid is not None
-                                 else "confirme a voz antes: só voz com pessoa decidida tem ficha a editar")
-
-    def edit_current(self) -> None:
-        """E: a ficha da pessoa da voz atual; salvar muda a ficha (e o cargo do dia nesta reunião), apagar pede confirmação."""
-        pid = self.editable_person()
-        if pid is None:
-            self.header.setText("Esta voz ainda não tem pessoa confirmada: confirme antes de editar a ficha.")
-            return
-        person = self.store.people.get_person(pid)
-        if person is None:
-            return
-        dlg = PersonDialog(self, data=person_data(person), can_delete=not person.get("is_me"))
-        code = dlg.exec()
-        if code == DELETE:
-            self.delete_person(pid, str(person["name"]))
-        elif code == QDialog.DialogCode.Accepted:
-            self.save_person(pid, dlg.data())
-
-    def save_person(self, person_id: int, data: PersonData) -> bool:
-        try:
-            meetings = review.edit_person(self.store, person_id, self.meeting_id, data.name, data.role, data.company, data.email)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._reindex(meetings)
-        self.reload(self.current_cluster_id(), focus=True)
-        return True
-
-    def delete_person(self, person_id: int, name: str) -> bool:
-        answer = QMessageBox.question(self, "Apagar pessoa", DELETE_TEXT.format(name=name),
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                                      QMessageBox.StandardButton.Cancel)
-        if answer != QMessageBox.StandardButton.Yes:
-            log.info("revisão da reunião %s: apagar a pessoa %s cancelado", self.meeting_id, person_id)
-            return False
-        try:
-            meetings = review.forget_person(self.store, person_id)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._reindex(meetings)
-        self._next_pending()
-        return True
-
-    def _reindex(self, meetings: list[int]) -> None:
-        """O falante entra no texto dos trechos da busca: as reuniões da pessoa reindexam (esta, pelo caminho de sempre)."""
-        for mid in meetings:
-            if mid == self.meeting_id:
-                self._edited()
-            elif self.on_edited is not None:
-                self.on_edited(mid, "review", now=True)
-
     def ask_merge(self) -> None:
         it = self.current_item()
         others = [o for o in self.items if o.cluster_id != (it.cluster_id if it else None) and o.merged_into is None]
         if it is None or not others:
             return
-        labels = [f"{o.title} · {o.summary()}" for o in others]
+        labels = [f"{self.names.title(o.cluster_id, o.title)} · {o.summary()}" for o in others]
         choice, ok = QInputDialog.getItem(self, "É a mesma pessoa que…", "Voz:", labels, 0, False)
         if ok and choice in labels:
             self.merge_into(others[labels.index(choice)].cluster_id)
@@ -401,7 +299,8 @@ class ReviewDialog(QDialog):
         if self.player is None:
             self.header.setText("Reprodução indisponível nesta janela.")
             return
-        self.player.play_from(self.meeting_id, t0, end_ms=t1, channel=channel, title=f"{it.title} (5 s)")
+        self.player.play_from(self.meeting_id, t0, end_ms=t1, channel=channel,
+                              title=f"{self.names.title(it.cluster_id, it.title)} (5 s)")
 
     def _on_player(self, st: object) -> None:
         """Sem dispositivo de saída ou sem o arquivo de áudio: o motivo no cabeçalho, como antes."""
@@ -450,6 +349,9 @@ class ReviewDialog(QDialog):
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.list and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent) and self.handle_key(event.key()):
+        """Enter, Espaço e as letras com o foco na lista. Lê a lista pelo `__dict__`: a coleta de ciclos pode limpar os
+        atributos da janela sem pai antes de o Qt apagá-la, e um filtro que falha ali derrubava o processo (F5.4 L4)."""
+        if (watched is self.__dict__.get("list") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent)
+                and self.handle_key(event.key())):
             return True
         return super().eventFilter(watched, event)

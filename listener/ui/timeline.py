@@ -73,6 +73,15 @@ def build_lanes(rows: Sequence[TranscriptRow], me_id: int | None) -> list[Lane]:
     return lanes
 
 
+def lane_of_rows(lanes: Sequence[Lane], count: int) -> list[int | None]:
+    """F5.4 L4 (U-081): o índice da faixa de cada fala, a cor do ponto dela na Transcrição (a mesma da faixa aqui)."""
+    out: list[int | None] = [None] * count
+    for i, lane in enumerate(lanes):
+        for r in lane.rows:
+            out[r] = i
+    return out
+
+
 def visible_slice(lane: Lane, t0: float, t1: float) -> tuple[int, int]:
     """[lo, hi) das falas da faixa que cruzam [t0, t1)."""
     lo = int(np.searchsorted(lane.reach, t0, side="right"))
@@ -172,5 +181,5 @@ class PlaybackFollower(QObject):
             self.moved.emit(t_ms)
 
 
-__all__ = ["Lane", "PlaybackFollower", "bar_at", "build_lanes", "follow_position", "merge_spans", "opening", "tick_step_ms",
-           "visible_slice"]
+__all__ = ["Lane", "PlaybackFollower", "bar_at", "build_lanes", "follow_position", "lane_of_rows", "merge_spans", "opening",
+           "tick_step_ms", "visible_slice"]

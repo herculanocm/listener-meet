@@ -222,7 +222,8 @@ def test_errors_without_device_without_audio_file_and_without_audio(store):
 
 
 def test_player_signals_guard_and_bar(qtbot, store):
-    from listener.ui.player import Player, PlayerBar
+    from listener.ui.player import Player
+    from listener.ui.player_bar import PlayerBar                  # F5.4 L4: a barra saiu do `ui/player.py`
 
     mid = _meeting(store, seconds=4, pause=None)
     permits = threading.Semaphore(0)

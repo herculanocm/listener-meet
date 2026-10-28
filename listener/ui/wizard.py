@@ -1,6 +1,10 @@
 """Assistente de primeira inicialização (D-026, D-029): dados do usuário, pasta do banco, chaves de acesso (U-038, D-054:
 a LLM escolhida com a chave e o token do Hugging Face, opcionais; `ui/keys.py`), arquivo e nível de log (D-033), teste do
-microfone; dica para fixar o ícone da bandeja (U-017)."""
+microfone; dica para fixar o ícone da bandeja (U-017).
+
+F5.4 L4 (U-088, A-21): o `QWizard.ModernStyle`, sem a faixa vazia do Aero; no cabeçalho, o título da página em 20 px e
+"Passo n de 6" em legenda (o texto que explicava a página desce para o começo dela); Próximo e Concluir como primários
+(U-056). O cabeçalho é privado do Qt: os rótulos dele são achados pelo texto, a cada troca de página."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +12,7 @@ from typing import TYPE_CHECKING, override
 
 import numpy as np
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QPushButton, QVBoxLayout, QWidget, QWizard, QWizardPage)
 
 from ..capture.audio import rms
@@ -20,12 +24,17 @@ from ..store import Store
 from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
 from .meters import LevelMeter
-from .theme import PRIMARY, Tone, set_kind, tone
+from .theme import FONT_PROP, PRIMARY, Tone, note, role, set_kind, tone
 
 if TYPE_CHECKING:
     from ..platform.base import AudioDevice, CaptureHandle, Platform
 
 log = get_logger("ui.wizard")
+WIZARD_SIZE = (720, 600)          # U-088: cabe a página mais alta (as chaves) a 100 % e a 150 %, dentro do notebook (A-17)
+
+
+def step_text(n: int, total: int) -> str:
+    return f"Passo {n} de {total}"
 
 
 class IntroPage(QWizardPage):
@@ -190,11 +199,17 @@ class MicPage(QWizardPage):
         self._level = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(100)
-        self._timer.timeout.connect(lambda: self.meter.set_rms(self._level))
+        self._timer.timeout.connect(self._tick)                 # R-06: métodos, não lambdas com `self`
         self._devices_timer = QTimer(self)                  # U-043: fone conectado com o assistente aberto
         self._devices_timer.setInterval(REFRESH_MS)
         self._devices_timer.timeout.connect(self._refresh_devices)
-        self.combo.currentIndexChanged.connect(lambda _: self._open())
+        self.combo.currentIndexChanged.connect(self._device_chosen)
+
+    def _tick(self) -> None:
+        self.meter.set_rms(self._level)
+
+    def _device_chosen(self, _index: int) -> None:
+        self._open()
 
     @override
     def initializePage(self) -> None:
@@ -269,7 +284,9 @@ class FirstRunWizard(QWizard):
         self.platform = platform
         self.store: Store | None = None
         self.setWindowTitle("listener-meet — primeira inicialização")
-        self.setMinimumSize(640, 440)
+        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)    # U-088: sem a faixa vazia do Aero
+        self.setMinimumSize(640, 480)
+        self.resize(*WIZARD_SIZE)
         self.addPage(IntroPage())
         self.user_page = UserPage()
         self.addPage(self.user_page)
@@ -283,6 +300,37 @@ class FirstRunWizard(QWizard):
         self.addPage(self.mic_page)
         for which in (QWizard.WizardButton.NextButton, QWizard.WizardButton.FinishButton):   # F5.4 (U-056): o primário
             set_kind(self.button(which), PRIMARY)
+        self._steps()
+        self.currentIdChanged.connect(self._style_header)
+
+    def _steps(self) -> None:
+        """U-088: "Passo n de 6" no subtítulo de cada página; o texto que explicava a página vai para o começo dela."""
+        pages = [self.page(i) for i in self.pageIds()]
+        for n, page in enumerate(pages, 1):
+            text = page.subTitle()
+            page.setSubTitle(step_text(n, len(pages)))
+            lay = page.layout()
+            if not text or lay is None:
+                continue
+            intro = QLabel(text)
+            intro.setWordWrap(True)
+            if isinstance(lay, QFormLayout):
+                lay.insertRow(0, intro)
+            elif isinstance(lay, QBoxLayout):
+                lay.insertWidget(0, intro)
+
+    def _style_header(self, _page_id: int) -> None:
+        """U-088: o título em 20 px e o passo em legenda, nos rótulos do cabeçalho do `ModernStyle` (achados pelo texto)."""
+        page = self.currentPage()
+        if page is None:
+            return
+        for label in self.findChildren(QLabel):
+            if isinstance(label.parentWidget(), QWizardPage) or not label.text():
+                continue
+            if label.text() == page.title() and label.property(FONT_PROP) != "subtitle":
+                role(label, "subtitle")
+            elif label.text() == page.subTitle() and label.property(FONT_PROP) != "caption":
+                note(label)
 
     @override
     def accept(self) -> None:

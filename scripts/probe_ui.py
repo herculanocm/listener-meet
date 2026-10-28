@@ -16,7 +16,7 @@ tempos     a abertura das janelas (warm-up, Configurações, reunião, Históric
            noutro: cada filho fica preso aos núcleos da classe de eficiência mais alta (`GetSystemCpuSetInformation`).
            F5.4 L2: o `fit_to_screen` do warm-up (A-17) traria a janela para a tela, onde o Windows a pintaria (a base não
            tem isso): a sonda o troca pelo mesmo cálculo sem mover (`fit_offscreen`), e o custo dele segue medido. L3: o
-           mesmo nas Configurações e na fila (`FITTED`).
+           mesmo nas Configurações e na fila (`FITTED`); L4, na reunião e no Histórico.
 cortados   rótulo, botão, aba, cabeçalho de tabela ou título de cartão (L1b) com o texto maior que o espaço; o cortado de
            propósito, com reticências e o texto inteiro na dica, não conta.
 pequenos   o alvo de clique do Aceite 3: botão, campo e combo abaixo de 32 por 32 px; caixa de seleção abaixo de 24 px.
@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 WINDOWS = ("warmup", "configuracoes", "reuniao", "historico", "fila", "revisao")
-FITTED = ("listener.ui.warmup", "listener.ui.settings_min", "listener.ui.queue")   # quem chama o `fit_to_screen` (A-17)
+FITTED = ("listener.ui.warmup", "listener.ui.settings_min", "listener.ui.queue", "listener.ui.meeting", "listener.ui.history")  # A-17
 ROUNDS, RUNS, TICKS = 7, 3, 300
 TARGET_PX, CHECK_PX = 32, 24          # Aceite 3: botão, campo e combo; caixa de seleção
 CARD_TITLE_INSET = 6                  # a folga à direita do título do cartão (o `TITLE_INSET` de `ui/style.py`)

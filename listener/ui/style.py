@@ -11,7 +11,8 @@ dos testes) que pinta o que a paleta não alcança, com os tokens do tema (`ui/t
   (`TONE_ROLE`) vira a cor do texto na hora da pintura (a troca de tema não deixa cor velha).
 - A-06: o grupo como cartão (preenchido em `card`, borda `stroke_card`, raio 8, o título dentro); as abas sublinhadas em
   `accent`; a borda `danger` no campo, combo e spin com a propriedade `invalid`; o anel de foco de 2 px só com
-  `State_KeyboardFocusChange` (U-055). O indicador da caixa de seleção fica com a base: a sonda no escuro forçado não
+  `State_KeyboardFocusChange` (U-055); o campo com `theme_flat` (o título da reunião, U-078) sem moldura nem fundo até o
+  foco ou o mouse. O indicador da caixa de seleção fica com a base: a sonda no escuro forçado não
   mostrou o defeito do A-06.
 - `polish(widget)`: as alturas mínimas (Aceite 3), só nos controles medidos (`SIZED`; o resto sai sem chamada ao C++):
   botão, campo, combo e spin com 32 px e botão com 32 de largura; caixa de seleção e rádio com 24 (o `pequenos` da sonda
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 PE, CE, CC, SC = QStyle.PrimitiveElement, QStyle.ControlElement, QStyle.ComplexControl, QStyle.SubControl
 St = QStyle.StateFlag
 POLISHED_PROP = "theme_polished"
+FLAT_PROP = "theme_flat"                          # L4 (U-078): o campo sem moldura nem fundo até o foco ou o mouse
 INTERNAL_PARENTS = (QLineEdit, QComboBox, QAbstractSpinBox, QTabBar, QScrollBar, QAbstractItemView)
 TITLE_INSET = 6                                   # o título do cartão desce da borda de cima (px lógicos)
 SIZED = (QGroupBox, QPushButton, QToolButton, QLineEdit, QComboBox, QAbstractSpinBox, QCheckBox, QRadioButton)   # o que o polish mede
@@ -113,6 +115,9 @@ class ThemeStyle(QProxyStyle):
             if not idle:                                    # o botão sem moldura (o "✕" do aviso) só ganha fundo sob o mouse
                 rounded(painter, QRectF(option.rect), self.tokens.metrics.radius, flat_fill(self._tokens(widget), option.state))
             return
+        if (element == PE.PE_PanelLineEdit and widget is not None and widget.property(FLAT_PROP)
+                and not option.state & (St.State_HasFocus | St.State_MouseOver)):
+            return                                          # U-078: o título da reunião, sem moldura até o foco
         if element == PE.PE_PanelLineEdit and self._on_surface(widget):
             t = self._tokens(widget)
             rounded(painter, QRectF(option.rect), t.metrics.radius, t.input, t.stroke_strong)
@@ -295,4 +300,4 @@ def _card_room(box: QGroupBox) -> None:
     lay.setContentsMargins(max(m.left(), TITLE_INSET + 2), m.top() + TITLE_INSET, max(m.right(), TITLE_INSET + 2), m.bottom())
 
 
-__all__ = ["POLISHED_PROP", "ThemeStyle", "flat_fill", "kind_fill", "min_size", "rounded"]
+__all__ = ["FLAT_PROP", "POLISHED_PROP", "ThemeStyle", "flat_fill", "kind_fill", "min_size", "rounded"]

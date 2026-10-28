@@ -19,7 +19,7 @@ from ..log import get_logger
 from ..model import JobKind
 from ..pipeline import reprocess
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
-from .theme import Tone, tone
+from .theme import note
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -89,7 +89,7 @@ class MeetingLanguage(QWidget):
         self.target = other(None)                        # o idioma que o botão oferece agora
         self.label = QLabel("")
         self.label.setObjectName("meetingInfo")
-        tone(self.label, Tone.SECONDARY)
+        note(self.label)                                 # F5.4 L4 (U-078): os fatos do cabeçalho em legenda
         self.button = QPushButton("")
         self.button.clicked.connect(self.ask_change)
         lay = QHBoxLayout(self)

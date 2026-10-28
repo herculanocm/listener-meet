@@ -16,7 +16,11 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               L3: cada página das Configurações (a parte à vista e a
                                                               página inteira), as sub-abas dos provedores, o erro de
                                                               validação na página, e a fila nos seis estados e com o
-                                                              aviso; quem usa o `fit_to_screen` cabe no notebook
+                                                              aviso; quem usa o `fit_to_screen` cabe no notebook;
+                                                              L4 (`scripts/probe_l4.py`): a reunião com dados em todas as
+                                                              abas (pipeline falso), a ata em edição e os estados vazios, o
+                                                              Histórico com a busca, a revisão e a ficha, cada passo do
+                                                              assistente e o Ao vivo
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -370,11 +374,10 @@ def cmd_shots(args) -> None:
         app.styleHints().setColorScheme(scheme)
     from listener.platform import get_platform
     from listener.store import Store
+    from listener.ui import history as history_module
+    from listener.ui import meeting as meeting_module
     from listener.ui.common import install_translations
-    from listener.ui.history import HistoryWindow
-    from listener.ui.meeting import MeetingWindow
     from listener.ui.notices import Notice, NoticeAction, NoticeKind, Target
-    from listener.ui.player import Player
     from listener.ui.queue import BUTTON_HELP, COLUMN_HELP, QueueDialog
     from listener.ui.queue_help import QueueHelpDialog
     from listener.ui.summary import SummaryDialog
@@ -385,7 +388,7 @@ def cmd_shots(args) -> None:
     from listener.ui.toast import Toast
     from listener.ui.warmup import WarmupDialog
     from listener.ui.widget import MarkerPopup
-    from listener.ui.wizard import FirstRunWizard
+    from probe_l4 import l4_shots
 
     install_translations(app)
     p = get_platform()
@@ -407,7 +410,7 @@ def cmd_shots(args) -> None:
         if (width, height) != (g.width(), g.height()):
             w.resize(width, height)
 
-    for module in (warmup_module, settings_module, queue_module):
+    for module in (warmup_module, settings_module, queue_module, meeting_module, history_module):
         module.fit_to_screen = probe_fit
 
     def shot(w, name: str) -> None:
@@ -451,16 +454,10 @@ def cmd_shots(args) -> None:
     store = Store(Path(tempfile.mkdtemp(prefix="listener-shots-db-")))
     store.upsert_me("Teste")
     store.seed_default_presets()
-    for make, name in ((lambda: FirstRunWizard(p, None), "assistente"), (lambda: WarmupDialog(p, store), "warmup"),
-                       (lambda: MarkerPopup(12.0, p), "marcador")):
+    for make, name in ((lambda: WarmupDialog(p, store), "warmup"), (lambda: MarkerPopup(12.0, p), "marcador")):
         w = make()
         shot(w, name)
         discard(w)
-    wiz = FirstRunWizard(p, None)                         # U-038: a página das chaves, aberta direto (sem validar as anteriores)
-    wiz.setStartId(wiz.pageIds()[[wiz.page(i) for i in wiz.pageIds()].index(wiz.keys_page)])
-    wiz.restart()
-    shot(wiz, "assistente-chaves")
-    discard(wiz)
     widget_shots(p, shot)                                 # F5.4 L2: cada estado e cada alerta
     devices_shots(p, shot)                                # F5.3 L4: o painel
     settings_shots(store, p, shot, part, app)              # F5.4 L3: cada página, as sub-abas e o erro
@@ -473,16 +470,7 @@ def cmd_shots(args) -> None:
     su = SummaryDialog(store, mid, {"duration_s": 3725.0, "warnings": []})
     shot(su, "resumo-gravacao-marcadores")
     discard(su)
-    player = Player(store)
-    mw = MeetingWindow(store, mid, player=player)
-    shot(mw, "reuniao")
-    tabs_of(mw, "reuniao")
-    discard(mw)
-    hw = HistoryWindow(store)
-    shot(hw, "historico")
-    tabs_of(hw, "historico")
-    hw.page.shutdown()
-    discard(hw)
+    l4_shots(store, p, shot, tabs_of, app, Path(tempfile.mkdtemp(prefix="listener-shots-l4-")))   # F5.4 L4
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")
@@ -506,7 +494,6 @@ def cmd_shots(args) -> None:
         toast.set_private(private)
         shot(toast, name)
         discard(toast)
-    player.shutdown()
     tray = tray_sheet(out_dir)                            # F5.4 L2 (U-070): a bandeja nos dois temas da barra
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)   # R-06: as janelas apagadas antes do banco fechar
     store.close()
