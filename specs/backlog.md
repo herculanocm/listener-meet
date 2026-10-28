@@ -2,9 +2,12 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (27/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Próximo passo, comece aqui:** o dono testa a F5.2 pela Parte 10 do roteiro (fone conectado com o app aberto, ficha
-  da pessoa, a ata depois da identificação, log em DEBUG) e segue as partes 1 a 9: primeiro
+## Onde paramos (28/10/2026, Windows nativo; tudo commitado; push do dono)
+- **Em curso: F5.4, design das telas** (pedido do dono em 28/10, spec aprovada antes de escrita): um especialista em
+  UI/UX escreve a spec a partir dos prints reais e a LLM implementa em lotes, como na F5.3.
+- **Próximo passo do dono:** testar a F5.3 pela Parte 11 do roteiro (idioma, fila, aviso, fone no meio da gravação) e a
+  F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
+  da pessoa, a ata depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
   uso, chaves, gravação curta de ponta a ponta, reunião aberta, busca com o Gemini, busca local, ao vivo, reuniões reais
   e situações de borda) e devolve o que cada parte pede; a LLM registra os números em `decisoes.md`, marca aqui e
   corrige o que aparecer (pedido do dono, 25/10: a LLM roda sozinha o que não depende dele e o acompanha no resto). Sem
@@ -12,7 +15,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   chaves (D-053):** segue pela Parte 2, agora no grupo "Chaves de acesso", e refaz a Parte 3 numa chamada de verdade. A
   pasta do banco daquele teste (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 de 26/10, fora da Lixeira e sem
   nenhum processo da LLM nela (os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`): perguntar ao dono.
-- **Concluído em 25 e 26/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
+- **Concluído de 25 a 28/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
   - [x] F5: R7 e R8 e o fechamento (**F5 implementada**: `af2ea3d`, `6e0f235`, `b21d675`).
   - [x] "Verificar no Windows" sem o dono: itens 1 e 2 inteiros e a parte sem o dono dos itens 3, 5, 7, 8 e 9, com seis
         defeitos corrigidos (ctypes duas vezes, corrida do worker leve, isolamento dos testes, tradução do Qt, largura
@@ -49,8 +52,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         vigia do laço faz o worker sair e o app o relança (`4bcc056`).
   - [x] D-059, a pedido do dono: logs para acompanhar e validar cada execução, com a convenção em `ARCHITECTURE.md`
         (`4d4102d`, `3f1cb65`); o terminal fechado com o app aberto passa a deixar a linha no log (conferido).
-- **Em curso: F5.3** (`features/F5.3-idioma-fila-avisos-dispositivos.md`, D-060): spec aprovada em 27/10 com a revisão
-  de arquitetura (A-01 a A-23); implementação em L1 idioma, L2 fila, L3 avisos e L4 dispositivos, um commit por lote.
+  - [x] **F5.3 implementada** (27 e 28/10, `features/F5.3-idioma-fila-avisos-dispositivos.md`, D-060): spec e revisão de
+        arquitetura (`65fbbe7`), L1 idioma (`7f7225a`, `6f82acc`), L2 fila (`64e0a84`, `2239385`), L3 avisos (`a4e5fe9`),
+        L4 dispositivos (`5532083`) e a revisão do diff, R-01 a R-11 (`1996d4e`); no caminho, o log drenado na saída de
+        todo processo (`4d28d50`) e a queda 0xC0000409 na saída da suíte. Falta o dono verificar no Windows (Parte 11).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -72,8 +77,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
-## Estado em 27/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1 e **F5.2 implementadas**: 498 testes mais 7 pulados no Windows com
+## Estado em 28/10/2026
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2 e **F5.3 implementadas**: 585 testes mais 7 pulados no Windows com
   `--tudo` (55 a 87 s; a rápida, ~345 mais 6, ~25 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.

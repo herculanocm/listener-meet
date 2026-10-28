@@ -5,7 +5,7 @@ implementadas na F1.1 (D-035); U-024 e U-026 a U-029 implementadas na F5 (D-047)
 F5.1 (26/10); U-030 a U-033, vistas no Windows, aprovadas e implementadas em 26/10 (D-049); U-034 a U-036 propostas nas
 telas da F5.1 (26/10); U-037 e U-038 pedidas pelo dono no primeiro teste e implementadas (D-053, D-054); U-039 e
 U-040 do segundo teste (D-055); U-041 a U-043 do brainstorm de 27/10, aprovadas (D-057) e implementadas na F5.2;
-U-044 a U-051 na F5.3, aprovadas (D-060), quatro delas pedidas pelo dono.
+U-044 a U-051 aprovadas (D-060) e implementadas na F5.3, quatro delas pedidas pelo dono.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -51,11 +51,11 @@ Tamanho-alvo: 3 KB.
 | U-041 | Ficha da pessoa ao nomear a voz: nome, cargo, empresa e e-mail; editar e apagar pessoa; a LLM e a busca com o cargo de quem fala (o e-mail fica local) | Revisão | implementada (F5.2) |
 | U-042 | A ata, o executivo, o pré-resumo e o título só depois de as vozes serem identificadas (a identidade por contexto e a transcrição revisada saem antes), com "Gerar ata mesmo assim"; "Atualizar a ata com os nomes" quando eles mudam depois | Revisão, Reunião aberta | implementada (F5.2) |
 | U-043 | Dispositivo de áudio conectado com o app aberto (fone Bluetooth) aparece sem reiniciar; o "Antes de gravar" atualiza a lista sozinho | Warm-up, Assistente | implementada (F5.2) |
-| U-044 | Idioma padrão nas Configurações (pt-BR ou en) para transcrição, legenda ao vivo e LLM | Configurações | aprovada (F5.3, D-060; pedido do dono) |
-| U-045 | Idioma da reunião no "Antes de gravar", com o padrão já escolhido | Warm-up | aprovada (F5.3, D-060) |
-| U-046 | Trocar o idioma de uma reunião gravada e reprocessar nele (transcrição e ata) | Reunião aberta | aprovada (F5.3, D-060) |
-| U-047 | Fila com a coluna "Enviado", a porcentagem como barra colorida pelo estado e o botão Ajuda (o que cada tipo e etapa faz) | Fila | aprovada (F5.3, D-060; pedido do dono) |
-| U-048 | Aviso do próprio app que some sozinho quando algo fica pronto (ata, resumo, processamento, erro), sem o título durante a gravação | Canto da tela | aprovada (F5.3, D-060; pedido do dono) |
-| U-049 | Trocar microfone e saída gravada durante a gravação, pelo painel Dispositivos do widget, com os aparelhos conectados no meio dela | Widget | aprovada (F5.3, D-060; pedido do dono) |
-| U-050 | "novo: <nome>" com "Usar" no widget quando um aparelho chega durante a gravação | Widget | aprovada (F5.3, D-060) |
-| U-051 | Uma linha "Sistema inteiro: <saída>" por saída ativa na tabela de fontes | Warm-up | aprovada (F5.3, D-060) |
+| U-044 | Idioma padrão nas Configurações (pt-BR ou en) para transcrição, legenda ao vivo e LLM | Configurações | implementada (F5.3; pedido do dono) |
+| U-045 | Idioma da reunião no "Antes de gravar", com o padrão já escolhido | Warm-up | implementada (F5.3) |
+| U-046 | Trocar o idioma de uma reunião gravada e reprocessar nele (transcrição e ata) | Reunião aberta | implementada (F5.3) |
+| U-047 | Fila com a coluna "Enviado", a porcentagem como barra colorida pelo estado e o botão Ajuda (o que cada tipo e etapa faz) | Fila | implementada (F5.3; pedido do dono) |
+| U-048 | Aviso do próprio app que some sozinho quando algo fica pronto (ata, resumo, processamento, erro), sem o título durante a gravação | Canto da tela | implementada (F5.3; pedido do dono) |
+| U-049 | Trocar microfone e saída gravada durante a gravação, pelo painel Dispositivos do widget, com os aparelhos conectados no meio dela | Widget | implementada (F5.3; pedido do dono) |
+| U-050 | "novo: <nome>" com "Usar" no widget quando um aparelho chega durante a gravação | Widget | implementada (F5.3) |
+| U-051 | Uma linha "Sistema inteiro: <saída>" por saída ativa na tabela de fontes | Warm-up | implementada (F5.3) |

@@ -167,6 +167,27 @@ Antes: Configurações › Log no nível DEBUG (D-059: cada execução fica no l
 - Devolva: os quatro logs (`listener.log`, `listener-worker.log`, `listener-llm.log`, `listener-live.log`) e o que não se
   comportou assim.
 
+## Parte 11 — F5.3: idioma, fila, avisos e dispositivos na gravação (30 min)
+Antes: log em DEBUG; um fone (Bluetooth ou USB) desligado à mão; para o aviso e os dispositivos, uma chamada no Teams.
+- [ ] Configurações › "Idioma e avisos": o padrão é Português. No "Antes de gravar", "Idioma da reunião" já vem com ele;
+      o microfone começa em "Padrão do Windows (acompanha)" e a tabela de fontes tem uma linha "Sistema inteiro" por
+      saída. Grave 2 min falando inglês com o combo em Inglês: legenda, transcrição e ata saem em inglês; o
+      `listener-worker.log` diz "transcrição em en (o da reunião)" e nada de idioma detectado.
+- [ ] Na reunião aberta, o cabeçalho diz "Idioma: en"; "Trocar para Português (pt-BR)…" pergunta com o tempo e o custo;
+      confirme e veja "en → pt-BR (reprocessando)" até o fim; a ata nova sai em português e a anterior vira versão
+      anterior. Salve o .docx: o Word revisa no idioma da ata.
+- [ ] Fila: a coluna "Enviado" com dia e hora; a barra azul andando no job que roda, verde no concluído, vermelha no erro;
+      "Ajuda" explica cada tipo e etapa.
+- [ ] Avisos: ao fim do processamento e da ata, um aviso no canto da tela some sozinho em ~6 s (o mouse em cima segura; o
+      clique abre a reunião). Compartilhando a tela no Teams, quem está do outro lado não vê o aviso.
+- [ ] Dispositivos: grave com "Sistema inteiro" e o som nos alto-falantes; conecte o fone no meio: em até 3 s o widget diz
+      "novo: <fone>" com "Usar", que troca o microfone e abre o painel com as saídas do fone primeiro; o botão 🎧 abre o
+      mesmo painel. Troque a saída gravada para o fone (ou, em "acompanha", veja a troca sozinha quando o Windows passar
+      o som para ele). A gravação não para; na reunião aberta, o silêncio da troca fica abaixo de 1,5 s com fio e de 3 s
+      com Bluetooth. Gravando com o mudo ligado, o fone fica mudo e o microfone antigo volta.
+- [ ] Desligue o fone escolhido: o widget avisa e volta ao padrão; religue: a gravação volta para o fone sozinha.
+- Devolva: os quatro logs e o que não se comportou assim.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
