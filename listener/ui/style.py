@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 PE, CE, CC, SC = QStyle.PrimitiveElement, QStyle.ControlElement, QStyle.ComplexControl, QStyle.SubControl
 St = QStyle.StateFlag
+SHAPED_FRAME = CE.CE_ShapedFrame                  # a moldura de todo `QFrame` (cada rótulo): uma por pintura de rótulo
 POLISHED_PROP = "theme_polished"
 FLAT_PROP = "theme_flat"                          # L4 (U-078): o campo sem moldura nem fundo até o foco ou o mouse
 INTERNAL_PARENTS = (QLineEdit, QComboBox, QAbstractSpinBox, QTabBar, QScrollBar, QAbstractItemView)
@@ -123,6 +124,11 @@ class ThemeStyle(QProxyStyle):
     @override
     def drawControl(self, element: QStyle.ControlElement, option: QStyleOption, painter: QPainter,
                     widget: QWidget | None = None) -> None:
+        if element == SHAPED_FRAME:                          # o mais frequente: direto para a base, antes dos outros
+            super().drawControl(element, option, painter, widget)
+            if widget is not None and widget.property(INVALID_PROP):
+                self._invalid_border(option.rect, painter)      # R-09: a tabela de preços com erro
+            return
         if element == CE.CE_ItemViewItem and isinstance(option, QStyleOptionViewItem):
             self._item(option, painter, widget)
         elif element == CE.CE_PushButtonBevel and isinstance(option, QStyleOptionButton):
@@ -135,8 +141,6 @@ class ThemeStyle(QProxyStyle):
             self._tab_shape(option, painter)
         else:
             super().drawControl(element, option, painter, widget)
-            if element == CE.CE_ShapedFrame and widget is not None and widget.property(INVALID_PROP):
-                self._invalid_border(option.rect, painter)      # R-09: a tabela de preços com erro
 
     def _item(self, option: QStyleOptionViewItem, painter: QPainter, widget: QWidget | None) -> None:
         """A-05: a linha selecionada em `selected` (cada célula pinta a sua parte) e o tom do item na cor do texto; a célula

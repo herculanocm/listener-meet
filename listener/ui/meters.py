@@ -5,11 +5,10 @@ sobre o cartão) e as zonas por dBFS, em faixas de cor sem degradê: verde até 
 escala de `common.level_fraction` (piso em -60 dBFS). O pico fica num traço na cor do texto."""
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import override
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QLinearGradient, QPainter, QPaintEvent
+from PySide6.QtGui import QBrush, QLinearGradient, QPainter, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
 from .common import level_fraction
@@ -34,9 +33,8 @@ def zone_stops(t: Tokens) -> tuple[tuple[float, str], ...]:
             (1.0, t.danger))
 
 
-@lru_cache(maxsize=4)
 def track_color(t: Tokens) -> str:
-    """O trilho nos tokens `t`, em cache (a conta custava ~8 µs a cada pintura, duas por tique do widget)."""
+    """O trilho nos tokens `t` (o medidor guarda o pincel dele enquanto os tokens forem os mesmos, `_track_and_peak`)."""
     return mix(t.stroke, t.stroke_strong, TRACK_MIX)
 
 
@@ -47,6 +45,7 @@ class LevelMeter(QWidget):
         self._peak = 0.0
         self._gradient: QLinearGradient | None = None
         self._gradient_key: tuple[int, int, Tokens] | None = None
+        self._brushes: tuple[Tokens, QBrush, QBrush] | None = None     # os tokens, o trilho e o pico
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
         self.setMinimumWidth(60)
@@ -70,6 +69,14 @@ class LevelMeter(QWidget):
             self._gradient, self._gradient_key = g, key
         return self._gradient
 
+    def _track_and_peak(self, t: Tokens) -> tuple[QBrush, QBrush]:
+        """O pincel do trilho e o do pico nos tokens `t`, guardados enquanto os tokens forem o mesmo objeto (a troca de tema
+        traz outro): sem o hash dos tokens, que o `lru_cache` refazia, nem dois `QColor` a cada pintura (quatro por tique
+        do widget)."""
+        if self._brushes is None or self._brushes[0] is not t:
+            self._brushes = (t, QBrush(qcolor(track_color(t))), QBrush(qcolor(t.text, PEAK_ALPHA)))
+        return self._brushes[1], self._brushes[2]
+
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
         t = surface_tokens(self)
@@ -78,7 +85,8 @@ class LevelMeter(QWidget):
         r = self.rect()
         radius = min(3.0, r.height() / 2)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(qcolor(track_color(t)))
+        track, peak = self._track_and_peak(t)
+        p.setBrush(track)
         p.drawRoundedRect(r, radius, radius)
         if self._fraction > 0:
             p.setBrush(self._gradient_for(r.left(), r.right(), t))
@@ -86,6 +94,6 @@ class LevelMeter(QWidget):
             p.drawRoundedRect(r.left(), r.top(), max(2, w), r.height(), radius, radius)
         if self._peak > 0:
             x = r.left() + int(r.width() * self._peak)
-            p.setBrush(qcolor(t.text, PEAK_ALPHA))
+            p.setBrush(peak)
             p.drawRect(max(r.left(), x - 1), r.top(), 2, r.height())
         p.end()
