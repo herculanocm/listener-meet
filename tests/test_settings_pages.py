@@ -62,24 +62,73 @@ def test_validation_error_opens_the_page_marks_the_field_and_explains_in_a_bar(q
 
     boxes: list[Any] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: boxes.append(a))
-    store.set_setting("rag.top_k", "99")                                 # fora da faixa: só um banco editado à mão
     dlg = _dialog(qtbot, store, platform)
-    top_k = dlg.editor("rag.top_k")
-    assert isinstance(top_k, IntEditor) and top_k.spin.value() == 12     # o spin mostra o padrão, que é o que o app usa
+    params = dlg.provider_tabs.tab_by_id["gemini"].params                # o erro de uma sub-aba: abre a página LLM
+    params.setText("{não é json")
     dlg._save()
-    assert dlg.stack.currentWidget() is dlg.page("Busca") and top_k.spin.property("invalid")
-    assert "Trechos por pergunta" in dlg.error_bar.label.text() and not dlg.error_bar.isHidden() and boxes == []
-    assert dlg.result() != dlg.DialogCode.Accepted and store.get_setting("rag.top_k") == "99"   # nada gravado
-    top_k.spin.setValue(10)
+    assert dlg.stack.currentWidget() is dlg.page("LLM") and params.property("invalid")
+    assert "parâmetros não são JSON" in dlg.error_bar.label.text() and not dlg.error_bar.isHidden() and boxes == []
+    assert dlg.result() != dlg.DialogCode.Accepted
+    params.setText("")
     mark = dlg.editor("hotkeys.mark")                                    # A-14: o erro de texto num campo de texto
     assert isinstance(mark, TextEditor)
     mark.edit.setText("ctrl+ç")
     dlg._save()                                                          # a marca anterior sai; a nova página abre
-    assert dlg.stack.currentWidget() is dlg.page("Atalhos") and mark.edit.property("invalid") and not top_k.spin.property("invalid")
+    assert dlg.stack.currentWidget() is dlg.page("Atalhos") and mark.edit.property("invalid") and not params.property("invalid")
     assert "tecla desconhecida" in dlg.error_bar.label.text()
+    top_k = dlg.editor("rag.top_k")
+    assert isinstance(top_k, IntEditor)
+    top_k.spin.setValue(10)
     mark.edit.setText("ctrl+alt+shift+m")
     dlg._save()
     assert dlg.result() == dlg.DialogCode.Accepted and store.get_setting("rag.top_k") == "10" and boxes == []
+
+
+def test_the_mark_leaves_when_the_value_changes_also_in_the_price_table(qtbot, store, platform):
+    """Revisão da F5.4 (R-09): a marca de erro sai quando o usuário mexe no campo (campo de texto, spin, lista e a tabela de
+    preços); a faixa fica com o motivo até o próximo Salvar."""
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    dlg = _dialog(qtbot, store, platform)
+    tab = dlg.provider_tabs.tab_by_id["gemini"]
+    tab.prices.setItem(0, 1, QTableWidgetItem("abc"))
+    dlg._save()
+    assert dlg.stack.currentWidget() is dlg.page("LLM") and tab.prices.property("invalid")
+    assert "preço inválido" in dlg.error_bar.label.text()
+    tab.prices.item(0, 1).setText("1.5")
+    assert tab.prices.property("invalid") is None and not dlg.error_bar.isHidden()
+    for widget, change in ((dlg.editor("hotkeys.mark").widget, "setText"), (dlg.editor("rag.top_k").widget, "setValue"),
+                           (dlg.editor("log.level").widget, "setCurrentIndex")):
+        dlg.show_problem("motivo", widget)
+        assert widget.property("invalid")
+        getattr(widget, change)({"setText": "ctrl+alt+shift+k", "setValue": 9, "setCurrentIndex": 0}[change])
+        assert widget.property("invalid") is None, change
+
+
+# ---------------------------------------------------------------- R-04: o valor salvo que a `SPECS` recusa
+def test_an_invalid_saved_value_shows_the_default_warns_on_the_page_and_saves_it(qtbot, store, platform, caplog):
+    for key, raw in (("pipeline.threshold", "0.9"), ("log.level", "trace"), ("pipeline.auto_start", "talvez"),
+                     ("hotkeys.mark", "ctrl+ç")):
+        store.set_setting(key, raw)                                      # só um banco editado à mão chega a isso
+    with caplog.at_level(logging.INFO, logger="listener.ui.settings"):
+        dlg = _dialog(qtbot, store, platform)
+    threshold, level, auto = (dlg.editor(k) for k in ("pipeline.threshold", "log.level", "pipeline.auto_start"))
+    assert (threshold.spin.text(), level.combo.currentData(), auto.box.isChecked()) == ("0,60", "INFO", True)   # o padrão
+    processing, data = dlg.page("Processamento").warning, dlg.page("Log e banco de dados").warning
+    assert processing is not None and data is not None
+    assert "Limiar de identificação" in processing.label.text() and "Vale o padrão (0,60), gravado ao salvar" in processing.label.text()
+    assert "Processar sozinho" in processing.label.text() and "'trace'" in data.label.text()
+    assert "pipeline.threshold" in caplog.text and "0.9" not in caplog.text and "trace" not in caplog.text
+    mark = dlg.editor("hotkeys.mark")                                    # o campo de texto mostra o texto e a validação recusa
+    assert mark.edit.text() == "ctrl+ç" and mark.saved_error is None and dlg.page("Atalhos").warning is None
+    assert "tecla desconhecida" in (dlg.validation_error() or "")
+    threshold.spin.setValue(0.61)
+    threshold.spin.setValue(0.60)                                        # mexer e voltar ao padrão também grava o padrão
+    mark.edit.setText("ctrl+alt+shift+m")
+    dlg._save()
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert [store.get_setting(k) for k in ("pipeline.threshold", "log.level", "pipeline.auto_start")] == ["0.6", "INFO", "True"]
+    assert _dialog(qtbot, store, platform).page("Processamento").warning is None          # gravado: a faixa não volta
 
 
 # ---------------------------------------------------------------- U-073 e A-14: editores tipados, o mesmo texto salvo
@@ -164,8 +213,8 @@ def test_float_editor_writes_plain_numbers(qtbot):
     for value, text in ((5.0, "5"), (0.5, "0.5"), (12.25, "12.25"), (0.0, "0")):
         cost.spin.setValue(value)
         assert cost.raw() == text
-    cost.set_raw("abc")                                                              # ilegível: fica para a validação recusar
-    assert cost.raw() == "abc" and cost.spin.value() == 2.0
+    cost.set_raw("abc")                                     # ilegível (R-04): o padrão à vista, que o Salvar grava
+    assert cost.saved_error and cost.raw() == "2" and cost.spin.value() == 2.0
 
 
 # ---------------------------------------------------------------- U-074: o momento na página e, na linha, só o que difere

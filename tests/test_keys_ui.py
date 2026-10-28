@@ -182,3 +182,55 @@ def test_warmup_warns_before_recording_when_keys_are_missing(qtbot, store, platf
     dlg.keys_note.linkActivated.emit("settings")
     assert dlg.keys_note.isHidden() and dlg.keys_note.text() == ""                       # nada falta: o aviso some
     dlg.reject()
+
+
+def test_connected_only_for_the_key_that_passed_the_last_test(qtbot, store, platform, monkeypatch):
+    """Revisão da F5.4 (R-05): trocar a chave limpa o teste da anterior; a chave nova aprovada só vale com o Salvar; o teste
+    que falha na chave salva tira o "Conectado"."""
+    from listener.store.core import _now
+    from listener.ui import providers
+    from listener.ui.providers import CONNECTED, FAILED, NOT_TESTED
+    from listener.ui.settings_min import SettingsDialog
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+
+    def opened() -> tuple[SettingsDialog, providers.ProviderTab]:
+        dlg = SettingsDialog(store, platform)
+        qtbot.addWidget(dlg)
+        return dlg, dlg.provider_tabs.tab_by_id["gemini"]
+
+    def tested(tab: providers.ProviderTab, key: str) -> None:
+        tab.key.setText(key)
+        tab.fast.setCurrentText("fake-fast")
+        tab.last_test = None
+        tab.run_test()
+        qtbot.waitUntil(tab.btn_test.isEnabled, timeout=3000)
+
+    store.providers.update_provider("gemini", api_key="chave-a")
+    store.providers.update_provider("gemini", tested_at=_now(), latency_ms=320)
+    dlg, tab = opened()
+    assert tab.key_badge.text() == CONNECTED
+    tab.key.setText("chave-b")                                                       # outra chave, salva sem testar
+    dlg._save()
+    row = store.providers.get("gemini")
+    assert row["api_key"] == "chave-b" and row["tested_at"] is None and row["latency_ms"] is None
+    dlg, tab = opened()
+    assert tab.key_badge.text() == NOT_TESTED
+    tested(tab, "chave-c")                                                           # aprovada, mas o usuário cancela
+    assert tab.key_badge.text() == CONNECTED
+    dlg.reject()
+    dlg, tab = opened()
+    assert tab.key_badge.text() == NOT_TESTED and store.providers.get("gemini")["tested_at"] is None
+    tested(tab, "chave-c")                                                           # aprovada e salva: conectada
+    dlg._save()
+    dlg, tab = opened()
+    assert tab.key_badge.text() == CONNECTED and store.providers.get("gemini")["api_key"] == "chave-c"
+
+    def refused(*_args: object) -> object:
+        raise RuntimeError("401 chave recusada")
+
+    monkeypatch.setattr(providers, "test_connection", refused)
+    tested(tab, "chave-c")                                                           # a chave salva falha no teste
+    assert tab.key_badge.text() == FAILED and store.providers.get("gemini")["tested_at"] is None
+    _dlg, tab = opened()
+    assert tab.key_badge.text() == NOT_TESTED

@@ -121,6 +121,21 @@ def test_the_alert_line_has_the_icon_and_color_of_its_kind(qtbot):
         assert w.alert_label.palette().color(QPalette.ColorRole.WindowText).name() == LIGHT.tone(value)
 
 
+def test_the_alert_and_the_caption_lines_show_the_text_as_written(qtbot):
+    """Revisão da F5.4: a linha do alerta e a da legenda são texto puro: um nome de aparelho ou uma fala com "<b>" aparece
+    como foi escrito, sem virar texto formatado."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui.widget import RecordingWidget
+
+    w = RecordingWidget(live_line=True)
+    qtbot.addWidget(w)
+    w.show_alert("sem sinal no <b>Fone USB</b>", kind="warning")
+    for line in (w.alert_label, w.caption_line):
+        assert line.textFormat() == Qt.TextFormat.PlainText
+    assert w.alert_label.full_text == "sem sinal no <b>Fone USB</b>"
+
+
 def test_the_marker_popup_has_the_flag_and_the_hour(qtbot):
     from listener.ui.widget import MarkerPopup
 
@@ -266,6 +281,9 @@ def test_the_summary_has_the_success_icon_and_lists_markers_only_when_there_are(
     warned = SummaryDialog(store, mid, {"duration_s": 1.0, "unsaved": ["L-3"]})
     qtbot.addWidget(warned)
     assert any(_icon(c) == "warning:warning:32" for c in warned.findChildren(QLabel))
+    texts = {c.text() for c in warned.findChildren(QLabel)}             # revisão da F5.4: o título diz que houve falha
+    assert "Gravação salva com falha" in texts and "Gravação salva" not in texts and warned.windowTitle() == "Gravação salva com falha"
+    assert "Gravação salva" in {c.text() for c in full.findChildren(QLabel)}
 
 
 def test_the_tray_icon_is_the_brand_with_a_state_badge_of_shape_and_color(qapp):

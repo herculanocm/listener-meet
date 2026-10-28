@@ -59,8 +59,8 @@ def test_settings_dialog_validates_with_platform_grammar(qtbot, store, platform)
     qtbot.addWidget(dlg)
     assert dlg.validation_error() is None
     rate = dlg.editor("capture.target_rate")                         # F5.4 L3 (A-14): a taxa em lista não aceita "0";
-    rate.set_raw("0")                                                # o texto entra como se viesse do banco
-    assert "Taxa de amostragem" in (dlg.validation_error() or "")
+    rate.set_raw("0")                                                # o texto entra como se viesse do banco (R-04: o padrão)
+    assert "Taxa de amostragem" in (rate.saved_error or "") and rate.raw() == "16000" and dlg.validation_error() is None
     rate.set_raw("16000")
     mark = dlg.editor("hotkeys.mark")
     assert isinstance(mark, TextEditor)                              # o atalho segue um campo de texto: o usuário digita
@@ -70,7 +70,7 @@ def test_settings_dialog_validates_with_platform_grammar(qtbot, store, platform)
     assert dlg.validation_error() == "Dois atalhos iguais."
     mark.edit.setText("ctrl+alt+shift+m")
     dlg.editor("pipeline.threshold").set_raw("0.9")                  # F2: Processamento gerado da tabela
-    assert "Limiar" in (dlg.validation_error() or "")
+    assert "Limiar" in (dlg.editor("pipeline.threshold").saved_error or "") and dlg.validation_error() is None
     dlg.editor("pipeline.threshold").set_raw("0.7")
     whisper = dlg.editor("pipeline.whisper_model")
     assert isinstance(whisper, ChoiceEditor)

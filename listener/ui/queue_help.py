@@ -1,17 +1,19 @@
 """A Ajuda da fila (F5.3 item 9, U-047, A-09): o que cada tipo faz, as etapas de cada tipo na ordem em que rodam, os estados
 com a cor da barra, as colunas novas e o que cada botão faz. Os textos de tipos, estados e etapas vêm de `model.py`; a
 ordem das etapas, dos próprios runners (a mesma que eles seguem); os textos dos botões e das colunas, de quem os cria
-(`ui/queue.py`)."""
+(`ui/queue.py`). Revisão da F5.4: a amostra da cor de cada estado é uma classe do tema (`class="info"`), nunca a cor, e a
+janela é o `HtmlView`, que refaz o HTML na troca de tema com a Ajuda aberta."""
 from __future__ import annotations
 
 import html
 from collections.abc import Mapping
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout, QWidget
 
 from ..model import JOB_KIND_HELP, JOB_KIND_LABELS, JOB_STATUS_HELP, JOB_STEP_HELP, JOB_STEP_LABELS, JobKind, JobStatus, JobStep
 from ..pipeline.estimate import STEP_ORDER
-from .common import JOB_STATUS_COLOR_NAMES, JOB_STATUS_HATCHED, job_status_color
+from .common import JOB_STATUS_COLOR_NAMES, JOB_STATUS_HATCHED, JOB_STATUS_TONES
+from .components import HtmlView
 
 type StepGroup = tuple[JobStep, ...]            # etapas que rodam juntas (quase sempre uma só)
 type HelpItems = Mapping[str, str]              # nome -> o que faz, de botões e colunas
@@ -55,11 +57,11 @@ def _group_html(group: StepGroup) -> str:
 
 
 def _status_html(status: JobStatus) -> str:
-    """O estado com a amostra da cor da barra, nos tokens do tema (F5.4), e o nome da cor (quem não distingue cores lê o
-    nome)."""
-    mark, color = ("▨" if status in JOB_STATUS_HATCHED else "■"), job_status_color(status)
-    return (f'<li><span style="color:{color}">{mark}</span> <b>{_esc(status)}</b> ({_esc(JOB_STATUS_COLOR_NAMES[status])}): '
-            f"{_esc(JOB_STATUS_HELP[status])}</li>")
+    """O estado com a amostra da cor da barra, pela classe do tom dele (F5.4: a folha de classes do `HtmlView` nos tokens),
+    e o nome da cor (quem não distingue cores lê o nome)."""
+    mark = "▨" if status in JOB_STATUS_HATCHED else "■"
+    return (f'<li><span class="{JOB_STATUS_TONES[status].value}">{mark}</span> <b>{_esc(status)}</b> '
+            f"({_esc(JOB_STATUS_COLOR_NAMES[status])}): {_esc(JOB_STATUS_HELP[status])}</li>")
 
 
 def _items_html(items: HelpItems) -> str:
@@ -89,7 +91,7 @@ class QueueHelpDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ajuda da fila")
         self.setMinimumSize(560, 520)
-        self.view = QTextBrowser()
+        self.view = HtmlView()
         self.view.setOpenLinks(False)
         self.view.setHtml(queue_help_html(buttons, columns))
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

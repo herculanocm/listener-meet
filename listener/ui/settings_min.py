@@ -11,17 +11,20 @@ para todas; as páginas moram em `ui/settings_general.py` e `ui/settings_search.
 editores são tipados (U-073, A-14, `ui/settings_editors.py`): sim/não em caixa, número com vírgula na faixa da `SPECS`,
 opções em lista, e o que o usuário não mexeu volta para o banco com o texto salvo original. Chaves, atalhos e downloads com
 o estado em selo (U-075); sem jargão interno na tela (U-076). Um erro de validação abre a página, marca o campo e explica
-numa faixa, sem caixa de mensagem (U-072)."""
+numa faixa, sem caixa de mensagem (U-072); a marca sai quando o valor do campo muda, também na tabela de preços (revisão da
+F5.4, R-09). O valor salvo que a `SPECS` recusa, num editor tipado, dá lugar ao padrão, gravado ao salvar, com o aviso numa
+faixa no topo da página (R-04)."""
 from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, SignalInstance
 from PySide6.QtGui import QPalette, QShowEvent
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem,
-                               QMessageBox, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QSpinBox, QStackedWidget, QTableWidget, QVBoxLayout,
+                               QWidget)
 
 from ..config.defaults import HF_PROVIDER_ID, HOTKEY_KEYS, SPECS, validate_setting
 from ..llm.jobconfig import audio_capable
@@ -68,6 +71,19 @@ def offer_local_reindex(store: Store, parent: QWidget | None, on_launch: Callabl
     return n
 
 
+def change_signal(widget: QWidget) -> SignalInstance | None:
+    """R-09: o sinal de "o valor mudou" de cada tipo de campo que a validação marca (None nos outros)."""
+    if isinstance(widget, QLineEdit | QSpinBox | QDoubleSpinBox):
+        return widget.textChanged
+    if isinstance(widget, QComboBox):
+        return widget.currentTextChanged
+    if isinstance(widget, QAbstractButton):
+        return widget.toggled
+    if isinstance(widget, QTableWidget):
+        return widget.itemChanged
+    return None
+
+
 def ask_reindex(parent: QWidget | None, text: str, yes: str, no: str) -> bool:
     """Pergunta com dois botões nomeados ("Reindexar agora" e "Depois", ou "Reindexar" e "Cancelar"); True = o primeiro.
     Separada para os testes trocarem."""
@@ -95,6 +111,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
         self._editors: dict[str, SettingEditor] = {}
         self.badges: dict[str, Badge] = {}                   # U-075: o selo posto na linha de cada chave (os atalhos)
         self._invalid: list[QWidget] = []
+        self._watched: list[QWidget] = []                    # R-09: os campos com o sinal de mudança já ligado
         self._error_bar: InfoBar | None = None
         self.setWindowTitle("Configurações")
         self.resize(*SIZE)
@@ -163,6 +180,9 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
         shown = page.add_row(form, ed, badge, compact=compact)
         if shown is not None:
             self.badges[key] = shown
+        if ed.saved_error is not None:                       # R-04: o valor à vista é o padrão, que o Salvar grava
+            page.warn(f"Valor salvo inválido. {ed.saved_error}. Vale o padrão ({ed.shown_text()}), gravado ao salvar.")
+            log.info("configurações: o valor salvo de %s não vale; o padrão é gravado ao salvar", key)
         return ed
 
     def _ask(self, text: str, yes: str, no: str) -> bool:
@@ -245,12 +265,27 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
                 self.provider_tabs.tabs.setCurrentWidget(tab)
             theme.set_invalid(widget, True)
             self._invalid.append(widget)
+            self._watch(widget)
             if page is not None:
                 page.ensureWidgetVisible(widget)
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
         self.error_bar.set_text(message)
         self.error_bar.show()
         log.info("configurações: o Salvar parou num erro de validação (página %s)", page.page_title if page else "?")
+
+    def _watch(self, widget: QWidget) -> None:
+        """R-09: o sinal de mudança do campo marcado, ligado a um método uma vez por campo (a marca sai quando o valor muda)."""
+        signal = change_signal(widget)
+        if signal is not None and not any(w is widget for w in self._watched):
+            signal.connect(self._on_marked_changed)
+            self._watched.append(widget)
+
+    def _on_marked_changed(self, *_args: object) -> None:
+        """O usuário mexeu num campo marcado: a marca de erro dele sai (a faixa fica com o motivo até o próximo Salvar)."""
+        sender = self.sender()
+        if isinstance(sender, QWidget) and sender in self._invalid:
+            theme.set_invalid(sender, False)
+            self._invalid.remove(sender)
 
     def _save(self) -> None:
         from ..rag.index import embedder_status
@@ -275,4 +310,4 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
 
 
 __all__ = ["REINDEX_TITLE", "SUBTITLES", "TOAST_SECONDS", "SettingsDialog", "ask_reindex", "audio_cost_text", "breakable_path",
-           "offer_local_reindex"]
+           "change_signal", "offer_local_reindex"]

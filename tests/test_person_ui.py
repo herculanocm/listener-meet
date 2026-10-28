@@ -40,7 +40,8 @@ def test_edit_starts_filled_and_offers_delete(qtbot):
     dlg = PersonDialog(data=PersonData("Ana", "CFO", "Empresa X", "ana@x.com"), can_delete=True)
     qtbot.addWidget(dlg)
     assert dlg.windowTitle() == "Editar pessoa" and dlg.data() == PersonData("Ana", "CFO", "Empresa X", "ana@x.com")
-    assert dlg.btn_delete is not None and not dlg.btn_delete.autoDefault()          # Enter salva; apagar só no clique
+    assert dlg.btn_delete is not None and not dlg.btn_delete.isDefault()            # Enter num campo salva (R-02: num botão
+    assert dlg.btn_save.isDefault()                                                  # com foco, aciona o botão)
     dlg.btn_delete.click()
     assert dlg.result() == DELETE
     assert any(w.text() == EMAIL_NOTE for w in dlg.findChildren(type(dlg.error)))

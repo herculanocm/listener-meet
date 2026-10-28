@@ -10,13 +10,18 @@ sem importar o tema no nível do módulo.
   `selected` (o placeholder só aparece no campo vazio, o estado sai em selo com fundo próprio e a caixa de seleção não fica
   sobre a linha selecionada).
 - HTML (A-10, passo 6 do A-21): `html_css(t)` é a folha de classes (`note`, `success`, `warning`, `danger`, `info`,
-  `accent`) que o `QTextBrowser` do tema põe no `document().setDefaultStyleSheet`; o HTML do app usa `class`, nunca cor."""
+  `neutral`, `disabled`, `accent`) que o `QTextBrowser` do tema põe no `document().setDefaultStyleSheet`; o HTML do app usa
+  `class`, nunca cor.
+- Contraste alto (revisão da F5.4, R-03): `contrast_tokens` monta os tokens da paleta do sistema (`ui/theme.py` lê a
+  paleta), e todo pintor que lê tokens segue o tema do Windows sem caminho próprio: o texto da linha selecionada vem de
+  `selected_text` (`on_selected`) e o selo e a faixa ganham a borda no tom (`outline`, `edge`)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 BLACK, WHITE = "#000000", "#ffffff"
+CONTRAST_SCHEME = "contrast"                     # o `scheme` dos tokens do contraste alto (montados da paleta do sistema)
 TEXT_MIN, GRAPHIC_MIN = 4.5, 3.0                 # WCAG 2.1: texto comum; ícone, traço e o que não é texto
 
 
@@ -105,6 +110,8 @@ class Tokens:
     neutral: str
     neutral_bg: str
     speakers: tuple[str, ...]
+    selected_text: str | None = None   # contraste alto: o texto sobre `selected` (fora dele, cada texto fica na sua cor)
+    outline: bool = False              # contraste alto: o selo e a faixa no fundo da janela, com a borda no tom
     fonts: Fonts = FONTS
     metrics: Metrics = METRICS
 
@@ -120,6 +127,14 @@ class Tokens:
     def speaker(self, index: int) -> str:
         """A cor do falante `index` (a partir de 0), em volta nas 8."""
         return self.speakers[index % len(self.speakers)]
+
+    def on_selected(self, color: str, selected: bool) -> str:
+        """A cor de um texto (ou ícone) de uma linha: a dele; na linha selecionada do contraste alto, o texto do destaque."""
+        return self.selected_text if selected and self.selected_text else color
+
+    def edge(self, tone: Tone) -> str | None:
+        """A borda do selo e da faixa: no contraste alto, a do tom (o fundo deles é o da janela); fora dele, nenhuma."""
+        return self.tone(tone) if self.outline else None
 
 
 LIGHT = Tokens(
@@ -153,6 +168,26 @@ CONTRAST_PAIRS: tuple[tuple[str, tuple[str, ...], float], ...] = (
     ("focus", ("window", "card", "input", "hover"), GRAPHIC_MIN),                      # o anel de foco
 )
 SPEAKER_SURFACES = _SURFACES                    # falantes: 3:1 sobre todas as superfícies (o ponto na linha selecionada)
+
+
+def contrast_tokens(*, window: str, text: str, base: str, highlight: str, highlighted_text: str, disabled: str) -> Tokens:
+    """Contraste alto (Comportamento; revisão da F5.4, R-03): os tokens das cores da paleta do sistema ("#rrggbb"). Os
+    textos, também os de estado, no texto do sistema; os fundos na janela e na base; o destaque e a linha selecionada no
+    `Highlight`, com o `HighlightedText` por cima; o selo e a faixa no fundo da janela, com a borda no tom (`outline`);
+    traços e foco no texto. O destaque que não dá 4,5:1 como texto sobre a janela (ou com o texto dele por cima) vira o
+    texto invertido. Os falantes (só gráfico) ficam os do esquema do mesmo lado do fundo."""
+    accent, on_accent = highlight, highlighted_text
+    if contrast(accent, window) < TEXT_MIN or contrast(on_accent, accent) < TEXT_MIN:
+        accent, on_accent = text, window
+    selected, selected_text = highlight, highlighted_text
+    if contrast(selected_text, selected) < TEXT_MIN:
+        selected, selected_text = text, window
+    return replace(DARK if text_on(window) == WHITE else LIGHT, scheme=CONTRAST_SCHEME, window=window, card=window, input=base,
+                   hover=window, selected=selected, stroke=text, stroke_card=text, stroke_strong=text, text=text, secondary=text,
+                   placeholder=text, disabled=disabled, focus=text, on_accent=on_accent, accent=accent, accent_hover=accent,
+                   accent_pressed=accent, success=text, success_bg=window, warning=text, warning_bg=window, danger=text,
+                   danger_bg=window, info=text, info_bg=window, neutral=text, neutral_bg=window, selected_text=selected_text,
+                   outline=True)
 
 
 # ---------------------------------------------------------------- contraste (WCAG 2.1)
@@ -189,7 +224,8 @@ def mix(a: str, b: str, amount: float) -> str:
 
 # ---------------------------------------------------------------- HTML por classes (A-10)
 HTML_CLASSES: dict[str, Tone] = {"note": Tone.SECONDARY, "success": Tone.SUCCESS, "warning": Tone.WARNING,
-                                 "danger": Tone.DANGER, "info": Tone.INFO, "accent": Tone.ACCENT}
+                                 "danger": Tone.DANGER, "info": Tone.INFO, "neutral": Tone.NEUTRAL, "disabled": Tone.DISABLED,
+                                 "accent": Tone.ACCENT}
 
 
 def html_css(t: Tokens) -> str:

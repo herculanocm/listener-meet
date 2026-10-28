@@ -81,7 +81,8 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     tab.fast.setCurrentText("fake-fast")
     tab.run_test()
     qtbot.waitUntil(lambda: tab.last_test is not None, timeout=3000)
-    assert tab.last_test.ok and "respondeu em" in tab.status.text() and store.providers.get("gemini")["tested_at"]
+    assert tab.last_test.ok and "respondeu em" in tab.status.text()
+    assert not store.providers.get("gemini")["tested_at"]              # R-05: a chave nova testada vai ao banco com o Salvar
     tab.refresh_models()
     qtbot.waitUntil(lambda: bool(tab.last_models), timeout=3000)
     assert [m.id for m in tab.last_models] == ["fake-fast", "fake-strong"] and [tab.fast.itemText(i) for i in range(tab.fast.count())] == [
@@ -103,7 +104,7 @@ def test_settings_dialog_llm_group_provider_tabs_and_capability(qtbot, store, pl
     dlg._save()
     assert dlg.result() == dlg.DialogCode.Accepted
     g = store.providers.get("gemini")
-    assert g["api_key"] == KEY and g["fast_model"] == "fake-fast" and g["params"] == '{"top_p": 0.9}'
+    assert g["api_key"] == KEY and g["fast_model"] == "fake-fast" and g["params"] == '{"top_p": 0.9}' and g["tested_at"]
     assert g["model"] == "gemini-embedding-001"
     assert store.providers.active_provider("llm")["id"] == "openai" and store.providers.active_provider("embed")["id"] == "gemini"
     assert store.get_setting("llm.cost_alert_usd") == "5"

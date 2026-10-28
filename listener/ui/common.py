@@ -3,7 +3,8 @@ tradução pt-BR dos textos padrão do Qt. F5.3 (U-047, A-08): as cores da barra
 sobre elas (WCAG 2.1, 4,5:1), nos temas claro e escuro; (U-048) as do aviso que some sozinho, por tipo. F5.4: as contas
 de contraste moram em `ui/theme.py` e seguem reexportadas daqui (A-13); os dicionários de estado guardam o tom (`Tone`) e a
 cor sai dos tokens do tema vigente na hora (A-11). F5.4 L2: o widget de gravação, o marcador e os avisos seguem o tema (sai
-o `DARK_SURFACE`) e `fit_to_screen` põe a janela inteira, com a moldura, dentro da área livre da tela (A-17)."""
+o `DARK_SURFACE`) e `fit_to_screen` põe a janela inteira, com a moldura, dentro da área livre da tela (A-17). Revisão da
+F5.4 (R-01, R-02): `click_focused_button`, o Enter num botão com foco aciona esse botão, como no Windows."""
 from __future__ import annotations
 
 import math
@@ -203,6 +204,19 @@ def markdown_html(md: str) -> str:
     return doc.toHtml()
 
 
+def click_focused_button(window: QWidget) -> bool:
+    """Revisão da F5.4 (R-01, R-02): o Enter com o foco num botão de apertar (`QPushButton` ou `QToolButton`; caixa de seleção
+    e rádio, não) aciona esse botão, como no Windows. Para as janelas que tratam o Enter elas mesmas (a revisão, a fila): o
+    botão sem `autoDefault` e o `QToolButton` deixam o Enter subir até a janela. True quando acionou."""
+    from PySide6.QtWidgets import QPushButton, QToolButton
+
+    focus = window.focusWidget()
+    if not isinstance(focus, QPushButton | QToolButton) or not focus.isEnabled() or not focus.isVisible():
+        return False
+    focus.click()
+    return True
+
+
 _ALIVE: dict[int, QWidget] = {}              # as janelas sem pai seguras até o Qt apagá-las (`keep_until_destroyed`)
 
 
@@ -223,5 +237,6 @@ def _forget_window(key: int, *_args: object) -> None:
 
 __all__ = ["BAND_OPACITY", "BLACK", "HEALTH_TEXT", "HEALTH_TONES", "JOB_STATUS_COLOR_NAMES", "JOB_STATUS_HATCHED", "JOB_STATUS_TONES",
            "NOTICE_TONES", "QT_LOCALE", "STATE_TONES", "TRACK_MIX", "WHITE", "BarColors", "Box", "bar_colors", "clamp_to_screens",
-           "contrast", "copy_rich", "fit_rect", "fit_to_screen", "health_color", "human_size", "install_translations",
-           "job_status_color", "keep_until_destroyed", "level_fraction", "luminance", "markdown_html", "mix", "state_color", "text_on"]
+           "click_focused_button", "contrast", "copy_rich", "fit_rect", "fit_to_screen", "health_color", "human_size",
+           "install_translations", "job_status_color", "keep_until_destroyed", "level_fraction", "luminance", "markdown_html", "mix",
+           "state_color", "text_on"]

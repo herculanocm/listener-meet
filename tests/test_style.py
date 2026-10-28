@@ -58,7 +58,7 @@ def test_primary_and_danger_are_filled_with_on_accent_text_and_the_rest_keeps_th
     lightest = max(QColor(c).lightness() for c in colors_in(img, save.geometry().adjusted(6, 6, -6, -6)))
     assert lightest > 200 > QColor(LIGHT.accent).lightness()          # o texto do primário em `on_accent` (o offscreen não tem
     assert LIGHT.text in colors_in(img, cancel.geometry())            # fonte: só as caixas das letras), o do comum em `text`
-    assert save.isDefault() and not cancel.autoDefault() and not delete.autoDefault()          # Enter fica no primário
+    assert save.isDefault() and not cancel.isDefault() and not delete.isDefault()    # o Enter num campo fica no primário (R-02)
 
 
 def test_fill_follows_the_state_and_disabled_goes_flat():
@@ -117,6 +117,16 @@ def test_invalid_field_gets_the_danger_border_and_loses_it(qtbot):
     assert near(shown(qtbot, edit).pixelColor(0, 16), LIGHT.danger, 20)
     theme.set_invalid(edit, False)
     assert edit.property(theme.INVALID_PROP) is None and not near(edit.grab().toImage().pixelColor(0, 16), LIGHT.danger, 20)
+
+
+def test_invalid_table_gets_the_danger_border_too(qtbot):
+    """Revisão da F5.4 (R-09): a tabela de preços com erro ganha a borda `danger`, como o campo (o `CE_ShapedFrame`)."""
+    table = QTableWidget(2, 2)
+    table.resize(200, 120)
+    theme.set_invalid(table, True)
+    left = shown(qtbot, table).pixelColor(0, 60)
+    theme.set_invalid(table, False)
+    assert near(left, LIGHT.danger, 20) and not near(table.grab().toImage().pixelColor(0, 60), LIGHT.danger, 20)
 
 
 def test_tabs_are_underlined_in_accent_only_on_the_current(qtbot):

@@ -31,7 +31,7 @@ from ..platform.base import AudioDevice, Endpoint, Endpoints
 from . import icons
 from .components import BADGE_PAD_X, BADGE_PAD_Y, InfoBar
 from .style import rounded
-from .theme import Tokens, font_for, note, qcolor, surface_tokens
+from .theme import Tokens, Tone, font_for, note, qcolor, surface_tokens
 
 if TYPE_CHECKING:
     from ..capture.recorder import SourceSpec
@@ -169,31 +169,32 @@ class DeviceRowDelegate(QStyledItemDelegate):
         t = surface_tokens(opt.widget)
         r = opt.rect.adjusted(self.PAD, 4, -self.PAD, -4)
         current, new = bool(index.data(CURRENT_ROLE)), bool(index.data(NEW_ROLE))
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)       # contraste alto: o texto do destaque (R-03)
         name = str(index.data(NAME_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or "")
         painter.save()
         if current:
             dpr = painter.device().devicePixelRatioF() if painter.device() is not None else 1.0
-            mark = icons.pixmap("check", t.accent, 16, dpr)
+            mark = icons.pixmap("check", t.on_selected(t.accent, selected), 16, dpr)
             painter.drawPixmap(r.left() + 2, r.top() + (r.height() - 16) // 2, mark)
         text = QRect(r.left() + self.MARK, r.top(), r.width() - self.MARK, r.height())
         if new:
             text.setRight(text.right() - self._badge(painter, text, t) - 8)
-        self._lines(painter, text, name, str(index.data(DETAIL_ROLE) or ""), current, t)
+        self._lines(painter, text, name, str(index.data(DETAIL_ROLE) or ""), current, t, selected)
         painter.restore()
 
     @staticmethod
-    def _lines(painter: QPainter, r: QRect, name: str, detail: str, current: bool, t: Tokens) -> None:
+    def _lines(painter: QPainter, r: QRect, name: str, detail: str, current: bool, t: Tokens, selected: bool) -> None:
         top_font = font_for("body_strong" if current else "body")
         sub_font = font_for("caption")
         top, sub = QFontMetrics(top_font), QFontMetrics(sub_font)
         y = r.top() + (r.height() - top.height() - (sub.height() if detail else 0)) // 2
         painter.setFont(top_font)
-        painter.setPen(qcolor(t.text))
+        painter.setPen(qcolor(t.on_selected(t.text, selected)))
         painter.drawText(QRect(r.left(), y, r.width(), top.height()), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                          top.elidedText(name, Qt.TextElideMode.ElideMiddle, r.width()))
         if detail:
             painter.setFont(sub_font)
-            painter.setPen(qcolor(t.secondary))
+            painter.setPen(qcolor(t.on_selected(t.secondary, selected)))
             painter.drawText(QRect(r.left(), y + top.height(), r.width(), sub.height()),
                              int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                              sub.elidedText(detail, Qt.TextElideMode.ElideRight, r.width()))
@@ -205,7 +206,7 @@ class DeviceRowDelegate(QStyledItemDelegate):
         fm = QFontMetrics(font)
         width, height = fm.horizontalAdvance(NEW_BADGE) + 2 * BADGE_PAD_X, fm.height() + 2 * BADGE_PAD_Y
         pill = QRectF(r.right() - width, r.center().y() - height / 2, width, height)
-        rounded(painter, pill, height / 2, t.info_bg)
+        rounded(painter, pill, height / 2, t.info_bg, t.edge(Tone.INFO))
         painter.setFont(font)
         painter.setPen(qcolor(t.info))
         painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), NEW_BADGE)

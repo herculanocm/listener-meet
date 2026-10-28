@@ -3,7 +3,9 @@ aqui, fora das sub-abas (`LLM_KINDS`). `update_provider` tem lista branca (padr�
 troca o ativo numa só instrução; `active_provider(role)` devolve o ativo para texto ou embeddings.
 F5.1 (A-01): a linha `local` (embeddings na CPU, sem chave) só vale para o papel `embed`; nasce por `INSERT OR IGNORE`
 (`ensure_local`, dado e não esquema) só no caminho de escrita (as Configurações), nunca numa leitura (o `--check` abre só
-leitura); `set_role` faz um único `UPDATE` do papel, que escolhe um provedor ou zera o papel."""
+leitura); `set_role` faz um único `UPDATE` do papel, que escolhe um provedor ou zera o papel.
+Revisão da F5.4 (R-05): `tested_at` e `latency_ms` são da chave salva; trocar a chave sem dizer o teste dela os limpa (o
+selo "Conectado" só vale para a chave que passou no último teste)."""
 from __future__ import annotations
 
 import json
@@ -67,6 +69,8 @@ class ProvidersRepo:
         self.core.execute("INSERT OR IGNORE INTO providers(id, kind, updated_at) VALUES (?, ?, ?)", (provider_id, provider_id, _now()))
         if not fields:
             return
+        if "api_key" in fields and "tested_at" not in fields and (fields["api_key"] or None) != (self.key(provider_id) or None):
+            fields = {**fields, "tested_at": None, "latency_ms": None}       # R-05: o teste era da chave anterior
         log.info("provedor %s atualizado: %s", provider_id, ", ".join(
             (f"api_key {'definida' if fields[k] else 'apagada'}" if k == "api_key" else
              f"{k} = {safe_url(str(fields[k]))!r}" if k in SHOWN_PROVIDER_FIELDS else k) for k in fields))   # sem chave nem senha

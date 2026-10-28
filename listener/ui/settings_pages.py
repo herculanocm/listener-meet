@@ -2,7 +2,8 @@
 o subtítulo que diz quando o que está nela vale ("Aplica agora", "Vale na próxima gravação") e os cartões; na linha de um
 campo só aparece o momento quando ele difere do da página. `DownloadRow` é um download (os modelos do ao vivo, a busca
 local): o botão e a barra numa linha e, embaixo, o estado em selo com o detalhe. O selo fica no tamanho do texto, no meio
-da linha (`pill`), e a nota de um formulário estica na coluna do campo (`add_note`)."""
+da linha (`pill`), e a nota de um formulário estica na coluna do campo (`add_note`). Revisão da F5.4 (R-04): o valor salvo
+que a `SPECS` recusa vira um aviso numa faixa no topo da página (`warn`)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout, QLabel, QProgre
                                QVBoxLayout, QWidget)
 
 from ..model import SettingScope
-from .components import Badge, Card
+from .components import Badge, Card, InfoBar
 from .keys import note as wrap_note
 from .settings_editors import BoolEditor, SettingEditor, TextEditor
 from .theme import METRICS, Tone, note, role
@@ -34,6 +35,7 @@ class SettingsPage(QScrollArea):
         self.page_title = title
         self.scope = scope
         self.cards: dict[str, Card] = {}
+        self.warning: InfoBar | None = None                # R-04: montada no primeiro aviso
         self.body = QWidget()
         self.content = QVBoxLayout(self.body)
         m = METRICS.margin
@@ -68,6 +70,15 @@ class SettingsPage(QScrollArea):
 
     def finish(self) -> None:
         self.content.addStretch(1)
+
+    def warn(self, text: str) -> InfoBar:
+        """Um aviso na faixa do topo da página, depois do título e do subtítulo (uma faixa por página, uma linha por aviso)."""
+        if self.warning is None:
+            self.warning = InfoBar("warning", text)
+            self.content.insertWidget(2, self.warning)
+        else:
+            self.warning.set_text(f"{self.warning.label.text()}\n{text}")
+        return self.warning
 
     def scope_note(self, scope: SettingScope) -> str:
         """U-074: o momento do campo só quando difere do da página."""

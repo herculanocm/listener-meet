@@ -10,10 +10,12 @@ dos testes) que pinta o que a paleta não alcança, com os tokens do tema (`ui/t
   `State_Selected` (o texto fica no `Text`; o `backgroundBrush` do item, a fala que toca, segue por cima); o tom do item
   (`TONE_ROLE`) vira a cor do texto na hora da pintura (a troca de tema não deixa cor velha).
 - A-06: o grupo como cartão (preenchido em `card`, borda `stroke_card`, raio 8, o título dentro); as abas sublinhadas em
-  `accent`; a borda `danger` no campo, combo e spin com a propriedade `invalid`; o anel de foco de 2 px só com
-  `State_KeyboardFocusChange` (U-055); o campo com `theme_flat` (o título da reunião, U-078) sem moldura nem fundo até o
-  foco ou o mouse. O indicador da caixa de seleção fica com a base: a sonda no escuro forçado não
+  `accent`; a borda `danger` no campo, combo, spin e tabela (revisão da F5.4, R-09) com a propriedade `invalid`; o anel
+  de foco de 2 px só com `State_KeyboardFocusChange` (U-055); o campo com `theme_flat` (o título da reunião, U-078) sem
+  moldura nem fundo até o foco ou o mouse. O indicador da caixa de seleção fica com a base: a sonda no escuro forçado não
   mostrou o defeito do A-06.
+- Contraste alto (revisão da F5.4, R-03): os tokens vêm da paleta do sistema; a linha selecionada leva o texto do destaque
+  (`selected_text`) e o primário apagado fica no fundo da janela com a borda no apagado (o preenchido some no sistema).
 - `polish(widget)`: as alturas mínimas (Aceite 3), só nos controles medidos (`SIZED`; o resto sai sem chamada ao C++):
   botão, campo, combo e spin com 32 px e botão com 32 de largura; caixa de seleção e rádio com 24 (o `pequenos` da sonda
   acusou 422 controles de 29 px). As peças internas do Qt (o botão de limpar do campo, as setas das abas) ficam como estão.
@@ -57,7 +59,7 @@ def rounded(painter: QPainter, rect: QRectF, radius: float, fill: str | None, st
 def kind_fill(t: Tokens, kind: str, state: QStyle.StateFlag) -> str:
     """O fundo do primário (destaque) e do destrutivo (perigo) em cada estado; apagado, o traço do controle."""
     if not state & St.State_Enabled:
-        return t.stroke
+        return t.window if t.outline else t.stroke
     sunken, hover = bool(state & St.State_Sunken), bool(state & St.State_MouseOver)
     if kind == PRIMARY:
         return t.accent_pressed if sunken else t.accent_hover if hover else t.accent
@@ -159,6 +161,8 @@ class ThemeStyle(QProxyStyle):
             self._tab_shape(option, painter, widget)
         else:
             super().drawControl(element, option, painter, widget)
+            if element == CE.CE_ShapedFrame and widget is not None and widget.property(INVALID_PROP):
+                self._invalid_border(option.rect, painter, widget)      # R-09: a tabela de preços com erro
 
     def _item(self, option: QStyleOptionViewItem, painter: QPainter, widget: QWidget | None) -> None:
         """A-05: a linha selecionada em `selected` (cada célula pinta a sua parte) e o tom do item na cor do texto; a célula
@@ -169,12 +173,16 @@ class ThemeStyle(QProxyStyle):
             return
         opt = QStyleOptionViewItem(option)
         t = self._tokens(widget)
-        if name:
+        selected = bool(opt.state & St.State_Selected)
+        color = t.tone(Tone(str(name))) if name else None
+        if selected and opt.backgroundBrush.style() == Qt.BrushStyle.NoBrush:      # o fundo do item fica por cima da seleção
+            color = t.on_selected(color, True) if color else t.selected_text
+        if color:
             pal = QPalette(opt.palette)
             for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
-                pal.setColor(group, QPalette.ColorRole.Text, qcolor(t.tone(Tone(str(name)))))
+                pal.setColor(group, QPalette.ColorRole.Text, qcolor(color))
             opt.palette = pal
-        if opt.state & St.State_Selected:
+        if selected:
             painter.fillRect(opt.rect, qcolor(t.selected))
             opt.state &= ~St.State_Selected
         super().drawControl(CE.CE_ItemViewItem, opt, painter, widget)
@@ -186,7 +194,8 @@ class ThemeStyle(QProxyStyle):
             return
         t = self._tokens(widget)
         fill = kind_fill(t, kind, option.state) if kind else flat_fill(t, option.state)
-        rounded(painter, QRectF(option.rect), t.metrics.radius, fill)
+        edge = t.disabled if t.outline and not option.state & St.State_Enabled else None
+        rounded(painter, QRectF(option.rect), t.metrics.radius, fill, edge)
 
     def _button_label(self, element: QStyle.ControlElement, opt: QStyleOptionButton | QStyleOptionToolButton, painter: QPainter,
                       widget: QWidget | None) -> None:

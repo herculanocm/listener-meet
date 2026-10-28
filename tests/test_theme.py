@@ -150,7 +150,11 @@ def test_high_contrast_keeps_the_system_palette(qapp, restore_theme, monkeypatch
     theme.notifier().changed.connect(seen.append)
     monkeypatch.setattr(theme, "_high_contrast", lambda: True)
     theme.notifier().on_contrast_changed(Qt.ContrastPreference.HighContrast)
-    assert qapp.palette().color(QPalette.ColorRole.Window).name() != LIGHT.window and seen == [LIGHT]
+    window = qapp.palette().color(QPalette.ColorRole.Window).name()
+    assert window != LIGHT.window and seen == [theme.tokens()]                         # a paleta do sistema fica
+    # R-03: os tokens saem dela (cartão, faixa, selo, fala e linha selecionada seguem o sistema; `test_high_contrast.py`)
+    assert theme.tokens() == theme.system_tokens(qapp.palette()) and theme.tokens().scheme == theme.CONTRAST_SCHEME
+    assert theme.tokens().window == window and qapp.style().tokens is theme.tokens()
     theme.notifier().changed.disconnect(seen.append)
 
 
@@ -270,16 +274,17 @@ def test_the_theme_change_sweeps_the_tones_and_keeps_the_surfaces(qtbot, qapp, t
 
 
 def test_primary_kind_invalid_and_qcolor(qtbot):
-    from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton
+    from PySide6.QtWidgets import QDialog, QHBoxLayout, QLineEdit, QPushButton
 
-    win = QWidget()
+    win = QDialog()
     lay = QHBoxLayout(win)
     ok, other, field = QPushButton("Salvar"), QPushButton("Testar"), QLineEdit()
     for w in (ok, other, field):
         lay.addWidget(w)
     qtbot.addWidget(win)
     theme.primary(win, ok)
-    assert ok.property(theme.KIND_PROP) == theme.PRIMARY and ok.isDefault() and not other.autoDefault()
+    # R-02 (desvio do A-02): os outros botões seguem `autoDefault`: o Enter num botão com foco aciona esse botão
+    assert ok.property(theme.KIND_PROP) == theme.PRIMARY and ok.isDefault() and other.autoDefault() and not other.isDefault()
     theme.set_kind(ok, None)
     assert ok.property(theme.KIND_PROP) is None and not ok.isDefault()
     theme.set_invalid(field, True)

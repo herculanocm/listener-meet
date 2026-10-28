@@ -4,12 +4,14 @@
   `Platform.text_scale()`; o peso 600 pelas famílias "… Semibold", item 5), a paleta nos papéis que o `windows11` segue
   (A-01) e o `ThemeStyle` (`ui/style.py`) sobre `Platform.ui_style()`. `scheme` explícito vale para a sonda e os testes (o
   offscreen não tem esquema); sem ele, o do sistema, e `Unknown` é claro. Reaplica no `colorSchemeChanged` e na troca do
-  contraste alto (A-07: `hints` guardado antes de encadear); com o contraste alto fica a paleta do sistema.
+  contraste alto (A-07: `hints` guardado antes de encadear); com o contraste alto fica a paleta do sistema e os tokens
+  saem dela (`system_tokens`, revisão da F5.4, R-03): cartão, faixa, selo, fala, linha selecionada e tons seguem o sistema.
 - Widgets (A-02, A-10, passo 5 do A-21): `tone(w, Tone)` põe a cor do texto e `role(w, papel)` a fonte de um papel
   (`caption`, `body`, `body_strong`, `subtitle`, `clock`); `note(w)` é a nota (legenda no secundário); `set_kind` e `primary`
-  marcam o primário e o destrutivo, `set_invalid` o campo com erro, `surface` uma janela inteira noutro esquema (no L1b, o
-  widget de gravação, o marcador e os avisos; desde o L2 eles seguem o tema); `qcolor` é o único caminho (com os ícones) para
-  um `QColor` (A-12). Itens de lista e tabela guardam o tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura.
+  marcam o primário (o padrão do Enter; o Enter num botão com foco aciona esse botão, R-02) e o destrutivo, `set_invalid`
+  o campo com erro, `surface` uma janela inteira noutro esquema (no L1b, o widget de gravação, o marcador e os avisos;
+  desde o L2 eles seguem o tema); `qcolor` é o único caminho (com os ícones) para um `QColor` (A-12). Itens de lista e
+  tabela guardam o tom em `TONE_ROLE` e o `ThemeStyle` lê na pintura.
 - Troca de tema (A-10): `app.setPalette` não alcança o que o tema pôs em cada widget; a varredura de `allWidgets()`, só na
   troca, repinta os tons (`theme_tone`), os ícones (`theme_icon`) e chama `retheme()` de quem pinta ou desenha HTML; depois
   `notifier().changed` avisa os tokens novos (ligado a métodos, nunca a lambda que capture widget).
@@ -29,8 +31,9 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QAbstractButton, QApplication, QPushButton, QWidget
 
 from ..log import get_logger
-from .tokens import (BLACK, CONTRAST_PAIRS, DARK, FONT_ROLES, FONTS, GRAPHIC_MIN, LIGHT, METRICS, SPEAKER_SURFACES, STATUS_TONES,
-                     TEXT_MIN, WHITE, Fonts, FontToken, Metrics, Tokens, Tone, contrast, html_css, luminance, mix, text_on)
+from .tokens import (BLACK, CONTRAST_PAIRS, CONTRAST_SCHEME, DARK, FONT_ROLES, FONTS, GRAPHIC_MIN, LIGHT, METRICS, SPEAKER_SURFACES,
+                     STATUS_TONES, TEXT_MIN, WHITE, Fonts, FontToken, Metrics, Tokens, Tone, contrast, contrast_tokens, html_css,
+                     luminance, mix, text_on)
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QAccessibilityHints, QStyleHints
@@ -102,6 +105,24 @@ def build_palette(t: Tokens) -> QPalette:
     return pal
 
 
+def system_tokens(pal: QPalette) -> Tokens:
+    """Contraste alto (R-03): os tokens das cores da paleta do sistema (janela, texto, base, destaque e o texto apagado)."""
+    roles, active = QPalette.ColorRole, QPalette.ColorGroup.Active
+
+    def color(role_id: QPalette.ColorRole, group: QPalette.ColorGroup = active) -> str:
+        return pal.color(group, role_id).name()
+
+    return contrast_tokens(window=color(roles.Window), text=color(roles.WindowText), base=color(roles.Base),
+                           highlight=color(roles.Highlight), highlighted_text=color(roles.HighlightedText),
+                           disabled=color(roles.WindowText, QPalette.ColorGroup.Disabled))
+
+
+def _system_palette(app: QApplication) -> QPalette:
+    """Contraste alto: a paleta do sistema no app (sem papel nosso, segue as trocas do Windows), lida de volta."""
+    app.setPalette(QPalette())
+    return app.palette()
+
+
 # ---------------------------------------------------------------- widgets (A-02, A-10)
 def surface_tokens(w: QWidget | None) -> Tokens:
     """Os tokens da janela de `w`: os do esquema marcado por `surface` ou os do tema vigente."""
@@ -166,13 +187,11 @@ def set_kind(button: QAbstractButton, kind: str | None) -> None:
     button.update()
 
 
-def primary(window: QWidget, button: QPushButton) -> None:
-    """O primário da janela (um por janela, U-056): `kind` e `setDefault(True)` nele e `setAutoDefault(False)` nos outros
-    botões dela (A-02: o foco noutro botão não lhe passa o padrão; Enter fica no primário, Comportamento)."""
+def primary(_window: QWidget, button: QPushButton) -> None:
+    """O primário da janela (um por janela, U-056): `kind` e `setDefault(True)` nele, sem mexer nos outros botões. Revisão
+    da F5.4 (R-02, desvio do A-02, que tirava o `autoDefault` dos outros): como no Windows, o Enter num botão com foco
+    aciona esse botão (Cancelar cancela) e o Enter num campo aciona o primário."""
     set_kind(button, PRIMARY)
-    for other in window.findChildren(QPushButton):
-        if other is not button:
-            other.setAutoDefault(False)
 
 
 def set_invalid(w: QWidget, invalid: bool) -> None:
@@ -230,6 +249,13 @@ def _high_contrast() -> bool:
     return access is not None and access.contrastPreference() == Qt.ContrastPreference.HighContrast
 
 
+def reduced_motion() -> bool:
+    """Sem animação no sistema (Comportamento; revisão da F5.4, R-07): a preferência mora em `QAccessibilityHints` (A-07,
+    guardados no `apply`); lida na hora, segue a troca sem sinal (quem anima consulta ao ligar o timer)."""
+    access = _STATE.access
+    return access is not None and access.motionPreference() == Qt.MotionPreference.ReducedMotion
+
+
 def _sweep() -> None:
     """A-10: o que o tema pôs em cada widget, de novo nos tokens vigentes: o tom, o ícone e o `retheme()` de quem pinta à
     mão ou desenha HTML. Só na troca de tema (percorre todos os widgets do app)."""
@@ -251,7 +277,10 @@ def _apply_scheme(app: QApplication) -> Tokens:
     hints = _STATE.hints
     scheme = _STATE.forced if _STATE.forced is not None else (hints.colorScheme() if hints is not None else None)
     t, high = tokens_for(scheme), _high_contrast()
-    app.setPalette(QPalette() if high else build_palette(t))    # contraste alto: a paleta do sistema, sem papel nosso
+    if high:                                                    # contraste alto: a paleta do sistema e os tokens dela
+        t = system_tokens(_system_palette(app))
+    else:
+        app.setPalette(build_palette(t))
     style = app.style()
     if isinstance(style, ThemeStyle):
         style.tokens = t
@@ -320,8 +349,9 @@ def release(app: QApplication | None = None) -> None:
     _STATE.notifier = None                                   # sem dono no C++: o Python o apaga aqui
 
 
-__all__ = ["BLACK", "CONTRAST_PAIRS", "DANGER", "DARK", "FONTS", "FONT_ROLES", "GRAPHIC_MIN", "INVALID_PROP", "KIND_PROP", "LIGHT",
-           "METRICS", "PRIMARY", "SPEAKER_SURFACES", "STATUS_TONES", "TEXT_MIN", "TONE_ROLE", "WHITE", "FontToken", "Fonts", "Metrics",
-           "ThemeNotifier", "Tokens", "Tone", "apply", "build_palette", "contrast", "font_for", "html_css", "luminance", "make_font",
-           "mix", "note", "notifier", "primary", "qcolor", "release", "retone", "role", "set_invalid", "set_kind", "surface",
-           "surface_tokens", "text_on", "text_scale", "tokens", "tokens_for", "tone"]
+__all__ = ["BLACK", "CONTRAST_PAIRS", "CONTRAST_SCHEME", "DANGER", "DARK", "FONTS", "FONT_ROLES", "GRAPHIC_MIN", "INVALID_PROP",
+           "KIND_PROP", "LIGHT", "METRICS", "PRIMARY", "SPEAKER_SURFACES", "STATUS_TONES", "TEXT_MIN", "TONE_ROLE", "WHITE",
+           "FontToken", "Fonts", "Metrics", "ThemeNotifier", "Tokens", "Tone", "apply", "build_palette", "contrast", "contrast_tokens",
+           "font_for", "html_css", "luminance", "make_font", "mix", "note", "notifier", "primary", "qcolor", "reduced_motion",
+           "release", "retone", "role", "set_invalid", "set_kind", "surface", "surface_tokens", "system_tokens", "text_on",
+           "text_scale", "tokens", "tokens_for", "tone"]

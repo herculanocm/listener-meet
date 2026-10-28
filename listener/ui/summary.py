@@ -1,7 +1,8 @@
 """Resumo de fim de gravação (F1): duração, pedaços, tamanho, marcadores; título editável (vai para revisions);
 pedaços não gravados, se houver (M-04). F5: o título salvo aqui chama `on_edited` (o índice da busca usa o título em todo
 trecho; o pesado pode já ter indexado com o antigo, R5-07). F5.4 L2 (U-069): o cabeçalho com o ícone de sucesso e o título
-de 20 px; a lista dos marcadores só quando há marcador; OK é o primário (Enter, U-056)."""
+de 20 px; a lista dos marcadores só quando há marcador; OK é o primário (Enter, U-056). Revisão da F5.4: com pedaços não
+gravados, o título diz que houve falha ("Gravação salva com falha"), junto do ícone de aviso."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from ..store import Store
 
 HEADER_ICON_PX = 32
+SAVED, SAVED_WITH_FAILURE = "Gravação salva", "Gravação salva com falha"
 
 
 class SummaryDialog(QDialog):
@@ -27,7 +29,7 @@ class SummaryDialog(QDialog):
         self.store = store
         self.meeting_id = meeting_id
         self.on_edited = on_edited                     # F5: `on_edited(meeting_id, motivo)` reindexa a reunião
-        self.setWindowTitle("Gravação salva")
+        self.setWindowTitle(SAVED_WITH_FAILURE if stats.get("unsaved") else SAVED)
         self.setMinimumWidth(480)
         m = store.get_meeting(meeting_id) or {}
         cs = store.chunk_stats(meeting_id)
@@ -74,14 +76,14 @@ class SummaryDialog(QDialog):
 
     @staticmethod
     def _header(unsaved: object) -> QHBoxLayout:
-        """U-069: o ícone de sucesso (o de aviso quando pedaços não foram gravados) e "Gravação salva" em 20 px."""
+        """U-069: o ícone de sucesso e "Gravação salva" em 20 px; com pedaços não gravados, o de aviso e a falha no título."""
         icon = QLabel()
         icon.setFixedSize(HEADER_ICON_PX, HEADER_ICON_PX)
         if unsaved:
             set_icon(icon, "warning", Tone.WARNING, HEADER_ICON_PX)
         else:
             set_icon(icon, "success", Tone.SUCCESS, HEADER_ICON_PX)
-        title = QLabel("Gravação salva")
+        title = QLabel(SAVED_WITH_FAILURE if unsaved else SAVED)
         role(title, "subtitle")
         row = QHBoxLayout()
         row.setSpacing(12)

@@ -5,9 +5,11 @@ de texto. A validação continua a da `SPECS` (CP8), sobre o texto que cada edit
 - `raw()`: o texto que vai para o banco. Enquanto o valor à vista for o mesmo que o editor mostrou ao abrir, é o texto salvo
   original, tal como estava (sem trocar "0.60" por "0.6", "True" por "1" nem "info" por "INFO", que virariam troca no log
   da D-059); mexido, o valor novo no texto que a `SPECS` lê ("0.65", "True", "16000").
-- `set_raw(texto)`: um texto como se viesse do banco (os testes põem valores por aqui). Um texto que o editor não consegue
-  mostrar (fora da faixa ou ilegível, só de um banco editado à mão) fica guardado e a validação o recusa no Salvar, como
-  antes; o editor mostra o padrão até o usuário mexer.
+- `set_raw(texto)`: um texto como se viesse do banco (os testes põem valores por aqui). Revisão da F5.4 (R-04): num editor
+  tipado (número, lista, sim/não), um texto que a `SPECS` recusa (fora da faixa ou ilegível, só de um banco editado à mão)
+  fica em `saved_error`, o editor mostra o padrão e `raw()` devolve o valor à vista: salvar grava o padrão (antes o Salvar
+  ficava travado, e mexer e voltar ao padrão não destravava). A página avisa numa faixa (`ui/settings_min.py`). O campo de
+  texto (atalhos, caminhos) segue mostrando o texto como está, e a validação o recusa.
 - Sem sinais: comparar o valor à vista com o da abertura não liga nada no C++ (R-06). A roda do mouse só muda spin e lista
   com o foco neles: rolando a página por cima deles, o valor não muda sozinho.
 - Largura: spin e lista com pelo menos `COMPACT_W` (alinhados na coluna); o spin com o maior texto da faixa mais as setas
@@ -78,20 +80,28 @@ class SettingEditor:
     (`show`)."""
     widget: QWidget
 
+    typed = True                    # número, lista e sim/não: o texto salvo que a `SPECS` recusa dá lugar ao padrão (R-04)
+
     def __init__(self, key: str, raw: str) -> None:
         self.key = key
         self.spec: SettingSpec[Any] = SPECS[key]
         self.saved = raw
+        self.saved_error: str | None = None
         self.shown: object = None
 
     def raw(self) -> str:
         value = self.value()
-        return self.saved if value == self.shown else self.format(value)
+        return self.saved if value == self.shown and self.saved_error is None else self.format(value)
 
     def set_raw(self, raw: str) -> None:
         self.saved = raw
+        self.saved_error = self.spec.error(raw) if self.typed else None
         self.show(raw)
         self.shown = self.value()
+
+    def shown_text(self) -> str:
+        """O valor à vista como a tela o escreve ("0,60", "INFO", "marcado")."""
+        raise NotImplementedError
 
     def parsed(self, raw: str) -> Any:
         """O valor de um texto pela `SPECS`; o padrão quando o texto não vale (o editor mostra o que o app usa)."""
@@ -112,7 +122,9 @@ class SettingEditor:
 
 class TextEditor(SettingEditor):
     """Campo de texto (atalhos, glossário, pastas, proxy); `fallback` é o que se mostra com o texto salvo vazio (o
-    arquivo de log padrão), sem gravar nada enquanto o usuário não mexe."""
+    arquivo de log padrão), sem gravar nada enquanto o usuário não mexe. O texto salvo inválido fica à vista para a
+    validação recusar (o usuário o corrige)."""
+    typed = False
 
     def __init__(self, key: str, raw: str, fallback: str = "") -> None:
         super().__init__(key, raw)
@@ -133,6 +145,10 @@ class TextEditor(SettingEditor):
     def show(self, raw: str) -> None:
         self.edit.setText(raw or self.fallback)
 
+    @override
+    def shown_text(self) -> str:
+        return self.edit.text()
+
 
 class BoolEditor(SettingEditor):
     """Sim/não numa caixa de seleção com o rótulo da `SPECS` (U-073); mexido, grava "True" ou "False" (o `str` do bool, como
@@ -151,6 +167,10 @@ class BoolEditor(SettingEditor):
     @override
     def show(self, raw: str) -> None:
         self.box.setChecked(bool(self.parsed(raw)))
+
+    @override
+    def shown_text(self) -> str:
+        return "marcado" if self.box.isChecked() else "desmarcado"
 
 
 class IntEditor(SettingEditor):
@@ -174,6 +194,10 @@ class IntEditor(SettingEditor):
     @override
     def show(self, raw: str) -> None:
         self.spin.setValue(int(self.parsed(raw)))
+
+    @override
+    def shown_text(self) -> str:
+        return self.spin.text()
 
 
 def decimals_for(spec: SettingSpec[Any], raw: str) -> int:
@@ -219,6 +243,10 @@ class FloatEditor(SettingEditor):
     def show(self, raw: str) -> None:
         self.spin.setValue(float(self.parsed(raw)))
 
+    @override
+    def shown_text(self) -> str:
+        return self.spin.text()
+
 
 def choice_items(spec: SettingSpec[Any]) -> list[tuple[str, object]]:
     """As opções da `SPECS` em lista (o texto e o valor): a ordem de `CHOICE_ORDER` ou a crescente."""
@@ -247,6 +275,10 @@ class ChoiceEditor(SettingEditor):
     @override
     def show(self, raw: str) -> None:
         self.combo.setCurrentIndex(max(0, self.combo.findData(self.parsed(raw))))
+
+    @override
+    def shown_text(self) -> str:
+        return self.combo.currentText()
 
 
 def make_editor(key: str, raw: str) -> SettingEditor:

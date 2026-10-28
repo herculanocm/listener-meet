@@ -510,8 +510,8 @@ def test_settings_language_and_notices_group_has_the_toast_seconds(qtbot, store,
     assert dlg.page("Idioma e avisos").isAncestorOf(spin) and editor.raw() == "6" and "balão" in spin.toolTip()
     assert (spin.minimum(), spin.maximum()) == (0, 60)
     for bad in ("61", "-1", "abc"):                          # A-14: o spin não aceita; o texto entra como se viesse do banco
-        editor.set_raw(bad)
-        assert (dlg.validation_error() or "").startswith("Aviso some em (s)")
+        editor.set_raw(bad)                                  # R-04: o padrão à vista é o que o Salvar grava
+        assert (editor.saved_error or "").startswith("Aviso some em (s)") and editor.raw() == "6" and dlg.validation_error() is None
     spin.setValue(0)
     assert dlg.validation_error() is None
     dlg._save()

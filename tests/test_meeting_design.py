@@ -427,7 +427,7 @@ def test_person_sheet_puts_delete_in_red_on_the_left_far_from_save(qtbot):
     dlg = PersonDialog(data=PersonData("Ana", "CFO"), can_delete=True)
     qtbot.addWidget(dlg)
     dlg.show()
-    assert dlg.btn_delete is not None and dlg.btn_delete.property(KIND_PROP) == DANGER and not dlg.btn_delete.autoDefault()
+    assert dlg.btn_delete is not None and dlg.btn_delete.property(KIND_PROP) == DANGER and not dlg.btn_delete.isDefault()
     assert dlg.btn_save.property(KIND_PROP) == PRIMARY and dlg.btn_save.isDefault()
     gap = dlg.btn_save.mapTo(dlg, QPoint(0, 0)).x() - dlg.btn_delete.mapTo(dlg, QPoint(dlg.btn_delete.width(), 0)).x()
     assert gap >= 48                                                                 # à esquerda, longe do Salvar

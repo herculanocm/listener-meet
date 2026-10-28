@@ -24,7 +24,7 @@ from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import review, summary_gate
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
-from .common import keep_until_destroyed
+from .common import click_focused_button, keep_until_destroyed
 from .player import ERROR, PlayerState
 from .review_cards import KeyButton, VoiceCardDelegate, card_item, stage_primary
 from .review_person import PersonActionsMixin
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .player import Player
 
 log = get_logger("ui.review")
+ENTER_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
 
 
 class ReviewDialog(PersonActionsMixin, QDialog):
@@ -78,7 +79,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         self.btn_identify.clicked.connect(self._identify_clicked)
         for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore, self.btn_play,
                   self.btn_edit, self.btn_transcript, self.btn_finish, self.btn_identify):
-            b.setAutoDefault(False)                        # U-086: o Enter fica com a lista (U-006); nenhum vira o padrão sozinho
+            b.setAutoDefault(False)                        # U-086: nenhum vira o padrão do Enter (o Enter num botão: `keyPressEvent`)
         self.btn_confirm.clicked.connect(self._confirm_clicked)
         self.btn_llm.clicked.connect(self.accept_llm_current)
         self.btn_other.clicked.connect(self.ask_other_person)
@@ -344,8 +345,19 @@ class ReviewDialog(PersonActionsMixin, QDialog):
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if self.tabs.currentIndex() != 0 or not self.handle_key(event.key()):   # nas abas de texto as letras são texto
-            super().keyPressEvent(event)
+        """Revisão da F5.4 (R-01): o Enter num botão com foco aciona esse botão (os botões da revisão não são `autoDefault`,
+        para nenhum virar o padrão sozinho); na aba Vozes, as teclas da revisão (U-006: o Enter confirma o pyannote); nas
+        abas de texto as letras são texto e o Enter fora de um botão não aciona nada (um botão das abas que já teve o foco
+        fica sendo o padrão no Qt: o Enter num campo não gera ata nem fecha a revisão)."""
+        enter = event.key() in ENTER_KEYS
+        if enter and click_focused_button(self):
+            return
+        if self.tabs.currentIndex() == 0 and self.handle_key(event.key()):
+            return
+        if enter:
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:

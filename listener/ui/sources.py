@@ -27,7 +27,7 @@ from ..platform.base import Endpoints, PlayingApp
 from .components import BADGE_PAD_X, BADGE_PAD_Y
 from .meters import LevelMeter
 from .style import rounded
-from .theme import font_for, qcolor, surface_tokens
+from .theme import Tone, font_for, qcolor, surface_tokens
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -102,7 +102,7 @@ class MeetingBadgeDelegate(QStyledItemDelegate):
         t = surface_tokens(option.widget)
         pill = QRectF(option.rect.right() - width - 4, option.rect.center().y() - height / 2 + 1, width, height)
         painter.save()
-        rounded(painter, pill, height / 2, t.info_bg)
+        rounded(painter, pill, height / 2, t.info_bg, t.edge(Tone.INFO))
         painter.setFont(font)
         painter.setPen(qcolor(t.info))
         painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), MEETING_BADGE)

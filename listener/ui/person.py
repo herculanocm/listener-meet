@@ -95,7 +95,7 @@ class PersonDialog(QDialog):
         lay.addWidget(note)
         lay.addWidget(self.error)
         lay.addLayout(row)
-        primary(self, self.btn_save)                     # Enter salva; o apagar só no clique
+        primary(self, self.btn_save)                     # Enter num campo salva; num botão com foco, aciona o botão (R-02)
         if self.btn_delete is not None:
             set_kind(self.btn_delete, DANGER)
         self.name_edit.setFocus()

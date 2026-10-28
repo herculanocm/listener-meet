@@ -7,7 +7,8 @@
 - `KeyButton`: o botão da ação com o atalho num selo de tecla à direita ("Confirmar pyannote [Enter]"); a tecla também vai
   na dica e na descrição acessível.
 - `stage_primary`: o primário segue a etapa (com voz pendente, "Confirmar pyannote"; sem nenhuma, "Concluir"). Nenhum vira
-  o padrão do Enter: na lista, Enter segue confirmando o pyannote (U-006), e num campo de texto não fecha a revisão."""
+  o padrão do Enter: na lista, Enter segue confirmando o pyannote (U-006), e num campo de texto não fecha a revisão; num
+  botão com foco, o Enter aciona esse botão (`ReviewDialog.keyPressEvent`, R-01 da revisão da F5.4)."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -120,7 +121,7 @@ class VoiceCardDelegate(QStyledItemDelegate):
         meta = str(index.data(META_ROLE) or "")
         meta_w = self._caption_fm.horizontalAdvance(meta)
         painter.setFont(self.caption)
-        painter.setPen(qcolor(t.secondary))
+        painter.setPen(qcolor(t.on_selected(t.secondary, selected)))       # contraste alto: o texto do destaque (R-03)
         painter.drawText(QRectF(right - meta_w, y, meta_w, head_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
                          meta)
         title = str(index.data(TITLE_ROLE) or "")
@@ -129,20 +130,20 @@ class VoiceCardDelegate(QStyledItemDelegate):
         room = max(0.0, right - meta_w - 12 - x - (pill_w + 8 if badge else 0))
         shown = self._strong_fm.elidedText(title, Qt.TextElideMode.ElideRight, int(room))
         painter.setFont(self.strong)
-        painter.setPen(qcolor(t.text))
+        painter.setPen(qcolor(t.on_selected(t.text, selected)))
         painter.drawText(QRectF(x, y, room, head_h), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), shown)
         if badge:
             value = Tone(str(index.data(BADGE_TONE_ROLE) or Tone.NEUTRAL.value))
             pill_h = self._caption_fm.height() + 2 * PILL_PAD_Y
             pill = QRectF(x + self._strong_fm.horizontalAdvance(shown) + 8, y + (head_h - pill_h) / 2, pill_w, pill_h)
-            rounded(painter, pill, pill_h / 2, t.background(value))
+            rounded(painter, pill, pill_h / 2, t.background(value), t.edge(value))
             painter.setFont(self.caption)
             painter.setPen(qcolor(t.tone(value)))
             painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), badge)
         detail = str(index.data(DETAIL_ROLE) or "")
         if detail:
             painter.setFont(option.font)
-            painter.setPen(qcolor(t.secondary))
+            painter.setPen(qcolor(t.on_selected(t.secondary, selected)))
             top = y + head_h + CARD_GAP
             painter.drawText(QRectF(x, top, right - x, card.bottom() - CARD_PAD - top), DETAIL_FLAGS, detail)
         painter.restore()

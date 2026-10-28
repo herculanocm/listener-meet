@@ -9,13 +9,16 @@ F5.4 L3 (U-077, U-058): 1040 x 480, aberta dentro da área livre pelo `fit_to_sc
 (`BadgeDelegate`; o texto segue no `DisplayRole`, para o leitor de tela e os testes); a barra com o raio do token; Ajuda e
 Fechar na linha dos botões; a tabela com o cabeçalho à esquerda, sem número de linha, a linha inteira selecionada e a
 Reunião esticando (a Etapa e o Detalhe com largura própria; o texto inteiro dessas três na dica); o resultado da última
-ação numa faixa (U-057). Os textos das colunas moram em `ui/queue_rows.py` e seguem reexportados daqui."""
+ação numa faixa (U-057). Os textos das colunas moram em `ui/queue_rows.py` e seguem reexportados daqui.
+Revisão da F5.4: o Enter na tabela não aciona botão nenhum (o Qt fazia do primeiro botão o padrão da janela, e o Enter na
+tabela clicava "Pausar fila"); num botão com foco, aciona esse botão. Com o movimento reduzido do sistema (R-07), a faixa
+do "rodando" fica parada no meio da barra."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QRect, Qt, QTimer
-from PySide6.QtGui import QHideEvent, QShowEvent
+from PySide6.QtGui import QHideEvent, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
 
@@ -25,13 +28,13 @@ from ..log import get_logger
 from ..model import LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..store.jobs import HELD
 from ..pipeline.reprocess import request_reprocess
-from .common import fit_to_screen
+from .common import click_focused_button, fit_to_screen
 from .components import BadgeDelegate, InfoBar
 from .queue_bar import PROGRESS_ROLE, STATUS_ROLE, ProgressBarDelegate
 from .queue_help import QueueHelpDialog
 from .queue_rows import (TIME_FORMAT, fmt_work, index_progress, index_row_texts, job_row_texts, job_times_tip, llm_job_texts, local_time,
                          pct_text, work_seconds)
-from .theme import METRICS, TONE_ROLE, Tone, note
+from .theme import METRICS, TONE_ROLE, Tone, note, reduced_motion
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -41,6 +44,7 @@ log = get_logger("ui.queue")
 
 REFRESH_MS = 2000
 BAND_MS = 120                   # a faixa do "rodando" anda nesse passo, só com linha rodando e a fila visível (A-08)
+BAND_REST = 0.5                 # com o movimento reduzido (R-07), a faixa fica parada no meio da barra
 COLUMNS = ("Reunião", "Enviado", "Tipo", "Estado", "Etapa", "%", "Estimativa", "Detalhe")
 SENT_COL, STATE_COL, PROGRESS_COL = COLUMNS.index("Enviado"), COLUMNS.index("Estado"), COLUMNS.index("%")
 MEETING_COL, DETAIL_COL = COLUMNS.index("Reunião"), COLUMNS.index("Detalhe")
@@ -231,8 +235,13 @@ class QueueDialog(QDialog):
 
     # ---------------------------------------------------------------- a faixa do "rodando" (A-08)
     def _sync_band(self) -> None:
-        """Liga o timer da faixa só com alguma linha rodando e a fila à vista; sem isso ele nem acorda."""
-        if self._running_rows and self.isVisible() and not self.isMinimized():
+        """Liga o timer da faixa só com alguma linha rodando, a fila à vista e o sistema sem o movimento reduzido; sem isso
+        ele nem acorda. Com o movimento reduzido (R-07; lido a cada leitura da fila, segue a troca em até 2 s), a faixa fica
+        parada no meio da barra."""
+        still = reduced_motion()
+        if still:
+            self.bar_delegate.phase = BAND_REST
+        if self._running_rows and self.isVisible() and not self.isMinimized() and not still:
             if not self._band_timer.isActive():
                 self._band_timer.start()
         elif self._band_timer.isActive():
@@ -253,6 +262,16 @@ class QueueDialog(QDialog):
             self.refresh()                               # o que mudou com ela fechada
             self._timer.start()
         self._sync_band()
+
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """O Enter num botão com foco aciona esse botão; na tabela, nenhum (a fila não tem primário: o padrão que o Qt
+        escolhe sozinho não recebe o Enter)."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            click_focused_button(self)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     @override
     def hideEvent(self, event: QHideEvent) -> None:
@@ -320,6 +339,6 @@ class QueueDialog(QDialog):
         return result.job_id
 
 
-__all__ = ["BAND_MS", "BUTTON_HELP", "COLUMNS", "COLUMN_HELP", "PROGRESS_COL", "REFRESH_MS", "SENT_COL", "STATE_COL", "STATUS_BADGES",
-           "TIME_FORMAT", "QueueDialog", "fmt_work", "index_progress", "index_row_texts", "job_row_texts", "job_times_tip",
-           "llm_job_texts", "local_time", "pct_text", "work_seconds"]
+__all__ = ["BAND_MS", "BAND_REST", "BUTTON_HELP", "COLUMNS", "COLUMN_HELP", "PROGRESS_COL", "REFRESH_MS", "SENT_COL", "STATE_COL",
+           "STATUS_BADGES", "TIME_FORMAT", "QueueDialog", "fmt_work", "index_progress", "index_row_texts", "job_row_texts",
+           "job_times_tip", "llm_job_texts", "local_time", "pct_text", "work_seconds"]

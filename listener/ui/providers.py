@@ -10,7 +10,7 @@ acesso", o primeiro das Configurações (`ui/keys.py`); a sub-aba diz onde e gua
 F5.4 L3: o estado da chave em selo (`key_badge`, U-075: Falta a chave, Não testada, Chave nova, Testando, Conectado, Falhou)
 com o detalhe em nota (`key_status`); a tabela de preços com o cabeçalho inteiro, à esquerda e sem número de linha (U-076,
 U-058); o aviso do envio numa faixa (U-057); sem jargão interno na tela; `validation_problem` devolve o campo do erro para a
-página marcá-lo (U-072)."""
+página marcá-lo (U-072). Revisão da F5.4 (R-05): "Conectado" só para a chave que passou no último teste (`_record_test`)."""
 from __future__ import annotations
 
 import functools
@@ -89,6 +89,7 @@ class ProviderTab(QWidget):
         self.on_launch = on_launch
         self.last_test: ConnectionTest | None = None
         self.last_models: tuple[ModelInfo, ...] = ()
+        self._tested: tuple[str, int | None] = ("", None)          # R-05: a chave do último teste e a latência (None: falhou)
         self.key = QLineEdit(str(row.get("api_key") or ""))
         self.key.setPlaceholderText("chave de API (fica no banco do app, em texto aberto)")
         self.key.setAccessibleName(f"Chave do {TITLES.get(self.pid, self.pid)}")
@@ -217,6 +218,7 @@ class ProviderTab(QWidget):
             self._say("informe a chave antes de testar", (NO_KEY, Tone.WARNING, "informe a chave antes de testar"))
             return
         self.btn_test.setEnabled(False)
+        self._tested = (key, None)
         self._say("testando…", (TESTING, Tone.INFO, ""))
         kind, model, net = str(self.kind), self.fast.currentText().strip(), self._net()
         run_task(functools.partial(test_connection, kind, key, model, net), self.store, self._on_test)
@@ -226,15 +228,25 @@ class ProviderTab(QWidget):
         if isinstance(result, BaseException):
             error = friendly_error(str(result))
             self._say(f"falhou: {error}", (FAILED, Tone.DANGER, error))
+            self._record_test(None)
             return
         self.last_test = result
         if result.ok:
             detail = f"{result.model} respondeu em {result.latency_ms} ms"
             self._say(f"ok: {detail}", (CONNECTED, Tone.SUCCESS, detail))
-            self.store.providers.update_provider(self.pid, tested_at=_now(), latency_ms=int(result.latency_ms))
+            self._record_test(int(result.latency_ms))
         else:
             error = friendly_error(result.error)
             self._say(f"falhou: {error}", (FAILED, Tone.DANGER, error))
+            self._record_test(None)
+
+    def _record_test(self, latency: int | None) -> None:
+        """R-05: o resultado vale para a chave testada: a salva vai ao banco já (a que falhou perde o "Conectado"); outra,
+        com o Salvar (`save`), e trocar a chave sem testar limpa o teste da anterior (`update_provider`)."""
+        key = self._tested[0]
+        self._tested = (key, latency)
+        if key and key == self.saved_key:
+            self.store.providers.update_provider(self.pid, tested_at=_now() if latency is not None else None, latency_ms=latency)
 
     def refresh_models(self) -> None:
         key = self.key.text().strip()
@@ -314,11 +326,12 @@ class ProviderTab(QWidget):
         err = self.validation_error()
         if err:
             raise ValueError(err)
-        params = self.params.text().strip()
-        self.store.providers.update_provider(self.pid, api_key=self.key.text().strip() or None,
-                                             fast_model=self.fast.currentText().strip(),
+        params, key, (tested, latency) = self.params.text().strip(), self.key.text().strip(), self._tested
+        passed: dict[str, Any] = {"tested_at": _now(), "latency_ms": latency} if key and key == tested and latency is not None else {}
+        self.store.providers.update_provider(self.pid, api_key=key or None, fast_model=self.fast.currentText().strip(),
                                              strong_model=self.strong.currentText().strip() or None, params=params or None,
-                                             model=self.embed_model.text().strip() or None)
+                                             model=self.embed_model.text().strip() or None, **passed)
+        self.saved_key = key
         for model, values in self._price_rows():
             self.store.providers.set_price(self.pid, model, *values)
 

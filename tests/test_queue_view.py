@@ -259,6 +259,39 @@ def test_band_moves_only_with_a_running_row_and_the_queue_visible(qtbot, store):
     dlg.hide()
 
 
+def test_band_stays_still_with_the_system_reduced_motion(qtbot, store, monkeypatch):
+    """Revisão da F5.4 (R-07): sem animação no sistema (`QAccessibilityHints.motionPreference`), a faixa do "rodando" fica
+    parada no meio da barra; a preferência é lida a cada leitura da fila, e a faixa volta a andar quando ela sai."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui import theme
+    from listener.ui.queue import BAND_REST, QueueDialog
+
+    class Access:
+        motion = Qt.MotionPreference.ReducedMotion
+
+        def motionPreference(self) -> Qt.MotionPreference:  # noqa: N802 (o nome do QAccessibilityHints)
+            return self.motion
+
+    access = Access()
+    monkeypatch.setattr(theme._STATE, "access", access)
+    mid = _meeting(store)
+    jid = store.jobs.enqueue(mid)
+    store.jobs.claim(pid=1)
+    store.jobs.set_progress(jid, JobStep.DIARIZE, 0.3)
+    dlg = QueueDialog(store)
+    qtbot.addWidget(dlg)
+    dlg._timer.stop()
+    dlg.show()
+    assert not dlg._band_timer.isActive() and dlg.bar_delegate.phase == BAND_REST
+    qtbot.wait(3 * 120)
+    assert dlg.bar_delegate.phase == BAND_REST                                       # parada
+    access.motion = Qt.MotionPreference.NoPreference
+    dlg.refresh()
+    assert dlg._band_timer.isActive()
+    dlg.hide()
+
+
 def test_the_refresh_timer_runs_only_with_the_queue_visible(qtbot, store):
     """Fechada, a fila não consulta o banco (antes a leitura de 2 s seguia depois do "Fechar"); ao abrir de novo, lê na
     hora o que mudou."""
@@ -315,3 +348,26 @@ def test_help_covers_every_kind_status_and_step_in_the_order_they_run(qtbot, sto
     assert help_dialog is not None and help_dialog.isVisible() and "fila: ajuda aberta" in caplog.text
     assert "separando vozes" in help_dialog.view.toPlainText() and dlg.open_help() is help_dialog   # reabrir traz a mesma
     help_dialog.close()
+
+
+def test_help_colors_are_theme_classes_and_follow_the_theme_change(qtbot, qapp, tmp_path):
+    """Revisão da F5.4: a amostra da cor de cada estado na Ajuda é uma classe do tema, e a Ajuda aberta acompanha a troca."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui import theme
+    from listener.ui.components import HtmlView
+    from listener.ui.queue import BUTTON_HELP, COLUMN_HELP
+    from listener.ui.queue_help import QueueHelpDialog, queue_help_html
+    from listener.ui.theme import DARK, LIGHT
+    from tests.fake_platform import FakePlatform
+
+    page = queue_help_html(BUTTON_HELP, COLUMN_HELP)
+    assert "style=" not in page and 'class="info"' in page and 'class="disabled"' in page
+    dlg = QueueHelpDialog(BUTTON_HELP, COLUMN_HELP)
+    qtbot.addWidget(dlg)
+    assert isinstance(dlg.view, HtmlView) and f".info {{ color: {LIGHT.info}; }}" in dlg.view.document().defaultStyleSheet()
+    try:
+        theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Dark)
+        assert f".info {{ color: {DARK.info}; }}" in dlg.view.document().defaultStyleSheet()
+    finally:
+        theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Light)

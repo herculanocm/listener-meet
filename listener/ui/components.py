@@ -1,7 +1,8 @@
 """Os componentes da F5.4 (L1, item 3), nos tokens do tema e sem folha de estilo: `Card`, `InfoBar`, `Badge` (também numa
 célula, pelo `BadgeDelegate`), `EmptyState`, `IconButton` e o `HtmlView`, o `QTextBrowser` do HTML por classes (A-10).
 Quem pinta lê os tokens na hora da pintura (a troca de tema só repinta); os ícones vêm de `ui/icons` (`theme_icon`). O
-`HtmlView` já serve o Histórico e o Ao vivo (o HTML por classes do L1); os outros, as telas passam a usar do L2 ao L4."""
+`HtmlView` já serve o Histórico e o Ao vivo (o HTML por classes do L1); os outros, as telas passam a usar do L2 ao L4. No
+contraste alto (revisão da F5.4, R-03) a faixa e o selo ficam no fundo da janela, com a borda no tom (`Tokens.edge`)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
@@ -75,7 +76,8 @@ class InfoBar(QFrame):
     def paintEvent(self, event: QPaintEvent) -> None:
         t = surface_tokens(self)
         p = QPainter(self)
-        rounded(p, QRectF(self.rect()), t.metrics.radius, t.background(INFO_KINDS[self.kind][0]), t.stroke)
+        value = INFO_KINDS[self.kind][0]
+        rounded(p, QRectF(self.rect()), t.metrics.radius, t.background(value), t.edge(value) or t.stroke)
         p.end()
 
 
@@ -103,7 +105,7 @@ class Badge(QLabel):
         t = surface_tokens(self)
         p = QPainter(self)
         r = QRectF(self.rect())
-        rounded(p, r, r.height() / 2, t.background(self.badge_tone))
+        rounded(p, r, r.height() / 2, t.background(self.badge_tone), t.edge(self.badge_tone))
         p.end()
         super().paintEvent(event)
 
@@ -131,7 +133,7 @@ class BadgeDelegate(QStyledItemDelegate):
         width = min(fm.horizontalAdvance(text) + 2 * BADGE_PAD_X, max(0, opt.rect.width() - 8))
         pill = QRectF(opt.rect.left() + 4, opt.rect.center().y() - height / 2 + 1, width, height)
         painter.save()
-        rounded(painter, pill, height / 2, t.background(value))
+        rounded(painter, pill, height / 2, t.background(value), t.edge(value))
         painter.setPen(qcolor(t.tone(value)))
         painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter),
                          fm.elidedText(text, Qt.TextElideMode.ElideRight, int(width) - 2 * BADGE_PAD_X + 2))

@@ -117,8 +117,9 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     store.finish_meeting(empty, 1000)
     _pipeline_job(store, empty)
     assert dlg.complete_index() == 1 and len(asked) == 4 and launched == [True, True, True]
-    dlg.editor("rag.top_k").set_raw("3")                                                  # A-14: o spin não aceita o 3
-    assert "Trechos por pergunta" in (dlg.validation_error() or "")
+    top_k = dlg.editor("rag.top_k")
+    top_k.set_raw("3")                                    # A-14: o spin não aceita o 3; R-04: vale o padrão, gravado ao salvar
+    assert "Trechos por pergunta" in (top_k.saved_error or "") and top_k.raw() == "12" and dlg.validation_error() is None
 
 
 def test_completing_says_that_meetings_without_chunks_also_get_vectors(qtbot, store, platform, monkeypatch):

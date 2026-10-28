@@ -55,11 +55,13 @@ def shortcut_text(combo: str) -> str:
 
 class ElidedLabel(QLabel):
     """Uma linha cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no tooltip (a legenda
-    do F4 e, F5.3, a linha de alerta com o nome de um aparelho)."""
+    do F4 e, F5.3, a linha de alerta com o nome de um aparelho). Em texto puro (revisão da F5.4): um nome de aparelho ou uma
+    legenda com "<b>" aparece como foi escrito, sem virar texto formatado."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
     def set_full_text(self, text: str, tip: str = "") -> None:
