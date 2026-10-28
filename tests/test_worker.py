@@ -43,6 +43,7 @@ def test_worker_process_runs_one_job_with_own_log_and_low_priority():
     log_path = Path(run["root"]) / "logs" / "listener-worker.log"
     text = log_path.read_text(encoding="utf-8")
     assert "papel worker" in text and "prioridade baixa: ok" in text and "job 1 concluído" in text
+    assert "job 1 terminou" in text                          # a última linha antes de sair: a fila do log esvazia no fim
     assert "RSS" in text                                                                           # memória logada por etapa
     app_log = Path(run["root"]) / "logs" / "listener.log"
     assert not app_log.exists() or "papel worker" not in app_log.read_text(encoding="utf-8")       # log próprio, não o do app

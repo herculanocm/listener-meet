@@ -170,6 +170,18 @@ def check(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Despacha o papel do processo (app, worker, ao vivo, diagnóstico). Na saída, de qualquer papel, a fila do log esvazia
+    e o arquivo fecha: a thread do listener é daemon, e as últimas linhas ("app encerrado", "job N concluído") se perdiam
+    quando o processo terminava antes dela."""
+    try:
+        return _dispatch(argv)
+    finally:
+        from .log import shutdown
+
+        shutdown()
+
+
+def _dispatch(argv: list[str] | None) -> int:
     _utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--live" in argv:                                     # o processo ao vivo tem o seu próprio parser e log (F4)
