@@ -8,11 +8,12 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..model import AppState
 from .common import DARK_SURFACE, state_color
+from .theme import qcolor
 
 if TYPE_CHECKING:
     from .controller import Controller
@@ -33,9 +34,9 @@ def make_icon(color: str) -> QIcon:
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#2c3e50"))
+    p.setBrush(qcolor(DARK_SURFACE.card))             # o fundo próprio do ícone (A-19), nos tokens do escuro
     p.drawRoundedRect(4, 4, 56, 56, 14, 14)
-    p.setBrush(QColor(color))
+    p.setBrush(qcolor(color))
     p.drawEllipse(18, 18, 28, 28)
     p.end()
     return QIcon(pm)

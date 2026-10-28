@@ -15,7 +15,8 @@ o gerente só na thread da interface (A-10); aqui ficam a janela (`Toast`), a po
   `WA_ShowWithoutActivating`, nunca `activateWindow`; o alvo do clique vem à frente pelo controlador (`bring_to_front`). Com
   um diálogo modal aberto (o warm-up), o aviso aparece e some sem receber clique.
 - Visual sóbrio, como o widget de gravação: fundo escuro, texto claro e a faixa na cor do tipo (`ui/common.py`); F5.4: as
-  cores são os tokens do escuro, nos dois esquemas, até o L2 (U-068) levar o aviso ao tema."""
+  cores são os tokens do escuro, nos dois esquemas, até o L2 (U-068) levar o aviso ao tema: a janela é uma superfície
+  escura (`theme.surface`), os rótulos têm tom e papel de fonte e o `ThemeStyle` pinta o "✕"; sem folha de estilo."""
 from __future__ import annotations
 
 import functools
@@ -25,12 +26,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
+from PySide6.QtGui import QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
 from ..log import get_logger
-from .common import NOTICE_BACKGROUND, NOTICE_BORDER, NOTICE_COLORS, NOTICE_MUTED, NOTICE_TEXT
+from .common import DARK_SURFACE, NOTICE_BACKGROUND, NOTICE_BORDER, NOTICE_COLORS
 from .notices import Notice, NoticeAction, NoticeKind, Target
+from .theme import Tone, note, qcolor, retone, role, surface, tone
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QEvent
@@ -47,10 +49,6 @@ MARGIN, GAP = 16, 8              # da borda da tela e entre avisos
 RADIUS, ACCENT_W = 10, 4         # cantos e a faixa do tipo
 TOAST_FLAGS = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                | Qt.WindowType.WindowDoesNotAcceptFocus)
-STYLE = (f"QLabel {{ color: {NOTICE_TEXT}; }} QLabel#toastTitle {{ font-size: 11px; font-weight: 600; }} "
-         f"QLabel#toastMuted {{ color: {NOTICE_MUTED}; font-size: 11px; }} "
-         f"QToolButton {{ color: {NOTICE_MUTED}; background: transparent; border: none; font-size: 15px; padding: 0 4px; }} "
-         f"QToolButton:hover {{ color: {NOTICE_TEXT}; }}")
 KIND_TITLES: dict[str, str] = {NoticeKind.READY: "Pronto", NoticeKind.INFO: "Informação", NoticeKind.ERROR: "Erro"}
 ACTION_HINTS: dict[str, str] = {Target.MEETING: "Clique para abrir a reunião", Target.MEETING_CHAT: "Clique para abrir o chat da reunião",
                                 Target.QUEUE: "Clique para abrir a fila", Target.SETTINGS: "Clique para abrir as Configurações",
@@ -110,7 +108,7 @@ class Toast(QWidget):
         self.setObjectName("toast")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFixedWidth(TOAST_WIDTH)
-        self.setStyleSheet(STYLE)
+        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-068), sem folha de estilo
         self.notice = notice
         self.duration_ms = duration_ms
         self.count = count
@@ -131,6 +129,8 @@ class Toast(QWidget):
         self.close_button.setAccessibleName("Fechar o aviso")
         self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_button.setCursor(Qt.CursorShape.ArrowCursor)
+        self.close_button.setAutoRaise(True)            # sem fundo até o mouse passar
+        tone(self.close_button, Tone.SECONDARY)
         self.close_button.clicked.connect(self._finish)
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
@@ -148,8 +148,20 @@ class Toast(QWidget):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._finish)
+        self._style_labels()
         self._show_count()
         self.set_private(False)
+
+    def _style_labels(self) -> None:
+        """O título em legenda semibold, a contagem e a dica em nota, o texto em corpo; os tons nos tokens da superfície (os
+        rótulos nasceram antes de entrar na janela)."""
+        role(self.title, "caption")
+        font = self.title.font()
+        font.setWeight(QFont.Weight.DemiBold)
+        self.title.setFont(font)
+        for muted in (self.badge, self.hint):
+            note(muted)
+        retone(self)
 
     @staticmethod
     def _label(text: str, name: str) -> QLabel:
@@ -202,11 +214,11 @@ class Toast(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(NOTICE_BORDER)))
-        p.setBrush(QColor(NOTICE_BACKGROUND))
+        p.setPen(QPen(qcolor(NOTICE_BORDER)))
+        p.setBrush(qcolor(NOTICE_BACKGROUND))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(NOTICE_COLORS[self.notice.kind]))
+        p.setBrush(qcolor(NOTICE_COLORS[self.notice.kind]))
         p.drawRoundedRect(QRectF(6, 8, ACCENT_W, max(8, self.height() - 16)), 2, 2)
         p.end()
 

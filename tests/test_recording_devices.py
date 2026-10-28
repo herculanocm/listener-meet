@@ -76,7 +76,11 @@ def test_a_new_microphone_releases_the_player_rereads_and_opens(platform, store,
     assert old.stop_calls == 0 and _live_mics(platform) == [old] and platform.refreshes == 0
     platform.pump(0.3)
     calls.clear()
-    rec.before_reread = lambda: calls.append("player") or player.update(open=0)   # agora o player solta a saída
+    def release_output() -> None:                                               # agora o player solta a saída
+        calls.append("player")
+        player.update(open=0)
+
+    rec.before_reread = release_output
     result = rec.switch_mic(BT)
     assert result.ok and calls == ["player"] and platform.refreshes == 1 and old.stop_calls == 1
     assert [s.device_id for s in _live_mics(platform)] == [BT.id]

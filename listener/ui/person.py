@@ -9,6 +9,8 @@ from typing import override
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
+from .theme import Tone, tone
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_LEN = {"name": 120, "role": 120, "company": 120, "email": 254}
 EMAIL_NOTE = "O e-mail fica só neste computador: não vai para a LLM nem para a busca."
@@ -55,9 +57,9 @@ class PersonDialog(QDialog):
         form.addRow("E-mail", self.email_edit)
         note = QLabel(EMAIL_NOTE)
         note.setWordWrap(True)
-        note.setStyleSheet("color: #888;")
+        tone(note, Tone.SECONDARY)
         self.error = QLabel("")
-        self.error.setStyleSheet("color: #e74c3c;")
+        tone(self.error, Tone.DANGER)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Salvar")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")

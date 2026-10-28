@@ -40,10 +40,10 @@ from typing import TYPE_CHECKING, Any, cast, override
 
 from PySide6 import QtGui
 from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QThread, QTimer, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QContextMenuEvent, QFont, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, \
+from PySide6.QtGui import QAction, QCloseEvent, QContextMenuEvent, QFont, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, \
     QResizeEvent, QShortcut, QShowEvent
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStackedWidget,
-                               QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
+                               QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
 from ..llm.prompts.common import stamp
@@ -55,7 +55,8 @@ from ..store.rag import SearchFilters
 from ..store.segments import ClusterRow, resolve_person
 from .common import clamp_to_screens, copy_rich
 from .tasks import StreamTask, run_stream, run_task, wait_before_close
-from .theme import Tone, tokens
+from .components import HtmlView
+from .theme import TONE_ROLE, Tone, note, tone
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -80,7 +81,7 @@ KIND_TAB: dict[str, str] = {ChunkKind.EXECUTIVE: "resumo", ChunkKind.ACTION: "ac
                             ChunkKind.PENDING: "ata", ChunkKind.NEXT_STEP: "ata", ChunkKind.MINUTES: "ata"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 HIT_SCHEME, MEETING_SCHEME = "listener://hit?c=", "listener://meeting?m="
-CHAT_EMPTY = ("<p style='color:#888'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
+CHAT_EMPTY = ("<p class='note'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
               "numa citação abre a reunião naquele ponto e toca. Os filtros de pessoa e período valem aqui também.</p>")
 OVERDUE_TONE = Tone.DANGER       # F5.4 (A-11): a ação atrasada e a busca que falhou, no tom de perigo do tema
 KEPT = 100                       # instrumentação dos testes: as últimas respostas e cópias
@@ -150,19 +151,19 @@ def results_html(result: SearchResult) -> str:
     """Os trechos achados agrupados por reunião (U-024), na ordem do melhor trecho de cada uma. O destaque (`snippet_html`)
     já vem escapado; título e falantes vêm crus e são escapados aqui."""
     if not result.hits:
-        return "<p style='color:#888'>Nada encontrado com essas palavras e filtros.</p>"
+        return "<p class='note'>Nada encontrado com essas palavras e filtros.</p>"
     parts: list[str] = []
     for g in rag_search.group_by_meeting(result.hits):
         n = len(g.hits)
         title = html.escape(g.title or "Reunião sem título")
         parts.append(f"<p style='margin-top:12px; margin-bottom:2px'><a href='{MEETING_SCHEME}{g.meeting_id}'><b>{title}</b></a>"
-                     f" <span style='color:#888'>· {export.fmt_date(g.date)} · {n} {'trecho' if n == 1 else 'trechos'}</span></p>")
+                     f" <span class='note'>· {export.fmt_date(g.date)} · {n} {'trecho' if n == 1 else 'trechos'}</span></p>")
         for h in g.hits:
             when = f"▶ {stamp(h.t_start_ms)}" if h.t_start_ms is not None else "abrir"
             meta = " · ".join(x for x in (h.kind_label, html.escape(h.speakers)) if x)
             snippet = h.snippet_html or html.escape(" ".join(h.text.split())[:200])
             parts.append(f"<p style='margin-top:0; margin-bottom:6px; margin-left:16px'><a href='{hit_link(h)}'>{when}</a> "
-                         f"<span style='color:#888'>{meta}</span><br>{snippet}</p>")
+                         f"<span class='note'>{meta}</span><br>{snippet}</p>")
     return "".join(parts)
 
 
@@ -321,9 +322,10 @@ class MeetingsModel(QAbstractTableModel):
         self.endResetModel()
 
 
-class LinkBrowser(QTextBrowser):
-    """`QTextBrowser` que não navega sozinho (os links `listener://` vão para quem ouve `anchorClicked`) e acrescenta ao menu
-    de contexto as ações de quem o usa (U-029), conforme o ponto e o link debaixo do cursor."""
+class LinkBrowser(HtmlView):
+    """`QTextBrowser` do tema (`HtmlView`: HTML por classes, F5.4 A-10) que não navega sozinho (os links `listener://` vão
+    para quem ouve `anchorClicked`) e acrescenta ao menu de contexto as ações de quem o usa (U-029), conforme o ponto e o
+    link debaixo do cursor."""
 
     def __init__(self, actions: ContextActions | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -384,10 +386,13 @@ class HistoryPage(QWidget):
         self.period = QComboBox()
         for key, label in PERIODS:
             self.period.addItem(label, key)
-        self.badge = QLabel("")
+        self.badge = QLabel("")                         # F5.4 (A-10): o estado no tom e a contagem ao lado, sem HTML
+        self.badge.setTextFormat(Qt.TextFormat.PlainText)
+        self.badge_count = QLabel("")
+        self.badge_count.setTextFormat(Qt.TextFormat.PlainText)
         self.coverage = QLabel("")
         self.coverage.setTextFormat(Qt.TextFormat.PlainText)
-        self.coverage.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.coverage)
         top = QHBoxLayout()
         top.addWidget(self.search, 1)
         top.addWidget(QLabel("Pessoa"))
@@ -395,7 +400,8 @@ class HistoryPage(QWidget):
         top.addWidget(QLabel("Período"))
         top.addWidget(self.period)
         state = QHBoxLayout()
-        state.addWidget(self.badge, 1)
+        state.addWidget(self.badge)
+        state.addWidget(self.badge_count, 1)
         state.addWidget(self.coverage)
 
         # --- Reuniões ---
@@ -420,7 +426,7 @@ class HistoryPage(QWidget):
         self.stack.addWidget(self.results)
         self.list_note = QLabel("")
         self.list_note.setTextFormat(Qt.TextFormat.PlainText)          # o filtro leva o nome da pessoa (R7-07)
-        self.list_note.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.list_note)
         meetings = QWidget()
         ml = QVBoxLayout(meetings)
         ml.addWidget(self.stack, 1)
@@ -445,7 +451,7 @@ class HistoryPage(QWidget):
         self.btn_open_action.clicked.connect(self.open_action)
         self.actions_note = QLabel("")
         self.actions_note.setTextFormat(Qt.TextFormat.PlainText)
-        self.actions_note.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.actions_note)
         arow = QHBoxLayout()
         arow.addWidget(self.actions_note, 1)
         arow.addWidget(self.btn_open_action)
@@ -465,7 +471,7 @@ class HistoryPage(QWidget):
         self.chat_view.anchorClicked.connect(self._chat_link)
         self.chat_note = QLabel("")
         self.chat_note.setTextFormat(Qt.TextFormat.PlainText)
-        self.chat_note.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.chat_note)
         self.question = QLineEdit()
         self.question.setPlaceholderText("Pergunte sobre todas as reuniões (as citações abrem a reunião no ponto)")
         self.question.returnPressed.connect(self.ask)
@@ -476,7 +482,8 @@ class HistoryPage(QWidget):
         self.btn_stop.clicked.connect(self.stop_chat)
         self.chat_status = QLabel("")
         self.chat_status.setWordWrap(True)
-        self.chat_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.chat_status.setTextFormat(Qt.TextFormat.PlainText)
+        note(self.chat_status)
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Conversa"))
         trow.addWidget(self.threads, 1)
@@ -685,7 +692,7 @@ class HistoryPage(QWidget):
         self._gen += 1                                   # a busca em voo, se houver, chega velha
         self.result = None
         self._hits = {}
-        self.badge.setText("")
+        self._set_badge("")
         self.stack.setCurrentWidget(self.table)
 
     def _search_now(self) -> None:
@@ -711,7 +718,7 @@ class HistoryPage(QWidget):
             def fn() -> SearchResult:
                 return rag_search.search(store, query, filters)
         if with_vector and self.result is not None and self.result.query == query:
-            self.badge.setText(self.badge.text().split(" · ")[0] + " · buscando por sentido…")
+            self.badge_count.setText("· buscando por sentido…")
         log.debug("busca %d: %d caractere(s), %s", gen, len(query), "palavras e sentido" if with_vector else "palavras")
         self._start(fn, functools.partial(self._on_search, gen))
         if with_vector:
@@ -722,7 +729,7 @@ class HistoryPage(QWidget):
             return                                       # resultado velho: o usuário já digitou outra coisa
         if isinstance(result, BaseException):
             log.warning("busca %d falhou: %s", gen, type(result).__name__)
-            self.badge.setText(f"<span style='color:{tokens().tone(OVERDUE_TONE)}'>a busca falhou: {html.escape(str(result))}</span>")
+            self._set_badge(f"a busca falhou: {result}", OVERDUE_TONE)
             return
         log.info("busca %d: %d trecho(s) de %d reunião(ões)", gen, len(result.hits), len({h.meeting_id for h in result.hits}))
         self.show_result(result)
@@ -737,10 +744,9 @@ class HistoryPage(QWidget):
         meetings = len({h.meeting_id for h in result.hits})
         found = f"{len(result.hits)} trecho(s) em {meetings} reunião(ões)"
         if result.hybrid:
-            self.badge.setText(f"<span style='color:#27ae60'>busca híbrida</span> · {found}")
+            self._set_badge("busca híbrida", Tone.SUCCESS, found)
         else:
-            why = html.escape(friendly_reason(result.reason))
-            self.badge.setText(f"<span style='color:#e67e22'>busca por palavras: {why}</span> · {found}")
+            self._set_badge(f"busca por palavras: {friendly_reason(result.reason)}", Tone.WARNING, found)
         filt = self.filters_text()
         self.list_note.setText("Clique num trecho para abrir a reunião naquele ponto e ouvir; no título, para abrir a reunião."
                                + (f" Filtros: {filt}." if filt else ""))
@@ -809,7 +815,7 @@ class HistoryPage(QWidget):
                 if c == 3:
                     item.setToolTip("Enter ou duplo clique abre a reunião na evidência da ação")
                 if line.overdue:
-                    item.setForeground(QColor(tokens().tone(OVERDUE_TONE)))
+                    item.setData(TONE_ROLE, OVERDUE_TONE.value)      # a cor sai do tema na pintura (A-05)
                     if c == 2:
                         item.setFont(bold)
                 self.action_table.setItem(r, c, item)
@@ -902,7 +908,7 @@ class HistoryPage(QWidget):
         self.btn_stop.setEnabled(True)
         self.btn_new.setEnabled(False)
         self.threads.setEnabled(False)
-        self.chat_status.setText("procurando nas reuniões…")
+        self._chat_status("procurando nas reuniões…")
         log.info("chat global: pergunta enviada (%d caracteres; conversa %s)", len(text), self.thread_id)   # o texto não (LGPD)
         fn = functools.partial(chat_global.run_global_chat, self.store, self.thread_id, text, self.filters())
         task = run_stream(fn, self.store, self._on_chunk, self._on_chat_done)
@@ -916,7 +922,7 @@ class HistoryPage(QWidget):
             return
         self._partial += piece
         self._render_partial()
-        self.chat_status.setText(f"recebendo… {len(self._partial)} caracteres")
+        self._chat_status(f"recebendo… {len(self._partial)} caracteres")
 
     def _render_partial(self) -> None:
         partial = html.escape(self._partial).replace("\n", "<br>") or "…"
@@ -950,12 +956,12 @@ class HistoryPage(QWidget):
         if ans.error:
             self._chat_warning(f"A LLM falhou: {ans.error}")
         elif ans.cancelled and ans.message_id is None:
-            self.chat_status.setText("Pergunta cancelada.")
+            self._chat_status("Pergunta cancelada.")
         else:
             cost = f" · {fmt_usd(ans.cost_usd)}" if ans.cost_usd is not None else ""
             how = "busca híbrida" if ans.hybrid else "busca por palavras"
             stopped = " · interrompida" if ans.cancelled else ""
-            self.chat_status.setText(f"{ans.linked} citação(ões) com link · {ans.excerpts} trecho(s) de {len(ans.aliases)} "
+            self._chat_status(f"{ans.linked} citação(ões) com link · {ans.excerpts} trecho(s) de {len(ans.aliases)} "
                                      f"reunião(ões) · {how}{cost}{stopped}")
         if ans.error or not ans.cancelled:
             self._answered_away(not ans.error)
@@ -967,13 +973,24 @@ class HistoryPage(QWidget):
             self.on_answer(ok)
 
     def _chat_warning(self, text: str) -> None:
-        self.chat_status.setText(f"<span style='color:#e67e22'>{html.escape(text)}</span>")
+        self._chat_status(text, Tone.WARNING)
+
+    def _chat_status(self, text: str, value: Tone = Tone.SECONDARY) -> None:
+        """A linha de estado do chat, em texto puro no tom (F5.4, A-10: o aviso em `warning`, sem HTML com cor)."""
+        self.chat_status.setText(text)
+        tone(self.chat_status, value)
+
+    def _set_badge(self, text: str, value: Tone | None = None, count: str = "") -> None:
+        """O estado da busca no tom (verde híbrida, âmbar só palavras, vermelho falhou) e a contagem ao lado, em dois rótulos."""
+        self.badge.setText(text)
+        tone(self.badge, value)
+        self.badge_count.setText(f"· {count}" if text and count else count)
 
     def stop_chat(self) -> None:
         if self.chat_task is not None:
             self._chat_stopped = True
             self.chat_task.cancel()
-            self.chat_status.setText("parando…")
+            self._chat_status("parando…")
 
     def _chat_link(self, url: QUrl) -> None:
         link = url.toString()

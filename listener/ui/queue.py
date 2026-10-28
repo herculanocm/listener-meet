@@ -27,6 +27,7 @@ from ..pipeline.estimate import fmt_remaining, remaining_seconds
 from ..pipeline.reprocess import request_reprocess
 from .queue_bar import PROGRESS_ROLE, STATUS_ROLE, ProgressBarDelegate
 from .queue_help import QueueHelpDialog
+from .theme import Tone, tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -213,7 +214,7 @@ class QueueDialog(QDialog):
         self.status_label = QLabel("")
         self.message = QLabel("")                       # o resultado da última ação (o rodapé acima é refeito a cada 2 s)
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: #e67e22;")
+        tone(self.message, Tone.WARNING)
         closing = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         closing.rejected.connect(self.reject)
         lay = QVBoxLayout(self)

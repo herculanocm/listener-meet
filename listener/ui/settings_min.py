@@ -40,6 +40,7 @@ from ..llm import local_embed
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..llm.jobconfig import LlmJobConfig, audio_capable
 from ..model import SettingScope
+from . import theme
 from .keys import keys_group
 from .live_prepare import LIVE, RAG, ModelPreparer, local_status_text, models_status_text, preparer
 from .providers import ProviderTabs
@@ -198,7 +199,7 @@ class SettingsDialog(QDialog):
         self.prepare_bar.setRange(0, 100)
         self.prepare_bar.setTextVisible(True)
         self.prepare_status = QLabel("")
-        self.prepare_status.setStyleSheet("color: #888; font-size: 11px;")
+        theme.note(self.prepare_status)
         self.prepare_status.setWordWrap(True)
         prow = QHBoxLayout()
         prow.addWidget(self.prepare_btn)
@@ -248,7 +249,7 @@ class SettingsDialog(QDialog):
         synced = platform.synced_folder_name(store.base_dir)
         if synced:
             notes.append(QLabel(f"Atenção: esta pasta está dentro do {synced}; o banco sairá da máquina pela sincronização."))
-            notes[-1].setStyleSheet("color: #e67e22;")
+            theme.tone(notes[-1], theme.Tone.WARNING)
         notes.append(QLabel("Mover o banco e o backup entram na fase das Configurações completas (F6)."))
         for note in notes:
             note.setWordWrap(True)
@@ -259,6 +260,7 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+        theme.primary(self, buttons.button(QDialogButtonBox.StandardButton.Save))   # F5.4 (U-056, A-02)
 
     # ---------------------------------------------------------------- idioma e avisos (F5.3)
     def _language_group(self) -> QGroupBox:
@@ -289,7 +291,7 @@ class SettingsDialog(QDialog):
         self._add_local_search(form)
         self.index_status = QLabel("")
         self.index_status.setWordWrap(True)
-        self.index_status.setStyleSheet("color: #888; font-size: 11px;")
+        theme.note(self.index_status)
         self.complete_btn = QPushButton("Completar índice")
         self.complete_btn.setToolTip("Põe na fila as reuniões com trecho sem vetor do modelo ativo (e as ainda sem índice)")
         self.complete_btn.clicked.connect(self.complete_index)
@@ -315,7 +317,7 @@ class SettingsDialog(QDialog):
         self.local_bar.setRange(0, 100)
         self.local_bar.setTextVisible(True)
         self.local_status = QLabel("")
-        self.local_status.setStyleSheet("color: #888; font-size: 11px;")
+        theme.note(self.local_status)
         self.local_status.setWordWrap(True)
         row = QHBoxLayout()
         row.addWidget(self.local_btn)
@@ -470,12 +472,12 @@ class SettingsDialog(QDialog):
         spec = SPECS[key]
         field = field if field is not None else self._field(key)
         scope = QLabel(SCOPE_TEXT.get(spec.scope, ""))
-        scope.setStyleSheet("color: #888; font-size: 11px;")
+        theme.note(scope)
         box.addWidget(field, 1)
         box.addWidget(scope)
         if status:
             st = QLabel(status)
-            st.setStyleSheet("color: {}; font-size: 11px;".format("#e74c3c" if status.startswith("falhou") else "#2ecc71"))
+            theme.note(st, theme.Tone.DANGER if status.startswith("falhou") else theme.Tone.SUCCESS)
             box.addWidget(st)
         holder = QWidget()
         holder.setLayout(box)

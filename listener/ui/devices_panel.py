@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGroupBox, QLabel, QLi
 
 from ..model import SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints
+from .theme import Tone, note, tone
 
 if TYPE_CHECKING:
     from ..capture.recorder import SourceSpec
@@ -145,7 +146,7 @@ class DevicesPanel(QDialog):
         QVBoxLayout(out_box).addWidget(self.outputs)
         self.notes = QLabel("")
         self.notes.setWordWrap(True)
-        self.notes.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.notes)
         self.status = QLabel("")
         self.status.setWordWrap(True)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -185,7 +186,7 @@ class DevicesPanel(QDialog):
         lst.setFixedHeight(rows_h + 2 * lst.frameWidth() + 8)
 
     def set_status(self, text: str, error: bool = False) -> None:
-        self.status.setStyleSheet(f"color: {'#e74c3c' if error else '#2ecc71'};")
+        tone(self.status, Tone.DANGER if error else Tone.SUCCESS)
         self.status.setText(text)
         self.status.setVisible(bool(text))
 

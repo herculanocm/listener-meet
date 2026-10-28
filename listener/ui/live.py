@@ -18,16 +18,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QMoveEvent, QResizeEvent
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QSplitter, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QMoveEvent, QResizeEvent
+from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QSplitter, QVBoxLayout,
+                               QWidget)
 
 from ..config.defaults import SPECS
 from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import SummaryKind
 from .common import clamp_to_screens
-from .theme import tokens
+from .components import HtmlView
+from .theme import TONE_ROLE, Tone, note, role, tone
 from .widget import LIVE_BADGES, _screen_rects
 
 if TYPE_CHECKING:
@@ -108,7 +109,7 @@ def partial_html(data: Mapping[str, Any], marked: set[tuple[str, str]], can_mark
             when = f"[{stamp(int(t))}] " if isinstance(t, int | float) else ""
             owner = f" <i>({html.escape(str(it['owner']))})</i>" if kind == "actions" and it.get("owner") else ""
             if item_key(kind, it) in marked:
-                tail = ' · <span style="color:#27ae60">marcado ✓</span>'
+                tail = ' · <span class="success">marcado ✓</span>'
             elif can_mark:
                 tail = f' · <a href="mark:{kind}:{i}">marcar</a>'
             else:
@@ -152,11 +153,11 @@ class LiveWindow(QWidget):
         # --- resumo parcial ---
         self.partial_title = QLabel("<b>Resumo parcial</b>")
         self.partial_when = QLabel("")
-        self.partial_when.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.partial_when)
         self.refresh_btn = QPushButton("Atualizar resumo agora")
         self.refresh_btn.clicked.connect(self._refresh)
         self.refresh_btn.setVisible(on_refresh is not None)
-        self.partial_view = QTextBrowser()
+        self.partial_view = HtmlView()                    # F5.4 (A-10): HTML por classes nos tokens
         self.partial_view.setOpenLinks(False)
         self.partial_view.setOpenExternalLinks(False)
         self.partial_view.anchorClicked.connect(self._anchor)
@@ -173,13 +174,19 @@ class LiveWindow(QWidget):
 
         # --- legendas ---
         self.live_label = QLabel("")
-        self.live_label.setStyleSheet("font-size: 11px;")
+        self.live_label.setTextFormat(Qt.TextFormat.PlainText)
+        role(self.live_label, "caption")
         self.list = QListWidget()
         self.list.setWordWrap(True)
         self.list.setUniformItemSizes(False)
         self.list.itemClicked.connect(self._caption_clicked)
         chead = QHBoxLayout()
-        chead.addWidget(QLabel("<b>Legendas</b> <span style='color:#888'>(clique numa legenda para marcar o instante)</span>"), 1)
+        captions_title = QLabel("Legendas")             # F5.4 (A-10): o título e a dica em dois rótulos, sem HTML com cor
+        role(captions_title, "body_strong")
+        captions_hint = QLabel("(clique numa legenda para marcar o instante)")
+        tone(captions_hint, Tone.SECONDARY)
+        chead.addWidget(captions_title)
+        chead.addWidget(captions_hint, 1)
         chead.addWidget(self.live_label)
         bottom = QWidget()
         bl = QVBoxLayout(bottom)
@@ -196,7 +203,7 @@ class LiveWindow(QWidget):
         self.on_top.setChecked(bool(store.get(SPECS["ui.live_on_top"])))
         self.on_top.toggled.connect(self._set_on_top)
         self.status = QLabel("")
-        self.status.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.status)
         foot = QHBoxLayout()
         foot.addWidget(self.status, 1)
         foot.addWidget(self.on_top)
@@ -253,7 +260,7 @@ class LiveWindow(QWidget):
         marked = caption_key(row) in self.marked_captions
         item.setText(("⚑ " if marked else "") + caption_line(row))
         if marked:
-            item.setForeground(QColor(tokens().accent))        # F5.4 (A-11): a legenda marcada no destaque do tema
+            item.setData(TONE_ROLE, Tone.ACCENT.value)         # F5.4 (A-05, A-11): a legenda marcada no destaque do tema
 
     @property
     def captions(self) -> list[dict[str, Any]]:
@@ -291,7 +298,7 @@ class LiveWindow(QWidget):
         if row is None:
             interval = int(self.store.get(SPECS["live.summary_interval_min"]))
             self.partial_when.setText("")
-            self.partial_view.setHtml("<p style='color:#888'>Ainda sem resumo parcial: " +
+            self.partial_view.setHtml("<p class='note'>Ainda sem resumo parcial: " +
                                       (f"o primeiro sai em até {interval} min de legendas." if interval > 0 else
                                        "o automático está desligado (intervalo 0 nas Configurações, Ao vivo).") + "</p>")
             return
@@ -344,9 +351,10 @@ class LiveWindow(QWidget):
 
     # ---------------------------------------------------------------- estado
     def set_live_state(self, state: str) -> None:
-        badge, t = LIVE_BADGES.get(state), tokens()
-        text, color = (badge[0], t.tone(badge[1])) if badge else (STATE_TEXT.get(state, ""), t.secondary)
-        self.live_label.setText(f"<span style='color:{color}'>{html.escape(text)}</span>" if text else "")
+        badge = LIVE_BADGES.get(state)
+        text, value = badge if badge else (STATE_TEXT.get(state, ""), Tone.SECONDARY)
+        self.live_label.setText(text)                    # F5.4 (A-10): texto puro no tom, sem HTML com cor
+        tone(self.live_label, value)
 
     def set_finished(self, text: str = "gravação encerrada: só leitura") -> None:
         """Parar ou Cancelar: fica aberta para leitura, sem marcar nem atualizar."""

@@ -11,11 +11,12 @@ from collections.abc import Sequence
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPalette
+from PySide6.QtGui import QBrush, QFont, QLinearGradient, QPainter, QPalette
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..model import JobStatus
 from .common import BAND_OPACITY, bar_colors
+from .theme import qcolor
 
 PROGRESS_ROLE = Qt.ItemDataRole.UserRole + 1      # fração de 0 a 1; None = sem barra (a linha agregada do índice com erro)
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 2        # o estado do job, que dá a cor
@@ -54,10 +55,10 @@ class ProgressBarDelegate(QStyledItemDelegate):
         fill = QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(1.0, float(value))), bar.height())
         rest = QRectF(fill.right(), bar.top(), bar.right() - fill.right(), bar.height())
         painter.save()
-        painter.fillRect(bar, QColor(colors.track))
-        painter.fillRect(fill, QColor(colors.fill))
+        painter.fillRect(bar, qcolor(colors.track))
+        painter.fillRect(fill, qcolor(colors.fill))
         if colors.hatch:
-            painter.fillRect(fill, QBrush(QColor(colors.hatch), Qt.BrushStyle.BDiagPattern))
+            painter.fillRect(fill, QBrush(qcolor(colors.hatch), Qt.BrushStyle.BDiagPattern))
         if status == JobStatus.RUNNING:
             self._paint_band(painter, bar, ((fill, colors.band), (rest, colors.track_band)))
         if text:
@@ -73,9 +74,7 @@ class ProgressBarDelegate(QStyledItemDelegate):
         for clip, color in regions:
             if clip.width() <= 0:
                 continue
-            glow, clear = QColor(color), QColor(color)
-            glow.setAlphaF(BAND_OPACITY)
-            clear.setAlphaF(0.0)
+            glow, clear = qcolor(color, BAND_OPACITY), qcolor(color, 0.0)
             gradient = QLinearGradient(x, 0.0, x + width, 0.0)
             gradient.setColorAt(0.0, clear)
             gradient.setColorAt(0.5, glow)
@@ -94,6 +93,6 @@ class ProgressBarDelegate(QStyledItemDelegate):
                 continue
             painter.save()
             painter.setClipRect(clip, Qt.ClipOperation.IntersectClip)
-            painter.setPen(QColor(color))
+            painter.setPen(qcolor(color))
             painter.drawText(bar, Qt.AlignmentFlag.AlignCenter, text)
             painter.restore()

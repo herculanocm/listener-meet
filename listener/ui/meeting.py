@@ -43,6 +43,7 @@ from .player import PlayerBar
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
+from .theme import Tone, note, tone
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -57,8 +58,6 @@ DEFAULT_SIZE = (1040, 720)
 MIN_SIZE = (640, 420)
 SAVE_DELAY_MS = 600
 CASCADE_PX = 28                  # cada janela de reunião a mais nasce um pouco abaixo e à direita da anterior
-STYLE = ("QLineEdit#meetingTitle { font-size: 16px; font-weight: 600; padding: 3px 6px; } "
-         "QLabel#meetingInfo { color: palette(placeholder-text); } QLabel#meetingMessage { color: #e67e22; }")
 
 
 class MarkersTab(QWidget):
@@ -73,7 +72,7 @@ class MarkersTab(QWidget):
         self.list.itemClicked.connect(self._activated)
         self.list.itemActivated.connect(self._activated)
         self.note = QLabel("")
-        self.note.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.note)
         lay = QVBoxLayout(self)
         lay.addWidget(self.list, 1)
         lay.addWidget(self.note)
@@ -113,7 +112,6 @@ class MeetingWindow(QWidget):
         self.on_edited = on_edited
         self.exported: deque[str] = deque(maxlen=100)        # instrumentação dos testes: o que foi copiado ou salvo
         self.setMinimumSize(*MIN_SIZE)
-        self.setStyleSheet(STYLE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
                                 compact_title=True, parent=self)
 
@@ -144,10 +142,12 @@ class MeetingWindow(QWidget):
         self.btn_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.info = QLabel("")
         self.info.setObjectName("meetingInfo")
+        tone(self.info, Tone.SECONDARY)
         self.info.setTextFormat(Qt.TextFormat.PlainText)        # participantes: nomes do usuário (R7-07)
         self.info.setWordWrap(True)
         self.message = QLabel("")
         self.message.setObjectName("meetingMessage")
+        tone(self.message, Tone.WARNING)
         self.message.setTextFormat(Qt.TextFormat.PlainText)     # o caminho salvo leva o título
         self.message.setWordWrap(True)
         self.message.setVisible(False)

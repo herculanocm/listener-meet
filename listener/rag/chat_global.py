@@ -286,8 +286,8 @@ def _rating_html(message_id: int, rating: Any) -> str:
         return f'<a href="{html.escape(rate_link(message_id, value))}">{label}</a>'
 
     if rating is None:
-        return f'<br><span style="color:#888">Citação certa? {a("sim", 1)} · {a("não", 0)}</span>'
-    return f'<br><span style="color:#888">Citação certa: {"sim" if int(rating) == 1 else "não"} · {a("desfazer", None)}</span>'
+        return f'<br><span class="note">Citação certa? {a("sim", 1)} · {a("não", 0)}</span>'
+    return f'<br><span class="note">Citação certa: {"sim" if int(rating) == 1 else "não"} · {a("desfazer", None)}</span>'
 
 
 def thread_html(store: Store, thread_id: int, *, rating: bool = True) -> str:

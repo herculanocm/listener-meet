@@ -30,10 +30,11 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, override
 
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFontDatabase, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from ..capture.audio import StreamResampler, decode_flac, resample
@@ -42,6 +43,7 @@ from ..log import get_logger
 from ..model import EventType
 from ..platform.common import portaudio
 from ..store.core import LEGACY_AUDIO_FILE
+from .theme import Tone, font_for, qcolor, surface_tokens, tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -1030,8 +1032,6 @@ class PlayerBar(QWidget):
         self.title_fn = title or (lambda: "")
         self.start_fn = start or (lambda: 0)
         self.setObjectName("playerBar")
-        self.setStyleSheet("QWidget#playerBar { border-top: 1px solid palette(mid); } "
-                           "QLabel#playerTime { font-family: monospace; }")
         self.btn_play = QPushButton("Tocar")
         self.btn_play.setToolTip("Toca a reunião a partir da fala selecionada (ou pausa e retoma)")
         self.btn_back = QPushButton("-10 s")
@@ -1040,13 +1040,16 @@ class PlayerBar(QWidget):
         self.btn_fwd.setToolTip("Avança 10 segundos")
         self.time = QLabel("00:00 / 00:00")
         self.time.setObjectName("playerTime")
+        mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)   # o tempo de largura fixa (F5.4: sem folha)
+        mono.setPixelSize(font_for("body").pixelSize())
+        self.time.setFont(mono)
         self.what = QLabel("")
         self.what.setTextFormat(Qt.TextFormat.PlainText)
-        self.what.setStyleSheet("color: palette(placeholder-text);")
+        tone(self.what, Tone.SECONDARY)
         self.what.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.note = QLabel("")
         self.note.setTextFormat(Qt.TextFormat.PlainText)
-        self.note.setStyleSheet("color: #e67e22;")
+        tone(self.note, Tone.WARNING)
         self.note.setWordWrap(True)
         self.btn_play.clicked.connect(self.toggle)
         self.btn_back.clicked.connect(lambda: self.seek(-SEEK_MS))
@@ -1060,6 +1063,14 @@ class PlayerBar(QWidget):
         player.state_changed.connect(self._on_state)
         player.position_changed.connect(self._on_position)
         self.show_state(player.state())
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """A linha de cima da barra no traço do tema (F5.4: no lugar da borda da folha de estilo)."""
+        p = QPainter(self)
+        p.setPen(qcolor(surface_tokens(self).stroke))
+        p.drawLine(0, 0, self.width(), 0)
+        p.end()
 
     def mine(self, st: PlayerState) -> bool:
         return self.meeting_id is None or st.meeting_id == self.meeting_id

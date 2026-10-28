@@ -28,6 +28,7 @@ from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LLM_KINDS, LOCAL_ID
 from .tasks import run_task
+from .theme import Tone, note, tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -108,18 +109,20 @@ class ProviderTab(QWidget):
         self.key_status = QLabel(self.saved_state)                                       # posto junto da chave (U-037)
         self.key_status.setTextFormat(Qt.TextFormat.PlainText)
         self.key_status.setWordWrap(True)
-        self.key_status.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.key_status)
         self.key.textChanged.connect(self._key_edited)
         self.prices = QTableWidget(0, len(PRICE_COLUMNS))
         self.prices.setHorizontalHeaderLabels(list(PRICE_COLUMNS))
         self.prices.horizontalHeader().setStretchLastSection(True)
+        header = self.prices.horizontalHeader()                # F5.4 (L1, `cortados`): o "Modelo (id ou prefixo)" inteiro
+        header.resizeSection(0, max(header.defaultSectionSize(), header.sectionSizeHint(0)))
         self.prices.setMaximumHeight(160)
         self._fill_prices()
         self.month = QLabel("")
         self.refresh_month()
         warn = QLabel(SEND_WARNING)
         warn.setWordWrap(True)
-        warn.setStyleSheet("color: #e67e22;")
+        tone(warn, Tone.WARNING)
         form = QFormLayout()
         where = QLabel(KEY_ELSEWHERE)
         where.setWordWrap(True)

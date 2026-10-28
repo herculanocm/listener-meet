@@ -2,6 +2,8 @@
 Cargo · Empresa" pelo id; E só em voz confirmada, edita a ficha e o cargo do dia, e apaga a pessoa com confirmação."""
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
@@ -43,7 +45,11 @@ def test_new_person_saves_every_field_and_a_repeated_name_asks(qtbot, platform, 
     assert (ana["role"], ana["company"], ana["email"]) == ("CFO", "Empresa X", "ana@x.com")
     assert store.segments.get_cluster(items[0].cluster_id)["person_id"] == ana["id"]
     asked: list[str] = []
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **_k: asked.append(a[2]) or QMessageBox.StandardButton.No))
+    def question(*a: Any, **_k: Any) -> QMessageBox.StandardButton:
+        asked.append(a[2])
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
     dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(items[1].cluster_id))
     _fill(monkeypatch, PersonData("Ana", "Analista"))                                      # outra Ana: "não" cria a segunda
     dlg.ask_new_person()

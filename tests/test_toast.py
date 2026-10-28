@@ -453,7 +453,10 @@ def test_a_chat_answer_with_the_window_out_of_focus_warns_and_opens_the_chat(qtb
                     await asyncio.sleep(0.01)
                 yield piece
 
-        return LlmStream(chunks(), lambda _text: inner.result)
+        def finish(_text: str) -> Any:
+            return inner.result
+
+        return LlmStream(chunks(), finish)
 
     monkeypatch.setattr(fake.FakeProvider, "stream", held_stream)
     win.chat.question.setText("e os riscos?")

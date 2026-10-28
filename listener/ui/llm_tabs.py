@@ -25,6 +25,7 @@ from ..log import get_logger
 from ..model import JOB_STEP_LABELS, ActionStatus, JobKind, JobStatus, JobStep, SummaryKind
 from ..pipeline import summary_gate
 from ..store.jobs import ACTIVE
+from .theme import Tone, note, role, tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -122,7 +123,7 @@ class TextTab(QWidget):
         self.info.setWordWrap(True)
         self.notice = QLabel("")
         self.notice.setWordWrap(True)
-        self.notice.setStyleSheet("color: #e67e22;")
+        tone(self.notice, Tone.WARNING)
         self.editor = QPlainTextEdit()
         self.btn_save = QPushButton("Salvar edição")
         self.btn_regen = QPushButton("Gerar de novo")
@@ -261,6 +262,7 @@ class TitleTab(QWidget):
 
     def _compact_layout(self) -> None:
         self.title.setObjectName("meetingTitle")
+        role(self.title, "subtitle")                      # F5.4 (U-078): o título da reunião em 20 px
         self.title.setPlaceholderText("título da reunião")
         self.title.setToolTip("Edite e tecle Enter (ou \"Salvar\") para gravar o título")
         self.title.returnPressed.connect(self.save)
@@ -445,7 +447,7 @@ class LlmTabsGroup(QObject):
                                               for k in (SummaryKind.PRE_SUMMARY, SummaryKind.MINUTES, SummaryKind.EXECUTIVE)}
         self.actions_tab = ActionsTab(store, meeting_id, on_edited=on_edited)
         self.cost = QLabel("")
-        self.cost.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.cost)
 
     def reload(self) -> bool:
         busy = llm_job_active(self.store, self.meeting_id)

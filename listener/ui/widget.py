@@ -8,23 +8,25 @@ F5.3 L4 (U-049, U-050): o botão "🎧" abre o painel dos dispositivos (desligad
 genérico (rótulo e ação dados por quem a mostra, A-21) no lugar do "Trocar fonte" fixo: "Usar" no aparelho novo,
 "Dispositivos…" na saída sem sinal.
 F5.4 (A-11): as cores do estado, da saúde dos canais e do selo do ao vivo são tons dos tokens; o widget segue escuro até o
-L2 (U-060), com os tokens do escuro nos dois esquemas (`common.DARK_SURFACE`)."""
+L2 (U-060), com os tokens do escuro nos dois esquemas (`common.DARK_SURFACE`): o widget e o marcador são superfícies escuras
+(`theme.surface`), os rótulos têm tom e papel de fonte e o `ThemeStyle` pinta os botões e o campo planos; sem folha de
+estilo (o tique a 5 Hz só troca o tom quando o estado muda, `style_changes`)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QPoint, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
                                QWidget)
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..model import AppState, Health
-from .common import DARK_SURFACE, HEALTH_TEXT, clamp_to_screens, health_color, state_color
+from .common import DARK_SURFACE, HEALTH_TEXT, HEALTH_TONES, STATE_TONES, clamp_to_screens
 from .meters import LevelMeter
-from .theme import Tone
+from .theme import Tone, note, qcolor, retone, role, surface, tone
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -33,6 +35,7 @@ log = get_logger("ui.widget")
 LIVE_MIN_HEIGHT = 118             # F4: 96 do widget mais a linha da legenda
 CLICK_SLOP_PX = 6
 ALERT_MIN_PX = 170                # F5.3: a linha de alerta à vista abre esse espaço ao lado dos botões (o resto vai na dica)
+BACKGROUND_ALPHA = 235 / 255      # o fundo um pouco translúcido, como antes da F5.4
 # selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo
 LIVE_BADGES: dict[str, tuple[str, Tone]] = {
     "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
@@ -118,12 +121,7 @@ class RecordingWidget(QWidget):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("recwidget")
-        self.setStyleSheet("""
-            QLabel { color: #eee; } QToolButton { color: #eee; background: #3a3f4b; border: none; border-radius: 6px;
-            padding: 2px 6px; font-size: 14px; } QToolButton:hover { background: #4a5063; }
-            QToolButton:checked { background: #c0392b; }
-            QPushButton { color: #fff; background: #c0392b; border-radius: 6px; padding: 2px 8px; }
-        """)
+        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-060), sem folha de estilo
         self.live_line = live_line
         width, height = size
         self.resize(width, max(height, LIVE_MIN_HEIGHT) if live_line else height)   # o tamanho salvo nunca encolhe
@@ -136,17 +134,21 @@ class RecordingWidget(QWidget):
         self.style_changes = 0                                      # instrumentação dos testes (M-12)
 
         self.time_label = QLabel("00:00")
-        self.time_label.setStyleSheet("font-size: 22px; font-weight: 600;")
+        role(self.time_label, "clock")
         self.status_label = QLabel("gravando")
-        self.status_label.setStyleSheet(f"color: {state_color(AppState.RECORDING, DARK_SURFACE)}; font-weight: 600;")
+        role(self.status_label, "body_strong")
+        tone(self.status_label, STATE_TONES[AppState.RECORDING])
         self.health_l = QLabel("L ●")
         self.health_r = QLabel("R ●")
+        for lab in (self.health_l, self.health_r):
+            role(lab, "body_strong")
         self.markers_label = QLabel("")
-        self.markers_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        note(self.markers_label)
         self.live_badge = QLabel("")
+        role(self.live_badge, "caption")
         self.live_badge.hide()
         self.caption_line = CaptionLine()
-        self.caption_line.setStyleSheet("color: #ddd; font-size: 11px;")
+        note(self.caption_line, Tone.TEXT)
         self.caption_line.set_full_text("aguardando a primeira legenda…", "clique para abrir a janela Ao vivo")
         self.caption_line.clicked.connect(self.live_clicked)
         self.caption_line.setVisible(live_line)
@@ -165,7 +167,7 @@ class RecordingWidget(QWidget):
         self.alert_label = ElidedLabel()                  # F5.3: o nome de um aparelho não alarga o widget
         self.alert_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.alert_label.setMinimumWidth(ALERT_MIN_PX)
-        self.alert_label.setStyleSheet("color: #ff7675; font-size: 11px;")
+        note(self.alert_label, Tone.DANGER)
         self.alert_btn = QPushButton("")
         self.alert_btn.clicked.connect(self._emit_alert)   # método, não lambda com `self`: o ciclo pelo C++ prendia o widget
         self.alert_label.hide()
@@ -197,6 +199,7 @@ class RecordingWidget(QWidget):
         lay.addLayout(meters)
         lay.addWidget(self.caption_line)
         lay.addLayout(buttons)
+        retone(self)                                     # os tons nos tokens da superfície (nasceram fora dela)
         self.move(self._initial_pos(pos))
 
     def _initial_pos(self, pos: QPoint | None) -> QPoint:
@@ -229,8 +232,8 @@ class RecordingWidget(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor("#555555")))
-        p.setBrush(QColor(28, 30, 36, 235))
+        p.setPen(QPen(qcolor(DARK_SURFACE.stroke)))
+        p.setBrush(qcolor(DARK_SURFACE.input, BACKGROUND_ALPHA))
         p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 10, 10)
         p.end()
 
@@ -246,9 +249,8 @@ class RecordingWidget(QWidget):
             self.style_changes += 1
             text = "salvando…" if saving else ("pausado" if paused else ("gravando (mudo)" if muted else "gravando"))
             state = AppState.SAVING if saving else (AppState.PAUSED if paused else AppState.RECORDING)
-            color = state_color(state, DARK_SURFACE)
             self.status_label.setText(text)
-            self.status_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+            tone(self.status_label, STATE_TONES[state])
             self.btn_pause.setText("▶" if paused else "⏸")
             self.btn_mute.setChecked(muted)
             self.btn_mute.setText("🔇" if muted else "🎤")
@@ -259,7 +261,7 @@ class RecordingWidget(QWidget):
             if self._last_health.get(ch) != h:
                 self._last_health[ch] = h
                 self.style_changes += 1
-                lab.setStyleSheet(f"color: {health_color(h, DARK_SURFACE)}; font-weight: 600;")
+                tone(lab, HEALTH_TONES.get(h, Tone.DISABLED))
                 lab.setToolTip(f"canal {ch}: {HEALTH_TEXT.get(h, h)}")
         text = f"⚑ {markers}" if markers else ""
         if self.markers_label.text() != text:
@@ -276,11 +278,10 @@ class RecordingWidget(QWidget):
         if badge is None:
             self.live_badge.hide()
             return
-        text, tone = badge
-        color = DARK_SURFACE.tone(tone)
+        text, value = badge
         self.style_changes += 1
         self.live_badge.setText(f"● {text}")
-        self.live_badge.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 600;")
+        tone(self.live_badge, value)
         self.live_badge.setToolTip(tip or text)
         self.live_badge.show()
 
@@ -337,8 +338,7 @@ class MarkerPopup(QDialog):
     def __init__(self, t_rel: float, platform: Platform | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.platform = platform
-        self.setStyleSheet("QDialog { background: #1c1e24; border: 1px solid #666; border-radius: 8px; } QLabel { color: #eee; } "
-                           "QLineEdit { background: #2b2f3a; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 4px; }")
+        surface(self, DARK_SURFACE)                      # F5.4: escuro até o L2 (U-068); o `ThemeStyle` pinta o campo
         self.edit = QLineEdit()
         self.edit.setPlaceholderText("nota do marcador (Enter salva, Esc cancela)")
         self.edit.setMinimumWidth(320)

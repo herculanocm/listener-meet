@@ -63,7 +63,12 @@ def test_refresh_rereads_only_when_the_endpoints_change_and_nothing_else_is_open
     sigs = iter([("a",), ("a",), ("b",), ("b",)])
     monkeypatch.setattr(wp, "_endpoint_signature", lambda: next(sigs))
     restarts: list[int] = []
-    monkeypatch.setattr(wp.portaudio, "restart", lambda: restarts.append(1) or True)
+
+    def restart() -> bool:
+        restarts.append(1)
+        return True
+
+    monkeypatch.setattr(wp.portaudio, "restart", restart)
     opened = {"n": 0}
     monkeypatch.setattr(wp.portaudio, "open_streams", lambda: opened["n"])
     plat = wp.Win32Platform()
@@ -157,7 +162,7 @@ def test_strict_refuses_a_microphone_that_is_not_in_the_list(monkeypatch):
 def test_audio_devices_changed_compares_with_the_last_portaudio_reading(monkeypatch):
     from listener.platform.win32 import platform as wp
 
-    sig = {"now": ("a",)}
+    sig: dict[str, tuple[str, ...] | None] = {"now": ("a",)}
     monkeypatch.setattr(wp, "_endpoint_signature", lambda: sig["now"])
     plat = wp.Win32Platform()
     plat._audio_signature = ("a",)

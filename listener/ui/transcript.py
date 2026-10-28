@@ -27,7 +27,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QGradient, QKeyEvent, QLinearGradient
+from PySide6.QtGui import QBrush, QGradient, QKeyEvent, QLinearGradient
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QListView, QMenu, QPushButton, QVBoxLayout, QWidget
 
 from ..log import get_logger
@@ -36,7 +36,7 @@ from ..pipeline import review
 from ..rag import export
 from .common import copy_rich
 from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
-from .theme import Tokens, Tone, tokens
+from .theme import Tokens, Tone, note, qcolor, tokens
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -54,7 +54,7 @@ def playing_brush(t: Tokens) -> QBrush:
     """O fundo da fala que toca: a faixa forte à esquerda e o fundo âmbar no resto (relativo ao retângulo da linha)."""
     grad = QLinearGradient(0.0, 0.0, 1.0, 0.0)
     grad.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
-    accent, tint = QColor(t.tone(PLAYING_TONE)), QColor(t.background(PLAYING_TONE))
+    accent, tint = qcolor(t.tone(PLAYING_TONE)), qcolor(t.background(PLAYING_TONE))
     for stop, color in ((0.0, accent), (PLAYING_ACCENT_SPAN, accent), (PLAYING_ACCENT_SPAN + 1e-4, tint), (1.0, tint)):
         grad.setColorAt(stop, color)
     return QBrush(grad)
@@ -166,7 +166,7 @@ class TranscriptTab(QWidget):
         self.btn_revise.clicked.connect(self.request_revise)
         self.llm_note = QLabel("")
         self.llm_note.setWordWrap(True)
-        self.llm_note.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.llm_note)
         bottom = QHBoxLayout()
         bottom.addWidget(self.toggle)
         bottom.addStretch(1)

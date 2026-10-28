@@ -20,6 +20,7 @@ from ..llm import chat_task
 from ..llm.costs import fmt_usd
 from ..log import get_logger
 from .tasks import StreamTask, run_stream, wait_before_close
+from .theme import note
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -55,7 +56,7 @@ class ChatPanel(QWidget):
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop)
         self.status = QLabel("")
-        self.status.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.status)
         row = QHBoxLayout()
         row.addWidget(self.question, 1)
         row.addWidget(self.btn_ask)

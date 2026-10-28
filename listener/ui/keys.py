@@ -24,6 +24,7 @@ from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LOCAL_ID
 from .providers import TITLES, test_connection
+from . import theme
 from .tasks import run_task
 
 if TYPE_CHECKING:
@@ -56,7 +57,6 @@ WIZARD_NOTE = ("Tudo opcional: pule e cole depois em Configurações, Chaves de 
                "(CP10).")
 STORAGE_NOTE = ("Valem ao salvar. Ficam no banco do app, em texto aberto (CP10): mantenha a pasta do banco fora do OneDrive "
                 "e do git. Qual LLM faz o quê fica no grupo LLM, mais abaixo.")
-NOTE_STYLE = "color: #888; font-size: 11px;"
 
 
 class WrapLabel(QLabel):
@@ -88,7 +88,7 @@ def note(text: str, *, links: bool = False) -> QLabel:
     """Linha de ajuda pequena; com `links`, o texto fixo vira HTML e os links abrem no navegador."""
     label = WrapLabel(text)
     label.setWordWrap(True)
-    label.setStyleSheet(NOTE_STYLE)
+    theme.note(label)
     label.setTextFormat(Qt.TextFormat.RichText if links else Qt.TextFormat.PlainText)
     label.setOpenExternalLinks(links)
     return label

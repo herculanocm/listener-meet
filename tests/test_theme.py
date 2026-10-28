@@ -10,9 +10,11 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from PySide6.QtWidgets import QWidget
 
 from listener.platform.base import text_scale_from_percent
 from listener.ui import theme
+from listener.ui.style import ThemeStyle
 from listener.ui.theme import DARK, FONTS, LIGHT, Tone
 from tests.fake_platform import FakePlatform
 
@@ -96,7 +98,7 @@ def test_session_app_has_the_theme(qapp):
 
     roles, pal = QPalette.ColorRole, qapp.palette()
     style = qapp.style()
-    assert isinstance(style, theme.ThemeStyle) and style.base_name == "Fusion" and style.tokens is LIGHT
+    assert isinstance(style, ThemeStyle) and style.base_name == "Fusion" and style.tokens is LIGHT
     assert theme.tokens() is LIGHT and qapp.font().pixelSize() == FONTS.body.px
     for role, value in ((roles.Window, LIGHT.window), (roles.WindowText, LIGHT.text), (roles.Base, LIGHT.input),
                         (roles.Text, LIGHT.text), (roles.Accent, LIGHT.accent), (roles.PlaceholderText, LIGHT.placeholder),
@@ -156,7 +158,7 @@ def test_release_puts_the_base_style_back_and_can_run_twice(qapp, restore_theme)
     first = theme.notifier()
     theme.release(qapp)
     theme.release(qapp)
-    assert not isinstance(qapp.style(), theme.ThemeStyle) and qapp.style().name().lower() == "fusion"
+    assert not isinstance(qapp.style(), ThemeStyle) and qapp.style().name().lower() == "fusion"
     assert theme.notifier() is not first
 
 
@@ -193,18 +195,96 @@ def test_current_theme_readers_follow_the_scheme(qapp, tmp_path, restore_theme):
     assert dark is not light and dark.gradient().stops()[0][1].name() == DARK.tone(PLAYING_TONE)
 
 
+def _text_color(w) -> str:
+    from PySide6.QtGui import QPalette
+
+    return w.palette().color(QPalette.ColorRole.WindowText).name()
+
+
 def test_dark_surfaces_stay_dark_until_l2(qtbot):
+    """L1b: o widget, o marcador e o aviso são superfícies escuras (`theme.surface`), sem folha de estilo: a paleta é a do
+    escuro e os tons saem dos tokens do escuro, com o tema claro."""
     from listener.model import AppState
+    from listener.ui.notices import Notice, NoticeKind
+    from listener.ui.toast import Toast
     from listener.ui.tray import icon_color
-    from listener.ui.widget import RecordingWidget
+    from listener.ui.widget import MarkerPopup, RecordingWidget
 
     w = RecordingWidget()
     qtbot.addWidget(w)
     w.update_state(1.0, {"L": 0.1, "R": 0.1}, {"L": "ok", "R": "warn"}, False, False, 0)
     w.set_live_state("crashed")
-    assert DARK.danger in w.status_label.styleSheet() and DARK.success in w.health_l.styleSheet()
-    assert DARK.danger in w.live_badge.styleSheet() and theme.tokens() is LIGHT       # o widget escuro no tema claro
+    assert theme.tokens() is LIGHT and theme.surface_tokens(w.status_label) is DARK      # o widget escuro no tema claro
+    assert (_text_color(w.status_label), _text_color(w.health_l), _text_color(w.live_badge)) == (DARK.danger, DARK.success, DARK.danger)
+    assert _text_color(w.time_label) == DARK.text and _text_color(w.markers_label) == DARK.secondary
+    assert not w.styleSheet() and not any(c.styleSheet() for c in w.findChildren(QWidget))
+    popup, toast = MarkerPopup(3.0), Toast(Notice(NoticeKind.INFO, "texto"), 1000)
+    qtbot.addWidget(popup)
+    qtbot.addWidget(toast)
+    assert theme.surface_tokens(popup.edit) is DARK and _text_color(toast.hint) == DARK.secondary and not toast.styleSheet()
     assert icon_color(AppState.RECORDING) == DARK.danger
+
+
+# ---------------------------------------------------------------- widgets: tom, papel, primário, erro (L1b, A-02, A-10)
+def test_tone_role_and_note_set_the_text_color_and_font_and_reset(qtbot):
+    from PySide6.QtWidgets import QLabel
+
+    label = QLabel("nota")
+    qtbot.addWidget(label)
+    theme.note(label)
+    assert _text_color(label) == LIGHT.secondary and label.font().pixelSize() == FONTS.caption.px
+    assert label.property(theme.TONE_PROP) == "secondary" and label.property(theme.FONT_PROP) == "caption"
+    theme.tone(label, Tone.WARNING)
+    assert _text_color(label) == LIGHT.warning
+    theme.tone(label, None)
+    assert _text_color(label) == LIGHT.text and label.property(theme.TONE_PROP) is None        # de volta à herdada
+    theme.role(label, "subtitle")
+    assert label.font().pixelSize() == FONTS.subtitle.px
+    with pytest.raises(ValueError, match="papel"):
+        theme.role(label, "titulo")
+
+
+def test_the_theme_change_sweeps_the_tones_and_keeps_the_surfaces(qtbot, qapp, tmp_path, restore_theme):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel, QVBoxLayout
+
+    plain, dark_win = QLabel("nota"), QWidget()
+    theme.tone(plain, Tone.SECONDARY)
+    theme.surface(dark_win, DARK)
+    inner = QLabel("no widget")
+    QVBoxLayout(dark_win).addWidget(inner)
+    theme.tone(inner, Tone.DANGER)                                      # nasceu fora da janela escura? `retone` resolve
+    theme.retone(dark_win)
+    for w in (plain, dark_win):
+        qtbot.addWidget(w)
+    assert (_text_color(plain), _text_color(inner)) == (LIGHT.secondary, DARK.danger)
+    theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Dark)
+    assert (_text_color(plain), _text_color(inner)) == (DARK.secondary, DARK.danger)       # a superfície fica no seu esquema
+
+
+def test_primary_kind_invalid_and_qcolor(qtbot):
+    from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton
+
+    win = QWidget()
+    lay = QHBoxLayout(win)
+    ok, other, field = QPushButton("Salvar"), QPushButton("Testar"), QLineEdit()
+    for w in (ok, other, field):
+        lay.addWidget(w)
+    qtbot.addWidget(win)
+    theme.primary(win, ok)
+    assert ok.property(theme.KIND_PROP) == theme.PRIMARY and ok.isDefault() and not other.autoDefault()
+    theme.set_kind(ok, None)
+    assert ok.property(theme.KIND_PROP) is None and not ok.isDefault()
+    theme.set_invalid(field, True)
+    assert field.property(theme.INVALID_PROP) is True
+    color = theme.qcolor(LIGHT.accent, 0.5)
+    assert color.name() == LIGHT.accent and abs(color.alphaF() - 0.5) < 0.01 and theme.qcolor(LIGHT.text).alpha() == 255
+
+
+def test_html_classes_come_from_the_tokens_without_literal_colors():
+    css = theme.html_css(DARK)
+    assert ".note { color: #c5c5c5; }" in css and f"a {{ color: {DARK.accent}; }}" in css
+    assert all(f".{name} " in css for name in ("note", "success", "warning", "danger", "info", "accent"))
 
 
 # ---------------------------------------------------------------- fator de texto (A-08)

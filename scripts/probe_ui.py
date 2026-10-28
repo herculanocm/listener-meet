@@ -14,8 +14,8 @@ tempos     a abertura das janelas (warm-up, Configurações, reunião, Históric
            vez), e o tema é aplicado com a plataforma real, como no app. [fato, 28/10] nesta CPU híbrida (Core Ultra 5
            235U: núcleos P e E) o mesmo código variou até 40 % entre processos, conforme o Windows os punha num núcleo ou
            noutro: cada filho fica preso aos núcleos da classe de eficiência mais alta (`GetSystemCpuSetInformation`).
-cortados   rótulo, botão, aba ou cabeçalho de tabela com o texto maior que o espaço; o cortado de propósito, com
-           reticências e o texto inteiro na dica, não conta.
+cortados   rótulo, botão, aba, cabeçalho de tabela ou título de cartão (L1b) com o texto maior que o espaço; o cortado de
+           propósito, com reticências e o texto inteiro na dica, não conta.
 pequenos   o alvo de clique do Aceite 3: botão, campo e combo abaixo de 32 por 32 px; caixa de seleção abaixo de 24 px.
 """
 from __future__ import annotations
@@ -35,6 +35,7 @@ from typing import Any
 WINDOWS = ("warmup", "configuracoes", "reuniao", "historico", "fila", "revisao")
 ROUNDS, RUNS, TICKS = 7, 3, 300
 TARGET_PX, CHECK_PX = 32, 24          # Aceite 3: botão, campo e combo; caixa de seleção
+CARD_TITLE_INSET = 6                  # a folga à direita do título do cartão (o `TITLE_INSET` de `ui/style.py`)
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
@@ -343,13 +344,28 @@ def _header_cut(header: Any) -> list[dict[str, Any]]:
     return found
 
 
+def _group_cut(box: Any) -> dict[str, Any] | None:
+    """F5.4 L1b: o título do cartão (o `ThemeStyle` o pinta dentro, `TITLE_INSET` abaixo) no espaço que o grupo tem."""
+    from PySide6.QtWidgets import QStyle, QStyleOptionGroupBox
+
+    if not box.title():
+        return None
+    opt = QStyleOptionGroupBox()
+    box.initStyleOption(opt)
+    label = box.style().subControlRect(QStyle.ComplexControl.CC_GroupBox, opt, QStyle.SubControl.SC_GroupBoxLabel, box)
+    need = label.left() + box.fontMetrics().horizontalAdvance(box.title()) + CARD_TITLE_INSET
+    return {"need_w": need, "w": box.width()} if need > box.width() + 1 else None
+
+
 def _cut(w: Any) -> list[dict[str, Any]]:
-    from PySide6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTabBar
+    from PySide6.QtWidgets import QAbstractButton, QGroupBox, QHeaderView, QLabel, QTabBar
 
     if isinstance(w, QLabel):
         found = _label_cut(w)
     elif isinstance(w, QAbstractButton):
         found = _button_cut(w)
+    elif isinstance(w, QGroupBox):
+        found = _group_cut(w)
     elif isinstance(w, QTabBar):
         return [{"widget": _name(w), **item} for item in _tabs_cut(w)]
     elif isinstance(w, QHeaderView):

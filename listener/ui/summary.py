@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QL
 
 from ..capture.clock import fmt_mmss
 from .common import human_size
+from .theme import Tone, tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -45,7 +46,7 @@ class SummaryDialog(QDialog):
         if unsaved:
             lab = QLabel(f"{len(unsaved)} pedaço(s) não foram gravados no banco ({', '.join(unsaved)}); a reunião ficou "
                          "marcada como interrompida. Veja o log.")
-            lab.setStyleSheet("color: #e74c3c;")
+            tone(lab, Tone.DANGER)
             lab.setWordWrap(True)
             form.addRow("Atenção", lab)
         warns = stats.get("warnings") or []

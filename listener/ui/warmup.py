@@ -45,6 +45,7 @@ from .live_prepare import missing_models, preparer
 from .meters import LevelMeter
 from .sources import SYSTEM_FOLLOW, SourceKey, SourceTable
 from .tasks import run_task
+from .theme import Tone, note, primary, tone
 
 if TYPE_CHECKING:
     from ..platform.base import AudioDevice, CaptureHandle, Platform
@@ -98,7 +99,7 @@ class WarmupDialog(QDialog):
         self.mic_meter = LevelMeter(height=10)
         self.mic_status = QLabel("ouvindo…")
         self.mic_note = QLabel("")
-        self.mic_note.setStyleSheet("color: #e67e22;")
+        tone(self.mic_note, Tone.WARNING)
         self.mic_note.setWordWrap(True)
         self.test_btn = QPushButton("Testar 3 s")
         self.test_btn.setToolTip("Grava 3 s do microfone e da saída escolhida, toca o microfone de volta e verifica eco.")
@@ -151,7 +152,7 @@ class WarmupDialog(QDialog):
         self.names_check = QCheckBox("Nomes ao vivo")
         self.names_check.setToolTip("Nome e cargo de quem tem perfil de voz na legenda (carrega o modelo de voz: mais memória).")
         self.live_note = QLabel("")
-        self.live_note.setStyleSheet("color: #e67e22; font-size: 11px;")
+        note(self.live_note, Tone.WARNING)
         self.live_note.linkActivated.connect(lambda _link: self._open_settings_for_live())
         self.live_check.toggled.connect(self._live_toggled)
         self._preparer = preparer()                       # download pelo link das Configurações: o aviso some quando terminar
@@ -160,7 +161,7 @@ class WarmupDialog(QDialog):
         self.glossary_edit = QLineEdit()
         self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a LLM sugere; edite à vontade)")
         self.glossary_status = QLabel("")
-        self.glossary_status.setStyleSheet("color: #888; font-size: 11px;")
+        note(self.glossary_status)
         self.glossary_status.setOpenExternalLinks(False)
         self.glossary_status.linkActivated.connect(lambda _link: self.on_settings() if self.on_settings else None)
         fl = QFormLayout(meet_box)
@@ -189,7 +190,6 @@ class WarmupDialog(QDialog):
         # --- botões ---
         self.buttons = QDialogButtonBox()
         self.record_btn = self.buttons.addButton("Gravar", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.record_btn.setDefault(True)
         self.record_btn.setMinimumHeight(40)
         self.buttons.addButton("Cancelar", QDialogButtonBox.ButtonRole.RejectRole)
         self.buttons.accepted.connect(self.accept)
@@ -197,7 +197,7 @@ class WarmupDialog(QDialog):
         self.keys_note = QLabel("")                       # U-037: falta chave ou token? diz antes de gravar, com o link
         self.keys_note.setWordWrap(True)
         self.keys_note.setTextFormat(Qt.TextFormat.RichText)
-        self.keys_note.setStyleSheet("color: #e67e22;")
+        tone(self.keys_note, Tone.WARNING)
         self.keys_note.linkActivated.connect(lambda _link: self._open_settings_for_keys())
 
         top = QHBoxLayout()
@@ -208,6 +208,7 @@ class WarmupDialog(QDialog):
         lay.addWidget(meet_box)
         lay.addWidget(self.keys_note)
         lay.addWidget(self.buttons)
+        primary(self, self.record_btn)                      # F5.4 (U-056, A-02): Gravar é o primário (Enter)
 
         self._timer = QTimer(self)
         self._timer.setInterval(100)
@@ -413,7 +414,7 @@ class WarmupDialog(QDialog):
         if not self._r_buffer or not r_rate:
             log.info("teste de 3 s: microfone %.1f s (nível %.4f); a saída (%s) não entregou áudio", len(mic) / 16000, rms(mic),
                      spec.log_text())
-            self.echo_label.setStyleSheet("color: #888;")
+            tone(self.echo_label, Tone.SECONDARY)
             self.echo_label.setText("Eco: a saída não entregou áudio durante o teste (nada tocando?).")
             return
         r = resample(to_mono(np.concatenate(self._r_buffer)), r_rate, 16000)
@@ -422,18 +423,18 @@ class WarmupDialog(QDialog):
         res = estimate_offset(mic, r, 16000)
         if res is None:
             log.info("teste de eco: sinal insuficiente para correlacionar")
-            self.echo_label.setStyleSheet("color: #888;")
+            tone(self.echo_label, Tone.SECONDARY)
             self.echo_label.setText("Eco: sinal insuficiente para testar (fale e deixe a saída tocando).")
             return
         corr, limit = res["correlation"], self.store.get(SPECS["capture.echo_corr_min"])
         log.info("teste de eco: correlação %.3f, atraso %.0f ms, limite %.2f", corr, res["offset_ms"], limit)
         corr_text = f"{corr:.2f}".replace(".", ",")                  # vírgula decimal (U-032)
         if corr >= limit:
-            self.echo_label.setStyleSheet("color: #e67e22;")
+            tone(self.echo_label, Tone.WARNING)
             self.echo_label.setText(f"Eco: seu microfone está ouvindo a reunião (correlação {corr_text}, atraso aproximado "
                                     f"{res['offset_ms']:.0f} ms). Use fone ou marque 'Sala de reunião'.")
         else:
-            self.echo_label.setStyleSheet("color: #2ecc71;")
+            tone(self.echo_label, Tone.SUCCESS)
             self.echo_label.setText(f"Sem eco: o microfone não ouve a saída (correlação {corr_text}).")
 
     # ---------------------------------------------------------------- tick

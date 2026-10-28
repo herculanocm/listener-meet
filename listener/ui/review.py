@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QKeyEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
@@ -24,7 +24,7 @@ from ..pipeline import review, summary_gate
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .person import DELETE, PersonData, PersonDialog
 from .player import ERROR, PlayerState
-from .theme import Tone, tokens
+from .theme import TONE_ROLE, Tone
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -182,7 +182,7 @@ class ReviewDialog(QDialog):
             item = QListWidgetItem(f"{it.title} · {it.minutes_text} · {it.summary()}")
             item.setData(Qt.ItemDataRole.UserRole, it.cluster_id)
             if it.pending and it.merged_into is None:
-                item.setForeground(QColor(tokens().tone(PENDING_TONE)))
+                item.setData(TONE_ROLE, PENDING_TONE.value)  # F5.4 (A-05): a cor sai do tema na pintura
             self.list.addItem(item)
         waiting = review.pending(self.items)
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else

@@ -20,6 +20,7 @@ from ..store import Store
 from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
 from .meters import LevelMeter
+from .theme import PRIMARY, Tone, set_kind, tone
 
 if TYPE_CHECKING:
     from ..platform.base import AudioDevice, CaptureHandle, Platform
@@ -74,7 +75,7 @@ class DbPage(QWizardPage):
         browse = QPushButton("Escolher…")
         browse.clicked.connect(self._browse)
         self.warning = QLabel("")
-        self.warning.setStyleSheet("color: #e67e22;")
+        tone(self.warning, Tone.WARNING)
         self.warning.setWordWrap(True)
         row = QHBoxLayout()
         row.addWidget(self.path, 1)
@@ -280,6 +281,8 @@ class FirstRunWizard(QWizard):
         self.addPage(self.log_page)
         self.mic_page = MicPage(platform)
         self.addPage(self.mic_page)
+        for which in (QWizard.WizardButton.NextButton, QWizard.WizardButton.FinishButton):   # F5.4 (U-056): o primário
+            set_kind(self.button(which), PRIMARY)
 
     @override
     def accept(self) -> None:
