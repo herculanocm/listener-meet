@@ -96,10 +96,14 @@ def test_win32_spawn_detached_opens_no_console_window(tmp_path):
             "open(p + '.tmp', 'w').write(json.dumps(bool(h) and bool(u.IsWindowVisible(h)))); os.replace(p + '.tmp', p)")
     Win32Platform().spawn_detached([sys.executable, "-c", code, str(out)])
     deadline = time.monotonic() + 30
-    while not out.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert out.exists(), "o filho não respondeu em 30 s"
-    assert json.loads(out.read_text()) is False                                                 # nenhum console visível
+    while True:
+        try:
+            seen = json.loads(out.read_text())
+            break
+        except (FileNotFoundError, PermissionError):     # ainda não existe, ou recém-criado e aberto por outro (antivírus)
+            assert time.monotonic() < deadline, "o filho não respondeu em 30 s"
+            time.sleep(0.05)
+    assert seen is False                                                                         # nenhum console visível
 
 
 def test_models_helpers_without_network(tmp_path, monkeypatch):
