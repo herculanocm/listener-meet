@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 12 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -188,12 +188,40 @@ Antes: log em DEBUG; um fone (Bluetooth ou USB) desligado à mão; para o aviso 
 - [ ] Desligue o fone escolhido: o widget avisa e volta ao padrão; religue: a gravação volta para o fone sozinha.
 - Devolva: os quatro logs e o que não se comportou assim.
 
+## Parte 12 — F5.4: as telas novas no claro, no escuro e no notebook (30 min)
+Antes: uma reunião processada com ata (a da Parte 3 serve) e, se der, o notebook a 150 %.
+- [ ] Tema: com o app aberto e a reunião, o Histórico e as Configurações à vista, troque o Windows entre claro e escuro
+      (Configurações › Personalização › Cores). Tudo troca sem reabrir: widget, ícone da bandeja, cartões, selos,
+      bandeiras dos marcadores, lupa da busca. Nada fica com fundo branco no escuro nem texto escuro sobre escuro.
+- [ ] Contraste alto (Acessibilidade › Temas de contraste): o app usa as cores do sistema e continua legível, inclusive
+      a linha selecionada, os selos e as faixas. Troque de um tema de contraste para outro (Aquático para Deserto):
+      se as cores não acompanharem, diga se volta ao reabrir o app. Tamanho do texto em 125 % (Acessibilidade ›
+      Tamanho do texto): na próxima abertura o texto cresce e nada sai cortado. Com "Efeitos de animação" desligado
+      (Acessibilidade › Efeitos visuais), a faixa azul do "rodando" na fila fica parada.
+- [ ] No notebook a 150 % e a 100 %: "Antes de gravar", Configurações, reunião, Histórico, fila e revisão abrem
+      inteiros dentro da tela, sem texto cortado. O widget tem 360 px de largura e cresce para cima com a legenda e o
+      alerta, sem sair da tela; Parar em vermelho, Cancelar afastado, o mudo como microfone cortado.
+- [ ] Configurações: navegue pelas 9 páginas. A roda do mouse rolando a página por cima de um número ou de uma lista não
+      muda o valor. Salve sem mexer em nada: o `listener.log` não mostra troca de configuração. Ponha um atalho
+      inválido (ex.: `ctrl+ç`) e salve: a página Atalhos abre com o campo marcado em vermelho e o motivo numa faixa.
+- [ ] Reunião: a ata aparece formatada (títulos, listas); "Editar" mostra o Markdown, "Cancelar edição" volta sem
+      mudar, editar e Salvar grava. As vozes sem nome aparecem como "Voz 2", "Voz 3"… iguais na transcrição, na linha
+      do tempo e na revisão. Na revisão, os atalhos de sempre (Enter, L, O, N, M, I, Espaço, E) funcionam.
+- [ ] Teclado e Narrador: Tab percorre na ordem da tela e o anel de foco só aparece pelo teclado; Esc fecha as janelas;
+      com o Narrador (Ctrl+Win+Enter), os botões só de ícone do widget dizem o nome. Enter num botão com o anel aciona
+      esse botão (no "Antes de gravar", Tab até Cancelar e Enter cancela, não grava); Enter num campo aciona o botão
+      azul da janela.
+- [ ] Abra e feche três reuniões, a revisão e o Histórico e saia pela bandeja: o app fecha sem a mensagem "Python
+      parou de funcionar" (Visualizador de Eventos › Aplicativo, sem erro do `python.exe` nesse horário).
+- Devolva: print de qualquer tela estranha (cor, corte, sobreposição) no claro e no escuro, e o `listener.log`.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
 - Decisões que esperam você (padrão entre parênteses; `backlog.md`, "Perguntas abertas ao dono"): P23, a RAM da busca
-  local (aceitar e medir na Parte 6); U-034 a U-036 (sim); a linha dos testes no `AGENTS.md` (sim); `pytest-xdist` (sim,
-  num lote pequeno); o próximo passo (a spec da F6 para você aprovar); transcrever sem o token do Hugging Face, sem
-  saber quem fala no R (sim, numa spec).
+  local (aceitar e medir na Parte 6); a linha dos testes no `AGENTS.md` (sim); `pytest-xdist` (sim, num lote
+  pequeno); o próximo passo (a spec da F6 para você aprovar); transcrever sem o token do Hugging Face, sem saber quem
+  fala no R (sim, numa spec); "Voz 2" também na ata e na exportação (sim, numa spec); os ~5 ms a mais na abertura do
+  "Antes de gravar" e da revisão (aceitar).
 - O push é seu: a main está à frente do `origin/main`.
 - A metade Linux do L0 da F5.1 fica para a próxima sessão no Linux; a LLM roda e você só abre a sessão lá.
