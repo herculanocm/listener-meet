@@ -183,7 +183,7 @@ def test_the_llm_reads_voz_n_while_the_identity_keeps_the_internal_label(platfor
     _runner, status, fake = _run_llm(store)
     title = [m.text for m in fake.calls(LlmTask.TITLE)[0].messages]
     assert status == JobStatus.DONE and "] Voz 1: bom dia Ana" in title[1]
-    llm_steps.enqueue_llm_job(store, mid, ["identify", "minutes", "revise"], parent)
+    llm_steps.enqueue_llm_job(store, mid, ["identify", "minutes", "revise"], parent, requested=True)
     _runner, status, fake = _run_llm(store)
     assert status == JobStatus.DONE
     texts = [*title, *(m.text for task in (LlmTask.MINUTES, LlmTask.REVISE) for c in fake.calls(task) for m in c.messages)]
@@ -248,7 +248,7 @@ def test_a_merge_of_two_voices_lights_the_refresh_of_new_minutes(platform, store
     mid = _record(platform, store)
     _provider_ready(store)
     parent = _pipeline(store, mid)
-    llm_steps.enqueue_llm_job(store, mid, ["minutes"], parent)
+    llm_steps.enqueue_llm_job(store, mid, ["minutes"], parent, requested=True)
     _runner, status, _fake = _run_llm(store)
     assert status == JobStatus.DONE and not summary_gate.names_changed(store, mid)
     done = next(e["data"] for e in store.list_events(mid) if (e.get("data") or {}).get("step") == "minutes_done")

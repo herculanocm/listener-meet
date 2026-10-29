@@ -24,7 +24,7 @@ from listener.pipeline.types import AudioWindow, Word
 from listener.store import Store
 from tests.conftest import make_config
 from tests.fake_pipeline import FakeDeps
-from tests.test_llm_steps import _provider_ready, _run_llm
+from tests.test_llm_steps import _ask, _provider_ready, _run_llm
 from tests.test_runner import CFG
 
 SCRIPT_EN = {"R": [(0.2, 1.4, "good morning Ana how are you"), (1.6, 2.9, "let us close the 2027 budget today")],
@@ -209,8 +209,10 @@ def test_from_the_warmup_combo_to_the_minutes_in_english(qtbot, qapp, store, pla
         deps = FakeDeps(SCRIPT_EN)
         _job, status = _run_heavy(store, deps)                                     # o job que o "Parar" pôs na fila
         assert status == JobStatus.DONE and deps.scripted.calls and {call[2] for call in deps.scripted.calls} == {"en"}
-        _runner, status, fake = _run_llm(store)
-        assert status == JobStatus.DONE and all(ENGLISH in r.messages[0].text for r in fake.requests)
+        _runner, status, fake = _run_llm(store)                                    # o núcleo
+        assert _ask(store, mid) is not None                                         # F5.6: a ata a pedido
+        _runner, status2, fake = _run_llm(store, fake)
+        assert status == status2 == JobStatus.DONE and all(ENGLISH in r.messages[0].text for r in fake.requests)
         assert store.summaries.current(mid, SummaryKind.MINUTES)["text_llm"].startswith("## Context")
         assert c.start_recording(cfg, {"title": "sem o combo"})
         assert store.get_meeting(c.recorder.meeting_id)["language"] == "pt"
@@ -235,12 +237,14 @@ def test_an_english_meeting_comes_out_in_english_without_detection(platform, sto
     assert status == JobStatus.DONE and {c[2] for c in deps.scripted.calls} == {"en"}    # R e L desde a primeira janela
     assert store.get_meeting(mid)["language"] == "en" and f"job {parent}: transcrição em en (o da reunião)" in caplog.text
     assert "detect" not in caplog.text.lower()
-    llm_job = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == JobKind.LLM)
+    assert _ask(store, mid) is not None                                             # F5.6: a ata a pedido, atrás do núcleo
     old = json.dumps({"provider_id": "gemini", "provider_kind": "gemini", "fast_model": "fake-fast", "strong_model": "fake-strong",
                       "output_language": "pt-BR"})                                  # snapshot de antes da F5.3
-    store._x("UPDATE processing_jobs SET config_json = ? WHERE id = ?", (old, llm_job["id"]))
+    for llm_job in (j for j in store.jobs.for_meeting(mid) if j["kind"] == JobKind.LLM):
+        store._x("UPDATE processing_jobs SET config_json = ? WHERE id = ?", (old, llm_job["id"]))
     _runner, status, fake = _run_llm(store)
-    assert status == JobStatus.DONE and fake.requests
+    _runner, status2, fake = _run_llm(store, fake)
+    assert status == status2 == JobStatus.DONE and fake.requests
     assert all(ENGLISH in r.messages[0].text for r in fake.requests)               # toda saída da LLM em inglês
     minutes = store.summaries.current(mid, SummaryKind.MINUTES)
     assert minutes["language"] == "en" and minutes["text_llm"].startswith("## Context") and "## Decisions" in minutes["text_llm"]

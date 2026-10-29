@@ -280,7 +280,7 @@ def test_heavy_and_llm_jobs_chain_the_index(platform, store):
     pending = store.jobs.list_jobs(kinds=("index",), statuses=(JobStatus.PENDING,))
     assert [json.loads(j["params_json"])["reason"] for j in pending] == ["llm"]
     store.jobs.request_cancel(int(pending[0]["id"]))
-    llm_steps.enqueue_llm_job(store, mid, ["title", "minutes"])
+    llm_steps.enqueue_llm_job(store, mid, ["title", "minutes"], requested=True)
     failing = FakeProvider()
     failing.fail_next(LlmError("recusado", permanent=True), LlmTask.MINUTES)
     _runner, status, _fake = _run_llm(store, failing)

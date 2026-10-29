@@ -141,7 +141,8 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),
     # F3 (item 12): camada de LLM; o job `llm` grava o snapshot em `config_json` (nunca a chave)
-    SettingSpec("llm.auto_tasks", True, _NOW, "Gerar título, pré-resumo, identidade e ata ao processar", _bool, phase="F3"),
+    # F5.6 (A-20): só o núcleo (identidade, título, transcrição revisada); ata e resumo só a pedido, com ela ligada ou não
+    SettingSpec("llm.auto_tasks", True, _NOW, "Gerar identidade, título e transcrição revisada ao processar", _bool, phase="F3"),
     SettingSpec("llm.cost_alert_usd", 2.0, _NOW, "Alerta de custo por reunião (US$)", float, low=0.0, high=1000.0, phase="F3"),
     SettingSpec("llm.max_parallel", 2, _NOW, "Chamadas simultâneas à LLM", int, low=1, high=8, phase="F3"),
     SettingSpec("llm.audio_second_opinion", False, _NOW, "Segunda opinião por áudio na identidade (envia voz)", _bool, phase="F3"),
@@ -158,6 +159,8 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min; 0 desliga)", int, low=0, high=60,
                 phase="F4"),                                   # 0: sem o custo do parcial, a ata segue (desvio do orquestrador, L5)
     SettingSpec("live.in_widget", True, _NEXT, "Mostrar a última legenda no widget", _bool, phase="F4"),
+    # F5.6 (A-21, P-06): o resumo parcial automático é escolha da gravação (fora do preset); "Atualizar resumo agora" vale sempre
+    SettingSpec("live.partial", False, _NEXT, "Resumo parcial automático (padrão do \"Antes de gravar\")", _bool, phase="F5.6"),
     # F5 (Dados): grupo "Busca" (a tela é do L5). `rag.auto_index` = vetores automáticos (o custo dos embeddings, Q1):
     # desligado, os jobs `index` continuam e gravam trechos e FTS (locais e grátis), só os vetores ficam de fora, salvo no
     # "reindexar" (pedido forçado). F5.1 (A-05): o embedder local não tem custo, logo o rótulo só fala de custo nos pagos;

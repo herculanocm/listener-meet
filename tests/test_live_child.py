@@ -176,7 +176,9 @@ def test_session_in_process_writes_captions_events_and_says_bye(tmp_path):
     with Store(db) as s:
         mid = s.create_meeting("ao vivo", None, None, None, glossary="SRM, FIDC")
         s.set_setting("pipeline.glossary", "Cotas")
-    data = session_input(pr.Hello(1000.0, names=False, model="small", threads=3),
+    hello = pr.Hello(1000.0, names=False, model="small", threads=3, partial=True)
+    assert pr.Hello.from_msg(hello.to_msg()) == hello and pr.Hello.from_msg({**hello.to_msg(), "partial": None}).partial is False
+    data = session_input(hello,
                           [("L", tone(1.5, 440), 0), ("R", 24000, pr.SILENCED),                            # mic fala; R pausado
                            ("L", 32000, pr.SILENCED), ("R", tone(2.0), 0), ("R", 24000, pr.GAP), ("L", 16000 * 3, pr.GAP)])
     engines = FakeEngines()
@@ -200,6 +202,7 @@ def test_session_in_process_writes_captions_events_and_says_bye(tmp_path):
     bye = lines[-1]
     assert bye["captions"] == 2 and bye["app_dropped"] == 4 and bye["skipped"] == 0 and bye["model"] == "fake:small"
     assert events["live_started"]["data"]["engine"] == "fake" and events["live_started"]["data"]["threads"] == 3
+    assert events["live_started"]["data"]["partial"] is True                         # F5.6 (A-23): o `--check` conta por ele
     assert events["live_stopped"]["data"]["captions"] == 2 and events["live_started"]["t_ms"] == 10_000
 
 

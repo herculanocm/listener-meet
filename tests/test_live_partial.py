@@ -148,7 +148,7 @@ def test_llm_runner_keeps_the_cost_of_previous_attempts(platform, store):
 def test_minutes_alert_counts_what_the_meeting_already_spent(platform, store):
     """Q6: a mesma conta da ata soma o parcial ao vivo; as opcionais do job automático saem com "já gastos"."""
     from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
-    from listener.pipeline import llm_steps
+    from listener.model import JobKind
 
     store.upsert_me("Eu")
     mid = _record(platform, store)
@@ -158,7 +158,8 @@ def test_minutes_alert_counts_what_the_meeting_already_spent(platform, store):
     runner, _status, _ = _run_llm(store)
     assert json.loads(store.jobs.get(runner.job_id)["timings_json"])["llm"]["skipped"] == {}       # estimativa barata: tudo roda
     store.llm_calls.insert(LlmCallInsert(mid, None, "partial", "gemini", "fake-fast", None, None, 1, 1, 0, 0, 0.999, 1, LlmCallStatus.OK))
-    assert llm_steps.enqueue_llm_job(store, mid, ["executive"], auto=True)
+    assert store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["executive"], "parent_job_id": store.segments.current_job_id(mid),
+                                                 "auto": True})              # A-48: um job automático de antes da F5.6
     runner2, _status, _ = _run_llm(store)
     skipped = json.loads(store.jobs.get(runner2.job_id)["timings_json"])["llm"]["skipped"]
     assert set(skipped) == {"executive"} and "já gastos US$ 1,00" in skipped["executive"]
@@ -205,6 +206,7 @@ def test_controller_partial_timer_interval_manual_budget_and_cancel(qtbot, qapp,
     monkeypatch.setenv("LISTENER_LLM", "fake")
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
     store.set_setting("live.enabled", True)
+    store.set_setting("live.partial", True)                          # F5.6 (P-06): o automático só com a caixa
     c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
     c.tray = None
     monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
@@ -296,6 +298,7 @@ def test_controller_partial_keeps_its_cadence_and_drains_what_the_cut_left(qtbot
     monkeypatch.setenv("LISTENER_LLM", "fake")
     monkeypatch.setattr(partial_task, "MAX_INPUT_CHARS", 800)                    # duas legendas longas por chamada
     store.set_setting("live.enabled", True)
+    store.set_setting("live.partial", True)
     _ready(store)
     c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
     c.tray = None
@@ -324,6 +327,62 @@ def test_controller_partial_keeps_its_cadence_and_drains_what_the_cut_left(qtbot
         data = json.loads(store.summaries.current(mid, SummaryKind.PARTIAL)["data_json"])
         assert data["interval_min"] == 5                                      # o `--check` conta pelo intervalo que valia
         platform.pump(0.6)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+    finally:
+        c.emergency_stop()
+
+
+def test_controller_without_the_partial_box_never_runs_the_timer_but_the_button_does(qtbot, qapp, store, platform, monkeypatch):
+    """F5.6 (A-21 a A-23, P-06): `live.partial` desligado (o padrão) vale para a gravação inteira: o disparo do intervalo não
+    chama a LLM nem com legenda nova e o intervalo vencido; "Atualizar resumo agora" chama, com `manual` no parcial; a janela
+    diz que o automático está desligado nesta gravação; o `hello` leva o valor ao processo ao vivo. A caixa (`live_partial`
+    nos campos do warm-up) vence o padrão."""
+    from listener.capture.recorder import RecordConfig, SourceSpec
+    from listener.model import AppState
+    from listener.ui import controller as ctl
+
+    monkeypatch.setenv("LISTENER_LIVE", "fake")
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    store.set_setting("live.enabled", True)
+    _ready(store)
+    c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    monkeypatch.setattr(c, "notify", lambda _text: None)
+    now = [1000.0]
+    c.monotonic = lambda: now[0]
+    calls: list[bool] = []
+    real = partial_task.run_partial
+
+    def counted(s: Any, m: int, **kw: Any) -> Any:
+        calls.append(bool(kw.get("manual")))
+        return real(s, m, **kw)
+
+    monkeypatch.setattr(partial_task, "run_partial", counted)
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+    try:
+        assert c.start_recording(cfg, {"title": "sem parcial"})
+        mid = c.recorder.meeting_id
+        assert c.live is not None and c._live_hello is not None and c._live_hello.partial is False
+        _caption(store, mid, 1000, "primeira")
+        for _ in range(3):
+            now[0] += 6 * 60                                                  # o intervalo de 5 min venceu, com legenda nova
+            c._partial_tick()
+        assert calls == [] and not c._partial_tasks
+        win = c.open_live_window()
+        assert win is not None and "desligado nesta gravação" in win.partial_view.toPlainText()
+        assert c.request_partial_now() == "atualizando o resumo parcial…"      # o clique vale
+        qtbot.waitUntil(lambda: not c._partial_tasks, timeout=5000)
+        assert calls == [True]
+        data = json.loads(store.summaries.current(mid, SummaryKind.PARTIAL)["data_json"])
+        assert data["manual"] is True                                          # o `--check` não o conta como automático
+        platform.pump(0.6)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
+        assert c.start_recording(cfg, {"title": "com a caixa", "live_partial": True})   # a caixa do "Antes de gravar" vence
+        assert c._partial_auto and c._live_hello is not None and c._live_hello.partial is True
         c.stop_recording()
         qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=5000)
     finally:

@@ -79,10 +79,12 @@ class Hello:
     model: str = "small"
     threads: int = 2
     eof_grace_s: float = 8.0       # depois do EOF, o filho transcreve o que está na fila até este prazo
+    partial: bool = False          # F5.6 (A-23): o resumo parcial automático desta gravação; o filho o grava no `live_started`
 
     def to_msg(self) -> dict[str, Any]:
         return {"type": HELLO, "v": PROTOCOL_VERSION, "t0_perf": float(self.t0_perf), "names": bool(self.names),
-                "model": str(self.model), "threads": int(self.threads), "eof_grace_s": float(self.eof_grace_s)}
+                "model": str(self.model), "threads": int(self.threads), "eof_grace_s": float(self.eof_grace_s),
+                "partial": bool(self.partial)}
 
     @classmethod
     def from_msg(cls, msg: dict[str, Any]) -> Self:
@@ -92,7 +94,8 @@ class Hello:
             raise ProtocolError(f"protocolo {msg.get('v')!r} do app, o processo ao vivo fala o {PROTOCOL_VERSION}: reinicie o app")
         try:
             return cls(t0_perf=float(msg["t0_perf"]), names=bool(msg.get("names", True)), model=str(msg.get("model") or "small"),
-                       threads=max(1, int(msg.get("threads", 2))), eof_grace_s=max(0.0, float(msg.get("eof_grace_s", 8.0))))
+                       threads=max(1, int(msg.get("threads", 2))), eof_grace_s=max(0.0, float(msg.get("eof_grace_s", 8.0))),
+                       partial=bool(msg.get("partial", False)))
         except (KeyError, TypeError, ValueError) as e:
             raise ProtocolError(f"hello inválido: {e}") from e
 

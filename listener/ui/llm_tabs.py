@@ -8,7 +8,9 @@ espera 30 s sem edição antes de enfileirar). F5 L4 (F5A-26): `LlmTabsGroup` ju
 novo" para a revisão e para a reunião aberta (as duas recarregam igual: ocupado, gerado antes do reprocessamento, pulado
 pelo alerta); o título tem um modo compacto, numa linha, para o cabeçalho da reunião aberta. U-042 (F5.2): a aba da ata
 diz quando ela espera a identificação das vozes ("Gerar ata mesmo assim") ou quando os nomes mudaram depois dela
-("Atualizar a ata com os nomes"); o "gerar de novo" de uma tarefa adiada a libera com as outras. F5.4 L4: a ata, o executivo e o
+("Atualizar a ata com os nomes"). F5.6 L1a (A-02): ata, executivo e pré-resumo só a pedido (`llm_requests`): "Gerar de
+novo", "Gerar ata mesmo assim" e "Atualizar a ata com os nomes" viram um pedido "agora" só do que foi clicado (no L1b, o
+popup vem antes) e entram na fila atrás de um job de LLM ativo (A-10). F5.4 L4: a ata, o executivo e o
 pré-resumo (`TextTab`, com a leitura formatada, A-15) foram para `ui/minutes_view.py` e as ações (`ActionsTab`, U-080) para
 `ui/actions_table.py`, reexportadas daqui; o título do cabeçalho da reunião em 20 px, sem moldura até o foco, e o menu "LLM"
 num botão com a seta inteira (U-078)."""
@@ -45,15 +47,31 @@ def llm_job_active(store: Store, meeting_id: int) -> bool:
 
 def request_llm_step(store: Store, meeting_id: int, step: JobStep) -> tuple[int | None, str]:
     """Job `llm` de uma tarefa pela fila, sob demanda (P6; `revise` e `identify` pela leitura e pela aba Vozes, F3.1 R3-05):
-    devolve (id do job, mensagem para o usuário); recusa com job `llm` ativo ou sem provedor com chave."""
-    from ..pipeline.llm_steps import enqueue_llm_job
+    devolve (id do job, mensagem para o usuário); recusa com job `llm` ativo ou sem provedor com chave. F5.6: ata, executivo
+    e pré-resumo viram um pedido "agora" (`ask_now`)."""
+    from ..pipeline.llm_steps import REQUEST_ONLY, enqueue_llm_job
 
+    if step in REQUEST_ONLY:
+        return ask_now(store, meeting_id, [step], f"gerar de novo: {step}")
     if llm_job_active(store, meeting_id):
         return None, "Já há um job de LLM em andamento para esta reunião; espere terminar."
     job_id = enqueue_llm_job(store, meeting_id, [step])
     if job_id is None:
         return None, "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso."
     return job_id, f"{step_label(step)}: gerando pela fila (3 a 5 s para começar)…"
+
+
+def ask_now(store: Store, meeting_id: int, tasks: list[JobStep | str], origin: str) -> tuple[int | None, str]:
+    """F5.6 L1a: um pedido "agora" (`llm_requests.request`); devolve (job `llm`, mensagem para o usuário)."""
+    from ..pipeline import llm_requests
+
+    res = llm_requests.request(store, meeting_id, tasks, llm_requests.Mode.NOW, origin)
+    out = llm_requests.Outcome
+    what = " e ".join(step_label(t) for t in tasks).capitalize()
+    texts = {out.QUEUED: "gerando pela fila (3 a 5 s para começar)…", out.WAITING: "sai quando todas as vozes tiverem nome.",
+             out.BOUND: "sai quando o processamento da reunião terminar.", out.NEXT: "sai quando a reunião for processada.",
+             out.NO_KEY: "pedido guardado; sai quando houver uma chave de LLM (Configurações, Chaves de acesso)."}
+    return res.job_id, res.refused if res.outcome == out.REFUSED else f"{what}: {texts[res.outcome]}"
 
 
 def last_llm_info(store: Store, meeting_id: int) -> dict[str, Any]:
@@ -252,21 +270,17 @@ class LlmTabsGroup(QObject):
             ata.set_extra("")
 
     def release_now(self) -> int | None:
-        """"Gerar ata mesmo assim": as tarefas adiadas entram na fila já, com as vozes que faltam sem nome."""
-        job_id = summary_gate.release(self.store, self.meeting_id, "gerar ata mesmo assim", force=True)
-        return self._queued(job_id, "Ata: gerando pela fila com as vozes que faltam sem nome…" if job_id is not None else
-                            "A ata não saiu agora: veja a fila (processamento em curso ou sem chave de LLM).")
+        """"Gerar ata mesmo assim" (F5.6 A-02): um pedido "agora" do que espera as vozes; o adiamento sai com ele."""
+        waiting = summary_gate.deferred(self.store, self.meeting_id)
+        tasks: list[JobStep | str] = list(waiting.tasks) if waiting is not None else [JobStep.MINUTES]
+        return self._queued(*ask_now(self.store, self.meeting_id, tasks, "gerar ata mesmo assim"))
 
     def refresh_names(self) -> int | None:
-        """"Atualizar a ata com os nomes": ata, executivo e pré-resumo de novo pela fila, com os nomes de agora (D-057)."""
-        from ..pipeline.llm_steps import enqueue_llm_job
-
-        if llm_job_active(self.store, self.meeting_id):
-            return self._queued(None, "Já há um job de LLM em andamento para esta reunião; espere terminar.")
-        job_id = enqueue_llm_job(self.store, self.meeting_id, list(summary_gate.REFRESH))
-        log.info("reunião %s: atualizar a ata com os nomes pedido (job llm %s)", self.meeting_id, job_id)
-        return self._queued(job_id, "Atualizando a ata com os nomes pela fila…" if job_id is not None else
-                            "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso.")
+        """"Atualizar a ata com os nomes" (D-057; F5.6 A-02): um pedido "agora" só das espécies que já têm versão atual."""
+        current = {KIND_STEP[k] for k in self.store.summaries.current_all(self.meeting_id) if k in KIND_STEP}
+        tasks: list[JobStep | str] = [t for t in summary_gate.REFRESH if t in current]
+        log.info("reunião %s: atualizar a ata com os nomes pedido (%s)", self.meeting_id, ", ".join(str(t) for t in tasks))
+        return self._queued(*ask_now(self.store, self.meeting_id, tasks, "atualizar a ata com os nomes"))
 
     def _queued(self, job_id: int | None, message: str) -> int | None:
         if self.on_message is not None:
@@ -283,30 +297,14 @@ class LlmTabsGroup(QObject):
 
     def regenerate(self, step: JobStep) -> int | None:
         """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar.
-        Tarefa que espera a identificação (U-042, A-14) é liberada com as outras adiadas, para a ata não sair duas vezes."""
-        waiting = summary_gate.deferred(self.store, self.meeting_id)
-        if waiting is not None and str(step) in waiting.tasks:
-            job = summary_gate.release(self.store, self.meeting_id, f"gerar de novo: {step}", force=True)
-            return self._queued(job, f"{step_label(step)}: gerando pela fila com as outras tarefas que esperavam…" if job
-                                is not None else "Não saiu agora: veja a fila (processamento em curso ou sem chave de LLM).")
-        job_id, message = request_llm_step(self.store, self.meeting_id, step)
-        if self.on_message is not None:
-            self.on_message(message)
-        if job_id is None:
-            return None
-        self.regenerated.append(job_id)
-        if self.on_launch is not None:
-            self.on_launch(True)
-        if self.after_regenerate is not None:
-            self.after_regenerate()
-        else:
-            self.reload()
-        return job_id
+        F5.6 (A-02): de ata, executivo ou pré-resumo, um pedido "agora" só da tarefa clicada (o resumo leva a ata quando ela
+        falta, P-07); um adiamento com exatamente essa tarefa sai com ele."""
+        return self._queued(*request_llm_step(self.store, self.meeting_id, step))
 
 
 def step_label(step: JobStep | str) -> str:
     return JOB_STEP_LABELS.get(str(step), str(step)).removeprefix("LLM: ")
 
 
-__all__ = ["KIND_STEP", "ActionsTab", "JobStatus", "LlmTabsGroup", "TextTab", "TitleTab", "cost_badge", "last_llm_info",
+__all__ = ["KIND_STEP", "ActionsTab", "JobStatus", "LlmTabsGroup", "TextTab", "TitleTab", "ask_now", "cost_badge", "last_llm_info",
            "llm_done_text", "llm_job_active", "request_llm_step", "step_label"]

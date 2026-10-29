@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
 
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
-from ..pipeline import review, summary_gate
+from ..pipeline import llm_requests, review
 from ..pipeline.voices import VoiceNames, voice_names
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .common import click_focused_button, keep_until_destroyed
@@ -140,9 +140,10 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         self.release_summary("revisão sem voz pendente")
 
     def release_summary(self, reason: str, force: bool = False) -> int | None:
-        """U-042: as tarefas adiadas entram na fila (uma vez); o worker leve é lançado. Falhar aqui nunca trava a revisão."""
+        """U-042, F5.6 (P-01): os pedidos "quando todos tiverem nome" saem (uma vez); o worker leve é lançado. Falhar aqui
+        nunca trava a revisão."""
         try:
-            job_id = summary_gate.release(self.store, self.meeting_id, reason, force=force)
+            job_id = llm_requests.release(self.store, self.meeting_id, reason, force=force)
         except Exception as e:
             log.warning("reunião %s: a ata adiada não foi liberada (%s): %s", self.meeting_id, reason, e)
             return None
@@ -315,7 +316,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
     def finish(self) -> None:
         review.finish(self.store, self.meeting_id)
         self._edited(now=True)                             # "Concluir": a reindexação não espera os 30 s
-        self.release_summary("concluir", force=True)       # U-042: concluir decide; a ata sai mesmo com voz sem nome
+        self.release_summary("concluir", force=True)       # U-042, P-01: concluir decide; o pedido sai mesmo com voz sem nome
         self.accept()
 
     # ---------------------------------------------------------------- teclado (U-006)

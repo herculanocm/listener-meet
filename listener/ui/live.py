@@ -46,10 +46,11 @@ class LiveWindow(QWidget):
     def __init__(self, store: Store, meeting_id: int, *, on_mark_caption: MarkCaption | None = None,
                  on_mark_item: MarkItem | None = None, on_refresh: Refresh | None = None,
                  marked_captions: set[tuple[Any, ...]] | None = None, marked_items: set[tuple[str, str]] | None = None,
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None, partial_auto: bool = True):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
+        self.partial_auto = partial_auto                 # F5.6 (A-22): o resumo parcial automático desta gravação
         self.on_mark_caption = on_mark_caption
         self.on_mark_item = on_mark_item
         self.on_refresh = on_refresh
@@ -218,9 +219,10 @@ class LiveWindow(QWidget):
         if row is None:
             interval = int(self.store.get(SPECS["live.summary_interval_min"]))
             self.partial_when.setText("")
-            self.partial_view.setHtml("<p class='note'>Ainda sem resumo parcial: " +
-                                      (f"o primeiro sai em até {interval} min de legendas." if interval > 0 else
-                                       "o automático está desligado (intervalo 0 nas Configurações, Ao vivo).") + "</p>")
+            self.partial_view.setHtml("<p class='note'>Ainda sem resumo parcial: " + (
+                "o automático está desligado nesta gravação (use \"Atualizar resumo agora\")." if not self.partial_auto else
+                f"o primeiro sai em até {interval} min de legendas." if interval > 0 else
+                "o automático está desligado (intervalo 0 nas Configurações, Ao vivo).") + "</p>")
             return
         until = row.get("t_until_ms")
         self.partial_when.setText(f"atualizado às {hhmm(row.get('created_at'))}"

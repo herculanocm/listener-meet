@@ -184,8 +184,9 @@ def render_markdown(data: Mapping[str, Any], language: str = "pt-BR") -> str:
 
 
 def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None = None,
-                cancelled: Callable[[], bool] | None = None) -> PartialResult:
-    """Um parcial (síncrono: roda numa `StreamTask`). `provider` só nos testes; senão o ativo, com a chave lida agora."""
+                cancelled: Callable[[], bool] | None = None, manual: bool = False) -> PartialResult:
+    """Um parcial (síncrono: roda numa `StreamTask`). `provider` só nos testes; senão o ativo, com a chave lida agora.
+    `manual` ("Atualizar resumo agora") fica no `data_json`: o `--check` conta só os automáticos (F5.6 A-23)."""
     meeting = store.get_meeting(meeting_id)
     if meeting is None:
         return PartialResult(Outcome.GONE, meeting_id)
@@ -275,7 +276,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     prev_until = int((store.summaries.current(meeting_id, SummaryKind.PARTIAL) or {}).get("t_until_ms") or 0)
     t_until = max(prev_until, *(int(r["t_end_ms"] or 0) for r in used))    # uma legenda atrasada não faz o "até" recuar
     data.update(last_caption_id=max(int(r["id"]) for r in used), captions=len(used), left=left,
-                t_from_ms=min(int(r["t_start_ms"] or 0) for r in used),
+                t_from_ms=min(int(r["t_start_ms"] or 0) for r in used), manual=bool(manual),
                 interval_min=int(store.get(SPECS["live.summary_interval_min"])))   # o `--check` conta pelo que valia
     try:
         summary_id = store.summaries.insert(SummaryInsert(meeting_id, SummaryKind.PARTIAL, json.dumps(data, ensure_ascii=False),

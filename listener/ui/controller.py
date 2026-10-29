@@ -56,7 +56,6 @@ F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py
 from __future__ import annotations
 
 import functools
-import json
 import threading
 import time
 from collections import deque
@@ -78,11 +77,9 @@ from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..llm import local_embed, partial_task
 from ..llm.prompts.common import stamp
 from ..log import get_logger
-from ..model import (HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind,
-                     SummaryKind)
+from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
 from ..store.jobs import HELD
-from ..pipeline import review, summary_gate
-from ..pipeline.reprocess import target_language
+from ..pipeline import llm_requests, review
 from ..platform.base import log_id
 from ..platform.common import process
 from .glossary_link import LateGlossaryLink
@@ -243,6 +240,7 @@ class Controller(QObject):
         self.monotonic: Callable[[], float] = time.monotonic
         self.partial_status: dict[str, Any] = {"state": "idle", "meeting_id": None}
         self._partial_meeting: int | None = None
+        self._partial_auto = False                       # F5.6 (A-21, P-06): o automático desta gravação (`live.partial`)
         self._partial_last_at = 0.0
         self._partial_backlog = False                    # o último parcial deixou legendas para depois (corte da entrada)
         self._partial_last_caption = 0
@@ -990,18 +988,20 @@ class Controller(QObject):
         if self.store.get_setting("pipeline.paused_until"):
             self.store.set_setting("pipeline.paused_until", "")
 
-    def _enqueue_processing(self, meeting_id: int) -> None:
-        """Parou: a reunião `gravada` entra na fila (D-014) e o worker é lançado se couber."""
+    def _enqueue_processing(self, meeting_id: int) -> int | None:
+        """Parou: a reunião `gravada` entra na fila (D-014) e o worker é lançado se couber. Devolve o job, a que o pedido de
+        ata ao parar fica preso (F5.6 A-18; None = o próximo processamento)."""
         m = self.store.get_meeting(meeting_id)
         if m is None or m.get("status") not in (MeetingStatus.RECORDED, MeetingStatus.INTERRUPTED):
-            return
+            return None
         if not self.store.get(SPECS["pipeline.auto_start"]):
             log.info("reunião %s gravada; processamento automático desligado", meeting_id)
-            return
+            return None
         job_id = self.store.jobs.enqueue(meeting_id)
         log.info("reunião %s na fila de processamento (job %s)", meeting_id, job_id)
         self.launch_worker()
         self._queue_timer.setInterval(QUEUE_POLL_ACTIVE_MS)
+        return job_id
 
     def _enqueue_leftovers(self) -> int:
         """Reuniões `gravada` ou `interrompida` sem nenhum job (Sair gravando, queda, versão anterior): entram na fila (D-014, R2-24)."""
@@ -1140,7 +1140,7 @@ class Controller(QObject):
                 self._reviews[mid].reload()
         else:
             todo = self._pending_voices(mid)
-            waits = todo and self._summary_waits(mid, job)         # U-042: a regra do worker, não o evento (A-14)
+            waits = todo and self._summary_waits(mid)              # U-042, F5.6 (A-06): só com um pedido que espera
             text = ("pronta para revisão de falantes; a ata sai depois que as vozes forem identificadas" if waits else
                     "pronta para revisão de falantes" if todo else "processada, sem voz a confirmar")
             self._notify_meeting(mid, f"{text}.")
@@ -1169,27 +1169,18 @@ class Controller(QObject):
         if text is not None:
             self._notify_meeting(int(job["meeting_id"]), text, NoticeKind.ERROR, NoticeAction(Target.QUEUE))
 
-    def _summary_waits(self, meeting_id: int, job: Any = None) -> bool:
-        """U-042: a ata espera a identificação quando as tarefas automáticas estão ligadas, há provedor com chave, a reunião
-        ainda não tem ata (R-10: depois de reprocessar, a ata antiga fica e nada espera) e a revisão não foi concluída antes
-        (R-01): o mesmo critério do `enqueue_after_pipeline`, que roda no worker depois do job concluído. F5.3 (A-06): depois
-        de uma troca de idioma nada espera (as tarefas vão como pedido manual)."""
-        if job is not None and target_language(job) is not None:
-            return False
+    def _summary_waits(self, meeting_id: int) -> bool:
+        """U-042, F5.6 (A-06): a ata espera a identificação só com um pedido "quando todos tiverem nome" (`llm_requests`)."""
         try:
-            return (bool(self.store.get(SPECS["llm.auto_tasks"])) and self.store.providers.active_with_key("llm") is not None
-                    and self.store.summaries.current(meeting_id, SummaryKind.MINUTES) is None
-                    and str((self.store.get_meeting(meeting_id) or {}).get("status")) != MeetingStatus.REVIEWED)
+            return llm_requests.summary_waits(self.store, meeting_id)
         except Exception as e:
             log.debug("critério da ata adiada: %s", e)
             return False
 
     def _identity_only(self, job: Any, meeting_id: int) -> bool:
-        """O job `llm` que só rodou a identidade e a revisão da transcrição enquanto a ata espera (A-14: o balão "LLM
-        concluída" enganaria)."""
+        """O job `llm` só do núcleo enquanto um pedido espera as vozes (A-14: o balão "LLM concluída" enganaria)."""
         try:
-            done = set(json.loads(job.get("timings_json") or "{}").get("llm", {}).get("done") or [])
-            return bool(done) and done <= {str(s) for s in summary_gate.EARLY} and summary_gate.deferred(self.store, meeting_id) is not None
+            return llm_requests.identity_only(self.store, meeting_id, dict(job))
         except Exception as e:
             log.debug("reunião %s: job llm só de identidade? %s", meeting_id, e)
             return False
@@ -1395,8 +1386,10 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- ao vivo (F4)
     def _start_live(self, rec: Recorder, fields: dict[str, Any]) -> bool:
-        """Depois de `rec.start()`: caixas do warm-up (`live_enabled`, `live_names`; ausentes = padrão das Configurações),
-        modelos prontos, filho lançado e desvio ligado. Qualquer falha só deixa a gravação sem ao vivo."""
+        """Depois de `rec.start()`: caixas do warm-up (`live_enabled`, `live_names`, `live_partial`; ausentes = padrão das
+        Configurações), modelos prontos, filho lançado e desvio ligado. Qualquer falha só deixa a gravação sem ao vivo."""
+        partial = fields.get("live_partial")             # F5.6 (A-21): fixo na gravação; o "Hello" o leva ao `--check`
+        self._partial_auto = bool(self.store.get(SPECS["live.partial"]) if partial is None else partial)
         old, self.live = self.live, None                 # o filho da gravação anterior ainda fechando (até 10 s) termina
         if old is not None:                              # sozinho: sem lease, legendas nem queda nesta (revisão do L0 a L3)
             old.on_message = lambda _msg: None
@@ -1423,7 +1416,7 @@ class Controller(QObject):
             return False
         t0_perf = rec.clock.t0_perf if isinstance(rec.clock, SessionClock) else time.perf_counter() - rec.clock.rel()
         self._live_hello = Hello(t0_perf, names=bool(names), model=model, threads=self.store.get(SPECS["live.threads"]),
-                                 eof_grace_s=LIVE_EOF_GRACE_S)
+                                 eof_grace_s=LIVE_EOF_GRACE_S, partial=self._partial_auto)
         return self._spawn_live(rec)
 
     def _spawn_live(self, rec: Recorder) -> bool:
@@ -1576,7 +1569,7 @@ class Controller(QObject):
         if win is None:
             win = LiveWindow(self.store, rec.meeting_id, on_mark_caption=self.mark_caption, on_mark_item=self.mark_partial_item,
                              on_refresh=self.request_partial_now, marked_captions=self._marked_captions,
-                             marked_items=self._marked_items)
+                             marked_items=self._marked_items, partial_auto=self._partial_auto)
             self.live_caption.connect(win.on_caption)
             self.partial_state.connect(win.on_partial_state)
             win.closed.connect(functools.partial(self._live_window_closed, win))
@@ -1682,9 +1675,10 @@ class Controller(QObject):
         self.partial_state.emit(st)
 
     def _partial_tick(self) -> None:
-        """A cada 15 s: o intervalo relido agora (CP8; 0 desliga o automático); vencido, roda se houver legenda nova."""
+        """A cada 15 s: o intervalo relido agora (CP8; 0 desliga o automático); vencido, roda se houver legenda nova. F5.6
+        (A-22): sem "Resumo parcial" nesta gravação, nunca (o "Atualizar resumo agora" segue)."""
         rec = self.recorder
-        if (self._partial_meeting is None or rec is None or rec.meeting_id != self._partial_meeting
+        if (self._partial_meeting is None or rec is None or rec.meeting_id != self._partial_meeting or not self._partial_auto
                 or self.state not in (AppState.RECORDING, AppState.PAUSED) or self._partial_stopped):
             return
         try:
@@ -1734,7 +1728,7 @@ class Controller(QObject):
         store = self.store
 
         def job(_emit: Callable[[str], None], cancelled: Callable[[], bool]) -> Any:
-            return partial_task.run_partial(store, mid, cancelled=cancelled)
+            return partial_task.run_partial(store, mid, cancelled=cancelled, manual=manual)
 
         task = run_stream(job, store, lambda _chunk: None, functools.partial(self._on_partial_done, mid, box))
         box.append(task)

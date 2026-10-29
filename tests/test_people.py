@@ -14,7 +14,7 @@ from listener.rag.index import sync_text
 from listener.store.actions import ActionInsert
 from listener.store.captions import CaptionInsert
 from listener.store.llm_calls import unpack_blob
-from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
+from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
 CANARY = "canario.lgpd@exemplo.com.br"
 
@@ -125,8 +125,10 @@ def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platfor
     assert any(ln.speaker == "Ana (CFO)" for ln in ctx.lines) and any(ln.speaker == "Eu (Gerente)" for ln in ctx.lines)
     assert any(p.id == ana for p in ctx.meeting_ctx.speakers)
     with caplog.at_level("DEBUG"):
+        _ask(store, mid)                                                                    # F5.6: a ata a pedido
         _runner, status, fake = _run_llm(store)
-        assert status == JobStatus.DONE
+        _runner, status2, fake = _run_llm(store, fake)
+        assert status == status2 == JobStatus.DONE
         sync_text(store, mid)
     minutes = fake.calls(LlmTask.MINUTES)[0].messages[1].text
     assert "Identified speakers in this meeting" in minutes and "(" + str(ana) + ") Ana — CFO, Empresa X" in minutes

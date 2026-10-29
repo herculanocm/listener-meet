@@ -155,6 +155,12 @@ class SegmentsRepo:
         return int(self.core.q(f"SELECT COUNT(*) FROM segments WHERE meeting_id = ? AND job_id = ?{text}",  # noqa: S608
                                (meeting_id, job_id))[0][0])
 
+    def text_size(self, meeting_id: int, job_id: int) -> tuple[int, int]:
+        """(caracteres do texto, falas com texto) do job: o custo do pedido sem montar o contexto da LLM (F5.6 A-17)."""
+        row = self.core.q("SELECT COALESCE(SUM(LENGTH(text)), 0), COUNT(*) FROM segments WHERE meeting_id = ? AND job_id = ? "
+                          "AND TRIM(COALESCE(text, '')) != ''", (meeting_id, job_id))[0]
+        return int(row[0]), int(row[1])
+
     def set_segments_person(self, meeting_id: int, cluster_id: int, person_id: int | None, role_at_time: str | None) -> int:
         """Confirmação na revisão: todas as falas do cluster ganham a pessoa (e o cargo do dia, D-016)."""
         return self.core.execute("UPDATE segments SET person_id = ?, role_at_time = ? WHERE meeting_id = ? AND cluster_id = ?",

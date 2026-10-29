@@ -100,10 +100,37 @@ def test_check_reports_the_g4_live_block_readonly(tmp_path, capsys):
     # nome: c1 certo, c2 sem nome, c3 errado; Bia (perfil depois), L sem sala e a legenda sem segmento majoritário ficam fora
     assert {k: live["names"][k] for k in ("n", "correct", "unnamed", "wrong", "pct", "people_with_profile")} == {
         "n": 3, "correct": 1, "unnamed": 1, "wrong": 1, "pct": 33.3, "people_with_profile": 1}
-    assert live["partials"] == {"n": 1, "expected": 1, "interval_min": 5, "failed_calls": 1}      # um intervalo com fala
+    assert live["partials"] == {"n": 1, "expected": 1, "interval_min": 5, "failed_calls": 1, "auto": True, "n_auto": 1}   # F5.6
     gate = live["gate"]
     assert gate["latency_mean"] == {"target": "<= 10 s", "value": 9.2, "ok": True}
     assert gate["latency_p95"]["ok"] is False and gate["cpu"]["ok"] is True and gate["cpu"]["value"] == 29.0
     assert gate["name"] == {"target": ">= 70 %", "value": 33.3, "ok": False} and gate["partials"]["ok"] is False
     assert gate["recording_intact"]["ok"] is True and gate["recording_intact"]["value"] == {"holes": 0, "idx_missing": 0}
     assert _contents(db) == before                                                                 # --check não escreve nada
+
+
+def test_check_expects_no_automatic_partial_when_the_box_was_off(store):
+    """F5.6 (A-23): com `partial` falso no `live_started` o esperado é zero parciais automáticos; o do "Atualizar resumo agora"
+    (`manual`) não conta; sem a chave (gravação de antes), ligado, como antes."""
+    from listener.live.report import live_report
+
+    mid = store.create_meeting("sem parcial", "meeting", None, None)
+    store._x("UPDATE meetings SET duration_ms = ? WHERE id = ?", (11 * 60_000, mid))
+    for t0 in (0, 60_000, 400_000):
+        store.captions.insert(CaptionInsert(mid, "R", t0, t0 + 4000, "fala", None, None, None, "fake:small", 5000))
+    store.add_event(mid, 0, EventType.LIVE_STARTED, {"model": "fake:small", "threads": 2, "names": False, "partial": False})
+
+    def partial(manual: bool) -> None:
+        store.summaries.insert(SummaryInsert(mid, SummaryKind.PARTIAL, json.dumps({"summary": "x", "manual": manual}), "x", "gemini", "f",
+                                             "partial/1.0", None, None, "pt-BR", t_until_ms=300_000))
+
+    partial(True)
+    report = live_report(store, mid)
+    assert report["partials"]["expected"] == 0 and report["partials"]["auto"] is False and report["partials"]["n_auto"] == 0
+    assert report["gate"]["partials"]["ok"] is True and "0 automáticos" in report["gate"]["partials"]["target"]
+    partial(False)                                                                      # um automático com a caixa desmarcada
+    assert live_report(store, mid)["gate"]["partials"]["ok"] is False
+    store._x("UPDATE events SET data = ? WHERE meeting_id = ? AND type = ?", (json.dumps({"model": "fake:small"}), mid,
+                                                                                str(EventType.LIVE_STARTED)))
+    again = live_report(store, mid)                                                     # sem a chave: ligado (antes da F5.6)
+    assert again["partials"]["auto"] is True and again["partials"]["expected"] == 2

@@ -111,7 +111,7 @@ def summary_text(prefix: str, limit: int) -> Callable[[Request], dict[str, Any]]
 
 
 def title(req: Request) -> dict[str, Any]:
-    text = _after(_user_text(req), "Summary:\n").strip()
+    text = (_after(_user_text(req), "Summary:\n") or _after(_user_text(req), "Opening of the transcript:\n")).strip()
     words = re.findall(r"\w+", text)[:5]
     return {"title": (" ".join(words) or "Reunião").capitalize()[:80]}
 

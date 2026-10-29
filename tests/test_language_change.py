@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from listener.llm.types import LlmTask
 from listener.model import EventType, JobKind, JobStatus, MeetingStatus, SummaryKind
 from listener.pipeline import reprocess, summary_gate
 from listener.pipeline.llm_steps import TASKS_AFTER_MEETING
@@ -114,11 +115,18 @@ def test_the_queue_reprocess_goes_through_the_helper(qtbot, store):
     assert dlg.reprocess_selected() is None and "sendo gravada" in dlg.message.text() and len(store.jobs.for_meeting(mid)) == 1
 
 
-# ---------------------------------------------------------------- as tarefas da LLM depois da troca (A-06)
-def test_after_a_language_change_every_llm_task_goes_as_a_manual_request(qtbot, qapp, platform, store):
+# ---------------------------------------------------------------- as tarefas da LLM depois da troca (A-06; F5.6 item 12)
+def test_after_a_language_change_only_the_core_goes_as_a_manual_request(qtbot, qapp, platform, store):
+    """F5.6 (A-05, item 12): a troca refaz só o núcleo (identidade, título, revisada) como pedido manual; ata, executivo e
+    pré-resumo ficam "desatualizados" pelo idioma, sem job nem adiamento."""
+    from listener.pipeline import llm_requests
+    from listener.store.summaries import SummaryInsert
     from listener.ui.controller import Controller
 
     mid = _processed(platform, store, "pt")                                          # sem chave: nenhum job llm ainda
+    old = store.segments.current_job_id(mid)
+    for kind in (SummaryKind.MINUTES, SummaryKind.EXECUTIVE):                        # a ata e o resumo de antes, em português
+        store.summaries.insert(SummaryInsert(mid, kind, "{}", "# x", "gemini", "m", f"{kind}/1.2", old, None, "pt-BR"))
     _provider_ready(store)
     store.set_setting("llm.auto_tasks", False)
     store.set_setting("llm.cost_alert_usd", 0.0000001)                               # o corte das opcionais não vale aqui
@@ -127,19 +135,22 @@ def test_after_a_language_change_every_llm_task_goes_as_a_manual_request(qtbot, 
     assert job == res.job_id and status == JobStatus.DONE and summary_gate.pending_voices(store, mid) == 2   # voz pendente...
     llm_jobs = [j for j in store.jobs.for_meeting(mid) if j["kind"] == JobKind.LLM]
     params = json.loads(llm_jobs[0]["params_json"])
-    assert len(llm_jobs) == 1 and params["tasks"] == [str(t) for t in TASKS_AFTER_MEETING] and params["auto"] is False
-    assert summary_gate.deferred(store, mid) is None                                 # ...e a ata não espera (U-042)
-    assert not [e for e in store.list_events(mid) if e["type"] == EventType.LLM_DEFERRED]
+    assert len(llm_jobs) == 1 and params["tasks"] == [str(t) for t in TASKS_AFTER_MEETING] == ["identify", "title", "revise"]
+    assert params["auto"] is False and summary_gate.deferred(store, mid) is None     # ...e nada espera (U-042)
+    assert not [e for e in store.list_events(mid) if e["type"] in (EventType.LLM_DEFERRED, EventType.LLM_REQUESTED)]
+    states = llm_requests.request_states(store, mid)
+    for sp in llm_requests.Species:
+        assert states[sp].state == llm_requests.State.STALE and "idioma" in states[sp].reasons and "transcrição" in states[sp].reasons
     c = Controller(qapp, platform, store)
     c.tray = None
     store.set_setting("llm.auto_tasks", True)
     try:
-        assert c._summary_waits(mid) and not c._summary_waits(mid, store.jobs.get(job))   # o mesmo critério do worker
+        assert not c._summary_waits(mid)                                             # o mesmo critério do worker: sem pedido
     finally:
         c.emergency_stop()
 
 
-def test_the_manual_tasks_after_the_change_skip_nothing_and_come_out_in_english(platform, store):
+def test_the_manual_core_after_the_change_skips_nothing_and_comes_out_in_english(platform, store):
     mid = _processed(platform, store, "pt")
     _provider_ready(store)
     store.set_setting("llm.auto_tasks", False)
@@ -148,9 +159,10 @@ def test_the_manual_tasks_after_the_change_skip_nothing_and_come_out_in_english(
     _run_heavy(store, FakeDeps(SCRIPT_EN))
     runner, status, fake = _run_llm(store)
     timings = json.loads(store.jobs.get(runner.job_id)["timings_json"])["llm"]
-    assert status == JobStatus.DONE and timings["skipped"] == {}                     # executivo e revisada saem (pedido manual)
-    assert {r.task for r in fake.requests} >= {"minutes", "executive", "revise"}
-    assert store.summaries.current(mid, SummaryKind.MINUTES)["language"] == "en"
+    assert status == JobStatus.DONE and timings["skipped"] == {}                     # a revisada sai (pedido manual)
+    assert {r.task for r in fake.requests} == {"identify", "title", "revise"}       # F5.6: nada de ata sem pedido
+    assert store.summaries.current(mid, SummaryKind.MINUTES) is None and fake.calls(LlmTask.REVISE)
+    assert "English" in fake.calls(LlmTask.TITLE)[0].messages[0].text                # o título no idioma novo
 
 
 # ---------------------------------------------------------------- a reunião aberta (U-046)
@@ -177,7 +189,8 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     text, yes = asked[0]
     assert yes == "Reprocessar em Inglês (en)" and not reprocess.active_jobs(store, mid) and launched == []
     assert "Tempo estimado: " in text and "refaz a separação de vozes" in text and "custo estimado: US$" in text
-    assert "versão anterior" in text
+    assert "desatualizados" in text and "versão anterior" not in text and "pré-resumo" not in text      # F5.6 (R-06)
+    assert "refaz o título, a identificação das vozes e a transcrição revisada" in text
     bar.confirm = lambda *_a: True
     bar.button.click()
     job = reprocess.pending_language(store, mid)

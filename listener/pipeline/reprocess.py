@@ -30,6 +30,7 @@ log = get_logger("pipeline.reprocess")
 
 REASON_LANGUAGE = "language"
 ONLY_FOR_LANGUAGE = "only_for_language"          # o job nasceu só para a troca: desfeita, ele sai (R-08)
+REPLACES = "replaces"                            # F5.6 (R-01): o processamento cancelado que este substitui (os pedidos seguem)
 CHANGE_KEYS = ("reason", "language", ONLY_FOR_LANGUAGE)
 RECORDING = frozenset({str(MeetingStatus.RECORDING), str(MeetingStatus.PAUSED)})
 TRANSCRIPT_STEPS = (JobStep.TRANSCRIBE_R, JobStep.TRANSCRIBE_L)
@@ -157,7 +158,7 @@ def _restore(store: Store, meeting_id: int, job: JobRow) -> tuple[int | None, st
                  meeting_id, asked, job_id, dropped)
         return job_id, f"o processamento que já estava na fila (job {job_id}) segue como era"
     store.jobs.request_cancel(job_id)                    # já existia e roda no idioma pedido: para e volta à fila como era
-    new = store.jobs.enqueue(meeting_id, JobKind(str(job["kind"])), rest or None)
+    new = store.jobs.enqueue(meeting_id, JobKind(str(job["kind"])), {**rest, REPLACES: job_id})
     log.info("reunião %s: troca para %s desfeita: o job %s para e o %s refaz o processamento de antes", meeting_id, asked, job_id,
              new)
     return new, f"o job {job_id} para entre as janelas e o job {new} refaz o processamento de antes"
@@ -171,6 +172,8 @@ def _enqueue(store: Store, meeting_id: int, target: str | None, cancelled: int |
     params: dict[str, Any] = {"reason": REASON_LANGUAGE, "language": target}
     if cancelled is None:                                # nada parou para ele: desfeita a troca, ele simplesmente sai (R-08)
         params[ONLY_FOR_LANGUAGE] = True
+    else:
+        params[REPLACES] = cancelled
     job_id = store.jobs.enqueue(meeting_id, JobKind.REPROCESS, params)
     log.info("reunião %s: reprocessar em %s na fila (job %s)%s", meeting_id, target, job_id,
              f"; o processamento {cancelled} foi cancelado" if cancelled is not None else "")
@@ -180,5 +183,5 @@ def _enqueue(store: Store, meeting_id: int, target: str | None, cancelled: int |
     return ReprocessResult(job_id, f"{text}.", cancelled)
 
 
-__all__ = ["ONLY_FOR_LANGUAGE", "REASON_LANGUAGE", "RECORDING", "ReprocessResult", "active_jobs", "pending_language",
+__all__ = ["ONLY_FOR_LANGUAGE", "REASON_LANGUAGE", "RECORDING", "REPLACES", "ReprocessResult", "active_jobs", "pending_language",
            "request_reprocess", "target_language"]

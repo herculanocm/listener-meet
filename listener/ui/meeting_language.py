@@ -1,7 +1,7 @@
 """Idioma da reunião aberta (F5.3 L1, U-046, A-05, pergunta 9): "Idioma: pt-BR" no cabeçalho e a troca pelo outro idioma.
-Trocar reprocessa a reunião (refaz a separação de vozes e a transcrição) e refaz pela LLM a ata, o executivo, o pré-resumo,
-o título, a identidade por contexto e a transcrição revisada; antes, a pergunta diz o tempo estimado, o custo estimado da
-LLM (as estimativas da fila e do job) e que a ata editada e as ações viram versão anterior (CP3: nada se apaga).
+Trocar reprocessa a reunião (refaz a separação de vozes e a transcrição) e refaz pela LLM o título, a identidade por
+contexto e a transcrição revisada; ata, resumo e ações ficam "desatualizados" até serem gerados de novo (F5.6, R-06). Antes,
+a pergunta diz o tempo e o custo estimados (as estimativas da fila e do job) e que nada se apaga (CP3).
 Durante o reprocessamento, "pt-BR → en (reprocessando)"; com a reunião gravando, a troca fica desabilitada. O pedido passa
 pelo helper único de reprocessar (`pipeline/reprocess.py`). R-08: com a troca ainda não aplicada, o botão oferece "Voltar
 para" o idioma que a reunião tem, com uma pergunta própria (sem tempo nem custo: desfazer não reprocessa nem chama a LLM);
@@ -46,7 +46,7 @@ def confirm_change(parent: QWidget, text: str, yes: str) -> bool:
 
 def change_question(store: Store, meeting_id: int, target: str) -> str:
     """O texto da pergunta (pergunta 9): o tempo do reprocessamento pela velocidade medida da fila, o custo da LLM pela
-    conta do job sobre a transcrição atual e o que vira versão anterior."""
+    conta do job sobre a transcrição atual e o que fica desatualizado (F5.6: a ata e o resumo só a pedido)."""
     from ..pipeline.llm_steps import estimate_meeting_usd
 
     m = store.get_meeting(meeting_id) or {}
@@ -54,14 +54,15 @@ def change_question(store: Store, meeting_id: int, target: str) -> str:
     eta = fmt_remaining(remaining_seconds(None, 0.0, duration / 1000 if duration else None, store.get_setting("pipeline.rtf_json"),
                                           kind=str(JobKind.REPROCESS)))
     if store.providers.active_with_key("llm") is None:
-        llm = "sem chave de LLM, a ata não é refeita agora (Configurações, Chaves de acesso)"
+        llm = "sem chave de LLM, nada é refeito agora (Configurações, Chaves de acesso)"
     else:
         cost = fmt_usd(estimate_meeting_usd(store, meeting_id))
-        llm = f"ata, resumo executivo, pré-resumo, título, identidade e transcrição revisada de novo (custo estimado: {cost})"
+        llm = f"refaz o título, a identificação das vozes e a transcrição revisada (custo estimado: {cost})"
     return (f"Reprocessar esta reunião em {label(target)}?\n\n"
             f"Tempo estimado: {eta} (refaz a separação de vozes e a transcrição).\n"
             f"LLM: {llm}.\n"
-            "A ata editada e as ações atuais ficam como versão anterior; nada se apaga.")
+            "A ata, o resumo e as ações ficam como estão, marcados como desatualizados: gere de novo pela reunião. "
+            "Nada se apaga.")
 
 
 def undo_question(store: Store, meeting_id: int) -> str:

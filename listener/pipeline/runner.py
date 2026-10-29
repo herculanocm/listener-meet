@@ -1,15 +1,14 @@
 """`JobRunner`: um job do começo ao fim (F2 itens 9 a 12), lendo e escrevendo só no banco.
 
-Ordem (P1): diarizar R (embeddings na mesma passagem, com relógio próprio) -> casar perfis (clusters gravados: a revisão já
-pode abrir) -> transcrever R -> transcrever L -> segmentos. Cada janela vira um artefato logo depois de calculada; na
-retomada, os `idx` presentes são pulados (perda máxima: uma janela). Entre janelas: heartbeat, cancelamento cooperativo e
-a lease da gravação (Q7). Nunca há transação em volta de computação. Preset sala (U-015): L segue o caminho do R; senão
-L é o usuário (`attribution = canal`) e reforça o perfil dele com `source = automatico` (P3). Reprocessar escreve com o
-`job_id` novo e, no último passo, transporta as decisões humanas por cosseno e troca numa só transação (item 12, CP3).
-F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o idioma pedido pela troca na reunião
-aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (português numa reunião já
-processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído: `meetings.language`
-muda com `revisions` na transação da troca.
+Ordem (P1): diarizar R (embeddings na mesma passagem, com relógio próprio) -> casar perfis (clusters gravados: a revisão já pode abrir) ->
+transcrever R -> transcrever L -> segmentos. Cada janela vira um artefato logo depois de calculada; na retomada, os `idx` presentes são
+pulados (perda máxima: uma janela). Entre janelas: heartbeat, cancelamento cooperativo e a lease da gravação (Q7). Nunca há transação em
+volta de computação. Preset sala (U-015): L segue o caminho do R; senão L é o usuário (`attribution = canal`) e reforça o perfil dele com
+`source = automatico` (P3). Reprocessar escreve com o `job_id` novo e, no último passo, transporta as decisões humanas por cosseno e troca
+numa só transação (item 12, CP3). F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o idioma pedido pela
+troca na reunião aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (português numa reunião já
+processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído: `meetings.language` muda com
+`revisions` na transação da troca.
 """
 from __future__ import annotations
 
@@ -185,7 +184,8 @@ class JobRunner(BaseJobRunner):
         self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.DONE, timings=self._timings_dict())
         self.store.set_setting("pipeline.rtf_json", update_rtf(self.store.get_setting("pipeline.rtf_json"), self.timings))
-        self.store.add_event(self.meeting_id, None, EventType.JOB_DONE, {"job_id": self.job_id, "timings": self._timings_dict()})
+        self.store.add_event(self.meeting_id, None, EventType.JOB_DONE, {"job_id": self.job_id, "timings": self._timings_dict(),
+                                                                          "llm_chain": True})   # F5.6 (A-12): a LLM vem depois
         log.info("job %s concluído: %s", self.job_id, self._timings_dict())
         self.status = JobStatus.DONE
         self._scrub_orphan_people()
@@ -220,12 +220,12 @@ class JobRunner(BaseJobRunner):
             log.warning("job %s: não enfileirei o índice da busca: %s", self.job_id, e)
 
     def _enqueue_llm(self) -> None:
-        """F3 item 2: o job da F2 termina como sempre e enfileira o job `llm` da reunião (worker leve); falhar aqui não
-        desfaz o job concluído."""
+        """F3 item 2: o job da F2 termina como sempre e enfileira o núcleo da LLM e os pedidos presos a ele (F5.6 A-12; worker
+        leve); falhar aqui não desfaz o job concluído."""
         try:
-            from .llm_steps import enqueue_after_pipeline
+            from .llm_requests import after_pipeline
 
-            enqueue_after_pipeline(self.store, self.meeting_id, self.job_id, self.kind)
+            after_pipeline(self.store, self.meeting_id, self.job_id, self.kind)
         except Exception as e:  # a camada de LLM nunca derruba o processamento
             log.warning("job %s: não enfileirei o job de LLM: %s", self.job_id, e)
 

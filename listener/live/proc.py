@@ -11,11 +11,10 @@ Threads: `live-stdin` lê os quadros, reamostra para 16 kHz, roda o VAD incremen
 `WhisperModel` int8 (`beam_size=1`, sem timestamps, temperatura 0), filtra (`no_speech` e logprob como na F2, compressão
 e alucinações comuns), grava a legenda em `captions` e só então emite a linha `caption`. Idioma: o de
 `meetings.language`, escolhido no warm-up, ou o padrão das Configurações, fixo desde a primeira janela (F5.3 A-01: sem
-detecção; o automático dobrava o custo do `small`, 25/10). Degradação (máquina pura com relógio
-injetado; o atraso é o da legenda, do fim da janela até o fim da transcrição): acima de 20 s por 30 s troca `small` por
-`base`; persistindo mais 30 s, pula as janelas pendentes menos a mais nova de cada canal; nunca volta sozinho. EOF:
-fecha as janelas em curso, transcreve a fila enquanto a próxima janela couber no prazo do `hello` (pela média do custo
-por janela), grava `live_stopped`, emite `bye` e sai com 0.
+detecção; o automático dobrava o custo do `small`, 25/10). Degradação (máquina pura com relógio injetado; o atraso é o da legenda, do
+fim da janela até o fim da transcrição): acima de 20 s por 30 s troca `small` por `base`; persistindo mais 30 s, pula as janelas
+pendentes menos a mais nova de cada canal; nunca volta sozinho. EOF: fecha as janelas em curso, transcreve a fila enquanto a próxima
+janela couber no prazo do `hello` (pela média do custo por janela), grava `live_stopped`, emite `bye` e sai com 0.
 `LISTENER_LIVE=fake` usa `tests/fake_live.py` (sem ML).
 
 Nomes (F4 item 5, só com "nomes ao vivo"): o `PyannoteEmbedder` da F2 (torch com uma thread, importado só aqui e antes do
@@ -656,7 +655,8 @@ class LiveSession:
         log.info("reunião %s: %s carregado em %.1f s (%d threads, motor %s, idioma %s)", self.meeting_id, self.transcriber.name,
                  time.perf_counter() - t0, self.hello.threads, self.engines.name, self.language)
         self._event(EventType.LIVE_STARTED, {"model": self.transcriber.name, "threads": self.hello.threads, "names": self.hello.names,
-                                             "engine": self.engines.name, "pid": os.getpid(), "language": self.language})
+                                             "engine": self.engines.name, "pid": os.getpid(), "language": self.language,
+                                             "partial": self.hello.partial})   # F5.6 (A-23): sem ele, o `--check` espera zero
         self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
         if embedder is not None:
             self._start_names(embedder)

@@ -15,7 +15,7 @@ from listener.llm.fake import FakeProvider
 from listener.llm.jobconfig import LlmJobConfig
 from listener.llm.types import LlmTask
 from listener.model import ClusterStatus, DecisionSource, JobKind, JobStatus, JobStep, SummaryKind
-from listener.pipeline import llm_steps, review
+from listener.pipeline import llm_requests, llm_steps, review
 from listener.pipeline.llm_steps import LlmJobRunner
 from listener.pipeline.runner import JobRunner
 from listener.store import Store
@@ -28,6 +28,8 @@ pytestmark = pytest.mark.usefixtures("no_summary_gate")       # U-042: a espera 
 SCRIPT = {"R": [(0.2, 1.4, "bom dia Ana tudo bem"), (1.6, 2.9, "vamos fechar o orçamento de 2027 hoje")],
           "L": [(0.3, 1.2, "oi gente"), (2.0, 2.8, "sim claro vamos")]}
 KEY = "AIzaSy-chave-de-teste-ABCDEFGH12345678"
+ASK = ("minutes", "executive", "pre_summary")                  # F5.6: ata, executivo e pré-resumo só a pedido
+ALL = [str(t) for t in llm_steps.TASK_ORDER if t != JobStep.TEST]
 
 
 @pytest.fixture
@@ -62,6 +64,11 @@ def _provider_ready(store: Store) -> None:
     store.providers.set_price("gemini", "fake-strong", 1.25, 10.0, 0.31)
 
 
+def _ask(store: Store, mid: int, tasks: tuple[str, ...] | list[str] = ASK, mode: str = "now") -> int | None:
+    """F5.6 (A-11): o pedido "agora" de ata, executivo e pré-resumo sobre a transcrição pronta; devolve o job `llm`."""
+    return llm_requests.request(store, mid, list(tasks), mode, "teste").job_id
+
+
 def _run_llm(store: Store, fake: FakeProvider | None = None, **kw) -> tuple[LlmJobRunner, JobStatus, FakeProvider]:
     fake = fake or FakeProvider()
     job = store.jobs.claim(pid=2, config_json=llm_steps.llm_config_snapshot(store), kinds=("llm",))
@@ -75,17 +82,20 @@ def test_pipeline_enqueues_llm_job_and_runner_writes_everything_with_parent_job_
     store.upsert_me("Eu", role="Gerente")
     ana = store.people.create_person("Ana", role="CFO")
     mid = _record(platform, store)
-    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"]) is None                         # sem provedor com chave: nada (comp. 6)
+    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"], requested=True) is None         # sem provedor com chave: nada (comp. 6)
     _provider_ready(store)
     parent = _pipeline(store, mid)
     jobs = store.jobs.for_meeting(mid)
     llm_job = next(j for j in jobs if j["kind"] == "llm")
     params = json.loads(llm_job["params_json"])
-    assert params == {"tasks": ["identify", "minutes", "executive", "pre_summary", "title", "revise"], "parent_job_id": parent,
-                      "auto": True}
+    assert params == {"tasks": ["identify", "title", "revise"], "parent_job_id": parent, "auto": True}   # F5.6 (A-05): o núcleo
     assert store.segments.current_job_id(mid) == parent
+    asked = _ask(store, mid)                                                                  # a ata só a pedido (A-09: sem corte)
+    assert json.loads(store.jobs.get(asked)["params_json"]) == {"tasks": list(ASK), "parent_job_id": parent, "auto": False, "mode": "now"}
     runner, status, fake = _run_llm(store)
     assert status == JobStatus.DONE, store.jobs.get(llm_job["id"])["error"]
+    runner2, status2, _ = _run_llm(store, fake)
+    assert runner2.job_id == asked and status2 == JobStatus.DONE
     row = store.jobs.get(llm_job["id"])
     cfg = json.loads(row["config_json"])
     assert cfg["provider_id"] == "gemini" and cfg["fast_model"] == "fake-fast" and KEY not in row["config_json"] and "api_key" not in cfg
@@ -125,16 +135,16 @@ def test_pipeline_enqueues_llm_job_and_runner_writes_everything_with_parent_job_
     assert {c["task"] for c in calls} == {"identify", "minutes", "executive", "pre_summary", "title", "revise"}
     assert all(c["job_id"] == parent and c["status"] == "ok" and c["cost_usd"] > 0 for c in calls)
     total, missing = store.llm_calls.cost_for_meeting(mid)
-    assert total == pytest.approx(runner.cost_usd) and missing == 0 and runner.calls == len(calls)
+    assert total == pytest.approx(runner.cost_usd + runner2.cost_usd) and missing == 0 and runner.calls + runner2.calls == len(calls)
     req, resp = store.llm_calls.payloads(calls[0]["id"])
     assert req[0]["role"] == "system" and resp["data"]
-    done = next(e for e in store.list_events(mid) if e["type"] == "job_done" and e["data"].get("kind") == "llm")
-    assert done["data"]["calls"] == len(calls) and "cost_usd" in done["data"]
+    done = [e for e in store.list_events(mid) if e["type"] == "job_done" and e["data"].get("kind") == "llm"]
+    assert sum(e["data"]["calls"] for e in done) == len(calls) and all("cost_usd" in e["data"] for e in done)
     assert all("bom dia" not in json.dumps(e["data"]) for e in store.list_events(mid))
     assert store._q("SELECT COUNT(*) FROM job_artifacts WHERE job_id = ?", (llm_job["id"],))[0][0] == 0
     assert fake.closed is False                                                   # provedor injetado: quem fecha é o teste
     timings = json.loads(row["timings_json"])
-    assert timings["llm"]["calls"] == len(calls) and set(timings["llm"]["done"]) == set(params["tasks"])
+    assert timings["llm"]["calls"] == runner.calls and set(timings["llm"]["done"]) == set(params["tasks"])
 
 
 def test_partial_failure_keeps_done_tasks_and_retry_redoes_only_the_missing(platform, store):
@@ -148,7 +158,8 @@ def test_partial_failure_keeps_done_tasks_and_retry_redoes_only_the_missing(plat
     from listener.llm.registry import RetryingProvider
 
     retrying = RetryingProvider(fake, sleep=lambda s: __import__("asyncio").sleep(0))
-    llm_job = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
+    store.jobs.request_cancel(next(j["id"] for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"))
+    llm_job = store.jobs.get(llm_steps.enqueue_llm_job(store, mid, ALL, requested=True))
     job = store.jobs.claim(pid=2, config_json=llm_steps.llm_config_snapshot(store), kinds=("llm",))
     status = LlmJobRunner(store, job, provider=retrying, heartbeat_thread=False).run()
     row = store.jobs.get(llm_job["id"])
@@ -177,7 +188,7 @@ def test_hierarchical_minutes_by_window_and_on_request_too_large(platform, store
     _pipeline(store, mid)
     llm_steps_tasks = ["minutes", "identify"]
     store.jobs.request_cancel(next(j["id"] for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"))
-    assert llm_steps.enqueue_llm_job(store, mid, llm_steps_tasks)
+    assert llm_steps.enqueue_llm_job(store, mid, llm_steps_tasks, requested=True)
     store.providers.update_provider("gemini", models_json=[{"id": "fake-strong", "input_limit": 600}])   # cache de list_models()
     small = FakeProvider(input_limit=600)                                                                  # janela minúscula: blocos
     runner, status, _ = _run_llm(store, small)
@@ -186,7 +197,7 @@ def test_hierarchical_minutes_by_window_and_on_request_too_large(platform, store
     assert len(calls) >= 2 and all(c["strategy"].startswith("map_reduce:") for c in calls)
     assert store.summaries.current(mid, SummaryKind.MINUTES)["text_llm"].count("Decidido:") >= 1
     # "request too large" no caminho direto também aciona o hierárquico
-    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"])
+    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"], requested=True)
     store.providers.update_provider("gemini", models_json=[])
     big = FakeProvider()
     big.fail_next(RequestTooLargeError("request too large"), LlmTask.MINUTES)
@@ -209,18 +220,24 @@ def test_cost_alert_skips_optional_tasks_and_semaphore_limits_parallelism(platfo
     runner, status, _ = _run_llm(store, fake)
     assert status == JobStatus.DONE
     timings = json.loads(store.jobs.get(runner.job_id)["timings_json"])["llm"]
-    assert set(timings["skipped"]) == {"executive", "revise"} and "acima do alerta" in timings["skipped"]["executive"]
+    assert set(timings["skipped"]) == {"revise"} and "acima do alerta" in timings["skipped"]["revise"]     # o núcleo (A-05)
     assert timings["estimated_usd"] > 0 and store.summaries.current(mid, SummaryKind.EXECUTIVE) is None
     assert all(not s["text_llm"] for s in store.segments.list_segments(mid)) and fake.peak_parallel == 1
+    asked = _ask(store, mid, ["executive"])                                   # o resumo pedido leva a ata que falta (P-07)
+    assert json.loads(store.jobs.get(asked)["params_json"])["tasks"] == ["minutes", "executive"]
+    runner, status, _ = _run_llm(store, FakeProvider())
+    timings = json.loads(store.jobs.get(runner.job_id)["timings_json"])["llm"]
+    assert status == JobStatus.DONE and timings["skipped"] == {}                 # A-09: o alerta não corta o pedido
+    assert store.summaries.current(mid, SummaryKind.EXECUTIVE) is not None
     # com o alerta alto e 2 em paralelo, as três tarefas do grupo andam juntas até o limite do semáforo
     store.set_setting("llm.cost_alert_usd", 100)
     store.set_setting("llm.max_parallel", 2)
-    assert llm_steps.enqueue_llm_job(store, mid, ["executive", "pre_summary", "title"])
+    assert llm_steps.enqueue_llm_job(store, mid, ["executive", "pre_summary", "title"], requested=True)
     fake2 = FakeProvider(delay_s=0.005)
     _, status, _ = _run_llm(store, fake2)
     assert status == JobStatus.DONE and fake2.peak_parallel == 2
     # "gerar de novo" por fora do alerta: job de uma tarefa não é automático e não pula nada
-    assert llm_steps.enqueue_llm_job(store, mid, ["executive"])
+    assert llm_steps.enqueue_llm_job(store, mid, ["executive"], requested=True)
     store.set_setting("llm.cost_alert_usd", 0.0000001)
     _, status, _ = _run_llm(store, FakeProvider())
     assert status == JobStatus.DONE and store.summaries.current(mid, SummaryKind.EXECUTIVE) is not None
@@ -259,8 +276,10 @@ def test_reprocess_keeps_minutes_moves_text_llm_and_relinks_actions(platform, st
     mid = _record(platform, store)
     _provider_ready(store)
     first = _pipeline(store, mid)
-    _, status, _ = _run_llm(store)
-    assert status == JobStatus.DONE
+    _ask(store, mid)
+    for _ in range(2):                                                                      # o núcleo e o pedido
+        _, status, _ = _run_llm(store)
+        assert status == JobStatus.DONE
     old_minutes = store.summaries.current(mid, SummaryKind.MINUTES)
     old_action = next(a for a in store.actions.list_for_meeting(mid) if a["segment_id"] is not None)
     old_seg_ids = {s["id"] for s in store.segments.list_segments(mid)}
@@ -334,7 +353,9 @@ def test_light_worker_in_process_with_fake_provider(tmp_path, store, platform, m
     _provider_ready(store)
     _pipeline(store, mid)
     llm_job = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
-    assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    _ask(store, mid, ["minutes"])
+    for _ in range(2):                                                                      # o núcleo e o pedido
+        assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
     row = store.jobs.get(llm_job["id"])
     assert row["status"] == "concluído", row["error"]
     assert json.loads(row["config_json"])["provider_id"] == "gemini" and KEY not in row["config_json"]
@@ -423,7 +444,8 @@ def test_meeting_without_speech_gets_no_llm_job_and_manual_job_fails_without_cal
     job = store.jobs.claim(pid=1, kinds=("meeting", "reprocess"))
     assert JobRunner(store, FakeDeps({"R": [], "L": []}), job, config=CFG, heartbeat_thread=False).run() == JobStatus.DONE
     assert store.segments.count_segments(mid) == 0 and not [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"]
-    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"]) is not None                               # manual: a fila aceita
+    assert llm_requests.request(store, mid, ["minutes"], "now", "teste").refused == llm_steps.NO_SPEECH  # F5.6: o pedido recusa
+    assert llm_steps.enqueue_llm_job(store, mid, ["minutes"], requested=True) is not None               # manual: a fila aceita
     runner, status, fake = _run_llm(store)
     row = store.jobs.get(runner.job_id)
     assert status == JobStatus.ERROR and fake.requests == [] and llm_steps.STALE_TRANSCRIPT in row["error"]
@@ -443,40 +465,11 @@ def test_two_pending_llm_jobs_of_one_meeting_run_in_order(platform, store):
     first, status1, fake1 = _run_llm(store)
     second, status2, fake2 = _run_llm(store)
     assert (status1, status2) == (JobStatus.DONE, JobStatus.DONE) and first.job_id < second.job_id == regen
-    assert [r.task for r in fake2.requests] == ["title"] and len(fake1.requests) >= 6
+    assert [r.task for r in fake2.requests] == ["title"] and {r.task for r in fake1.requests} == {"identify", "title", "revise"}
     assert first.parent_job_id == second.parent_job_id == parent
-    assert store._q("SELECT COUNT(*) FROM revisions WHERE entity = 'meeting' AND field = 'title_llm'")[0][0] == 2
-    assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == parent
-
-
-def test_reprocess_cancels_stale_pending_llm_jobs_and_keeps_what_never_ran(platform, store):
-    """R3-02: o reprocessamento cancela os jobs `llm` pendentes feitos para o pai antigo (o de teste fica) e o job novo leva,
-    além de identidade e revisão (P7), o que a reunião ainda não tem: um job que nunca rodou não a deixa sem ata."""
-    store.upsert_me("Eu")
-    mid = _record(platform, store)
-    _provider_ready(store)
-    _pipeline(store, mid)
-    stale = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm")
-    regen = llm_steps.enqueue_llm_job(store, mid, ["title"])
-    test_job = llm_steps.enqueue_test_job(store, mid)
-    rep = _pipeline(store, mid, JobKind.REPROCESS)
-    assert store.jobs.get(stale["id"])["status"] == "cancelado" and store.jobs.get(regen)["status"] == "cancelado"
-    assert store.jobs.get(test_job)["status"] == "pendente"
-    new = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente" and j["id"] != test_job)
-    params = json.loads(new["params_json"])
-    assert params["parent_job_id"] == rep and params["tasks"] == ["identify", "minutes", "executive", "pre_summary", "title", "revise"]
-    for _ in range(2):
-        _, status, _fake = _run_llm(store)
-        assert status == JobStatus.DONE
-    assert store.summaries.current(mid, SummaryKind.MINUTES)["job_id"] == rep
-    assert llm_steps.auto_tasks_for(store, mid, JobKind.REPROCESS) == ["identify", "revise"]          # agora tudo existe (P7)
-    # "gerar de novo" pendente durante outro reprocessamento: a tarefa passa para o job novo, mesmo sem tarefas automáticas
-    store.set_setting("llm.auto_tasks", False)
-    manual = llm_steps.enqueue_llm_job(store, mid, ["executive"])
-    rep2 = _pipeline(store, mid, JobKind.REPROCESS)
-    assert store.jobs.get(manual)["status"] == "cancelado"
-    moved = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente" and j["id"] != test_job)
-    assert json.loads(moved["params_json"]) == {"tasks": ["executive"], "parent_job_id": rep2, "auto": False}
+    # F5.6 (A-07): as duas leem as mesmas falas de abertura; o título igual não grava outra revisão
+    assert store._q("SELECT COUNT(*) FROM revisions WHERE entity = 'meeting' AND field = 'title_llm'")[0][0] == 1
+    assert store.summaries.current(mid, SummaryKind.MINUTES) is None                               # F5.6: sem pedido, sem ata
 
 
 def test_hierarchical_minutes_resumes_from_saved_block_notes(platform, store):
@@ -486,7 +479,7 @@ def test_hierarchical_minutes_resumes_from_saved_block_notes(platform, store):
     _provider_ready(store)
     _pipeline(store, mid)
     store.jobs.request_cancel(next(j["id"] for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"))
-    job_id = llm_steps.enqueue_llm_job(store, mid, ["minutes"])
+    job_id = llm_steps.enqueue_llm_job(store, mid, ["minutes"], requested=True)
     store.providers.update_provider("gemini", models_json=[{"id": "fake-strong", "input_limit": 600}])   # força o hierárquico
     note = {"context": "NOTA-SALVA-DO-BLOCO", "decisions": [], "actions": [], "risks": [], "open_questions": [], "summary": ""}
     store.jobs.put_artifact(job_id, JobStep.MINUTES, 1, json.dumps(note).encode("utf-8"))

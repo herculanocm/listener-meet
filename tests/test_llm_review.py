@@ -10,7 +10,7 @@ import pytest
 
 from listener.model import ActionStatus, DecisionSource, JobKind, JobStatus, SummaryKind
 from listener.pipeline import review
-from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
+from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
 pytest.importorskip("PySide6")
 pytestmark = pytest.mark.usefixtures("no_summary_gate")       # U-042: a espera pela identificação tem testes próprios
@@ -29,8 +29,10 @@ def _ready(platform, store) -> tuple[int, int]:
     mid = _record(platform, store)
     _provider_ready(store)
     parent = _pipeline(store, mid)
-    _runner, status, _fake = _run_llm(store)
-    assert status == JobStatus.DONE
+    _ask(store, mid)                                                                  # F5.6: ata, executivo e pré-resumo a pedido
+    for _ in range(2):                                                                # o núcleo e o pedido
+        _runner, status, _fake = _run_llm(store)
+        assert status == JobStatus.DONE
     return mid, parent
 
 
@@ -133,11 +135,10 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     assert "gerados antes do reprocessamento" in minutes_tab.notice.text()
     store.set_setting("llm.cost_alert_usd", 0.0000001)
     store.summaries.core.execute("UPDATE summaries SET status = 'superada' WHERE kind = 'executive'")
-    from listener.pipeline import llm_steps
-
     llm_job = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == "pendente")
     store.jobs.request_cancel(int(llm_job["id"]))
-    llm_steps.enqueue_llm_job(store, mid, ["executive", "title"], auto=True)
+    store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["executive", "title"], "parent_job_id": store.segments.current_job_id(mid),
+                                          "auto": True})                         # A-48: um job automático de antes da F5.6
     _runner, status, _fake = _run_llm(store)
     assert status == JobStatus.DONE
     dlg.reload()

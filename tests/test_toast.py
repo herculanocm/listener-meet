@@ -375,22 +375,22 @@ def test_launching_a_worker_with_an_active_job_polls_every_two_seconds(qtbot, co
 def test_identity_only_warns_that_the_names_are_ready(qtbot, qapp, tmp_path, clock, store, monkeypatch):
     from listener.ui.controller import Controller
     from tests.fake_platform import FakePlatform
-    from tests.test_llm_steps import _pipeline, _provider_ready, _record, _run_llm
+    from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
     platform = FakePlatform(tmp_path, clock=clock, r_format=(16000, 1), system_format=(16000, 1))
     mid = _record(platform, store)
     _provider_ready(store)
-    _pipeline(store, mid)                                                                  # vozes pendentes: a ata espera
-    _run_llm(store)                                                                        # só a identidade e a revisada
-    llm = next(j for j in store.jobs.for_meeting(mid) if j["kind"] == JobKind.LLM and j["status"] == JobStatus.DONE)
+    _pipeline(store, mid)                                                                  # vozes pendentes
+    llm = store.jobs.get(_run_llm(store)[0].job_id)                                        # o núcleo: identidade, título, revisada
     c = Controller(qapp, platform, store)
     c.tray = None
     monkeypatch.setattr(c, "open_review", lambda _mid: None)
     try:
+        c._on_job_done(llm)                                                                # F5.6 (A-06): sem pedido, nada espera
+        assert "LLM concluída" in c.notices[-1].text and _ask(store, mid, ["minutes"], mode="names") is None   # o pedido espera
         c._on_job_done(llm)
-        notice = c.notices[-1]
-        assert notice.text == f"Planejamento 2027: {IDENTITY_READY}" and notice.kind == NoticeKind.READY
-        assert notice.action == NoticeAction(Target.MEETING, mid)
+        n = c.notices[-1]
+        assert (n.text, n.kind, n.action) == (f"Planejamento 2027: {IDENTITY_READY}", NoticeKind.READY, NoticeAction(Target.MEETING, mid))
     finally:
         c.emergency_stop()
 

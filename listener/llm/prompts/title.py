@@ -1,25 +1,48 @@
-"""Título (até 80 caracteres) a partir do pré-resumo: uma chamada de 200 tokens no modelo rápido."""
+"""Título (até 80 caracteres) a partir do pré-resumo (ou do contexto da ata) ou, sem nenhum dos dois, das falas de abertura
+(F5.6 A-07: o núcleo automático roda antes de qualquer ata): uma chamada de 200 tokens no modelo rápido."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+from ..costs import estimate_tokens
 from ..types import Message
-from .common import MeetingCtx, header, system, user
+from .common import Line, MeetingCtx, header, system, user
 
-PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
+PROMPT_VERSION = "1.2"                  # F5.6 (A-07): também das falas de abertura, sem resumo
 MAX_CHARS = 80
+OPENING_TOKENS = 1500                   # F5.6 (A-07): a abertura da reunião que o título lê sem resumo
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["title"],
                 "properties": {"title": {"type": "string", "maxLength": MAX_CHARS}}}
-SYSTEM = ("You propose a short, specific title for a meeting from its summary: subject plus the main outcome when there is one, "
+SYSTEM = ("You propose a short, specific title for a meeting from its summary or, when there is none, from the opening of its "
+          "transcript: subject plus the main outcome when there is one, "
           f"at most {MAX_CHARS - 20} characters, no quotes, no trailing period. Example in Brazilian Portuguese: "
           '"Orçamento 2027: corte de 8% aprovado".')
+SUMMARY_LABEL = "Summary:"
+OPENING_LABEL = "Opening of the transcript:"
 
 
 @dataclass(frozen=True, slots=True)
 class TitleCtx:
     meeting: MeetingCtx
     summary: str
+    opening: bool = False               # `summary` são as falas de abertura (F5.6 A-07)
+
+
+def opening(lines: Sequence[Line], max_tokens: int = OPENING_TOKENS) -> tuple[Line, ...]:
+    """As falas de abertura até ~`max_tokens`, cortadas na troca de falante (a vez de quem fala no limite segue até 15 % a
+    mais, como `split_blocks`); ao menos uma."""
+    out: list[Line] = []
+    total = 0
+    for ln in lines:
+        t = estimate_tokens(ln.render()) + 1
+        if out and total + t > max_tokens and (out[-1].speaker != ln.speaker or total + t > max_tokens * 1.15):
+            break
+        out.append(ln)
+        total += t
+    return tuple(out)
 
 
 def build(ctx: TitleCtx) -> tuple[Message, ...]:
-    return (system(SYSTEM, ctx.meeting), user(header(ctx.meeting), f"Summary:\n{ctx.summary}"))
+    label = OPENING_LABEL if ctx.opening else SUMMARY_LABEL
+    return (system(SYSTEM, ctx.meeting), user(header(ctx.meeting), f"{label}\n{ctx.summary}"))

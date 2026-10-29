@@ -42,6 +42,8 @@ class EventType(StrEnum):
     LIVE_STOPPED = "live_stopped"
     LLM_DEFERRED = "llm_deferred"  # U-042 (F5.2): a ata espera a identificação das vozes (job pai e tarefas)
     LLM_RELEASED = "llm_released"  # U-042: as tarefas adiadas entraram na fila (job criado e o motivo)
+    LLM_REQUESTED = "llm_requested"  # F5.6 (A-11): ata ou resumo pedido (tarefas, modo, origem, job a que fica preso)
+    LLM_CHAINED = "llm_chained"    # F5.6 (A-12): o fim do processamento enfileirou o núcleo e consumiu os pedidos (job pai)
     DEVICE_CHANGE = "device_change"  # F5.3 (A-21): outro aparelho num canal (id do endpoint, acompanha, motivo; nunca o nome)
 
 

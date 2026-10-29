@@ -9,7 +9,8 @@ provedor devolve "request too large". Custo estimado antes de rodar: acima de `l
 (executivo e transcrição revisada) ficam de fora no job automático e a revisão oferece gerá-las (P5). O alerta é da reunião:
 soma o que ela já gastou fora deste job (resumo parcial ao vivo, glossário, chat, jobs anteriores; F4 Q6).
 F5.3 (A-02, A-06): toda saída sai no idioma da reunião (`build_context`); depois de uma troca de idioma (o job pai com
-`reason = language`), todas as tarefas entram como pedido manual, sem a espera da U-042 e sem o corte do alerta de custo."""
+`reason = language`), o núcleo entra como pedido manual, sem o corte do alerta de custo. F5.6 (A-05): sozinho, só o núcleo
+(identidade, título, revisada); ata, executivo e pré-resumo só a pedido (`llm_requests`, que passa `requested`)."""
 from __future__ import annotations
 
 import asyncio
@@ -35,8 +36,7 @@ from ..llm.registry import build_provider
 from ..llm.render import render_minutes
 from ..llm.schema import schema_hash
 from ..llm.types import TASK_CLASS, TASK_REASONING, Completion, LlmTask, Message, ModelClass, Request
-from ..model import (JOB_STEP_LABELS, ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, MeetingStatus,
-                     SummaryKind)
+from ..model import JOB_STEP_LABELS, ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, SummaryKind
 from ..store import Store
 from ..store.actions import ActionInsert
 from ..store.jobs import JobRow
@@ -58,11 +58,9 @@ TASK_ORDER: tuple[JobStep, ...] = (JobStep.TEST, JobStep.IDENTIFY, JobStep.MINUT
                                    JobStep.REVISE)
 PARALLEL: tuple[JobStep, ...] = (JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE)
 OPTIONAL: frozenset[JobStep] = frozenset({JobStep.EXECUTIVE, JobStep.REVISE})           # P5: automáticas só até o alerta de custo
-TASKS_AFTER_MEETING: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
-                                            JobStep.REVISE)
+TASKS_AFTER_MEETING: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.TITLE, JobStep.REVISE)   # F5.6 (A-05): o núcleo
 TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE)         # P7: ata antiga fica, com aviso
-SUMMARY_STEPS: dict[JobStep, SummaryKind] = {JobStep.MINUTES: SummaryKind.MINUTES, JobStep.EXECUTIVE: SummaryKind.EXECUTIVE,
-                                             JobStep.PRE_SUMMARY: SummaryKind.PRE_SUMMARY}
+REQUEST_ONLY: frozenset[JobStep] = frozenset({JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY})   # F5.6: só a pedido
 STALE_TRANSCRIPT = "a transcrição mudou ou está vazia: gere de novo pela revisão"
 NO_PROVIDER = "sem provedor de LLM com chave: ata não gerada (Configurações, Chaves de acesso)"
 NO_SPEECH = "a reunião não tem falas: nada para a LLM"
@@ -111,8 +109,13 @@ class Context:
 
 # ---------------------------------------------------------------- enfileirar
 def enqueue_llm_job(store: Store, meeting_id: int, tasks: Sequence[JobStep | str], parent_job_id: int | None = None,
-                    *, auto: bool = False) -> int | None:
-    """Job `llm` com a lista de tarefas; só com provedor ativo com chave (comportamento 6). `parent_job_id` nulo = o vigente."""
+                    *, auto: bool = False, requested: bool = False, mode: str | None = None) -> int | None:
+    """Job `llm` com a lista de tarefas; só com provedor ativo com chave (comportamento 6). `parent_job_id` nulo = o vigente.
+    F5.6 (Aceite 1): ata, executivo e pré-resumo só com `requested`, que só `llm_requests` passa, e o `mode` do pedido."""
+    names = [str(t) for t in tasks]
+    if not requested and {str(t) for t in REQUEST_ONLY} & set(names):
+        log.warning("reunião %s: %s só a pedido (F5.6); nenhum job llm criado", meeting_id, ", ".join(names))
+        return None
     if store.providers.active_with_key("llm") is None:
         log.info("reunião %s: sem provedor de LLM ativo com chave; nenhum job llm criado", meeting_id)
         return None
@@ -120,28 +123,27 @@ def enqueue_llm_job(store: Store, meeting_id: int, tasks: Sequence[JobStep | str
     if parent is None:
         log.info("reunião %s: sem job de pipeline concluído; nenhum job llm criado", meeting_id)
         return None
-    names = [str(t) for t in tasks]
-    params: dict[str, Any] = {"tasks": names, "parent_job_id": int(parent), "auto": bool(auto)}
+    params: dict[str, Any] = {"tasks": names, "parent_job_id": int(parent), "auto": bool(auto)} | ({"mode": mode} if mode else {})
     job_id = store.jobs.enqueue_if_meeting(meeting_id, JobKind.LLM, params)           # F5.6 (R-05): excluída, None
     log.info("reunião %s: job llm %s (%s)", meeting_id, f"{job_id} enfileirado" if job_id else "não criado: excluída", ", ".join(names))
     return job_id
 
 
-def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, kind: JobKind | str) -> int | None:
-    """Encadeado por `JobRunner._finish_ok` (F3A-01): tarefas automáticas conforme `llm.auto_tasks` e o tipo do job pai. Antes,
-    os jobs `llm` pendentes da reunião com outro job pai são cancelados (rodariam sobre segmentos apagados) e as tarefas dos
-    pedidos manuais entre eles ("gerar de novo") passam para o job novo, mesmo com `llm.auto_tasks` desligado; sem falas no
-    job pai, nenhum job (F3.1 R3-02). F5.3 (A-06): o job pai de uma troca de idioma leva todas as tarefas como pedido
-    manual (o usuário confirmou o custo na pergunta da troca)."""
+def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, kind: JobKind | str,
+                           carried: Iterable[JobStep] = ()) -> int | None:
+    """O núcleo depois do processamento (F5.6 A-05), conforme `llm.auto_tasks` e o tipo do job pai; `llm_requests.after_pipeline`
+    o chama na transação em que consome os pedidos (A-12). Antes, os jobs `llm` pendentes da reunião com outro job pai são
+    cancelados (rodariam sobre segmentos apagados) e as tarefas do núcleo dos pedidos manuais entre eles ("gerar de novo",
+    também `carried`) passam para o job novo, mesmo com `llm.auto_tasks` desligado; sem falas no job pai, nenhum job (F3.1
+    R3-02). F5.3 (A-06): o job pai de uma troca de idioma refaz o núcleo como pedido manual (o custo foi confirmado na troca)."""
     from ..config.defaults import SPECS
 
-    with store.transaction():                            # A-13: a decisão de adiar e o job nascem juntos
-        manual = cancel_stale_llm_jobs(store, meeting_id, parent_job_id)
+    with store.transaction():
+        manual = (cancel_stale_llm_jobs(store, meeting_id, parent_job_id) | set(carried)) - REQUEST_ONLY
         if target_language(store.jobs.get(parent_job_id)) is not None:
             manual |= set(TASKS_AFTER_MEETING)
             auto = False
-            log.info("reunião %s, job %s: troca de idioma; todas as tarefas da LLM entram como pedido manual (A-06)", meeting_id,
-                     parent_job_id)
+            log.info("reunião %s, job %s: troca de idioma; o núcleo da LLM entra como pedido manual (A-06)", meeting_id, parent_job_id)
         else:
             auto = bool(store.get(SPECS["llm.auto_tasks"]))
         if not auto and not manual:
@@ -149,18 +151,7 @@ def enqueue_after_pipeline(store: Store, meeting_id: int, parent_job_id: int, ki
         if store.segments.count_segments(meeting_id, parent_job_id, with_text=True) == 0:
             log.info("reunião %s, job %s: nenhum job llm criado: %s", meeting_id, parent_job_id, NO_SPEECH)
             return None
-        tasks = [t for t in TASK_ORDER if t in set(auto_tasks_for(store, meeting_id, kind))] if auto else []
-        pending = summary_gate.pending_voices(store, meeting_id) if auto and store.providers.active_with_key("llm") else 0
-        if pending and str((store.get_meeting(meeting_id) or {}).get("status")) == MeetingStatus.REVIEWED:
-            log.info("reunião %s: a revisão foi concluída antes do fim do processamento; a ata não espera as %d voz(es) sem "
-                     "nome (R-01)", meeting_id, pending)   # o reprocessamento com voz nova rebaixa o status (R2-11)
-            pending = 0
-        now, waiting = summary_gate.split(tasks, pending, manual)   # U-042: com voz pendente, a ata espera a identificação
-        if waiting:
-            summary_gate.record(store, meeting_id, parent_job_id, waiting, pending)
-        chosen = set(now) | manual
-        if not chosen:
-            return None
+        chosen = set(auto_tasks_for(store, meeting_id, kind) if auto else ()) | manual
         return enqueue_llm_job(store, meeting_id, [t for t in TASK_ORDER if t in chosen], parent_job_id, auto=auto)
 
 
@@ -179,14 +170,12 @@ def auto_skip_reason(store: Store, meeting_id: int, parent_job_id: int) -> str |
 
 
 def auto_tasks_for(store: Store, meeting_id: int, kind: JobKind | str) -> list[JobStep]:
-    """P5: tudo depois do primeiro processamento. P7: depois de reprocessar, identidade e trechos sem revisão, mais o que a
-    reunião ainda não tem (um job anterior cancelado ou que nunca rodou não a deixa sem ata, R3-02)."""
+    """P5 e F5.6 (A-05): o núcleo depois do primeiro processamento. P7: depois de reprocessar, identidade e trechos sem
+    revisão, mais o título quando a reunião ainda não tem; ata, executivo e pré-resumo ficam "desatualizados" (a pedido)."""
     if str(kind) != JobKind.REPROCESS:
         return list(TASKS_AFTER_MEETING)
-    missing = {step for step, sk in SUMMARY_STEPS.items() if store.summaries.current(meeting_id, sk) is None}
-    if not (store.get_meeting(meeting_id) or {}).get("title_llm"):
-        missing.add(JobStep.TITLE)
-    return [t for t in TASK_ORDER if t in TASKS_AFTER_REPROCESS or t in missing]
+    title = set() if (store.get_meeting(meeting_id) or {}).get("title_llm") else {JobStep.TITLE}
+    return [t for t in TASK_ORDER if t in TASKS_AFTER_REPROCESS or t in title]
 
 
 def cancel_stale_llm_jobs(store: Store, meeting_id: int, parent_job_id: int) -> set[JobStep]:
@@ -198,7 +187,7 @@ def cancel_stale_llm_jobs(store: Store, meeting_id: int, parent_job_id: int) -> 
     for job in store.jobs.for_meeting(meeting_id):
         if str(job.get("kind")) != JobKind.LLM or str(job["status"]) != JobStatus.PENDING:
             continue
-        params = _job_params(job)
+        params = job_params(job)
         parent = params.get("parent_job_id")
         if parent is not None and int(parent) != parent_job_id and store.jobs.request_cancel(int(job["id"])) == JobStatus.CANCELLED:
             cancelled.append(int(job["id"]))
@@ -223,7 +212,7 @@ def llm_config_snapshot(store: Store) -> str:
     return LlmJobConfig.from_store(store).to_json()
 
 
-def _job_params(job: JobRow) -> dict[str, Any]:
+def job_params(job: JobRow) -> dict[str, Any]:
     try:
         data = json.loads(job.get("params_json") or "{}")
     except ValueError:
@@ -233,7 +222,7 @@ def _job_params(job: JobRow) -> dict[str, Any]:
 
 def tasks_of(job: JobRow) -> list[JobStep]:
     out: list[JobStep] = []
-    for t in _job_params(job).get("tasks") or []:
+    for t in job_params(job).get("tasks") or []:
         try:
             out.append(JobStep(str(t)))
         except ValueError:
@@ -430,7 +419,7 @@ class LlmJobRunner(BaseJobRunner):
 
     @override
     def _execute(self) -> JobStatus:
-        params = _job_params(self.job)
+        params = job_params(self.job)
         self.tasks = [t for t in TASK_ORDER if t in tasks_of(self.job)]
         self.auto = bool(params.get("auto"))
         parent = params.get("parent_job_id")
@@ -872,7 +861,8 @@ class LlmJobRunner(BaseJobRunner):
         await self._task_summary(SummaryKind.PRE_SUMMARY, LlmTask.PRE_SUMMARY, prompts.pre_summary)
 
     async def _task_title(self) -> None:
-        """Título do pré-resumo quando já existe; senão do contexto da ata; senão das primeiras falas (o grupo roda em paralelo)."""
+        """Título do pré-resumo quando já existe; senão do contexto da ata; senão das falas de abertura (F5.6 A-07: ~1.500
+        tokens, cortadas na troca de falante; o núcleo roda antes de qualquer ata)."""
         ctx = self._ctx()
         pre = self.store.summaries.current(self.meeting_id, SummaryKind.PRE_SUMMARY)
         summary = str(pre.get("text_llm") or "") if pre else ""
@@ -882,9 +872,9 @@ class LlmJobRunner(BaseJobRunner):
                 summary = str(json.loads(minutes.get("data_json") or "{}").get("context") or "") if minutes else ""
             except ValueError:
                 summary = ""
-        if not summary:
-            summary = render_lines(ctx.lines[:40])
-        msgs = prompts.title.build(prompts.title.TitleCtx(ctx.meeting_ctx, summary))
+        opening = not summary
+        summary = summary or render_lines(prompts.title.opening(ctx.lines))
+        msgs = prompts.title.build(prompts.title.TitleCtx(ctx.meeting_ctx, summary, opening))
         comp, _ = await self._call(LlmTask.TITLE, msgs, prompts.title.SCHEMA)
         title = str((comp.data or {}).get("title") or "").strip().strip('"').rstrip(".")
         if not title:

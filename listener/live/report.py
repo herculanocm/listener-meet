@@ -1,7 +1,9 @@
 """Medição do G4 no `--check` (F4 item 11), só leitura (`Store.open_readonly`): legendas por modelo, atraso
 (`captions.latency_ms`: média, p95 e máximo), CPU dos eventos `live_cpu` (app, ao vivo e a soma: média e máximo),
 `live_degraded`, os contadores do `live_stopped`, o acerto do nome e os resumos parciais contra o esperado (os intervalos
-inteiros com legenda, pelo intervalo gravado em cada parcial); cada critério do Aceite marcado contra o alvo.
+inteiros com legenda, pelo intervalo gravado em cada parcial); cada critério do Aceite marcado contra o alvo. F5.6 (A-23): com o
+resumo parcial automático desligado na gravação (`partial` falso no `live_started`; sem a chave, ligado, como antes), o
+esperado é zero parciais automáticos (os do "Atualizar resumo agora" têm `manual` e não contam).
 
 Acerto do nome: o denominador são as legendas cujo tempo cai sobretudo (metade ou mais) num segmento do mesmo canal, no job
 vigente, cuja pessoa (o `person_id` do segmento ou o do cluster `auto`/`confirmado`, como a ata) tinha perfil de voz no
@@ -58,6 +60,35 @@ def _partial_interval(store: Store, datas: Sequence[Mapping[str, Any]]) -> int:
     sem parcial, o das Configurações de agora."""
     recorded = [int(d["interval_min"]) for d in datas if isinstance(d.get("interval_min"), int)]
     return Counter(recorded).most_common(1)[0][0] if recorded else int(store.get(SPECS["live.summary_interval_min"]))
+
+
+def _partials(store: Store, meeting_id: int, duration_ms: int, captions: Sequence[Mapping[str, Any]],
+              started: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Os parciais gravados contra o esperado, pelo intervalo que valia; com o automático desligado na gravação (o último
+    `live_started`, A-23), o esperado é zero e só os automáticos (sem `manual`) contam."""
+    datas: list[dict[str, Any]] = []
+    for r in store._q("SELECT data_json FROM summaries WHERE meeting_id = ? AND kind = ?", (meeting_id, str(SummaryKind.PARTIAL))):
+        try:
+            d = json.loads(r[0] or "{}")
+        except ValueError:
+            d = {}
+        datas.append(d if isinstance(d, dict) else {})
+    interval = _partial_interval(store, datas)
+    auto = all((e.get("data") or {}).get("partial", True) for e in started[-1:])
+    failed = int(store._q("SELECT COUNT(*) FROM llm_calls WHERE meeting_id = ? AND task = 'partial' AND status = ? "
+                          "AND COALESCE(error, '') != 'cancelado'", (meeting_id, str(LlmCallStatus.ERROR)))[0][0])
+    return {"n": len(datas), "expected": expected_partials(captions, duration_ms, interval) if auto else 0, "interval_min": interval,
+            "failed_calls": failed, "auto": auto, "n_auto": sum(1 for d in datas if not d.get("manual"))}
+
+
+def _partials_gate(p: Mapping[str, Any]) -> dict[str, Any]:
+    """Ligado: um parcial por intervalo com fala e nenhuma falha. Desligado na gravação (A-23): nenhum automático."""
+    expected, n, failed = p["expected"], p["n"], p["failed_calls"]
+    if not p["auto"]:
+        return {"target": "0 automáticos (resumo parcial desligado nesta gravação) e 0 falhas",
+                "value": {"n": n, "auto": p["n_auto"], "failed": failed}, "ok": p["n_auto"] == 0 and failed == 0}
+    return {"target": f">= {expected} (1 por intervalo com fala) e 0 falhas", "value": {"n": n, "failed": failed},
+            "ok": (n >= expected and failed == 0) if expected else None}
 
 
 def _gate(value: float | None, target: float, *, at_least: bool = False, unit: str = "") -> dict[str, Any]:
@@ -184,27 +215,14 @@ def live_report(store: Store, meeting_id: int, events: Sequence[Mapping[str, Any
     degraded = [{"t_ms": e.get("t_ms"), **(e.get("data") or {})} for e in events if e["type"] == EventType.LIVE_DEGRADED]
     stopped = [e.get("data") or {} for e in events if e["type"] == EventType.LIVE_STOPPED]
     names = name_accuracy(store, meeting_id, meeting, captions)
-    datas: list[dict[str, Any]] = []
-    for r in store._q("SELECT data_json FROM summaries WHERE meeting_id = ? AND kind = ?", (meeting_id, str(SummaryKind.PARTIAL))):
-        try:
-            d = json.loads(r[0] or "{}")
-        except ValueError:
-            d = {}
-        datas.append(d if isinstance(d, dict) else {})
-    interval = _partial_interval(store, datas)
-    expected = expected_partials(captions, int(meeting.get("duration_ms") or 0), interval)
-    n_partial = len(datas)
-    failed = int(store._q("SELECT COUNT(*) FROM llm_calls WHERE meeting_id = ? AND task = 'partial' AND status = ? "
-                          "AND COALESCE(error, '') != 'cancelado'", (meeting_id, str(LlmCallStatus.ERROR)))[0][0])
-    partials = {"n": n_partial, "expected": expected, "interval_min": interval, "failed_calls": failed}
+    partials = _partials(store, meeting_id, int(meeting.get("duration_ms") or 0), captions, started)
     mean_s = None if latency["mean"] is None else round(latency["mean"] / 1000, 1)
     p95_s = None if latency["p95"] is None else round(latency["p95"] / 1000, 1)
     gate = {"latency_mean": _gate(mean_s, TARGET_LATENCY_MEAN_S, unit=" s"),
             "latency_p95": _gate(p95_s, TARGET_LATENCY_P95_S, unit=" s"),
             "cpu": {**_gate(cpu["sum"]["mean"], TARGET_CPU_PCT, unit=" %"), "basis": "média da soma app + ao vivo"},
             "name": _gate(names["pct"], TARGET_NAME_PCT, at_least=True, unit=" %"),
-            "partials": {"target": f">= {expected} (1 por intervalo com fala) e 0 falhas", "value": {"n": n_partial, "failed": failed},
-                         "ok": (n_partial >= expected and failed == 0) if expected else None}}
+            "partials": _partials_gate(partials)}
     if channels is not None:
         missing = {}
         for ch in channels:

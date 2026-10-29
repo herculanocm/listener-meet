@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import Any, TypedDict, cast
 
 from ..config.language import whisper_code
@@ -263,8 +264,18 @@ class MeetingsRepo:
                                 (meeting_id, t_ms, str(type_), payload, _now()))
 
     def list_events(self, meeting_id: int) -> list[EventRow]:
+        return self._events(self.core.q("SELECT * FROM events WHERE meeting_id = ? ORDER BY id", (meeting_id,)))
+
+    def list_events_of(self, meeting_id: int, types: Iterable[EventType | str]) -> list[EventRow]:
+        """Só os eventos dos tipos pedidos, em ordem (F5.6 A-15: uma leitura por recarga, repartida entre as funções)."""
+        kinds = tuple(str(t) for t in types)
+        return self._events(self.core.q(f"SELECT * FROM events WHERE meeting_id = ? AND type IN ({','.join('?' * len(kinds))}) "  # noqa: S608
+                                        "ORDER BY id", (meeting_id, *kinds)))
+
+    @staticmethod
+    def _events(rows: Iterable[Any]) -> list[EventRow]:
         out: list[EventRow] = []
-        for r in self.core.q("SELECT * FROM events WHERE meeting_id = ? ORDER BY id", (meeting_id,)):
+        for r in rows:
             d = cast(EventRow, dict(r))
             try:
                 d["data"] = json.loads(d.get("data") or "{}")

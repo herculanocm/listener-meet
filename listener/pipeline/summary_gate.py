@@ -1,8 +1,9 @@
-"""U-042 (F5.2 L3): a ata depois da identificação das vozes. No fim do processamento, com voz pendente e as tarefas
-automáticas ligadas, o job `llm` leva só a identidade por contexto e a transcrição revisada (pergunta 1 da F5.2); ata,
-executivo, pré-resumo e título ficam adiados no evento `llm_deferred` (job pai e tarefas). `release` enfileira as adiadas
-uma vez por job pai (`llm_released`), quando a revisão fica sem voz pendente, no "Concluir" ou em "Gerar ata mesmo assim".
-Reprocessar troca o job pai: adiamento de job velho não libera (A-13). Os nomes que mudam depois da ata pronta acendem o
+"""U-042 (F5.2 L3) e F5.6 (A-03, A-11, A-12): a ata depois da identificação das vozes, só a pedido. O pedido é o evento
+`llm_requested` (o id dele é o `request_id`), consumido uma vez por `llm_requests`: com o modo "quando todos tiverem nome" e
+voz pendente, vira o adiamento `llm_deferred` (job pai, tarefas, `requested` e o `request_id`); senão, ou quando o adiamento
+sai (a revisão sem voz pendente, o "Concluir"), um job `llm` e o `llm_released` com o `request_id`. Os adiamentos automáticos
+da F5.2, sem a marca `requested`, nunca disparam (A-03). Reprocessar troca o job pai: o adiamento de um job velho não sai
+sozinho; o fim do processamento novo o refaz sobre a transcrição nova. Os nomes que mudam depois da ata pronta acendem o
 aviso "Atualizar a ata com os nomes" pela assinatura dos falantes gravada no `minutes_done` (A-15; um hash, sem nomes),
 versionada (F5.5 A-13, P-01): a v1, sobre o nome interno ("Voz SPK_1"), das atas de antes; a v2, sobre o nome mostrado
 ("Voz 2"), das novas, que acende também numa mescla de vozes sem pessoa. Só eventos da reunião: sem esquema novo."""
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
-from ..model import PIPELINE_JOB_KINDS, EventType, JobStep, SummaryKind
+from ..model import EventType, JobStep, SummaryKind
 from . import review
 from .voices import NO_NAMES, numbering
 
@@ -25,9 +26,10 @@ if TYPE_CHECKING:
 
 log = get_logger("pipeline.summary_gate")
 
-EARLY = frozenset({JobStep.IDENTIFY, JobStep.REVISE})   # saem logo: ajudam a revisar (a identidade sugere quem é quem)
+EARLY = frozenset({JobStep.IDENTIFY, JobStep.TITLE, JobStep.REVISE})   # o núcleo (F5.6 A-05): sai logo, sem pedido nem espera
 SPEAKERS_V = 2                 # F5.5 (A-13): a versão da assinatura que as atas novas gravam (`speakers_v`; sem ela, a 1)
-REFRESH = (JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY)   # "Atualizar a ata com os nomes" (D-057, decisão 5)
+REFRESH = (JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY)   # "Atualizar a ata com os nomes": as que já existem (A-02)
+LEDGER_TYPES = (EventType.LLM_REQUESTED, EventType.LLM_DEFERRED, EventType.LLM_RELEASED, EventType.LLM_CHAINED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,36 @@ class Deferral:
     parent_job_id: int
     tasks: tuple[str, ...]
     pending: int                  # vozes pendentes agora
+    request_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Asked:
+    """Um pedido (`llm_requested`, A-11): o id do evento é o `request_id`; `after_job_id` nulo = o próximo processamento."""
+    request_id: int
+    tasks: tuple[str, ...]
+    mode: str
+    origin: str
+    after_job_id: int | None
+    created_at: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Ledger:
+    """Os eventos dos pedidos de uma reunião numa leitura só (A-15): os pedidos, o último adiamento pedido de cada um (o
+    reprocessamento o refaz sobre outro job pai), os liberados (com o job, nulo sem fala) e os processamentos já
+    encadeados (`llm_chained`). O adiamento sem `requested` (F5.2) fica de fora (A-03)."""
+    asked: tuple[Asked, ...]
+    deferrals: dict[int, dict[str, Any]]
+    released: dict[int, int | None]
+    chained: frozenset[int] = frozenset()
+
+    def consumed(self, request_id: int) -> bool:
+        return request_id in self.released or request_id in self.deferrals
+
+    def open(self) -> list[tuple[int, dict[str, Any]]]:
+        """Os adiamentos pedidos que ainda não saíram: (request_id, dados do último `llm_deferred`)."""
+        return [(rid, d) for rid, d in self.deferrals.items() if rid not in self.released]
 
 
 def pending_voices(store: Store, meeting_id: int) -> int:
@@ -42,66 +74,53 @@ def pending_voices(store: Store, meeting_id: int) -> int:
     return len(review.pending(review.review_items(store, meeting_id)))
 
 
-def split(tasks: Iterable[JobStep], pending: int, manual: Iterable[JobStep] = ()) -> tuple[list[JobStep], list[JobStep]]:
-    """(agora, adiadas): sem voz pendente tudo sai agora; os pedidos manuais ("gerar de novo") nunca esperam."""
-    tasks, keep = list(tasks), set(manual)
-    if not pending:
-        return tasks, []
-    return [t for t in tasks if t in EARLY or t in keep], [t for t in tasks if t not in EARLY and t not in keep]
+def _asked(e: Mapping[str, Any], data: Mapping[str, Any]) -> Asked:
+    after = data.get("after_job_id")
+    return Asked(int(e["id"]), tuple(str(t) for t in data.get("tasks") or ()), str(data.get("mode") or ""), str(data.get("origin") or ""),
+                 int(after) if isinstance(after, int) else None, str(e.get("created_at") or ""))
 
 
-def record(store: Store, meeting_id: int, parent_job_id: int, tasks: Iterable[JobStep], pending: int) -> None:
+def ledger(store: Store, meeting_id: int) -> Ledger:
+    asked: list[Asked] = []
+    deferrals: dict[int, dict[str, Any]] = {}
+    released: dict[int, int | None] = {}
+    chained: set[int] = set()
+    for e in store.meetings.list_events_of(meeting_id, LEDGER_TYPES):
+        raw = e.get("data")
+        data = raw if isinstance(raw, dict) else {}
+        rid = data.get("request_id")
+        if e["type"] == EventType.LLM_REQUESTED:
+            asked.append(_asked(e, data))
+        elif e["type"] == EventType.LLM_CHAINED:
+            chained.add(int(data.get("parent_job_id") or 0))
+        elif not isinstance(rid, int):
+            continue                                     # A-03: adiamento e liberação automáticos da F5.2, sem pedido
+        elif e["type"] == EventType.LLM_DEFERRED and data.get("requested"):
+            deferrals[rid] = data
+        elif e["type"] == EventType.LLM_RELEASED:
+            released[rid] = data.get("job_id") if isinstance(data.get("job_id"), int) else None
+    return Ledger(tuple(asked), deferrals, released, frozenset(chained))
+
+
+def record(store: Store, meeting_id: int, parent_job_id: int, tasks: Iterable[str], pending: int, request_id: int) -> None:
+    """O pedido "quando todos tiverem nome" espera as vozes (A-11): o adiamento leva a marca e o `request_id`."""
     names = [str(t) for t in tasks]
-    store.add_event(meeting_id, None, EventType.LLM_DEFERRED, {"parent_job_id": parent_job_id, "tasks": names, "pending": pending})
-    log.info("reunião %s: ata adiada até a identificação de %d voz(es) (job pai %s; tarefas %s)", meeting_id, pending,
-             parent_job_id, ", ".join(names))
+    store.add_event(meeting_id, None, EventType.LLM_DEFERRED, {"parent_job_id": parent_job_id, "tasks": names, "pending": pending,
+                                                              "requested": True, "request_id": request_id})
+    log.info("reunião %s: pedido %s adiado até a identificação de %d voz(es) (job pai %s; tarefas %s)", meeting_id, request_id,
+             pending, parent_job_id, ", ".join(names))
 
 
-def deferred(store: Store, meeting_id: int) -> Deferral | None:
-    """O adiamento vigente: do job pai atual e ainda não liberado; None quando não há."""
+def deferred(store: Store, meeting_id: int, led: Ledger | None = None) -> Deferral | None:
+    """Os pedidos adiados do job pai atual, ainda não liberados, juntos; None quando não há (A-03: só os pedidos)."""
     parent = store.segments.current_job_id(meeting_id)
     if parent is None:
         return None
-    tasks: tuple[str, ...] | None = None
-    for e in store.list_events(meeting_id):
-        raw = e.get("data")
-        data = raw if isinstance(raw, dict) else {}
-        if int(data.get("parent_job_id") or 0) != parent:
-            continue
-        if e["type"] == EventType.LLM_DEFERRED:
-            tasks = tuple(str(t) for t in data.get("tasks") or ())
-        elif e["type"] == EventType.LLM_RELEASED:
-            tasks = None
-    return Deferral(parent, tasks, pending_voices(store, meeting_id)) if tasks else None
-
-
-def release(store: Store, meeting_id: int, reason: str, *, force: bool = False) -> int | None:
-    """Enfileira as tarefas adiadas do job vigente, uma vez (A-13): sem voz pendente, ou com `force` (o "Concluir", o
-    "Gerar ata mesmo assim", o "Gerar de novo" de uma adiada). Nada com reprocessamento na fila (ele terá o próprio
-    adiamento) nem sem provedor com chave (segue adiada). Devolve o job `llm` criado."""
-    from .llm_steps import enqueue_llm_job
-
-    with store.transaction():
-        d = deferred(store, meeting_id)
-        if d is None:
-            return None
-        if d.pending and not force:
-            log.debug("reunião %s: a ata segue adiada (%d voz(es) pendente(s))", meeting_id, d.pending)
-            return None
-        heavy = [j for j in store.jobs.active(kinds=PIPELINE_JOB_KINDS) if int(j["meeting_id"]) == meeting_id]   # R-09
-        if heavy:
-            log.info("reunião %s: a ata adiada não sai agora (%s): o processamento %s está na fila e terá o próprio adiamento",
-                     meeting_id, reason, heavy[0]["id"])
-            return None
-        job_id = enqueue_llm_job(store, meeting_id, list(d.tasks), d.parent_job_id, auto=True)
-        if job_id is None:
-            log.info("reunião %s: a ata adiada não saiu (%s): sem provedor de LLM com chave; segue adiada", meeting_id, reason)
-            return None
-        store.add_event(meeting_id, None, EventType.LLM_RELEASED,
-                        {"parent_job_id": d.parent_job_id, "tasks": list(d.tasks), "job_id": job_id, "reason": reason})
-    log.info("reunião %s: ata liberada (%s; %d voz(es) ainda sem nome): job llm %s (%s)", meeting_id, reason, d.pending, job_id,
-             ", ".join(d.tasks))
-    return job_id
+    opened = [(rid, d) for rid, d in (led or ledger(store, meeting_id)).open() if int(d.get("parent_job_id") or 0) == parent]
+    if not opened:
+        return None
+    tasks = tuple(dict.fromkeys(str(t) for _rid, d in opened for t in d.get("tasks") or ()))
+    return Deferral(parent, tasks, pending_voices(store, meeting_id), tuple(rid for rid, _d in opened))
 
 
 # ---------------------------------------------------------------- nomes depois da ata (A-15)
@@ -133,7 +152,7 @@ def names_changed(store: Store, meeting_id: int) -> bool:
     if row is None or row.get("job_id") != store.segments.current_job_id(meeting_id):
         return False
     digest, version = None, 1
-    for e in store.list_events(meeting_id):
+    for e in store.meetings.list_events_of(meeting_id, (EventType.JOB_STEP,)):
         raw = e.get("data")
         data = raw if isinstance(raw, dict) else {}
         if data.get("step") == "minutes_done" and data.get("summary_id") == row["id"]:
