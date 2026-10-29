@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 16 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 17 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -299,6 +299,59 @@ processada com falas.
   - o resultado de uma busca no `listener.log` por um pedaço das suas instruções (não pode aparecer nada);
   - a ata gerada com as suas instruções;
   - qualquer coisa que confundiu.
+
+## Parte 17 — F5.7: o aviso de reunião sem gravação (40 min, numa chamada de verdade)
+Antes: **reinicie o app**. Tenha à mão:
+- uma chamada do Teams (pode ser só você, por "Reunir agora");
+- um Meet no Chrome;
+- se der, um segundo monitor e o fone de comunicação.
+
+Nada aqui grava sozinho: o app só grava depois do seu clique em Gravar.
+- [ ] Primeiro a sonda, com o app aberto e sem gravar:
+      `.venv\Scripts\python.exe scripts\detect_probe.py --seconds 120`, durante a chamada do Teams. Ligue e desligue o
+      mudo no meio. Repita no Meet. A saída só traz o executável, o pid, as contagens e os picos, nunca o título.
+- [ ] Teams em chamada, sem gravar:
+      - o cartão "Reunião detectada" aparece no canto em até ~15 s;
+      - o foco não sai do Teams: o que você digita no chat vai para o Teams, nada vai para o cartão, e o Espaço de
+        falar continua funcionando.
+- [ ] Compartilhe a tela no Teams com o cartão à vista e confira:
+      - quem assiste não vê o cartão;
+      - "Gravar…" traz o "Antes de gravar" para a frente, com o Teams escolhido e a faixa "Fonte: Teams, pelo aviso de
+        reunião";
+      - o Enter grava;
+      - quem assiste também não vê o "Antes de gravar".
+- [ ] Deixe o cartão sumir sozinho: são 20 s, e com o mouse em cima ele não some. Confira:
+      - a dica da bandeja diz "reunião no Teams sem gravação";
+      - o primeiro item do menu, em negrito, é "Gravar a reunião do Teams…";
+      - 2 min depois vem um lembrete, um só.
+- [ ] "Agora não": nada mais até a chamada acabar. Numa chamada nova, depois de 30 s sem chamada e mais 2 min, ele
+      avisa de novo.
+- [ ] Durante uma chamada, abra o "Antes de gravar" pela bandeja e cancele. O aviso ainda vem (D-066).
+- [ ] Com uma chamada pendente, o atalho de Gravar e o clique esquerdo na bandeja abrem o "Antes de gravar" com o app.
+- [ ] Abra as Configurações com o cartão à vista: o cartão some e volta quando elas fecham (D-066).
+- [ ] "Não avisar para o Teams", na bandeja. Em Configurações > Idioma e avisos > "Reunião sem gravação", o Teams está
+      desmarcado. Marque e salve.
+- [ ] Ponha o fone como dispositivo de comunicação e o alto-falante como padrão, e grave o Teams pelo aviso. A
+      gravação tem a voz de quem fala no Teams.
+- [ ] 20 min com o Teams parado, um vídeo no YouTube, música no Spotify e as notificações do Teams: nenhum aviso.
+- [ ] Com dois monitores e a barra de tarefas em outra posição:
+      - o cartão fica no canto da tela do app;
+      - os outros avisos do app sobem acima dele.
+- [ ] Ligue o Narrador: o cartão é lido quando aparece, sem receber o foco.
+- [ ] A 150 % e no tema escuro, o cartão e o cartão das Configurações cabem na tela.
+- [ ] Teste a saída com a sonda presa:
+      - troque o dock ou o fone e feche o app pelo Sair logo em seguida;
+      - faça um logoff com o app aberto.
+      Nos dois casos, nenhum "parou de funcionar" do Windows, e o `listener.log` fecha com "app encerrado" ou com
+      "saída imediata".
+- Devolva:
+  - a saída da sonda;
+  - quanto tempo o aviso levou para aparecer;
+  - todo aviso falso: qual app e o que você fazia;
+  - o resultado do compartilhamento de tela;
+  - numa reunião do Teams e do Zoom pelo navegador, só o formato do título da aba, sem o nome da reunião (é para
+    reconhecer a reunião no navegador além do Meet);
+  - o resultado de uma busca no `listener.log` pelo nome da reunião (não pode aparecer nada).
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.

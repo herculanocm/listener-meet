@@ -3,13 +3,9 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Em curso: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, D-065, aprovada com as perguntas 1 a 6 no
-  padrão).
-  - O que faz: avisa quando uma chamada começa sem gravação, sem roubar o foco e sem aparecer na tela compartilhada. O
-    sinal é o microfone em uso por outro app, medido nesta máquina. "Gravar…" abre o "Antes de gravar" com o app.
-  - Lotes: a correção do "Apps tocando agora" (todas as saídas), num commit à parte; L1, a plataforma; L2, as regras;
-    L3, a interface.
-- **Próximo passo do dono:** testar a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
+- **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
+  do roteiro, numa chamada de verdade.
+- **Próximo passo do dono:** testar a F5.7 pela Parte 17 (reinicie o app antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
   Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
   depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
@@ -77,6 +73,16 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
         Cada lote passou por revisão do diff por um agente novo, com cada achado corrigido junto de um teste. Ao todo
         são 894 testes. Falta o dono verificar no Windows (Partes 14 a 16).
+  - [x] **F5.7 implementada** (29/10, `features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, D-065 e D-066): avisa
+        quando uma chamada começa sem gravação, sem roubar o foco e fora da tela compartilhada. "Gravar…" abre o "Antes
+        de gravar" com o app como fonte, e o app nunca grava sozinho.
+        - Correções à parte: `0393068`, `2b7effa` e `86dbe9a`.
+        - L1, a plataforma: `92e4546`.
+        - L2, as regras: `9a631ef`.
+        - L3, a interface: o refactor `2aeeb1a` e o `6133722`.
+
+        Revisão do diff por um agente novo no L1/L2 e no L3. São 1.072 testes. Falta o dono verificar no Windows
+        (Parte 17).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -186,6 +192,14 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
    sessão no Linux.
 
 ## Dívidas técnicas
+- **Saída com a thread do mudo presa** (visto na revisão do L3 da F5.7, de antes dela): o `_MutePoller` só recebe
+  `interrupt()`, sem `wait`. Preso no COM na saída, ele cai na mesma 0xC0000409 que o R-01 corrigiu no sensor de
+  chamada. Correção: entrar na conta do `leave_if_stuck` do `app.py`, num commit pequeno.
+- **Caminho no log** (visto no L3 da F5.7, de antes dela): o `attach_log` do `app.py`, quando falha, loga o caminho do
+  arquivo de log, que tem a pasta do usuário. Isso vai contra a D-053. Trocar pelo código do erro e pôr o `app.py` no
+  teste de privacidade.
+- **F5.7, aviso sem a exclusão da captura** (R-04 da revisão do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam
+  a dica e o menu da bandeja, e o ícone fica igual. Proposta: um selo no ícone enquanto houver chamada pendente.
 - **Suíte travada antes de começar (29/10, F5.7).** Uma execução de `pytest --tudo` ficou 14 min parada antes do
   primeiro teste, com 2,4 s de CPU. A seguinte, com o mesmo código, passou em 2 min. A causa não foi achada. Se voltar,
   rode com a saída num arquivo, não por `| tail`.
