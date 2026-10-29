@@ -186,6 +186,9 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
    sessão no Linux.
 
 ## Dívidas técnicas
+- **Suíte travada antes de começar (29/10, F5.7).** Uma execução de `pytest --tudo` ficou 14 min parada antes do
+  primeiro teste, com 2,4 s de CPU. A seguinte, com o mesmo código, passou em 2 min. A causa não foi achada. Se voltar,
+  rode com a saída num arquivo, não por `| tail`.
 - Saúde dos canais começa "ok" por até 10 s sem sinal; R não avisa antes (D-050: silêncio no começo é normal); rever
   depois do G1.
 - Deriva de relógio: só instrumentada (A7); corrigir em spec própria se o G1 mostrar mais de 100 ms por hora (P22).
