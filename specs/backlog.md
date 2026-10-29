@@ -3,13 +3,12 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (28/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Em curso: F5.5, vozes numeradas** (`features/F5.5-vozes-numeradas.md`, D-062): "Voz 2" também na ata, na
-  exportação, na busca e no chat; aprovada com a revisão de arquitetura, em implementação.
-- **Depois: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
+- **Em curso: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
   padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
   tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura
-  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono); lotes L3, L1a, L1b e L2, depois da F5.5.
-- **Próximo passo do dono:** testar a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook,
+  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono); lotes L3, L1a, L1b e L2, nessa ordem.
+- **Próximo passo do dono:** testar a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste
+  alto, notebook,
   teclado), a F5.3 pela Parte 11 (idioma, fila, aviso, fone no meio da gravação) e a
   F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
   da pessoa, a ata depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
@@ -65,7 +64,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         (`004fd83`), L1 sistema de design (`412fa97`, `f83e04d`), L2 gravação (`586dd3f`), L3 Configurações em páginas
         e fila (`dd76609`), L4 reunião, Histórico, revisão e assistente (`aa0eab1`), a revisão do diff, R-01 a R-09
         (`c4f9cc6`), a superfície do L1b sem uso (`4bd019a`) e o tique do widget (`5545e80`). Falta o dono verificar
-        no Windows (Parte 12) e a pergunta 14.
+        no Windows (Parte 12).
+  - [x] **F5.5 implementada** (28/10, `features/F5.5-vozes-numeradas.md`, D-062): spec com a revisão de arquitetura
+        (`579bddb`) e o código com a revisão do diff, R-01 a R-05 (`3b9320c`); também a página de chaves sem lambda
+        (`7fb2df7`) e o worktree da F5.3 removido. Falta o dono verificar no Windows (Parte 13).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -85,18 +87,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   12. F5.2, pergunta 2: "Nova pessoa" com um nome que já existe pergunta "é ela?" (sim; adotado).
   13. Depois do U-035, a reunião, a revisão e a citação copiada mostram "Voz 2", mas a ata, a exportação e os trechos
       da busca seguem com o rótulo interno ("Voz SPK_1"), que é o que vai para a LLM. Levar a numeração "Voz n" também
-      para a entrada da LLM, a exportação e o índice (sim; muda prompts e exportação, vai para uma spec pequena).
-  14. F5.4, Aceite 5: contra a base de antes da F5.4, o "Antes de gravar" e a revisão abrem ~5 ms mais devagar (24 → 28
-      e 23 → 27 ms, +18 a +20 %; cada lote ficou dentro dos 10 % contra o anterior), custo do Qt com os widgets novos e
-      a fonte de 14 px. Aceitar (sim; abaixo do perceptível) ou um lote de desempenho (as abas de texto da revisão
-      montadas sob demanda, ~2 a 3 ms).
+      para a entrada da LLM, a exportação e o índice. Respondida (D-062): feita na F5.5.
+  14. F5.4, Aceite 5: o "Antes de gravar" e a revisão ~5 ms mais devagar que antes da F5.4. Respondida (D-062): aceito.
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
 
 ## Estado em 28/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3 e **F5.4 implementadas**: 700 testes mais 7 pulados no
-  Windows com `--tudo` (95 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**: 710 testes mais 7
+  pulados no Windows com `--tudo` (85 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
   Esquema v8. Nada do app importa torch, ML, os SDKs de LLM, onnxruntime, tokenizers nem docx no nível do módulo (teste
@@ -113,7 +112,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   pendente) · **F3 e F3.1 implementadas** (D-043; contrato em `specs/llm-contrato.md`) · G3 depende da chave do Gemini no
   Windows · **F4 implementada** (D-044; L0 e G4 dependem do Windows) · **F5 implementada** (D-047; o item 8 e o G5
   dependem do Windows com o dono) · **F5.1 implementada** (`features/F5.1-busca-local-linha-do-tempo.md`; o item 9 e o
-  G5 com o embedder local dependem do dono) · **F5.2, F5.3 e F5.4 implementadas** (Partes 10 a 12 do roteiro com o
+  G5 com o embedder local dependem do dono) · **F5.2 a F5.5 implementadas** (Partes 10 a 13 do roteiro com o
   dono) · F6 rascunho inicial · F7 futuro.
 
 ## Como retomar (5 minutos)
@@ -213,11 +212,14 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
 - D-056: dois workers leves podem nascer no mesmo segundo (o pesado, ao terminar, e o polling do app lançam cada um o
   seu, e o intervalo de 60 s entre lançamentos vale por processo): o segundo não acha job e sai ocioso em 60 s.
   Inofensivo (o claim é atômico); custa um processo a mais. Resolver com uma marca de lançamento no banco, se valer.
-- F5.4: (a) `ui/keys.py`, a página de chaves do assistente, liga dois sinais a `lambda` que prendem a página, o padrão
-  da queda 0xC0000409 na saída (de antes da F5.4; trocar por métodos); (b) acima de 400 linhas seguem `ui/warmup.py`
-  (696), `history.py` (914), `player.py` (1019) e `controller.py` (1872): dividir ao mexer neles; (c) a sonda às vezes
-  acusa o índice do Histórico cortado no print `historico-abrindo` (o texto chega antes do layout do canto das abas; no
-  print seguinte sai inteiro).
+- F5.4: (a) feito em `7fb2df7` (a página de chaves sem lambda com `self`, com o teste estático); (b) acima de 400
+  linhas seguem `ui/warmup.py` (696), `history.py` (914), `player.py` (1019) e `controller.py` (1872): dividir ao mexer
+  neles; (c) a sonda às vezes acusa o índice do Histórico cortado no print `historico-abrindo` (o texto chega antes do
+  layout do canto das abas; no print seguinte sai inteiro).
+- Identidade no preset sala (achado R-06 da revisão da F5.5, de antes dela): a costura numera `SPK_n` por canal, e
+  `R/SPK_0` e `L/SPK_0` chegam à identidade os dois como "SPK_0"; `_merge_identify` e `_apply_identify` casam pelo
+  rótulo, então só um dos clusters recebe a sugestão, talvez o errado. Proposta: o rótulo com o canal na entrada da
+  identidade e a busca por (canal, rótulo), numa spec pequena.
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · deriva por canal e

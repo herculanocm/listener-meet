@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 12 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 13 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -214,6 +214,20 @@ Antes: uma reunião processada com ata (a da Parte 3 serve) e, se der, o noteboo
 - [ ] Abra e feche três reuniões, a revisão e o Histórico e saia pela bandeja: o app fecha sem a mensagem "Python
       parou de funcionar" (Visualizador de Eventos › Aplicativo, sem erro do `python.exe` nesse horário).
 - Devolva: print de qualquer tela estranha (cor, corte, sobreposição) no claro e no escuro, e o `listener.log`.
+
+## Parte 13 — F5.5: "Voz 2" na ata, na exportação e na busca (10 min)
+Antes: uma reunião com pelo menos uma voz sem nome e a chave da LLM (a da Parte 3 serve).
+- [ ] Na primeira abertura depois da atualização, as atas antigas não pedem "Atualizar a ata com os nomes" só por isso.
+      O `listener.log` mostra a varredura do índice uma vez (quantas reuniões entraram), e ela não volta na abertura
+      seguinte.
+- [ ] Gere a ata de novo numa reunião com voz sem nome: a ata, as ações e o executivo falam "Voz 2", o mesmo número
+      da transcrição e da linha do tempo, nunca "SPK_1". Exporte o .md e o .docx: o mesmo "Voz 2".
+- [ ] No Histórico, busque uma frase dessa voz: o trecho e o "Copiar com citação" mostram "Voz 2". Pergunte às
+      reuniões algo que ela disse: a resposta cita "Voz 2".
+- [ ] Numa reunião em inglês, a ata mantém "Voz 2" (não "Voice 2").
+- [ ] Com a ata nova pronta, mescle duas vozes sem nome na revisão: a reunião passa a oferecer "Atualizar a ata com os
+      nomes".
+- Devolva: o trecho da varredura no `listener.log` e qualquer "SPK_" ou "Voice" que aparecer.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
