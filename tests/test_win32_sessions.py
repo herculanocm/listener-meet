@@ -278,3 +278,52 @@ def test_the_render_sessions_read_this_machine():
         assert flow.activations == (first if keep else 2 * first)
         flow.close()
         assert flow._managers == {}
+
+
+# ---------------------------------------------------------------- os alvos do loopback do app, em todas as saídas
+def _teams_tree() -> dict[int, Any]:
+    """A árvore do Teams novo vista em 26/10 (D-055): o WebView2 da chamada é neto da raiz."""
+    from listener.platform.win32.processes import ProcInfo
+
+    return {p.pid: p for p in [
+        ProcInfo(11516, "explorer.exe", 9), ProcInfo(33820, "ms-teams.exe", 11516), ProcInfo(36964, "ms-teams.exe", 33820),
+        ProcInfo(35660, "msedgewebview2.exe", 33820), ProcInfo(32348, "msedgewebview2.exe", 35660),
+    ]}
+
+
+def _loopback_platform(monkeypatch: pytest.MonkeyPatch, outputs: Outputs) -> tuple[Any, list[int]]:
+    """A plataforma com a árvore do Teams e um loopback de processo de mentira que anota os pids abertos."""
+    from types import SimpleNamespace
+
+    plat = _platform(monkeypatch, outputs)
+    monkeypatch.setattr(plat, "_processes", lambda: (_teams_tree(), {}))
+    opened: list[int] = []
+
+    def open_one(pid: int, on_audio: Any, on_error: Any = None) -> Any:
+        opened.append(pid)
+        return SimpleNamespace(sample_rate=48000, channels=2, start=lambda: None, stop=lambda: None)
+
+    monkeypatch.setattr(plat, "_open_process_loopback", open_one)
+    return plat, opened
+
+
+def test_a_grandchild_that_plays_only_on_the_communications_output_is_captured(monkeypatch):
+    """O ms-teams.exe filho toca na saída padrão e o WebView2 neto, a chamada, só no fone de comunicação: o neto entra
+    entre os alvos do loopback do app (o filho direto já vem no da raiz). Antes só a saída padrão era vista, e a captura
+    ficava só com a raiz. Nada sobra guardado depois."""
+    outputs = Outputs({"ep-padrao": FakeManager([FakeSession(36964, 0.1), FakeSession(0, 0.2)]),
+                       "ep-fone": FakeManager([FakeSession(32348, 0.5)])})
+    plat, opened = _loopback_platform(monkeypatch, outputs)
+    plat.open_app_loopback(33820, lambda block, t: None)
+    assert opened == [33820, 32348]
+    assert plat._session_pids() == {36964, 32348} and outputs.alive() == 0
+
+
+def test_the_loopback_falls_back_to_the_root_when_the_sessions_fail(monkeypatch):
+    """Sem as sessões (o Core Audio fora), o loopback fica só com a raiz, como antes."""
+    outputs = Outputs({"ep-fone": FakeManager([FakeSession(32348, 0.5)])})
+    outputs.down = True
+    plat, opened = _loopback_platform(monkeypatch, outputs)
+    assert plat._session_pids() == set()
+    plat.open_app_loopback(33820, lambda block, t: None)
+    assert opened == [33820]

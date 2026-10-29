@@ -280,19 +280,6 @@ def _endpoint_volume(dev: Any) -> Any:
         return cast(iface, POINTER(IAudioEndpointVolume))
 
 
-def _session_pid(session: Any) -> int:
-    try:
-        pid = int(getattr(session, "ProcessId", 0) or 0)
-        if pid:
-            return pid
-    except Exception as e:
-        log.debug("ProcessId da sessão: %s", e)
-    try:
-        return int(session._ctl.GetProcessId())
-    except Exception:
-        return 0
-
-
 class _StreamHandle:
     """`CaptureHandle`: começa parada; `stop()` é idempotente e silencia o `on_error` de um encerramento nosso. A stream
     que a biblioteca encerrou (dispositivo removido) segue fechável: o `stop()` seguinte a fecha (U-043: aberta, ela
@@ -738,15 +725,14 @@ class Win32Platform(Platform):
         return handle
 
     def _session_pids(self) -> set[int]:
-        """Os processos com sessão de áudio agora (qualquer estado), para os alvos do loopback do app."""
-        _com_init()
+        """Os processos com sessão de áudio agora (qualquer estado), para os alvos do loopback do app. F5.7: em todas as
+        saídas, pelo `FlowSessions` sem guardar (o WebView2 neto do Teams que só toca no fone de comunicação também)."""
         try:
-            from pycaw.pycaw import AudioUtilities
-
-            return {pid for s in AudioUtilities.GetAllSessions() if (pid := _session_pid(s))}
+            reading = self._render_sessions.read()
         except Exception as e:
             log.debug("sessões de áudio para o loopback: %s", e)
             return set()
+        return {s.pid for group in reading.values() for s in group}
 
     @override
     def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
