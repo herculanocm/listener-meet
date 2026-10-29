@@ -294,7 +294,8 @@ def _rating_html(message_id: int, rating: Any) -> str:
 
 def thread_html(store: Store, thread_id: int, *, rating: bool = True) -> str:
     """A conversa como HTML: perguntas escapadas; respostas redesenhadas das citações gravadas (título e data atuais da
-    reunião, sem recasar segmentos; reunião apagada fica como texto) e, com `rating`, o "citação certa? sim · não" (U-027)
+    reunião, sem recasar segmentos; F5.6, P-02: a excluída vira "reunião excluída", sem link) e, com `rating`, o "citação
+    certa? sim · não" (U-027)
     como links `listener://rate?msg=<id>&v=1|0` (`parse_rate_link`, `rate_answer`)."""
     rows = store.chat.list_for_thread(thread_id)
     saved = {int(r["id"]): load_citations(r.get("citations_json")) for r in rows if str(r["role"]) == ChatRole.ASSISTANT}

@@ -141,3 +141,33 @@ def test_pipeline_settings_and_hf_provider(store):
     assert store.settings.provider_key(HF_PROVIDER_ID) == ""
     store.upsert_provider(HF_PROVIDER_ID, "huggingface", api_key="hf_x")
     assert store.settings.provider_key(HF_PROVIDER_ID) == "hf_x" and store.get_provider(HF_PROVIDER_ID)["kind"] == "huggingface"
+
+
+def test_invalidating_a_new_voice_never_touches_the_samples_of_a_deleted_meeting(store):
+    """F5.6 (A-34): os ids de `clusters` voltam depois de excluir a reunião mais recente; a correção de uma voz nova com o id
+    reaproveitado só invalida a amostra dela, nunca a da reunião excluída (que fica sem `cluster_id` e `segment_id`)."""
+    from listener.pipeline import review
+
+    ana, bia = store.people.create_person("Ana"), store.people.create_person("Bia")
+    old = store.create_meeting("antiga", "teams", None, None)
+    job = store.jobs.enqueue(old)
+    cid = store.segments.insert_clusters([ClusterInsert(old, job, "R", "SPK_0", 5000, _vec(0), "wespeaker",
+                                                        ClusterStatus.UNNAMED)])["SPK_0"]
+    store.segments.insert_segments([SegmentInsert(old, job, "R", 0, 900, "oi", Attribution.PYANNOTE, SegmentSource.FINAL,
+                                                  cluster="SPK_0", cluster_id=cid)])
+    review.confirm(store, cid, ana)
+    profile = store.profiles.profile_for(ana, "wespeaker")
+    before = (profile["n_samples"], profile["centroid"].copy())
+    store.delete_meeting(old)
+    new = store.create_meeting("nova", "teams", None, None)
+    job2 = store.jobs.enqueue(new)
+    cid2 = store.segments.insert_clusters([ClusterInsert(new, job2, "R", "SPK_0", 5000, _vec(4), "wespeaker",
+                                                         ClusterStatus.UNNAMED)])["SPK_0"]
+    assert cid2 == cid                                                         # o id da voz voltou (sem piso: a amostra o perdeu)
+    review.confirm(store, cid2, ana)
+    review.confirm(store, cid2, bia)                                           # a correção invalida a amostra da voz nova
+    p = store.profiles.profile_for(ana, "wespeaker")
+    sources = {int(r["meeting_id"]): str(r["source"]) for r in store._q("SELECT meeting_id, source FROM voice_embeddings "
+                                                                        "WHERE profile_id = ?", (p["id"],))}
+    assert sources == {old: "confirmacao", new: "invalidado"}
+    assert p["n_samples"] == before[0] and np.allclose(p["centroid"], before[1])

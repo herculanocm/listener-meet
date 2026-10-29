@@ -51,7 +51,8 @@ glossário e resumo parcial não avisam. O clique faz a ação do aviso e traz o
 F5.3 L4 (U-049, U-050): os dispositivos da gravação moram em `ui/recording_devices.py` (a vigia de 2 s, as trocas, a linha
 de alerta e o painel do botão 🎧); aqui só o fio: o gravador chama `_release_player_for_mic` antes de reler o PortAudio
 (o player solta a saída, "pausado para trocar o microfone", A-17) e a primeira leitura do poller do mudo depois de uma
-troca de microfone é ignorada (A-18). O log da gravação leva o id do microfone, nunca o nome do aparelho (A-22)."""
+troca de microfone é ignorada (A-18). O log da gravação leva o id do microfone, nunca o nome do aparelho (A-22).
+F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py` (o Histórico pede; gravar interrompe)."""
 from __future__ import annotations
 
 import functools
@@ -84,10 +85,12 @@ from ..pipeline import review, summary_gate
 from ..pipeline.reprocess import target_language
 from ..platform.base import log_id
 from ..platform.common import process
+from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import RAG, preparer, shutdown_preparer
 from .meeting import MeetingWindow
+from .meeting_delete import MeetingDeleter
 from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HISTORY_READY, IDENTITY_READY, Notice, NoticeAction,
                       NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text)
 from .player import Player, PlayRequest, prewarm_audio
@@ -168,28 +171,6 @@ class _MutePoller(QThread):
             except Exception as e:
                 log.debug("ler mudo do sistema: %s", e)
             self._wake.wait(MUTE_POLL_S)
-
-
-class LateGlossaryLink:
-    """Chamadas do glossário que voltam depois do "Gravar" de um warm-up (F3.1 R3-11): ficam guardadas até a reunião dele
-    existir e então ganham o `meeting_id`; cada warm-up tem o seu (resposta atrasada não cai na reunião seguinte)."""
-
-    def __init__(self, store: Store):
-        self.store = store
-        self.meeting_id: int | None = None
-        self.pending: list[int] = []
-
-    def add(self, call_id: int) -> None:
-        if self.meeting_id is None:
-            self.pending.append(call_id)
-        else:
-            self.store.llm_calls.set_meeting(call_id, self.meeting_id)
-
-    def bind(self, meeting_id: int) -> None:
-        self.meeting_id = meeting_id
-        for call_id in self.pending:
-            self.store.llm_calls.set_meeting(call_id, meeting_id)
-        self.pending.clear()
 
 
 class Controller(QObject):
@@ -299,6 +280,11 @@ class Controller(QObject):
                                    anchor=self._toast_anchor, parent=self)
         self._notice_requested.connect(self._on_notice_requested, Qt.ConnectionType.QueuedConnection)
 
+    @functools.cached_property
+    def deleter(self) -> MeetingDeleter:
+        """F5.6 L3: excluir pelo Histórico e o espaço de volta (`ui/meeting_delete.py`), criado no primeiro uso."""
+        return MeetingDeleter(self)
+
     # ---------------------------------------------------------------- início
     def start(self) -> None:
         self._adopt_legacy_language()
@@ -333,6 +319,7 @@ class Controller(QObject):
         preparer().changed.connect(self._on_preparer_changed)
         self._preparer_connected = True
         self._start_sweep()
+        self.deleter.resume_space()                           # F5.6 (A-39): o espaço que ficou pendente, na abertura ociosa
         self._poll_queue()
         self._queue_timer.start()
         QTimer.singleShot(PREWARM_AUDIO_MS, self, self._prewarm_audio)
@@ -651,10 +638,10 @@ class Controller(QObject):
                  language.whisper_code(lang))
         mute_ok = self.platform.mic_mute().set_device(cfg.mic_device)
         self.platform.keep_awake(True)
-        # o gravador chama `_before_system_loopback` antes de abrir o loopback do sistema inteiro por qualquer caminho: a
-        # fonte pedida e a troca automática quando o loopback do app não abre, aqui, na troca de fonte e na reabertura (R8-01)
+        # `_before_system_loopback` vem antes de todo loopback do sistema inteiro (o pedido, a troca automática; R8-01)
         rec = Recorder(self.platform, self.store, meeting_id, cfg, clock=self.clock_factory() if self.clock_factory else None,
                        before_system_loopback=self._before_system_loopback, before_reread=self._release_player_for_mic)
+        self.deleter.interrupt_space()                   # F5.6 (A-39): liberar espaço nunca disputa o arquivo com a gravação
         try:
             rec.start()
         except Exception as e:
@@ -1250,8 +1237,10 @@ class Controller(QObject):
 
         return llm_done_text(dict(job))
 
-    def open_review(self, meeting_id: int) -> ReviewDialog:
+    def open_review(self, meeting_id: int) -> ReviewDialog | None:
         """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""
+        if self.deleter.refuses(meeting_id):                     # F5.6 (R-07): sendo excluída
+            return None
         dlg = self._reviews.get(meeting_id)
         if dlg is None:
             dlg = ReviewDialog(self.store, meeting_id, None, on_transcript=self.open_transcript, on_launch=self.launch_worker,
@@ -1299,15 +1288,17 @@ class Controller(QObject):
                 self.launch_worker(light=True)
 
     # ---------------------------------------------------------------- reunião aberta e Histórico (F5 L4)
-    def open_transcript(self, meeting_id: int) -> MeetingWindow:
+    def open_transcript(self, meeting_id: int) -> MeetingWindow | None:
         """Apelido de `open_meeting(mid, "transcricao")` (Q6: a fila e a revisão continuam chamando)."""
         return self.open_meeting(meeting_id, "transcricao")
 
     def open_meeting(self, meeting_id: int, tab: str | None = None, t_ms: int | None = None, play: bool = False, *,
-                     focus: bool = False) -> MeetingWindow:
+                     focus: bool = False) -> MeetingWindow | None:
         """Abre (ou traz à frente) a janela da reunião; com `t_ms`, vai à fala de início mais perto, rola até ela e, com
         `play`, toca dela; senão mostra a aba `tab`. `focus` pede à plataforma para trazer a janela à frente (clique no
         balão: o app está em segundo plano)."""
+        if self.deleter.refuses(meeting_id):                     # F5.6 (R-07): sendo excluída (Histórico, fila, aviso)
+            return None
         win = self._meetings.get(meeting_id)
         log.info("reunião %s %s (aba %s%s%s)", meeting_id, "aberta" if win is None else "trazida à frente", tab or "padrão",
                  f", em {t_ms} ms" if t_ms is not None else "", ", tocando" if play else "")
@@ -1344,7 +1335,8 @@ class Controller(QObject):
         win = self._history
         log.info("histórico aberto%s", " pelo atalho da busca" if focus_search else "")
         if win is None:
-            win = HistoryWindow(self.store, on_open=self._open_from_history, on_edited=self.on_edited, on_answer=self._history_answered)
+            win = HistoryWindow(self.store, on_open=self.deleter.open_from_history, on_edited=self.on_edited,
+                                on_answer=self._history_answered, on_delete=self.deleter.request)
             self._history = win
         win.show()
         win.raise_()
@@ -1354,12 +1346,6 @@ class Controller(QObject):
                 self.platform.bring_to_front(int(win.winId()))
             win.page.focus_search()
         return win
-
-    def _open_from_history(self, meeting_id: int, tab: str | None = None, t_ms: int | None = None, play: bool = False) -> None:
-        if self.store.get_meeting(meeting_id) is None:
-            self.notify("Esta reunião não existe mais.")
-            return
-        self.open_meeting(meeting_id, tab, t_ms, play)
 
     def _pause_player(self, notice: str) -> None:
         """R7-01: o som que o player toca não entra no teste do warm-up: pausa, com o aviso na barra do player e no log (sem

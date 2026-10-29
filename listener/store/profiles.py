@@ -131,6 +131,14 @@ class ProfilesRepo:
             self.recompute_centroid(profile_id)
         return n
 
+    def unlink_meeting(self, meeting_id: int) -> int:
+        """F5.6 (A-34): a reunião excluída deixa as amostras dela nos perfis (o vetor, a fonte, o perfil e o `meeting_id`, que o
+        piso nunca reaproveita), sem o vínculo de voz e de fala: os ids de `clusters` e `segments` voltam em outras reuniões, e
+        a invalidação de uma voz nova (`invalidate_cluster_embeddings`) não pode tirar do centroide uma amostra antiga. Nada
+        aqui toca `voice_profiles`: centroide e `n_samples` ficam iguais."""
+        return self.core.execute("UPDATE voice_embeddings SET cluster_id = NULL, segment_id = NULL WHERE meeting_id = ? "
+                                 "AND (cluster_id IS NOT NULL OR segment_id IS NOT NULL)", (meeting_id,))
+
     def embeddings(self, profile_id: int, sources: tuple[str, ...] | None = None) -> list[tuple[int, np.ndarray, str]]:
         if sources:
             marks = ",".join("?" * len(sources))

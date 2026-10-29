@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from ..log import get_logger
 from ..model import EventType, MeetingStatus, StoreRole
+from . import floors, space
 from .actions import ActionsRepo
 from .audio import AudioRepo, ChannelStats, ChunkData, ChunkMeta, ContinuityIssue
 from .captions import CaptionsRepo
@@ -54,6 +55,8 @@ class Store:
         self.chat = ChatRepo(self.core)
         self.captions = CaptionsRepo(self.core)
         self.rag = RagRepo(self.core)
+        if (self.base_dir / LEGACY_AUDIO_FILE).exists() and LEGACY_AUDIO_FILE not in space.pending(self.core):
+            self.core.attach(LEGACY_AUDIO_FILE)       # F5.6 (R-02): pendente, o VACUUM inteiro da abertura o pega sem anexo
 
     @classmethod
     def open_readonly(cls, base_dir: str | Path) -> Self:
@@ -206,16 +209,38 @@ class Store:
             n += 1
         return n
 
+    def meeting_audio_file(self, meeting_id: int) -> str | None:
+        """O arquivo de áudio da reunião (o legado para a anterior à v3), só se existe na pasta: anexar um ausente, no papel do
+        app, o criaria vazio (F5.6, A-35)."""
+        m = self.get_meeting(meeting_id)
+        if m is None:
+            return None
+        file = m.get("audio_file") or LEGACY_AUDIO_FILE
+        return file if (self.base_dir / file).exists() else None
+
     def delete_meeting(self, meeting_id: int) -> None:
-        """Pedaços primeiro, depois a linha: uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão. As chamadas de
-        LLM (glossário, resumo parcial ao vivo) ficam sem a reunião e sem o conteúdo: o custo do mês continua certo (F4)."""
-        self.core.audio_schema_for_meeting(meeting_id)     # anexa fora da transação
+        """Excluir (Cancelar a gravação; F5.6, o Histórico), em duas transações (A-35). Primeiro os pedaços de áudio, com
+        commit, numa conexão própria com o arquivo (`space.delete_chunks`), e o arquivo na lista do espaço a liberar; depois,
+        no main: as revisões da reunião (A-33), as amostras de voz dela sem o vínculo de voz e fala (A-34), as chamadas de LLM
+        sem a reunião e sem o conteúdo (o custo do mês fica), os pisos de id (A-34) e a linha, cuja cascata leva o resto
+        (A-32). Uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão, e excluir de novo termina. O log leva só ids
+        e contagens (A-46)."""
+        file = self.meeting_audio_file(meeting_id)
+        chunks = 0
+        if file is not None:
+            space.add_pending(self.core, file)
+            chunks = space.delete_chunks(self.base_dir / file, meeting_id)
         with self.core.transaction():
-            chunks = self.audio.delete_chunks(meeting_id)
-            self.llm_calls.detach_meeting(meeting_id)
+            rows = self.meetings.cascade_counts(meeting_id)
+            rows["revisions"] = self.meetings.delete_revisions(meeting_id)
+            rows["voice_embeddings_unlinked"] = self.profiles.unlink_meeting(meeting_id)
+            rows["llm_calls_detached"] = self.llm_calls.detach_meeting(meeting_id)
+            for table, key in (floors.MEETINGS, floors.JOBS):
+                floors.raise_floor(self.core, table, key)
             self.meetings.delete_meeting_row(meeting_id)
         self.core.forget_meeting(meeting_id)
-        log.info("reunião %s apagada pelo usuário (%s pedaço(s) de áudio)", meeting_id, chunks)
+        log.info("reunião %s excluída: %d pedaço(s) de áudio; linhas: %s", meeting_id, chunks,
+                 ", ".join(f"{t} {n}" for t, n in rows.items() if n) or "nenhuma")
 
     # ---------------------------------------------------------------- pedaços
     def insert_chunk(self, meeting_id: int, channel: str, idx: int, t_start_ms: int, frames: int,

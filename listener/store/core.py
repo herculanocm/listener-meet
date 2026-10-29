@@ -7,7 +7,7 @@ abre tudo com `mode=ro` (`--check`).
 
 Arquivos: `listener.db` (main) e um `listener-audio-AAAA-MM.db` por mês de `meetings.started_at` (D-039); o
 `listener-audio.db` da F1 continua sendo lido pelas reuniões antigas e nunca é apagado nem renomeado (CP3).
-Cada arquivo de áudio tem `schema_migrations` e `audio_chunks` próprios, `page_size` de 32 KB e WAL.
+Cada arquivo de áudio tem `schema_migrations` e `audio_chunks` próprios, páginas de 32 KB e WAL; os novos (F5.6), `auto_vacuum` incremental.
 """
 from __future__ import annotations
 
@@ -26,16 +26,17 @@ import numpy as np
 
 from ..log import get_logger
 from ..model import StoreRole
-from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_SCHEMA_VERSION, CHAT_V8_INDEXES, CHAT_V8_TABLE, MAIN_DATE_COLUMNS,
-                     MAIN_MIGRATIONS, MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS, MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES,
-                     MAIN_V7_COLUMNS, MAIN_V7_INDEXES, MAIN_V8_RAG, RAG_TABLES, RAG_TRIGGERS)
+from .attached import AttachedFiles
+from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_NEW_FILE, AUDIO_PAGE_SIZE, AUDIO_SCHEMA_VERSION, CHAT_V8_INDEXES,
+                     CHAT_V8_TABLE, FTS5_MISSING, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS, MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS,
+                     MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES, MAIN_V7_COLUMNS, MAIN_V7_INDEXES, MAIN_V8_RAG, RAG_TABLES,
+                     RAG_TRIGGERS, fts5_error)
 
 log = get_logger("store")
 
 MAIN_FILE = "listener.db"
 LEGACY_AUDIO_FILE = "listener-audio.db"
 AUDIO_FILE_PREFIX = "listener-audio-"
-AUDIO_PAGE_SIZE = 32768          # blobs de ~1,5 MB: 2x no INSERT e no blobopen (M-19)
 WAL_AUTOCHECKPOINT = 4000        # páginas; vale para a conexão inteira (o main é pequeno)
 MAX_ATTACHED = 8                 # anexos simultâneos por conexão; os menos usados são desanexados
 VACUUM_MAX_BYTES = 100_000_000   # só arquivos legados pequenos recebem VACUUM para mudar o page_size
@@ -178,26 +179,6 @@ def _main_v7_live(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
         conn.execute(sql.format(s=schema))
 
 
-FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
-                "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
-
-
-def fts5_error() -> str | None:
-    """None quando o SQLite deste Python tem FTS5 com `unicode61 remove_diacritics 2`; senão a mensagem do SQLite. Testado
-    numa conexão à parte em memória: a migração não começa pela metade."""
-    try:
-        probe = sqlite3.connect(":memory:", uri=True)          # `uri` como toda conexão do Store (R2-02)
-    except sqlite3.Error as e:
-        return str(e)
-    try:
-        probe.execute("CREATE VIRTUAL TABLE probe USING fts5(x, tokenize='unicode61 remove_diacritics 2')")
-    except sqlite3.Error as e:
-        return str(e)
-    finally:
-        probe.close()
-    return None
-
-
 def _free_name(conn: sqlite3.Connection, schema: str, base: str) -> str:
     """`rag_chunks_v1`, ou `rag_chunks_v1_2`... se o nome já existir (uma guarda anterior)."""
     name, n = f"{base}_v1", 1
@@ -284,6 +265,7 @@ class Core:
         self._lock = threading.Lock()
         self._ready_files: set[str] = set()          # arquivos de áudio já migrados ou verificados neste processo
         self._meeting_files: dict[int, str] = {}
+        self.files = AttachedFiles()                  # F5.6 (R-02): os anexos de áudio deste processo, por arquivo
         self._closed = False
         self.main_version = 0
         if role == StoreRole.APP:
@@ -304,9 +286,7 @@ class Core:
                                    "abra o app uma vez para migrar")
         current = self.current_audio_file()
         if role == StoreRole.APP or (self.base_dir / current).exists():
-            self.attach(current)
-        if (self.base_dir / LEGACY_AUDIO_FILE).exists():
-            self.attach(LEGACY_AUDIO_FILE)
+            self.attach(current)                     # o legado, o `Store` anexa (F5.6: só sem o VACUUM pendente, R-02)
 
     @property
     def readonly(self) -> bool:
@@ -349,6 +329,7 @@ class Core:
         if c is None:
             return
         self._local.conn = None
+        self.files.detached(self._local.attached.values())
         self._local.attached = OrderedDict()
         with self._lock, suppress(ValueError):
             self._conns.remove(c)
@@ -368,6 +349,7 @@ class Core:
                     c.execute("PRAGMA wal_checkpoint(PASSIVE)")
             with suppress(sqlite3.Error):
                 c.close()
+        self.files.clear()
         self._local.conn = None
         self._local.attached = OrderedDict()
 
@@ -459,8 +441,8 @@ class Core:
         if self.role != StoreRole.APP:
             self._check_audio(c, schema, path)
             return
-        if new_file:
-            c.execute(f"PRAGMA {schema}.page_size = {AUDIO_PAGE_SIZE}")     # antes da primeira tabela
+        for sql in AUDIO_NEW_FILE if new_file else ():                  # antes da primeira tabela (F5.6: o auto_vacuum)
+            c.execute(sql.format(s=schema))
         c.execute(f"CREATE TABLE IF NOT EXISTS {schema}.schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
         current = self._version(c, schema)
         if current > AUDIO_SCHEMA_VERSION:
@@ -519,9 +501,8 @@ class Core:
         audio_ro = self.role != StoreRole.APP          # worker e --check nunca escrevem no áudio
         if audio_ro and new_file:
             raise FileNotFoundError(f"arquivo de áudio ausente: {path}")
-        while len(attached) >= MAX_ATTACHED and not self._local.in_tx:
-            old, _ = attached.popitem(last=False)
-            c.execute(f"DETACH DATABASE {old}")
+        self.release_audio(MAX_ATTACHED - 1)
+        self.files.attaching(file_name)               # F5.6 (R-02): conta e interrompe o VACUUM inteiro deste arquivo
         if audio_ro:
             c.execute(f"ATTACH DATABASE ? AS {schema}", (f"{path.as_uri()}?mode=ro",))
         else:
@@ -538,6 +519,16 @@ class Core:
         elif self.role == StoreRole.WORKER:
             c.execute(f"PRAGMA {schema}.mmap_size = {AUDIO_MMAP_BYTES}")
         return schema
+
+    def release_audio(self, keep: int = 0) -> None:
+        """Desanexa desta conexão os arquivos de áudio menos usados até sobrarem `keep` (nunca no meio de uma transação). F5.6:
+        o worker ocioso solta os mapas, que impedem o arquivo de encolher (R-01), e um arquivo sem anexo pode receber o
+        VACUUM inteiro (R-02)."""
+        c, attached = self._local.conn, self._local.attached
+        while c is not None and len(attached) > keep and not self._local.in_tx:
+            schema, file_name = attached.popitem(last=False)
+            c.execute(f"DETACH DATABASE {schema}")
+            self.files.detached([file_name])
 
     def audio_schema_for_meeting(self, meeting_id: int) -> str | None:
         """Schema do arquivo de áudio da reunião, anexando se preciso; None quando a reunião não tem arquivo."""

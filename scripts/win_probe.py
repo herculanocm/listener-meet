@@ -35,7 +35,7 @@ shots   janelas reais em (-10000, -10000) com WA_ShowWithoutActivating: o DPI ve
         (com WA_DontShowOnScreen os diálogos saem em DPR 1; a plataforma offscreen não tem as fontes do Windows). F5.4
         (A-03, A-21): `--escuro` força o esquema escuro no Qt (o Windows segue como está) e `--dpr1` desliga a escala
         (`QT_ENABLE_HIGHDPI_SCALING=0` antes do `QApplication`); o tema é aplicado como no app. `cortados` e `pequenos`
-        estão em `scripts/probe_ui.py`.
+        estão em `scripts/probe_ui.py`. F5.6: o Histórico com seleção, o menu e a confirmação em `scripts/probe_f56.py`.
 tempos  `scripts/probe_ui.py`: mediana de 7 aberturas por janela, em rodadas alternadas, e o menor de 3 processos; com
         `--base PASTA`, as rodadas alternam o código de antes (uma cópia, `git archive <commit> listener tests`) e o atual.
 player  a reunião é silêncio (nada audível) em pedaços de 60 s; o primeiro som roda em processos novos, um frio e um com o
@@ -56,6 +56,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no topo (o Qt entra na chamada)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -83,8 +84,7 @@ def silent_meeting(store, seconds: int, chunk_s: int = 60) -> int:
 
 
 def discard(w) -> None:
-    """R-06: a janela da foto é apagada, não só fechada: sem dono e viva até a derrubada do PySide, seria destruída fora de
-    ordem na saída (0xC0000409)."""
+    """R-06: a janela da foto é apagada, não só fechada (sem dono e viva até o fim, sairia fora de ordem: 0xC0000409)."""
     w.close()
     w.deleteLater()
 
@@ -463,14 +463,14 @@ def cmd_shots(args) -> None:
     settings_shots(store, p, shot, part, app)              # F5.4 L3: cada página, as sub-abas e o erro
     mid = store.create_meeting("Comitê de investimentos", "sistema", None, None)
     store.finish_meeting(mid, 1000)
-    su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []})
-    shot(su, "resumo-gravacao")
-    discard(su)
-    store.add_marker(mid, 754_000, "decisão: corte de 8 %")
-    su = SummaryDialog(store, mid, {"duration_s": 3725.0, "warnings": []})
-    shot(su, "resumo-gravacao-marcadores")
-    discard(su)
+    for seconds, name in ((1.0, "resumo-gravacao"), (3725.0, "resumo-gravacao-marcadores")):
+        if seconds > 1:
+            store.add_marker(mid, 754_000, "decisão: corte de 8 %")
+        su = SummaryDialog(store, mid, {"duration_s": seconds, "warnings": []})
+        shot(su, name)
+        discard(su)
     l4_shots(store, p, shot, tabs_of, app, Path(tempfile.mkdtemp(prefix="listener-shots-l4-")))   # F5.4 L4
+    f56_shots(store, shot, app)                           # F5.6 L3: o Histórico com seleção, o menu e a confirmação
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")

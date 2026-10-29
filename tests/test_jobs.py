@@ -109,6 +109,17 @@ def test_progress_and_artifacts_roundtrip(store):
     assert store.jobs.get(j) is None
 
 
+def test_a_job_whose_row_is_gone_counts_as_cancelled(store):
+    """F5.6 (A-37, F5A-17): o runner da reunião excluída no meio do job acha a linha sumida no próximo ponto de controle e
+    para, em vez de seguir gravando (antes, a linha ausente lia "sem cancelamento")."""
+    mid = _meeting(store)
+    j = store.jobs.enqueue(mid)
+    store.jobs.claim(pid=1, now=_at(0))
+    assert not store.jobs.cancel_requested(j)
+    store.delete_meeting(mid)
+    assert store.jobs.get(j) is None and store.jobs.cancel_requested(j)
+
+
 def test_list_jobs_orders_active_first(store):
     mid = _meeting(store)
     done, pend = store.jobs.enqueue(mid), store.jobs.enqueue(mid)

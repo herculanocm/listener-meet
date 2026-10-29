@@ -244,7 +244,7 @@ class JobRunner(BaseJobRunner):
                 self.store.segments.delete_clusters(self.meeting_id, self.job_id)
                 self.store.jobs.delete_artifacts(self.job_id)
         self.store.jobs.finish(self.job_id, JobStatus.CANCELLED, timings=self._timings_dict())
-        self.store.add_event(self.meeting_id, None, EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})
+        self._event(EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})      # F5A-17: reunião excluída
         log.info("job %s cancelado pelo usuário na etapa %s", self.job_id, self._step)
         self.status = JobStatus.CANCELLED
         return JobStatus.CANCELLED

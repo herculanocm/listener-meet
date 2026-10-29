@@ -8,8 +8,15 @@ from ..config.language import whisper_code
 from ..log import get_logger
 from ..model import PIPELINE_JOB_KINDS, EventType, JobStatus, MeetingStatus
 from .core import Core, _now, audio_file_for, json_default
+from .floors import MEETINGS, next_id_sql
 
 log = get_logger("store.meetings")
+# F5.6 (A-32): o que a cascata da reunião leva (contadas para o log da exclusão, A-46); `job_artifacts` e `rag_vectors` vão
+# pela cascata das filhas e o `rag_fts` pelo gatilho
+CASCADE_TABLES = ("processing_jobs", "clusters", "segments", "summaries", "action_items", "captions", "markers", "events",
+                  "rag_chunks", "chat_messages")
+# A-33: as revisões das entidades da reunião (as de `voice_profile` e `person` ficam)
+REVISION_ENTITIES = (("cluster", "clusters"), ("summary", "summaries"), ("action_item", "action_items"))
 
 
 class MeetingRow(TypedDict, total=False):
@@ -112,11 +119,11 @@ class MeetingsRepo:
         started = _now()
         audio_file = audio_file_for(started)
         self.core.attach(audio_file)
-        return self.core.insert(
-            "INSERT INTO meetings(title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file, glossary, "
-            "expected_people_json, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)), audio_file,
-             glossary, expected_people_json, whisper_code(language) if language else None))
+        return self.core.insert(                         # F5.6 (A-34): o id acima do piso, nunca o de uma reunião excluída
+            "INSERT INTO meetings(id, title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file, "  # noqa: S608
+            f"glossary, expected_people_json, language) VALUES ({next_id_sql(MEETINGS[0])}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (MEETINGS[1], title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)),
+             audio_file, glossary, expected_people_json, whisper_code(language) if language else None))
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         rows = self.core.q("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
@@ -225,6 +232,22 @@ class MeetingsRepo:
 
     def delete_meeting_row(self, meeting_id: int) -> None:
         self.core.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+
+    def cascade_counts(self, meeting_id: int) -> dict[str, int]:
+        """F5.6 (A-46): quantas linhas a cascata da reunião vai levar, por tabela (só para o log: ids e contagens)."""
+        counts = {t: int(self.core.q(f"SELECT COUNT(*) FROM {t} WHERE meeting_id = ?", (meeting_id,))[0][0])  # noqa: S608
+                  for t in CASCADE_TABLES}
+        return {t: n for t, n in counts.items() if n}
+
+    def delete_revisions(self, meeting_id: int) -> int:
+        """F5.6 (A-33): as revisões da reunião e das vozes, atas e ações dela (esses ids, sem piso, voltam em outras reuniões:
+        o histórico apagado não pode grudar nelas); as do perfil de voz e da pessoa ficam. Antes da linha (depois, as filhas
+        já sumiram)."""
+        n = self.core.execute("DELETE FROM revisions WHERE entity = 'meeting' AND entity_id = ?", (meeting_id,))
+        for entity, table in REVISION_ENTITIES:          # nomes fixos deste módulo
+            n += self.core.execute(f"DELETE FROM revisions WHERE entity = ? AND entity_id IN (SELECT id FROM {table} WHERE meeting_id = ?)",  # noqa: S608
+                                   (entity, meeting_id))
+        return n
 
     # ---------------------------------------------------------------- markers, events, revisions
     def add_marker(self, meeting_id: int, t_ms: int, note: str = "") -> int:

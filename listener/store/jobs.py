@@ -25,6 +25,7 @@ from typing import Any, TypedDict, cast
 from ..log import get_logger
 from ..model import JobKind, JobStatus, JobStep
 from .core import Core, _now, json_default
+from .floors import JOBS, next_id_sql
 
 log = get_logger("store.jobs")
 
@@ -89,10 +90,18 @@ class JobsRepo:
         self.core = core
 
     # ---------------------------------------------------------------- criar e ler
+    def enqueue_if_meeting(self, meeting_id: int, kind: JobKind, params: dict[str, Any] | None = None) -> int | None:
+        """F5.6 (R-05): `enqueue` para os runners, que encadeiam jobs depois do seu: None, sem erro, com a reunião excluída."""
+        with self.core.transaction() as c:
+            if c.execute("SELECT 1 FROM meetings WHERE id = ?", (meeting_id,)).fetchone() is None:
+                return None
+            return self.enqueue(meeting_id, kind, params)
+
     def enqueue(self, meeting_id: int, kind: JobKind = JobKind.MEETING, params: dict[str, Any] | None = None) -> int:
         payload = json.dumps(params, ensure_ascii=False, default=json_default) if params else None
-        return self.core.insert("INSERT INTO processing_jobs(meeting_id, kind, status, params_json, created_at) VALUES (?, ?, ?, ?, ?)",
-                                (meeting_id, str(kind), JobStatus.PENDING, payload, _now()))
+        return self.core.insert(f"INSERT INTO processing_jobs(id, meeting_id, kind, status, params_json, created_at) VALUES "  # noqa: S608
+                                f"({next_id_sql(JOBS[0])}, ?, ?, ?, ?, ?)",
+                                (JOBS[1], meeting_id, str(kind), JobStatus.PENDING, payload, _now()))
 
     def get(self, job_id: int) -> JobRow | None:
         rows = self.core.q("SELECT * FROM processing_jobs WHERE id = ?", (job_id,))
@@ -121,14 +130,16 @@ class JobsRepo:
     def enqueue_index(self, meeting_id: int, reason: str, *, force: bool = False, delay_s: float | None = None,
                       now: str | None = None) -> int | None:
         """Um `index` pendente por reunião (F5A-04), numa transação (dois processos não duplicam): devolve o id do job novo ou
-        None quando já havia um pendente, que fica com a espera e o `force` deste pedido. O que está rodando não conta (pode
-        ter lido o estado antigo). Espera durável (R5-07): `delay_s` > 0 põe "não antes de" agora + `delay_s` (cada edição
-        renova); 0 tira a espera ("Concluir"); None não mexe na espera de quem já está na fila. `force` (o "reindexar" do
-        usuário) pede os vetores mesmo com os vetores automáticos desligados."""
+        None quando já havia um pendente, que fica com a espera e o `force` deste pedido (F5.6, R-05: ou quando a reunião foi
+        excluída). O que está rodando não conta (pode ter lido o estado antigo). Espera durável (R5-07): `delay_s` > 0 põe "não
+        antes de" agora + `delay_s` (cada edição renova); 0 tira a espera ("Concluir"); None não mexe na espera de quem já está
+        na fila. `force` (o "reindexar" do usuário) pede os vetores mesmo com os vetores automáticos desligados."""
         if reason not in INDEX_REASONS:
             raise ValueError(f"motivo de indexação desconhecido: {reason!r}")
         now = now or _now()
         with self.core.transaction() as c:
+            if c.execute("SELECT 1 FROM meetings WHERE id = ?", (meeting_id,)).fetchone() is None:
+                return None                               # R-05: a varredura não aborta por uma reunião excluída no meio
             row = c.execute("SELECT id, params_json FROM processing_jobs WHERE meeting_id = ? AND kind = ? AND status = ? ORDER BY id "
                             "LIMIT 1", (meeting_id, JobKind.INDEX, JobStatus.PENDING)).fetchone()
             if row is None:
@@ -137,9 +148,10 @@ class JobsRepo:
                     params["force"] = True
                 if delay_s is not None and delay_s > 0:
                     params["not_before"] = _after(now, delay_s)
-                new = c.execute("INSERT INTO processing_jobs(meeting_id, kind, status, params_json, created_at) VALUES (?, ?, ?, ?, ?) "
-                                "RETURNING id", (meeting_id, JobKind.INDEX, JobStatus.PENDING, json.dumps(params, ensure_ascii=False),
-                                                 now)).fetchone()
+                payload = json.dumps(params, ensure_ascii=False)
+                new = c.execute(f"INSERT INTO processing_jobs(id, meeting_id, kind, status, params_json, created_at) VALUES "  # noqa: S608
+                                f"({next_id_sql(JOBS[0])}, ?, ?, ?, ?, ?) RETURNING id",
+                                (JOBS[1], meeting_id, JobKind.INDEX, JobStatus.PENDING, payload, now)).fetchone()
                 return int(new[0])
             data = _params(row["params_json"])
             before = dict(data)
@@ -329,9 +341,16 @@ class JobsRepo:
         log.info("job %s: cancelamento pedido (%s; o worker atende entre as etapas)", job_id, row[0] if row is not None else "sumiu")
         return JobStatus(str(row[0])) if row is not None else None
 
+    def give_back(self, job_id: int, error: str) -> bool:
+        """F5.6 (R-04): o job que falhou fora do runner volta à fila com a tentativa contada (o claim o esgota em `MAX_ATTEMPTS`,
+        como o de um worker que morreu); só o que ainda roda ou está pausado: concluído, cancelado ou com erro fica como está."""
+        return self.core.execute("UPDATE processing_jobs SET status = ?, attempts = attempts + 1, worker_pid = NULL, error = ? "
+                                 "WHERE id = ? AND status IN (?, ?)", (JobStatus.PENDING, error, job_id, *HELD)) > 0
+
     def cancel_requested(self, job_id: int) -> bool:
+        """F5.6 (A-37, F5A-17): a linha que sumiu (a reunião foi excluída no meio do job) conta como cancelada."""
         rows = self.core.q("SELECT cancel_requested FROM processing_jobs WHERE id = ?", (job_id,))
-        return bool(rows and rows[0][0])
+        return not rows or bool(rows[0][0])
 
     def retry(self, job_id: int, reset_config: bool = False) -> bool:
         """"Tentar de novo": erro ou cancelado volta a `pendente` com as tentativas zeradas; artefatos ficam (retomada).

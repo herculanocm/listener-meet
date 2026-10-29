@@ -27,7 +27,10 @@ F5.3 (A-12): a resposta (ou a falha) de "Perguntar às reuniões" que chega com 
 F5.4 L4 (U-084, U-085, U-080): a busca com a lupa, a cobertura do índice na linha das abas, o Estado da reunião em selo e o
 custo à direita; o estado da busca num selo; nas ações abertas, a Ação estica e quebra a linha e o prazo vencido vai num selo
 vermelho; os trechos e as respostas em HTML por classes (cores dos tokens). As funções puras e o modelo da lista moram em
-`ui/history_data.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17)."""
+`ui/history_data.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17).
+F5.6 L3 (U-093, A-40, P-04): a lista em seleção múltipla, com "Excluir…" no menu de contexto, num botão sob a lista e na tecla
+Delete (só na tabela) e a confirmação única, em `ui/history_delete.py`; quem exclui é o controlador (`on_delete`). A montagem
+da aba "Perguntar às reuniões" mora em `ui/history_chat.py`."""
 from __future__ import annotations
 
 import functools
@@ -53,9 +56,11 @@ from ..rag import chat_global, citations, export
 from ..rag import search as rag_search
 from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed
 from .components import Badge, BadgeDelegate, HtmlView
+from .history_chat import build_chat_tab
 from .history_data import (ACTION_COLUMNS, DUE_COL, HIT_SCHEME, KIND_TAB, MEETING_COLUMNS, MEETING_SCHEME, PERIODS, STATUS_COL, STATUS_TEXT,
                            ActionLine, MeetingLine, MeetingsModel, coverage_text, fmt_int, friendly_reason, hit_link, hit_quote,
                            hit_target, is_overdue, load_actions, load_meetings, period_range, results_html, search_filters)
+from .history_delete import MeetingsDelete, OnDelete
 from .icons import tone_icon
 from .tasks import StreamTask, run_stream, run_task, wait_before_close
 from .theme import METRICS, TONE_ROLE, Tone, note, surface_tokens, tone
@@ -122,7 +127,7 @@ class LinkBrowser(HtmlView):
 class HistoryPage(QWidget):
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
                  on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
-                 parent: QWidget | None = None):
+                 on_delete: OnDelete | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
         self.on_open = on_open
@@ -181,7 +186,7 @@ class HistoryPage(QWidget):
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)    # F5.6 (A-40): várias, para excluir
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSortingEnabled(True)
         header = self.table.horizontalHeader()
@@ -199,10 +204,11 @@ class HistoryPage(QWidget):
         self.list_note = QLabel("")
         self.list_note.setTextFormat(Qt.TextFormat.PlainText)          # o filtro leva o nome da pessoa (R7-07)
         note(self.list_note)
+        self.deleting = MeetingsDelete(self, self.table, self.model, on_delete)     # F5.6 L3 (U-093): menu, Delete e botão
         meetings = QWidget()
         ml = QVBoxLayout(meetings)
         ml.addWidget(self.stack, 1)
-        ml.addWidget(self.list_note)
+        ml.addLayout(self.deleting.row(self.list_note))
 
         # --- Ações abertas ---
         self.action_table = QTableWidget(0, len(ACTION_COLUMNS))
@@ -235,44 +241,10 @@ class HistoryPage(QWidget):
         al.addWidget(self.action_table, 1)
         al.addLayout(arow)
 
-        # --- Perguntar às reuniões ---
-        self.threads = QComboBox()
-        self.threads.setToolTip("Conversas guardadas")
-        self.threads.activated.connect(self._thread_chosen)
-        self.btn_new = QPushButton("Nova conversa")
-        self.btn_new.clicked.connect(self.new_thread)
+        # --- Perguntar às reuniões (a montagem em `ui/history_chat.py`) ---
         self.chat_view = LinkBrowser(self._answer_actions)
-        self.chat_view.anchorClicked.connect(self._chat_link)
-        self.chat_note = QLabel("")
-        self.chat_note.setTextFormat(Qt.TextFormat.PlainText)
-        note(self.chat_note)
-        self.question = QLineEdit()
-        self.question.setPlaceholderText("Pergunte sobre todas as reuniões (as citações abrem a reunião no ponto)")
-        self.question.returnPressed.connect(self.ask)
-        self.btn_ask = QPushButton("Perguntar")
-        self.btn_ask.clicked.connect(self.ask)
-        self.btn_stop = QPushButton("Parar")
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.clicked.connect(self.stop_chat)
-        self.chat_status = QLabel("")
-        self.chat_status.setWordWrap(True)
-        self.chat_status.setTextFormat(Qt.TextFormat.PlainText)
-        note(self.chat_status)
-        trow = QHBoxLayout()
-        trow.addWidget(QLabel("Conversa"))
-        trow.addWidget(self.threads, 1)
-        trow.addWidget(self.btn_new)
-        qrow = QHBoxLayout()
-        qrow.addWidget(self.question, 1)
-        qrow.addWidget(self.btn_ask)
-        qrow.addWidget(self.btn_stop)
-        chat = QWidget()
-        cl = QVBoxLayout(chat)
-        cl.addLayout(trow)
-        cl.addWidget(self.chat_view, 1)
-        cl.addWidget(self.chat_note)
-        cl.addLayout(qrow)
-        cl.addWidget(self.chat_status)
+        (chat, self.threads, self.btn_new, self.chat_note, self.question, self.btn_ask, self.btn_stop,
+         self.chat_status) = build_chat_tab(self, self.chat_view)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(meetings, "Reuniões")
@@ -846,12 +818,12 @@ class HistoryWindow(QWidget):
 
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
                  on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
-                 parent: QWidget | None = None):
+                 on_delete: OnDelete | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.setWindowTitle("Histórico — listener-meet")
         self.setMinimumSize(640, 420)
-        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, on_answer=on_answer, today=today)
+        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, on_answer=on_answer, today=today, on_delete=on_delete)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(self.page)

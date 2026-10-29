@@ -4,13 +4,17 @@ ligado (P8). `meeting_id` nulo = chamada fora de reunião (glossário no warm-up
 from __future__ import annotations
 
 import json
+import sqlite3
 import zlib
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypedDict, cast
 
+from ..log import get_logger
 from ..model import LlmCallStatus
 from .core import Core, _now, json_default
+
+log = get_logger("store.llm_calls")
 
 
 class LlmCallRow(TypedDict, total=False):
@@ -73,6 +77,17 @@ class LlmCallsRepo:
         self.core = core
 
     def insert(self, call: LlmCallInsert, store_payloads: bool = True) -> int:
+        """A chamada com a reunião; F5.6 (A-37): a reunião excluída no meio da chamada (Histórico, Cancelar) dispara a chave
+        estrangeira e a chamada, que foi paga, fica sem ela e sem o conteúdo, para o custo do mês (como `detach_meeting`)."""
+        try:
+            return self._insert(call, store_payloads)
+        except sqlite3.IntegrityError:
+            if call.meeting_id is None or self.core.q("SELECT 1 FROM meetings WHERE id = ?", (call.meeting_id,)):
+                raise
+            log.info("chamada de LLM (%s) gravada sem a reunião %s, excluída no meio", call.task, call.meeting_id)
+            return self._insert(replace(call, meeting_id=None, request=None, response=None), store_payloads)
+
+    def _insert(self, call: LlmCallInsert, store_payloads: bool) -> int:
         return self.core.insert(
             "INSERT INTO llm_calls(meeting_id, job_id, task, provider, model, prompt_version, schema_hash, input_tokens, output_tokens, "
             "cached_tokens, audio_tokens, cost_usd, latency_ms, status, error, strategy, request_blob, response_blob, created_at) "

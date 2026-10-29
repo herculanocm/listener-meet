@@ -117,8 +117,9 @@ def test_rewrite_links_only_sent_lines_within_five_seconds_and_never_drops_a_cit
     again = citations.render_saved(text, cites, {5: ("Orçamento final", "2026-10-24")})
     assert '[<a href="listener://open?m=5&amp;t=723000&amp;seg=143">Orçamento final, 24/10, 12:03</a>]' in again
     assert "[Orçamento final, 24/10, 12:20]" in again and '[<a href="listener://open?m=5">Orçamento final, 24/10</a>]' in again
-    gone = citations.render_saved(text, cites, {})
-    assert "[R1 12:05] e [R1 12:20]; ver [R1]" in gone and "href" not in gone
+    gone = citations.render_saved(text, cites, {})                   # F5.6 (P-02): a reunião excluída, com o tempo e sem link
+    assert "[reunião excluída, 12:03] e [reunião excluída, 12:20]; ver [reunião excluída]" in gone and "href" not in gone
+    assert "outra [R9 01:00]" in gone                                    # o apelido que não confere segue como veio
     # histórico do prompt (R6-05): resolvidas legíveis entre parênteses; não resolvidas sem o apelido (o tempo, se havia)
     told = citations.history_text(text, cites, {5: ("Orçamento final", "2026-10-24")})
     assert told.startswith("Fechado (Orçamento final, 24/10, 12:03) e (Orçamento final, 24/10, 12:20); ver (Orçamento final, 24/10)")

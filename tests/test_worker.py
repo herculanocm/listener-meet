@@ -203,3 +203,68 @@ def test_light_worker_serves_only_llm_jobs_in_process(tmp_path, store, monkeypat
     assert "papel worker-llm" in text and f"job {llm}" in text
     assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0           # nada a fazer: sai
     assert aio._Stall.on_stall is worker.exit_stalled                                               # D-058: o vigia ligado
+
+
+def test_serve_goes_on_to_the_next_job_when_one_fails_outside_the_runner(store, monkeypatch):
+    """F5.6 (A-37, F5A-17): um job que levanta fora do runner (a reunião excluída no meio, o banco) volta à fila com a
+    tentativa contada (R-04) até o claim esgotá-lo; o worker segue para o próximo em vez de cair e, ao fim de cada job, solta
+    os arquivos de áudio (R-01: o mapa de memória do worker impede o arquivo de encolher no Windows)."""
+    from listener.model import JobKind
+    from listener.pipeline import worker
+
+    mid = store.create_meeting("Reunião", None, None, None)
+    store.finish_meeting(mid, 5000)
+    ran: list[int] = []
+    current = store.core.current_audio_file()
+    assert store.core.files.users(current) == 1                                  # anexado na abertura
+    assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    assert store.core.files.users(current) == 0                                  # R-01: a abertura do worker solta
+    first = store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"]})
+    second = store.jobs.enqueue(mid, JobKind.LLM, {"tasks": ["minutes"]})
+
+    def run(st: Store, job) -> JobStatus:
+        ran.append(int(job["id"]))
+        st.core.attach(current)                                                  # o job lê o áudio (o worker o mapeia)
+        if int(job["id"]) == first:
+            raise RuntimeError("FOREIGN KEY constraint failed")
+        st.jobs.finish(int(job["id"]), JobStatus.DONE)
+        return JobStatus.DONE
+
+    monkeypatch.setattr(worker, "run_light_job", run)
+    assert worker._serve(store, once=True, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    row = store.jobs.get(first)                                                  # passageira: volta à fila, tentativa contada
+    assert row["status"] == JobStatus.PENDING and row["attempts"] == 1 and "RuntimeError" in row["error"] and row["worker_pid"] is None
+    assert store.core.files.users(current) == 0                                  # R-01: solto ao fim do job (que o anexou)
+    assert worker._serve(store, once=False, idle_exit_s=0.0, poll_s=0.0, light=True) == 0
+    assert ran == [first, first, first, second]                                  # o claim esgota em MAX_ATTEMPTS
+    row = store.jobs.get(first)
+    assert row["status"] == JobStatus.ERROR and row["attempts"] == 3 and "tentativas esgotadas" in row["error"]
+    assert store.jobs.get(second)["status"] == JobStatus.DONE
+
+
+def test_a_failure_after_the_runner_never_overwrites_a_finished_job(store, monkeypatch):
+    """R-04: o pesado concluiu e o banco prende depois (a consulta do worker leve): o job segue concluído."""
+    import sqlite3
+
+    from listener.pipeline import worker
+
+    class DoneRunner:
+        def __init__(self, st: Store, _deps: object, job, **_kw: object) -> None:
+            self.st, self.job = st, job
+
+        def run(self) -> JobStatus:
+            self.st.jobs.finish(int(self.job["id"]), JobStatus.DONE)
+            return JobStatus.DONE
+
+    def locked(*_a: object, **_k: object) -> bool:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setenv("LISTENER_PIPELINE", "fake")
+    monkeypatch.setattr(worker, "JobRunner", DoneRunner)
+    monkeypatch.setattr(worker, "spawn_light_worker", locked)
+    mid = store.create_meeting("r", None, None, None)
+    store.finish_meeting(mid, 1000)
+    job = store.jobs.enqueue(mid)
+    assert worker._serve(store, once=False, idle_exit_s=0.0, poll_s=0.0, light=False) == 0
+    row = store.jobs.get(job)
+    assert row["status"] == JobStatus.DONE and row["attempts"] == 0 and row["error"] is None

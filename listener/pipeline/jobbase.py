@@ -5,6 +5,7 @@ respeita a lease da gravação (`respects_lease`) e o que acontece ao concluir, 
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 import traceback
@@ -93,9 +94,19 @@ class BaseJobRunner:
         if n:
             log.info("job %s: %d vínculo(s) com pessoa apagada limpo(s)", self.job_id, n)
 
+    def _event(self, type_: EventType, data: dict[str, Any]) -> None:
+        """O evento do job na reunião. F5.6 (A-37, F5A-17): a reunião excluída no meio do job dispara a chave estrangeira; aí
+        só o log (o job já sumiu com ela), sem derrubar o worker."""
+        try:
+            self.store.add_event(self.meeting_id, None, type_, data)
+        except sqlite3.IntegrityError:
+            if self.store.get_meeting(self.meeting_id) is not None:
+                raise
+            log.info("job %s: a reunião %s foi excluída; evento %s não gravado", self.job_id, self.meeting_id, type_)
+
     def _cancelled(self) -> JobStatus:
         self.store.jobs.finish(self.job_id, JobStatus.CANCELLED, timings=self._timings_dict())
-        self.store.add_event(self.meeting_id, None, EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})
+        self._event(EventType.JOB_CANCEL, {"job_id": self.job_id, "step": str(self._step or "")})
         log.info("job %s cancelado pelo usuário na etapa %s", self.job_id, self._step)
         self.status = JobStatus.CANCELLED
         return JobStatus.CANCELLED
@@ -104,8 +115,7 @@ class BaseJobRunner:
         last = self._error_text(e)
         log.error("job %s falhou na etapa %s%s", self.job_id, self._step, " (erro permanente)" if permanent else "", exc_info=e)
         self.store.jobs.finish(self.job_id, JobStatus.ERROR, error=last, timings=self._timings_dict(), count_attempt=not permanent)
-        self.store.add_event(self.meeting_id, None, EventType.JOB_ERROR,
-                             {"job_id": self.job_id, "step": str(self._step or ""), "error": last, "permanent": permanent})
+        self._event(EventType.JOB_ERROR, {"job_id": self.job_id, "step": str(self._step or ""), "error": last, "permanent": permanent})
         self.status = JobStatus.ERROR
         return JobStatus.ERROR
 
@@ -173,7 +183,7 @@ class BaseJobRunner:
         if self._step != step:
             self._step = step
             self.store.jobs.set_progress(self.job_id, step, self._fraction(0.0), self._timings_dict())
-            self.store.add_event(self.meeting_id, None, EventType.JOB_STEP, {"job_id": self.job_id, "step": str(step)})
+            self._event(EventType.JOB_STEP, {"job_id": self.job_id, "step": str(step)})
 
     def _progress(self, step: JobStep, fraction: float) -> None:
         self.store.jobs.set_progress(self.job_id, step, self._fraction(fraction), self._timings_dict())

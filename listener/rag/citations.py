@@ -4,7 +4,8 @@ várias num colchete separadas por `;` ou `,` (`[R1 12:03; R2 05:10]`, `[R1 12:0
 entre o apelido e o tempo e o intervalo `12:03-12:40` (vale o começo). O tempo só casa com as linhas ENVIADAS daquela
 reunião, até 5 s (a mais próxima): casou, vira o link `listener://open?m=<reunião>&t=<ms>&seg=<segmento>` (o tempo navega; o
 segmento é só dica, F5A-06) com um texto legível (título curto, data dd/mm e mm:ss); não casou, fica o texto legível sem
-link; apelido desconhecido ou reunião apagada ficam como vieram. Nada some.
+link; apelido desconhecido fica como veio. Nada some. F5.6 (P-02): a reunião excluída no Histórico vira "reunião excluída",
+sem link, no redesenho da conversa e na cópia (o histórico do prompt segue só com o tempo).
 
 `rewrite` devolve o HTML e as citações `[{alias, meeting_id, t_ms, segment_id, cited_ms}]` que `chat_messages` guarda (`t_ms`
 é o da linha casada; nulo = sem link de tempo; `cited_ms` é o que a LLM escreveu). `render_saved` redesenha a conversa a
@@ -23,6 +24,7 @@ from ..llm.prompts.common import stamp
 
 MAX_DISTANCE_MS = 5000
 TITLE_CHARS = 32
+GONE_LABEL = "reunião excluída"      # F5.6 (P-02): a citação de uma reunião que não existe mais (o piso nunca reaproveita o id)
 SCHEME = "listener"
 BRACKET_RE = re.compile(r"\[\s*([Rr]\d{1,3}\b[^\[\]\n]{0,160}?)\s*\]")
 TOKEN_RE = re.compile(r"\s*(?:(?P<alias>[Rr]\d{1,3})\b|(?P<time>(?:\d{1,2}:)?\d{1,3}:\d{2})\b|(?P<sep>[;,])|(?P<dash>[-\u2013\u2014]))\s*")
@@ -242,11 +244,15 @@ def _saved(saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str 
 def render_saved(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mapping[int, tuple[str | None, str | None]], *,
                  as_html: bool = True) -> str:
     """Redesenha uma resposta guardada a partir das citações gravadas, sem recasar segmentos, com o título e a data atuais
-    (`meetings`: id -> (título, AAAA-MM-DD)); reunião apagada ou citação que não confere ficam como vieram."""
+    (`meetings`: id -> (título, AAAA-MM-DD)); a citação que não confere fica como veio e a da reunião que não está em
+    `meetings` (excluída) vira "reunião excluída", com o tempo e sem link (F5.6, P-02)."""
     base = _saved(saved, meetings)
 
     def resolve(item: CitedItem) -> tuple[str, str | None, Citation]:
         label, href, cite = base(item)
+        if label is None and cite.get("alias") == item.alias and cite.get("meeting_id") is not None:
+            t = cite.get("t_ms") if cite.get("t_ms") is not None else item.cited_ms
+            label = GONE_LABEL if t is None else f"{GONE_LABEL}, {stamp(int(t))}"
         return (label if label is not None else item.raw), href, cite
 
     return _apply(text, resolve, as_html)[0]
@@ -272,5 +278,5 @@ def saved_meeting_ids(saved: Sequence[Mapping[str, Any]]) -> set[int]:
     return {int(c["meeting_id"]) for c in saved if c.get("meeting_id") is not None}
 
 
-__all__ = ["MAX_DISTANCE_MS", "CitedItem", "OpenLink", "SentLine", "Target", "history_text", "meeting_label", "nearest", "open_link",
-           "parse_bracket", "parse_open_link", "render_saved", "rewrite", "saved_meeting_ids", "short_title", "to_ms"]
+__all__ = ["GONE_LABEL", "MAX_DISTANCE_MS", "CitedItem", "OpenLink", "SentLine", "Target", "history_text", "meeting_label", "nearest",
+           "open_link", "parse_bracket", "parse_open_link", "render_saved", "rewrite", "saved_meeting_ids", "short_title", "to_ms"]

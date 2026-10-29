@@ -122,8 +122,8 @@ def enqueue_llm_job(store: Store, meeting_id: int, tasks: Sequence[JobStep | str
         return None
     names = [str(t) for t in tasks]
     params: dict[str, Any] = {"tasks": names, "parent_job_id": int(parent), "auto": bool(auto)}
-    job_id = store.jobs.enqueue(meeting_id, JobKind.LLM, params)
-    log.info("reunião %s: job llm %s enfileirado (%s)", meeting_id, job_id, ", ".join(names))
+    job_id = store.jobs.enqueue_if_meeting(meeting_id, JobKind.LLM, params)           # F5.6 (R-05): excluída, None
+    log.info("reunião %s: job llm %s (%s)", meeting_id, f"{job_id} enfileirado" if job_id else "não criado: excluída", ", ".join(names))
     return job_id
 
 

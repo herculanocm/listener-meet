@@ -18,7 +18,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -183,14 +183,6 @@ def render_markdown(data: Mapping[str, Any], language: str = "pt-BR") -> str:
     return "\n".join(out).strip() + "\n"
 
 
-def _insert_call(store: Store, call: LlmCallInsert, store_payloads: bool) -> int:
-    """`llm_calls` com a reunião; apagada no meio (Cancelar), sem ela: a chamada foi paga e entra no custo do mês."""
-    try:
-        return store.llm_calls.insert(call, store_payloads=store_payloads)
-    except sqlite3.IntegrityError:
-        return store.llm_calls.insert(replace(call, meeting_id=None), store_payloads=store_payloads)
-
-
 def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None = None,
                 cancelled: Callable[[], bool] | None = None) -> PartialResult:
     """Um parcial (síncrono: roda numa `StreamTask`). `provider` só nos testes; senão o ativo, com a chave lida agora."""
@@ -253,9 +245,9 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     payload_req = [{"role": str(m.role), "text": m.text} for m in req.messages] if cfg.store_payloads else None
     if was_cancelled or err is not None or comp is None:
         message = "cancelado" if was_cancelled else redact.GLOBAL.redact(str(err) if err is not None else "sem resposta")
-        call_id = _insert_call(store, LlmCallInsert(call_mid, None, str(LlmTask.PARTIAL), cfg.provider_id, cfg.fast_model, version, digest,
-                                                    0, 0, 0, 0, None, 0, LlmCallStatus.ERROR, message, "direct", payload_req, None),
-                               cfg.store_payloads)
+        call_id = store.llm_calls.insert(LlmCallInsert(call_mid, None, str(LlmTask.PARTIAL), cfg.provider_id, cfg.fast_model, version,
+                                                       digest, 0, 0, 0, 0, None, 0, LlmCallStatus.ERROR, message, "direct", payload_req,
+                                                       None), cfg.store_payloads)
         if was_cancelled:
             return PartialResult(Outcome.CANCELLED, meeting_id, call_id=call_id)
         log.warning("reunião %s: resumo parcial falhou: %s", meeting_id, message)
@@ -264,7 +256,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     u = comp.usage
     cost = cost_usd(u, price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, comp.model))
     resp = {"text": comp.text, "data": comp.data, "finish": comp.finish} if cfg.store_payloads else None
-    call_id = _insert_call(store, LlmCallInsert(call_mid, None, str(LlmTask.PARTIAL), cfg.provider_id, comp.model, version, digest,
+    call_id = store.llm_calls.insert(LlmCallInsert(call_mid, None, str(LlmTask.PARTIAL), cfg.provider_id, comp.model, version, digest,
                                                 u.input_tokens, u.output_tokens, u.cached_tokens, u.audio_tokens, cost, comp.latency_ms,
                                                 LlmCallStatus.OK, None, "direct", payload_req, resp), cfg.store_payloads)
     if not alive:

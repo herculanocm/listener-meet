@@ -291,8 +291,9 @@ class SegmentsRepo:
     # ---------------------------------------------------------------- troca atômica (reprocessar, item 12)
     def swap_job(self, meeting_id: int, new_job_id: int, status: MeetingStatus = MeetingStatus.PROCESSED,
                  downgrade_reviewed: bool = False) -> dict[str, int]:
-        """Numa só transação: solta os `voice_embeddings` dos segmentos antigos (`segment_id = NULL`), apaga clusters e
-        segmentos dos jobs anteriores (só linhas de job: `job_id` nulo fica, R2-22) e atualiza o status da reunião, sem
+        """Numa só transação: solta os `voice_embeddings` dos segmentos antigos (`segment_id = NULL`), apaga clusters (F5.6,
+        R-09: e as revisões deles, cujo id volta em outra voz) e segmentos dos jobs anteriores (só linhas de job: `job_id`
+        nulo fica, R2-22) e atualiza o status da reunião, sem
         rebaixar `revisada` salvo quando o job novo deixou vozes pendentes (R2-11). Só é chamado no último passo de um
         reprocessamento disparado pelo usuário (CP3)."""
         with self.core.transaction():
@@ -315,6 +316,8 @@ class SegmentsRepo:
                     relinked += self.core.execute("UPDATE action_items SET segment_id = ? WHERE id = ?", (int(near[0]["id"]), int(a["id"])))
             segs = self.core.execute("DELETE FROM segments WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
                                      (meeting_id, new_job_id))
+            self.core.execute("DELETE FROM revisions WHERE entity = 'cluster' AND entity_id IN (SELECT id FROM clusters "   # F5.6 R-09
+                              "WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?)", (meeting_id, new_job_id))
             clus = self.core.execute("DELETE FROM clusters WHERE meeting_id = ? AND job_id IS NOT NULL AND job_id != ?",
                                      (meeting_id, new_job_id))
             self.core.execute("UPDATE meetings SET status = ? WHERE id = ? AND (status != ? OR ?)",

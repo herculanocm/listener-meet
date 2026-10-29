@@ -14,6 +14,8 @@ versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migraçõe
 """
 from __future__ import annotations
 
+import sqlite3
+
 MAIN_V1: tuple[str, ...] = (
     ("CREATE TABLE IF NOT EXISTS settings ("
     "  key TEXT PRIMARY KEY, value TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'now', updated_at TEXT NOT NULL)"),
@@ -191,6 +193,31 @@ CHAT_V8_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_chat_meeting ON chat_messages(meeting_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_chat_thread ON chat_messages(thread_id, id)",
 )
+
+FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
+                "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
+
+
+def fts5_error() -> str | None:
+    """None quando o SQLite deste Python tem FTS5 com `unicode61 remove_diacritics 2`; senão a mensagem do SQLite. Testado
+    numa conexão à parte em memória: a migração não começa pela metade."""
+    try:
+        probe = sqlite3.connect(":memory:", uri=True)          # `uri` como toda conexão do Store (R2-02)
+    except sqlite3.Error as e:
+        return str(e)
+    try:
+        probe.execute("CREATE VIRTUAL TABLE probe USING fts5(x, tokenize='unicode61 remove_diacritics 2')")
+    except sqlite3.Error as e:
+        return str(e)
+    finally:
+        probe.close()
+    return None
+
+
+AUDIO_PAGE_SIZE = 32768          # blobs de ~1,5 MB: 2x no INSERT e no blobopen (M-19)
+# arquivo de áudio novo, antes da primeira tabela: páginas de 32 KB (M-19) e, F5.6 (A-38), `auto_vacuum` incremental (excluir
+# uma reunião devolve o espaço em passos curtos, sem o VACUUM inteiro que travaria a gravação do mês); sem migração (A-47)
+AUDIO_NEW_FILE: tuple[str, ...] = (f"PRAGMA {{s}}.page_size = {AUDIO_PAGE_SIZE}", "PRAGMA {s}.auto_vacuum = INCREMENTAL")
 
 AUDIO_V1: tuple[str, ...] = (
     ("CREATE TABLE IF NOT EXISTS {s}.audio_chunks ("

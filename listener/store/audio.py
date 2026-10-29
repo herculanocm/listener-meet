@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ..log import get_logger
 from .core import Core, _now
+from .space import open_audio
 
 if TYPE_CHECKING:
     from ..capture.sinks import EncodedChunk
@@ -138,26 +140,21 @@ class AudioRepo:
             prev_end = c["t_start_ms"] + round(c["frames"] * 1000 / c["sample_rate"])
         return issues
 
-    def delete_chunks(self, meeting_id: int) -> int:
-        s = self._schema(meeting_id)
-        if s is None:
-            return 0
-        return self.core.execute(f"DELETE FROM {s}.audio_chunks WHERE meeting_id = ?", (meeting_id,))  # noqa: S608
-
     def orphan_report(self) -> dict[str, list[int]]:
-        """Por arquivo de áudio, reuniões com pedaços mas sem linha em `meetings`. Só reporta (CP3)."""
+        """Por arquivo de áudio, reuniões com pedaços mas sem linha em `meetings`. Só reporta (CP3). F5.6 (R-02): cada arquivo
+        é lido numa conexão própria, sem anexar (a varredura da abertura deixava todos os meses anexados na conexão da
+        interface, e um arquivo anexado não pode receber o VACUUM inteiro)."""
+        known = {int(r[0]) for r in self.core.q("SELECT id FROM main.meetings")}
         out: dict[str, list[int]] = {}
         for file in self.core.audio_files():
             try:
-                s = self.core.attach(file)
-                rows = self.core.q(f"SELECT DISTINCT meeting_id FROM {s}.audio_chunks "  # noqa: S608
-                                   "WHERE meeting_id NOT IN (SELECT id FROM main.meetings) ORDER BY meeting_id")
-            except (sqlite3.Error, RuntimeError, FileNotFoundError) as e:
+                with closing(open_audio(self.core.base_dir / file, readonly=self.core.readonly)) as c:
+                    found = {int(r[0]) for r in c.execute("SELECT DISTINCT meeting_id FROM audio_chunks")}
+            except sqlite3.Error as e:
                 log.warning("não consegui varrer %s: %s", file, e)
                 continue
-            ids = [int(r["meeting_id"]) for r in rows]
-            if ids:
-                out[file] = ids
+            if found - known:
+                out[file] = sorted(found - known)
         return out
 
     def db_sizes(self) -> dict[str, Any]:

@@ -12,6 +12,10 @@ não deixam um worker solto, F5A-16). O leve não sai ocioso enquanto houver `in
 F5.1: no leve, o embedder local calcula com 2 threads (A-03) e o log de abertura traz as versões de onnxruntime e tokenizers.
 D-058: o vigia dos laços do asyncio (`aio.watched`) fica ligado no worker: uma chamada presa em código nativo por
 `aio.STALL_S` faz o worker gravar o motivo e o traceback e sair; o heartbeat vence, o app relança e o job é retomado.
+F5.6 (A-37, F5A-17): cada job roda protegido (`_guarded`): uma falha fora do runner (a reunião excluída no meio do job, o
+banco) volta à fila com a tentativa contada (o claim esgota, R-04) e o worker segue para o próximo, em vez de cair. R-01: ao
+fim de cada job o worker solta os arquivos de áudio (o mapa de memória de 256 MB impede, no Windows, que o arquivo encolha
+depois de uma exclusão); o próximo job os anexa de novo.
 """
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ import os
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -170,7 +175,58 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(store, once=args.once, idle_exit_s=args.idle_exit, poll_s=args.poll, light=args.light)
 
 
-def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: bool = False) -> int:
+@dataclass(slots=True)
+class _Deps:
+    """As dependências do pesado: os modelos carregados uma vez por processo, refeitos quando a configuração muda."""
+    fake: bool
+    deps: PipelineDeps | None = None
+    key: tuple[Any, ...] | None = None
+
+    def get(self, store: Store, config: JobConfig, token: str) -> PipelineDeps:
+        from .models import deps_key as key_of
+
+        key = ("fake",) if self.fake else key_of(config, token, llm_transcriber_key(store, config))
+        if self.deps is None or key != self.key:
+            self.deps, self.key = build_deps(config, token, self.fake, store), key
+        return self.deps
+
+
+def _run_job(store: Store, job: Any, *, light: bool, once: bool, held: _Deps, memory: Any, spawn: Any) -> JobStatus | None:
+    """Um job da classe; None quando o pesado nem começou (sem o extra do pipeline: erro permanente, sem contar como feito)."""
+    if light:
+        return run_light_job(store, job)
+    config = JobConfig.from_json(job.get("config_json"))
+    try:
+        deps = held.get(store, config, store.settings.provider_key(HF_PROVIDER_ID))
+    except PermanentError as e:
+        store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=str(e), count_attempt=False)
+        log.warning("job %s: %s", job["id"], e)
+        return None
+    status = JobRunner(store, deps, job, memory_rss=memory).run()
+    if status == JobStatus.DONE and not once:                  # `--once` não deixa um leve solto (F5A-16)
+        spawn_light_worker(store, spawn)
+    return status
+
+
+def _guarded(store: Store, job: Any, **kw: Any) -> JobStatus | None:
+    """F5.6 (A-37, F5A-17): o job que falha fora do runner volta à fila com a tentativa contada (R-04: só se ainda roda; um
+    concluído fica concluído) e o worker segue. Depois de cada job, os arquivos de áudio soltos (R-01)."""
+    try:
+        return _run_job(store, job, **kw)
+    except Exception as e:  # o worker nunca cai por um job: o próximo da fila espera
+        log.exception("job %s: falha fora do runner; o worker segue para o próximo", job["id"])
+        status, job_id = JobStatus.ERROR, int(job["id"])
+        with suppress(Exception):                        # o banco preso aqui também não derruba: fica para o claim
+            back = store.jobs.give_back(job_id, f"falha fora do runner: {type(e).__name__}")
+            status = JobStatus.PENDING if back else JobStatus(str(store.jobs.get(job_id)["status"]))  # type: ignore[index]
+        return status
+    finally:
+        with suppress(Exception):
+            store.core.release_audio()
+
+
+def _announce(store: Store, light: bool) -> None:
+    """O log próprio do worker e a linha de abertura com as versões das bibliotecas da classe."""
     with suppress(Exception):
         attach_file(worker_log_path(store, light), store.get_setting("log.level"))
     versions = {}
@@ -178,17 +234,20 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
         with suppress(metadata.PackageNotFoundError):
             versions[dist] = metadata.version(dist)
     log_versions({"papel": "worker-llm" if light else "worker", "pid": str(os.getpid()), "banco": str(store.base_dir), **versions})
+
+
+def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: bool = False) -> int:
+    _announce(store, light)
     lower, memory, spawn = _platform_hooks()
     log.info("prioridade baixa: %s", "ok" if lower() else "não aplicada")
     aio.configure_stall(exit_stalled)                              # D-058: chamada nativa presa não trava a fila
+    store.core.release_audio()                                     # R-01: os anexos da abertura; o job anexa o que ler
     if light:                                                      # a sessão só abre no primeiro lote do embedder local
         from ..llm import local_embed
 
         local_embed.configure(LOCAL_EMBED_THREADS)
-    fake = os.environ.get("LISTENER_PIPELINE", "").lower() == "fake"
     kinds = LIGHT_JOB_KINDS if light else HEAVY_JOB_KINDS
-    deps: PipelineDeps | None = None
-    deps_key: tuple[Any, ...] | None = None
+    held = _Deps(os.environ.get("LISTENER_PIPELINE", "").lower() == "fake")
     idle_since: float | None = None
     released = False
     processed = 0
@@ -200,24 +259,9 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
         if job is not None:
             idle_since, released = None, False
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
-            if light:
-                status = run_light_job(store, job)
-            else:
-                config = JobConfig.from_json(job.get("config_json"))
-                token = store.settings.provider_key(HF_PROVIDER_ID)
-                from .models import deps_key as key_of
-
-                key = ("fake",) if fake else key_of(config, token, llm_transcriber_key(store, config))
-                if deps is None or key != deps_key:
-                    try:
-                        deps, deps_key = build_deps(config, token, fake, store), key
-                    except PermanentError as e:
-                        store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=str(e), count_attempt=False)
-                        log.warning("job %s: %s", job["id"], e)
-                        continue
-                status = JobRunner(store, deps, job, memory_rss=memory).run()
-                if status == JobStatus.DONE and not once:          # `--once` não deixa um leve solto (F5A-16)
-                    spawn_light_worker(store, spawn)
+            status = _guarded(store, job, light=light, once=once, held=held, memory=memory, spawn=spawn)
+            if status is None:
+                continue
             log.info("job %s terminou: %s", job["id"], status)
             processed += 1
             if once:
@@ -234,8 +278,8 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
         if now - idle_since >= idle_exit_s:
             log.info("worker ocioso há %.0f s: encerrando (%d job(s) processado(s))", now - idle_since, processed)
             break
-        if deps is not None and not released and now - idle_since >= RELEASE_AFTER_S:
-            deps.release()
+        if held.deps is not None and not released and now - idle_since >= RELEASE_AFTER_S:
+            held.deps.release()
             released = True
         time.sleep(poll_s)
     return 0
