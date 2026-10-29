@@ -7,8 +7,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   exportação, na busca e no chat; aprovada com a revisão de arquitetura, em implementação.
 - **Depois: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
   padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
-  tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura em
-  curso; o código começa depois da F5.5 (arquivos em comum).
+  tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura
+  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono); lotes L3, L1a, L1b e L2, depois da F5.5.
 - **Próximo passo do dono:** testar a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook,
   teclado), a F5.3 pela Parte 11 (idioma, fila, aviso, fone no meio da gravação) e a
   F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
