@@ -85,7 +85,7 @@ def test_whatsapp_with_the_mic_and_sound_warns_at_20_s_unless_other_apps_is_off(
     calls.run(0, 19, act(whatsapp()))
     assert calls.prompts() == []
     calls.at(20, act(whatsapp()))
-    assert calls.prompts() == [(20, Prompt("whatsapp.root.exe", "WhatsApp.Root", "R3", 20, False))]
+    assert calls.prompts() == [(20, Prompt("whatsapp.root.exe", "WhatsApp", "R3", 20, False))]   # F5.7 L3 (R-12): o nome amigável
     calls = Calls(Params(other_apps=False))
     calls.run(0, 60, act(whatsapp()))
     assert calls.prompts() == []

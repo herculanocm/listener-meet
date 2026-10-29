@@ -2,12 +2,17 @@
 `aboutToQuit` e `commitDataRequest` (logoff, desligamento) param a gravação sem diálogo (M-05). F5.4 (A-09): o tema (fonte,
 paleta e estilo) entra depois da tradução e antes do ícone e do assistente; o estilo em Python sai quando o laço de eventos
 volta (depois do `aboutToQuit` e da parada de emergência) e em toda saída antecipada (assistente cancelado, banco que não
-abre), sempre antes da derrubada do PySide (R-06)."""
+abre), sempre antes da derrubada do PySide (R-06). F5.7 (L3): o aviso de reunião sem gravação (`ui/call_watch.py`) começa
+depois do controlador e para antes da parada de emergência, que fecha o banco (`connect_exit`)."""
 from __future__ import annotations
 
+import functools
+import logging
+import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..config import bootstrap
 from ..log import attach_file, get_logger, log_versions, set_crash_notifier, setup
@@ -33,6 +38,31 @@ def attach_log(store: Store) -> str | None:
     return None
 
 
+def _ignore_manager(stop: Callable[[], None], _manager: object) -> None:
+    stop()
+
+
+def connect_exit(app: Any, *stops: Callable[[], None]) -> None:
+    """`aboutToQuit` e `commitDataRequest` (logoff, desligamento: sem diálogo, M-05) chamam as paradas na ordem dada: a ordem da
+    ligação é a da chamada (F5.7: o sensor de chamada antes da parada de emergência, que fecha o banco)."""
+    from PySide6.QtCore import Qt
+
+    for stop in stops:
+        app.aboutToQuit.connect(stop)
+        app.commitDataRequest.connect(functools.partial(_ignore_manager, stop), Qt.ConnectionType.DirectConnection)
+
+
+def attach_calls(app: Any, controller: Any, platform: Platform, store: Store) -> Any:
+    """F5.7: o aviso de reunião sem gravação preso ao controlador (o `hotkeys.start` e a saída). Para antes da parada de
+    emergência, que fecha o banco; `start` depois do `controller.start` (a bandeja já existe)."""
+    from .call_watch import CallWatch
+
+    calls = CallWatch(controller, platform, store, parent=controller)
+    controller.on_start = calls.start_from_hotkey
+    connect_exit(app, calls.shutdown, controller.emergency_stop)
+    return calls
+
+
 def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
@@ -49,14 +79,31 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
         log.info("tradução pt-BR do Qt indisponível: os botões padrão ficam em inglês")
     theme.apply(app, platform)                # F5.4 (A-09): antes do ícone e do assistente
     try:
-        return _run_app(app, platform)
+        code = _run_app(app, platform)
     finally:
         theme.release(app)                    # A-09 (R-06): o estilo em Python não chega à derrubada do PySide
+    leave_if_stuck(code)
+    return code
+
+
+def leave_if_stuck(code: int) -> None:
+    """F5.7 (R-01): com a thread do sensor de chamada presa no sistema de áudio (uma troca de dock), a derrubada do PySide a
+    destruiria rodando (o `atexit` dele apaga todo QObject do Python, e o Qt aborta: 0xC0000409). O app já salvou e fechou o
+    banco: o processo sai já, com o código do laço e o log escrito."""
+    from .call_sensor import stuck_threads
+
+    if not stuck_threads():
+        return
+    log.warning("saída imediata: a thread do sensor de chamada segue presa no sistema de áudio")
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            stream.flush()
+    os._exit(code)
 
 
 def _run_app(app: QApplication, platform: Platform) -> int:
     """O ícone, o banco (ou o assistente da primeira vez), o controlador e o laço de eventos."""
-    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QDialog, QMessageBox
 
     from ..model import AppState
@@ -91,9 +138,9 @@ def _run_app(app: QApplication, platform: Platform) -> int:
 
     controller = Controller(app, platform, store, first_run=first_run)   # vive até o app.exec() voltar
     set_crash_notifier(controller.notify_crash)   # F5.3 (A-10): chamado na thread que falhou; o aviso sai na da interface
-    app.aboutToQuit.connect(controller.emergency_stop)
-    app.commitDataRequest.connect(lambda _manager: controller.emergency_stop(), Qt.ConnectionType.DirectConnection)
+    calls = attach_calls(app, controller, platform, store)                # F5.7: o aviso de reunião sem gravação
     controller.start()
+    calls.start()                                 # depois do `start`: a bandeja já existe
     if log_error:
         controller.notify_error(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:

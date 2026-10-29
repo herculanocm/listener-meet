@@ -4,7 +4,8 @@ linhas): Chaves de acesso (U-037), Idioma e avisos (F5.3), Captura com os preset
 e Log e banco de dados. O subtítulo de cada página diz quando o que está nela vale (U-074) e não tem jargão interno (U-076).
 
 `GeneralPagesMixin` é parte do `SettingsDialog`: lê `store`, `platform`, `hotkey_errors`, `audio_capable`, `provider_tabs` e
-`hf_token` dele e registra os editores pelo `_add` dele."""
+`hf_token` dele e registra os editores pelo `_add` dele. F5.7 (U-094): o cartão "Reunião sem gravação" de "Idioma e avisos"
+mora em `ui/settings_detect.py`."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from ..model import SettingScope
 from .components import InfoBar
 from .keys import KEYS_TITLE, STORAGE_NOTE, hf_state, keys_cards, note
 from .settings_editors import ChoiceEditor, SettingEditor, TextEditor
+from .settings_detect import DetectCardMixin
 from .settings_pages import SettingsPage
 from .theme import Tone
 
@@ -32,8 +34,8 @@ TOAST_SECONDS = "ui.toast_seconds"                          # F5.3 (U-048): na p
 NOW = SettingScope.NOW
 SUBTITLES = {
     KEYS_TITLE: "A LLM escreve a ata, o resumo e o título; o token do Hugging Face identifica quem fala. Valem ao salvar.",
-    "Idioma e avisos": "O idioma das reuniões novas e do chat sobre todas as reuniões, e o aviso do app no canto da tela. "
-                       "Aplica agora.",
+    "Idioma e avisos": "O idioma das reuniões novas e do chat sobre todas as reuniões, o aviso do app no canto da tela e o "
+                       "aviso de reunião sem gravação. Aplica agora.",
     "Captura": "O áudio gravado, os alertas de silêncio e de eco e os presets do \"Antes de gravar\". Aplica agora; a linha "
                "diz quando vale só na próxima gravação.",
     "Atalhos": "Valem no Windows inteiro, com o app em segundo plano (ex.: ctrl+alt+shift+r; ctrl+alt sozinho é AltGr no "
@@ -64,7 +66,7 @@ def audio_cost_text(store: Store) -> str:
     return f"≈ {fmt_usd(per_hour)} por hora de áudio no modelo {cfg.fast_model}"
 
 
-class GeneralPagesMixin:
+class GeneralPagesMixin(DetectCardMixin):
     """As páginas comuns do `SettingsDialog`."""
     store: Store
     platform: Platform
@@ -107,6 +109,7 @@ class GeneralPagesMixin:
         toast.widget.setToolTip("Quanto tempo o aviso do listener-meet (ata pronta, erro na fila, download...) fica no canto da "
                                 "tela; com o mouse em cima ele não some. De 0 a 60; 0 desliga o aviso do app e volta ao balão "
                                 "do Windows.")
+        self._detect_card(page)                                  # F5.7 (U-094)
         page.finish()
         return page
 

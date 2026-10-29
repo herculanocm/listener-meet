@@ -2,8 +2,8 @@
 (mm:ss e, passando de 1 h, h:mm:ss; U-062), o atalho escrito como o Windows o escreve (U-061), a linha cortada com o texto
 inteiro na dica (a legenda do F4 e o alerta da F5.3), o rótulo de ícone e o popup do marcador (U-068: no tema, com o ícone
 do marcador e a hora em nota, sobre o cartão com borda e cantos de 8 px). `ui/widget.py` as reexporta.
-As preferências do widget no banco (posição, tamanho e os atalhos das dicas) saíram do `ui/controller.py` (refactor antes da
-F5.7, que precisa de espaço nele)."""
+F5.7 (L3): as preferências do widget no banco (posição, tamanho e os atalhos das dicas), que saíram do `ui/controller.py`
+para ele não crescer."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, override
@@ -182,7 +182,7 @@ class MarkerPopup(QDialog):
         return self.edit.text().strip()
 
 
-# ---------------------------------------------------------------- preferências no banco (saíram do controlador)
+# ---------------------------------------------------------------- preferências no banco (F5.7: saíram do controlador)
 def save_widget_pos(store: Store, pos: QPoint) -> None:
     store.set_setting("ui.widget_pos", f"{pos.x()},{pos.y()}")
 

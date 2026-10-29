@@ -274,6 +274,7 @@ class ToastManager(QObject):
         self._closing: list[Toast] = []
         self._closed = False
         self._exclusion_warned = False
+        self._avoid_also: Callable[[], Rect | None] | None = None
 
     def waiting(self) -> list[tuple[Notice, int]]:
         """Os da fila, com a contagem (instrumentação dos testes)."""
@@ -369,12 +370,17 @@ class ToastManager(QObject):
         """A pilha de novo (F5.4 L2, A-16): o widget de gravação cresceu ou encolheu com a borda de baixo no lugar."""
         self._layout()
 
+    def avoid_also(self, fn: Callable[[], Rect | None]) -> None:
+        """F5.7: mais um retângulo que a pilha evita fora da gravação, como o widget de gravação (o aviso de reunião)."""
+        self._avoid_also = fn
+
     def _layout(self) -> None:
         if not self.toasts:
             return
         anchor = self.anchor()
+        avoid = anchor if anchor is not None or self._avoid_also is None else self._avoid_also()
         sizes = [(t.width(), t.height()) for t in self.toasts]
-        for toast, (x, y) in zip(self.toasts, stack_positions(sizes, _screen_area(anchor), anchor), strict=True):
+        for toast, (x, y) in zip(self.toasts, stack_positions(sizes, _screen_area(anchor), avoid), strict=True):
             toast.move(x, y)
 
     def shutdown(self) -> None:

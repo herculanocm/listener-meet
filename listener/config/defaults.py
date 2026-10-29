@@ -115,6 +115,15 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     # F5.3 (U-048): quanto o aviso do app fica no canto da tela (o mouse em cima segura); 0 volta ao balão da bandeja. No grupo
     # "Idioma e avisos", montado à mão
     SettingSpec("ui.toast_seconds", 6, _NOW, "Aviso some em (s)", int, low=0, high=60, phase="F5.3"),
+    # F5.7 (U-094): o aviso de reunião sem gravação, no cartão "Reunião sem gravação" da página "Idioma e avisos" (vale na
+    # hora). `detect.apps`: os apps acrescentados (vazio = só a lista de fábrica da plataforma); `detect.off`: os que nunca
+    # avisam (desmarcados ou "Não avisar para o X" da bandeja); executáveis separados por vírgula
+    SettingSpec("detect.enabled", True, _NOW, "Avisar quando um app de reunião tocar áudio sem gravação", _bool, phase="F5.7"),
+    SettingSpec("detect.seconds", 8, _NOW, "Avisar depois de", int, low=3, high=120, phase="F5.7"),
+    SettingSpec("detect.remind", True, _NOW, "Lembrar uma vez, 2 min depois, se o aviso passar sem clique", _bool, phase="F5.7"),
+    SettingSpec("detect.apps", "", _NOW, "Apps de reunião acrescentados", _text, phase="F5.7"),
+    SettingSpec("detect.off", "", _NOW, "Apps que nunca avisam", _text, phase="F5.7"),
+    SettingSpec("detect.other_apps", True, _NOW, "Também outros apps que usam o microfone com som (20 s)", _bool, phase="F5.7"),
     SettingSpec("warmup.last_preset_id", "", _NOW, "Último preset", _text),
     SettingSpec("warmup.last_mic_device_id", "", _NOW, "Último microfone (id)", _text),
     SettingSpec("warmup.last_mic_device_name", "", _NOW, "Último microfone (nome)", _text),

@@ -19,7 +19,8 @@ janela inteira dentro da área livre pelo `fit_to_screen` (A-17); a falta de cha
 primário com o ícone de gravar (U-066); as fontes com o medidor de cada uma e "Reunião" em selo, e a sala e o ao vivo numa
 linha "Opções" (U-067). Os avisos do microfone, do eco e dos modelos do ao vivo viram faixas (U-057); os links vão a métodos,
 não a lambdas que prendam o diálogo (R-06).
-Os presets e a última escolha moram em `ui/warmup_source.py` (refactor antes da F5.7: o arquivo não cresce)."""
+F5.7 L3 (U-094): os presets e a última escolha moram em `ui/warmup_source.py`, com a fonte vinda do aviso de reunião
+(`source_hint`: a linha do app, a faixa no topo e o foco no Gravar) e a saída da captura de tela ao aparecer (D-065)."""
 from __future__ import annotations
 
 import functools
@@ -69,8 +70,9 @@ LINKED_BARS = frozenset({"keys", "live"})            # as faixas com o link para
 
 class WarmupDialog(SourceChoiceMixin, QDialog):
     def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None, on_settings: Any = None,
-                 on_late_call: Callable[[int], Any] | None = None):
+                 on_late_call: Callable[[int], Any] | None = None, source_hint: str | None = None):
         super().__init__(parent)
+        self.source_hint = source_hint                   # F5.7: o executável do app pelo aviso de reunião
         self.platform = platform
         self.store = store
         self.on_settings = on_settings
@@ -110,6 +112,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self.live.set_values(None, None)                    # padrão das Configurações; um preset salvo sobrescreve
         self._update_keys_note()
         self._restore_last_choice()
+        self._apply_hint()                                  # F5.7: o app do aviso por cima da última escolha
         self.mic_combo.currentIndexChanged.connect(self._on_mic_changed)   # só depois de restaurar: um open só
         self._update_src_status()
 
@@ -295,6 +298,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         fit_to_screen(self)                                # A-17: a janela inteira, com a moldura, na área livre
+        self._on_shown()                                   # F5.7: fora da captura de tela; pelo aviso, o foco no Gravar
         if self._mic_handle is None:
             self._open_mic()
         self.sources.start()

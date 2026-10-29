@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parent.parent
 L1_MODULES = tuple(ROOT / p for p in ("listener/platform/win32/activity.py", "listener/platform/win32/consent.py",
                                        "listener/platform/win32/sessions.py", "scripts/detect_probe.py"))
 L2_MODULES = (ROOT / "listener/ui/call_rules.py",)
+L3_MODULES = (*(ROOT / "listener/ui" / f for f in ("call_answers.py", "call_config.py", "call_prompt.py", "call_sensor.py",
+                                                    "call_watch.py", "settings_detect.py", "tray.py", "warmup_source.py")),
+              ROOT / "scripts/probe_f57.py", ROOT / "tests/call_exit_scenario.py")
 # o título (e o mapa pid -> título), o caminho, o nome da entrada do registro e o nome do aparelho
 FORBIDDEN = frozenset({"title", "titles", "by_pid", "path", "paths", "name", "names", "device_name", "friendly"})
 LOGGERS = frozenset({"log", "logger", "logging"})

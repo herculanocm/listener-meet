@@ -53,7 +53,9 @@ de alerta e o painel do botão 🎧); aqui só o fio: o gravador chama `_release
 (o player solta a saída, "pausado para trocar o microfone", A-17) e a primeira leitura do poller do mudo depois de uma
 troca de microfone é ignorada (A-18). O log da gravação leva o id do microfone, nunca o nome do aparelho (A-22).
 F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py` (o Histórico pede; gravar interrompe).
-F5.6 L1b (U-089): o resumo da gravação recebe o job do processamento (o pedido de ata ao parar fica preso a ele)."""
+F5.6 L1b (U-089): o resumo da gravação recebe o job do processamento (o pedido de ata ao parar fica preso a ele).
+F5.7 L3 (U-094): `busy` para o aviso de reunião sem gravação (`ui/call_watch.py`, ligado em `ui/app.py`), `open_warmup` com o
+app como fonte e o `hotkeys.start` pelo `on_start` dela; as preferências do widget saíram para `ui/widget_parts.py`."""
 from __future__ import annotations
 
 import functools
@@ -199,6 +201,7 @@ class Controller(QObject):
         self._warmup_open = False
         self._marker_open = False
         self._quitting = False
+        self.on_start: Callable[[], Any] | None = None   # F5.7: o `hotkeys.start` com uma reunião sem gravação pendente
         self._mute_poller: _MutePoller | None = None
         self._mute_skip = 0                           # F5.3 (A-18): leituras do poller do mudo a ignorar depois de uma troca
         self.devices: RecordingDevices | None = None  # F5.3 L4: os dispositivos da gravação em curso
@@ -587,7 +590,7 @@ class Controller(QObject):
         log.debug("atalho %s", name)
         match name:
             case "start":
-                self.open_warmup()
+                (self.on_start or self.open_warmup)()
             case "pause":
                 self.toggle_pause()
             case "stop":
@@ -600,17 +603,22 @@ class Controller(QObject):
                 self.open_history(focus_search=True)
 
     # ---------------------------------------------------------------- gravação
-    def open_warmup(self) -> None:
+    @property
+    def busy(self) -> bool:
+        """F5.7: gravando, pausado, salvando ou saindo (o aviso de reunião cobre a chamada; o "Antes de gravar" ele vê à parte)."""
+        return self.state != AppState.IDLE or self._quitting
+
+    def open_warmup(self, source_exe: str | None = None) -> None:
         if self.state != AppState.IDLE or self._warmup_open:
             log.info("warm-up não abriu: %s", "já está aberto" if self._warmup_open else f"o app está em {self.state.name}")
             self.show_widget()
             return
         self._warmup_open = True
-        log.info("warm-up aberto")
+        log.info("warm-up aberto%s", f" com a fonte {source_exe} (aviso de reunião)" if source_exe else "")
         self._pause_player(PLAYER_PAUSED_WARMUP)          # o teste e os medidores do warm-up não ouvem o player (R7-01)
         try:
             link = LateGlossaryLink(self.store)
-            dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add)
+            dlg = WarmupDialog(self.platform, self.store, on_settings=self.open_settings, on_late_call=link.add, source_hint=source_exe)
             accepted = dlg.exec() == QDialog.DialogCode.Accepted
             cfg, fields = dlg.result_config() if accepted else (None, {})
             log.info("warm-up fechado: %s", "Gravar" if accepted else "cancelado")
@@ -1824,4 +1832,3 @@ class Controller(QObject):
         log.info("app encerrado pelo usuário")
         self.player.stop()                               # o som para já; o resto da saída fica com o emergency_stop
         self.app.quit()                                  # aboutToQuit -> emergency_stop fecha atalhos e banco
-

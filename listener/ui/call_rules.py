@@ -33,6 +33,10 @@ REMIND_S = 120.0               # o lembrete, depois de o aviso sumir sem respost
 PER_HOUR, HOUR_S = 6, 3600.0   # teto de avisos (com os lembretes)
 SECONDS_RANGE = (3.0, 120.0)   # o "Avisar depois de" das Configurações
 KIND_OTHER = "other"
+# F5.7 L3 (R-12): o nome na tela de um "outro app" conhecido, pelo executável sem a extensão (em minúsculas); o resto fica
+# como o sistema o mostra, sem a extensão
+FRIENDLY_NAMES = {"whatsapp.root": "WhatsApp", "whatsapp": "WhatsApp", "telegram": "Telegram", "signal": "Signal",
+                  "discord": "Discord", "skype": "Skype"}
 MODE_STOPPED, MODE_IDLE, MODE_ARMING, MODE_SLOW = "parado", "ocioso", "armando", "lento"
 
 
@@ -137,9 +141,11 @@ def _merge(activity: AudioActivity) -> dict[str, _Seen]:
     return out
 
 
-def _stem(name: str) -> str:
-    """O executável sem a extensão, se tiver (o do Windows perde a dele; o "discord" do Linux fica como está)."""
-    return PurePath(name).stem or name
+def app_name(name: str) -> str:
+    """O nome na tela de um executável fora da lista de fábrica: o amigável dos conhecidos (`FRIENDLY_NAMES`) ou o executável
+    sem a extensão, se tiver (o do Windows perde a dele; o "discord" do Linux fica como está)."""
+    stem = PurePath(name).stem or name
+    return FRIENDLY_NAMES.get(stem.lower(), stem)
 
 
 def _clamp(seconds: float) -> float:
@@ -314,11 +320,14 @@ class CallRules:
         if track is not None and track.state != State.QUIET:
             track.state, track.recording = State.DISMISSED, False
 
-    def expired(self, exe: str) -> None:
-        """O aviso sumiu sem clique (20 s): pendente; com `remind`, um lembrete só, 2 min depois."""
+    def expired(self, exe: str, now: float | None = None) -> None:
+        """O aviso sumiu sem clique (20 s): pendente; com `remind`, um lembrete só, 2 min depois de `now` (o relógio de quem
+        chama; sem ele, o do último passo). F5.7 L3 (R-05): vale também para o aviso à espera da gravação, o "Gravar" do
+        "Antes de gravar" que não começou: a chamada volta a pendente, não vira "Agora não"."""
         track = self._tracks.get(exe.lower())
-        if track is not None and track.state == State.PROMPTED and not track.recording:
-            track.state, track.expired_at = State.PENDING, self._now
+        if track is not None and track.state == State.PROMPTED:
+            track.state, track.recording = State.PENDING, False
+            track.expired_at = self._now if now is None else now
 
     def record(self, exe: str) -> None:
         """"Gravar…" abriu o "Antes de gravar": segue avisado até o `busy` chegar (aí coberto)."""
@@ -363,11 +372,11 @@ class CallRules:
     def _label(self, exe: str, kind: str | None, cur: _Seen) -> str:
         watched = self._watched.get(exe)
         if kind == KIND_BROWSER:
-            name = watched.label if watched is not None else _stem(cur.name)
+            name = watched.label if watched is not None else app_name(cur.name)
             return f"{cur.service} no {name}" if cur.service else name
         if watched is not None:
             return watched.label
-        return _stem(cur.name)
+        return app_name(cur.name)
 
     def _reset(self, reason: str) -> list[Event]:
         events: list[Event] = [ClosePrompt(exe, reason) for exe, t in sorted(self._tracks.items()) if self._visible(t)]

@@ -1,14 +1,26 @@
-"""O "Antes de gravar" (`ui/warmup.py`), a parte da escolha: os presets e a última escolha (microfone, fonte e sala). Saiu do
-`warmup.py` (659 linhas) para ele não crescer; `SourceChoiceMixin` é parte do `WarmupDialog` e lê os campos dele."""
+"""O "Antes de gravar" (`ui/warmup.py`), a parte da escolha: os presets, a última escolha (microfone, fonte e sala) e, F5.7
+(L3, U-094), a fonte vinda do aviso de reunião sem gravação. Saiu do `warmup.py` (659 linhas) para ele não crescer;
+`SourceChoiceMixin` é parte do `WarmupDialog` e lê os campos dele.
+
+F5.7: aberto pelo aviso (`source_hint`, o executável), a linha do app vira a fonte na primeira lista de apps tocando
+(`select_exe`), uma faixa no topo diz "Fonte: Teams, pelo aviso de reunião. Confira os medidores e clique em Gravar." e, ao
+aparecer, o foco vai para o Gravar e a janela vem à frente; o app que não está tocando troca a faixa por um aviso e a fonte
+fica no sistema inteiro. Sempre, com ou sem o aviso (D-065, pergunta 6), a janela sai da captura de tela ao aparecer; se o
+sistema recusa, segue normal e o log diz o tipo. O Esc e o Cancelar continuam fechando sem gravar: a cola do aviso
+(`ui/call_watch.py`) vê que o app não está gravando e dispensa a chamada ("Agora não")."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QInputDialog, QMessageBox, QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QCheckBox, QComboBox, QInputDialog, QMessageBox, QPushButton, QWidget
 
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import log_id, pick_device
+from .call_config import label_for
+from .components import InfoBar
 from .sources import SYSTEM_FOLLOW, SourceKey, SourceTable
 
 if TYPE_CHECKING:
@@ -17,10 +29,12 @@ if TYPE_CHECKING:
     from .warmup_live import LiveBoxes
 
 log = get_logger("ui.warmup")
+SOURCE_HINT = "Fonte: {label}, pelo aviso de reunião. Confira os medidores e clique em Gravar."
+HINT_MISSING = "O {label} não está tocando agora: escolha a fonte na lista e clique em Gravar."
 
 
 class SourceChoiceMixin:
-    """Presets e última escolha, no `WarmupDialog`."""
+    """Presets, última escolha e a fonte pelo aviso de reunião, no `WarmupDialog`."""
     platform: Platform
     store: Store
     preset_combo: QComboBox
@@ -30,8 +44,12 @@ class SourceChoiceMixin:
     live: LiveBoxes
     live_check: QCheckBox
     names_check: QCheckBox
+    record_btn: QPushButton
     _devices: list[AudioDevice]
     _pending_source: tuple[str, str] | None
+    source_hint: str | None = None                   # F5.7: o executável do app pelo aviso de reunião
+    hint_bar: InfoBar | None = None
+    _capture_checked = False
 
     def _set_mic_note(self, text: str, kind: str = "warning") -> None:
         raise NotImplementedError
@@ -41,6 +59,45 @@ class SourceChoiceMixin:
 
     def _window(self) -> QWidget:
         return cast("QWidget", self)
+
+    # ---------------------------------------------------------------- F5.7: a fonte pelo aviso de reunião
+    def _hint_label(self) -> str:
+        return label_for(self.platform.watched_apps(), self.source_hint or "")
+
+    def _apply_hint(self) -> None:
+        """A linha do app como fonte (já ou na primeira lista) e a faixa no topo, por cima da última escolha."""
+        if not self.source_hint:
+            return
+        self.hint_bar = InfoBar("info", SOURCE_HINT.format(label=self._hint_label()))
+        layout: Any = self.layout()                  # type: ignore[attr-defined]
+        layout.insertWidget(0, self.hint_bar)
+        self._select_source(SourceKind.APP, self.source_hint)
+
+    def _hint_missing(self, exe: str) -> None:
+        if self.hint_bar is not None and self.source_hint and exe.lower() == self.source_hint.lower():
+            self.hint_bar.set_kind("warning")
+            self.hint_bar.set_text(HINT_MISSING.format(label=self._hint_label()))
+            log.info("\"Antes de gravar\" pelo aviso de reunião: o app não está na lista; a fonte fica no sistema inteiro")
+
+    def _on_shown(self) -> None:
+        """Na primeira vez que aparece: fora da captura de tela (sempre); pelo aviso, o foco no Gravar e a janela à frente."""
+        if self._capture_checked:
+            return
+        self._capture_checked = True
+        win_id = int(self.winId())                   # type: ignore[attr-defined]
+        try:
+            reason = "" if self.platform.exclude_from_capture(win_id) else "o sistema recusou"
+        except Exception as e:
+            reason = type(e).__name__
+        if reason:
+            log.info("\"Antes de gravar\" segue na captura de tela (%s)", reason)
+        if self.source_hint:
+            self.record_btn.setFocus(Qt.FocusReason.OtherFocusReason)
+            QTimer.singleShot(0, self.record_btn, self._to_front)
+
+    def _to_front(self) -> None:
+        with suppress(Exception):
+            self.platform.bring_to_front(int(self.winId()))     # type: ignore[attr-defined]
 
     # ---------------------------------------------------------------- presets e última escolha
     def _restore_last_choice(self) -> None:
@@ -89,6 +146,7 @@ class SourceChoiceMixin:
             self._pending_source = None
             if not (kind == SourceKind.APP and exe and self.sources.select_exe(exe)):
                 self.sources.select_key(SYSTEM_FOLLOW)
+                self._hint_missing(exe)
 
     def _apply_preset(self, index: int) -> None:
         pid = self.preset_combo.itemData(index)

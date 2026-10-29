@@ -5,10 +5,15 @@ F5.4 L2 (U-070, A-19): a marca do app (`icons/brand.svg`) com o estado num selo 
 tamanho que o Windows pede (16 a 64 px, legível a 16): gravando, um disco vermelho; pausado, duas barras âmbar; salvando, um
 anel azul; ocioso, sem selo. A barra de tarefas segue `SystemUsesLightTheme`, não o tema dos apps: o ícone tem fundo
 próprio e cores fixas (a marca em `accent` com as barras em `on_accent`, o selo com um aro claro), as do tema claro, que
-contrastam com o aro nos dois temas da barra. O mesmo desenho, sem selo, é o ícone das janelas."""
+contrastam com o aro nos dois temas da barra. O mesmo desenho, sem selo, é o ícone das janelas.
+F5.7 (L3, U-094): com uma reunião sem gravação pendente (o aviso à vista ou sumido sem clique), a dica diz qual, o primeiro
+item do menu, em negrito e padrão, é "Gravar a reunião do Teams…", logo abaixo vem "Não avisar para o Teams" (com o nome
+do que desliga: "Chrome", não "Google Meet no Chrome", R-07) e o clique esquerdo abre o "Antes de gravar" com o app como
+fonte (a cola, `ui/call_watch.py`, liga as duas ações)."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QRectF, Qt
 from PySide6.QtGui import QAction, QIcon, QPainter, QPen, QPixmap
@@ -27,6 +32,8 @@ STATE_TIPS: dict[str, str] = {AppState.IDLE: "listener-meet: pronto", AppState.R
 TRAY_TOKENS: Tokens = LIGHT                   # A-19: cores fixas, independentes do tema do app e do da barra de tarefas
 ICON_SIZES = (16, 20, 24, 32, 40, 48, 64)     # o que o Windows pede na bandeja, na barra e no Alt+Tab, de 100 % a 200 %
 BADGE = 0.56                                  # o diâmetro do selo, na fração do lado do ícone (no canto de baixo à direita)
+CALL_TIP = "listener-meet: reunião no {label} sem gravação"          # F5.7 (U-094)
+CALL_RECORD, CALL_OFF = "Gravar a reunião do {label}…", "Não avisar para o {label}"
 
 
 def icon_color(state: str) -> str:
@@ -106,6 +113,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
         self.act_quit = QAction("Sair", self.menu)
+        self._call_actions()
         for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
             self.menu.addAction(a)
         self.menu.addSeparator()
@@ -116,7 +124,7 @@ class TrayIcon(QSystemTrayIcon):
         self.queue_tip = ""
         self._state = AppState.IDLE
         self.setContextMenu(self.menu)
-        self.act_record.triggered.connect(controller.open_warmup)
+        self.act_record.triggered.connect(self._open_warmup)        # método: o `triggered(bool)` não vira a fonte
         self.act_pause.triggered.connect(controller.toggle_pause)
         self.act_mark.triggered.connect(controller.mark)
         self.act_mute.triggered.connect(controller.toggle_mute)
@@ -132,6 +140,54 @@ class TrayIcon(QSystemTrayIcon):
 
     def _open_history(self) -> None:
         self.controller.open_history()
+
+    def _open_warmup(self) -> None:
+        self.controller.open_warmup()
+
+    # ---------------------------------------------------------------- F5.7: a reunião sem gravação
+    def _call_actions(self) -> None:
+        """Os dois itens da reunião pendente, no topo do menu e escondidos sem ela; o primeiro em negrito."""
+        self.act_call = QAction("", self.menu)
+        font = self.act_call.font()
+        font.setBold(True)
+        self.act_call.setFont(font)
+        self.act_call_off = QAction("", self.menu)
+        self.menu.addAction(self.act_call)
+        self.menu.addAction(self.act_call_off)
+        self.call_separator = self.menu.addSeparator()
+        self.menu.setDefaultAction(self.act_call)                  # o padrão sai em negrito no menu do Windows
+        for a in (self.act_call, self.act_call_off, self.call_separator):
+            a.setVisible(False)
+        self.act_call.triggered.connect(self._call_record)
+        self.act_call_off.triggered.connect(self._call_off)
+        self.call_exe = self.call_label = self.call_off_label = ""
+        self._on_call_record: Callable[[str], Any] | None = None
+        self._on_call_off: Callable[[str], Any] | None = None
+
+    def set_call_handlers(self, on_record: Callable[[str], Any], on_off: Callable[[str], Any]) -> None:
+        """O "Gravar a reunião do X…" (e o clique esquerdo) e o "Não avisar para o X", com o executável."""
+        self._on_call_record, self._on_call_off = on_record, on_off
+
+    def set_call(self, exe: str, label: str, off_label: str = "") -> None:
+        """A reunião sem gravação pendente (vazio: nenhuma): os itens, o padrão do menu e a dica; `off_label` é o nome do que
+        "Não avisar" desliga (o app inteiro; vazio = o `label`)."""
+        if (exe, label, off_label) == (self.call_exe, self.call_label, self.call_off_label):
+            return
+        self.call_exe, self.call_label, self.call_off_label = exe, label, off_label
+        on = bool(exe)
+        self.act_call.setText(CALL_RECORD.format(label=label) if on else "")
+        self.act_call_off.setText(CALL_OFF.format(label=off_label or label) if on else "")
+        for a in (self.act_call, self.act_call_off, self.call_separator):
+            a.setVisible(on)
+        self._apply_tip()
+
+    def _call_record(self) -> None:
+        if self.call_exe and self._on_call_record is not None:
+            self._on_call_record(self.call_exe)
+
+    def _call_off(self) -> None:
+        if self.call_exe and self._on_call_off is not None:
+            self._on_call_off(self.call_exe)
 
     def set_state(self, state: AppState) -> None:
         self._state = state
@@ -149,12 +205,14 @@ class TrayIcon(QSystemTrayIcon):
             self._apply_tip()
 
     def _apply_tip(self) -> None:
-        base = STATE_TIPS.get(self._state, "listener-meet")
+        base = CALL_TIP.format(label=self.call_label) if self.call_exe else STATE_TIPS.get(self._state, "listener-meet")
         self.setToolTip(f"{base} · {self.queue_tip}" if self.queue_tip else base)
 
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.DoubleClick, QSystemTrayIcon.ActivationReason.Trigger):
             match self.controller.state:
+                case AppState.IDLE if self.call_exe and self._on_call_record is not None:
+                    self._on_call_record(self.call_exe)          # F5.7: o "Antes de gravar" com o app pendente
                 case AppState.IDLE:
                     self.controller.open_warmup()
                 case _:
