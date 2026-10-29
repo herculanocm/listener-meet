@@ -24,11 +24,16 @@ type ListEndpoints = Callable[[int], list[tuple[str, Any]]]     # fluxo -> [(id,
 type Activate = Callable[[Any], Any]                           # IMMDevice -> IAudioSessionManager2
 
 
+STATE_UNKNOWN, STATE_ACTIVE = -1, 1                            # AudioSessionState (-1: não deu para ler)
+
+
 @dataclass(frozen=True, slots=True)
 class Session:
-    """Uma sessão de áudio de um endpoint: o processo dono e o pico agora (0 a 1; 0 quando o medidor não responde)."""
+    """Uma sessão de áudio de um endpoint: o processo dono, o pico agora (0 a 1; 0 quando o medidor não responde) e o
+    estado (F5.7: ATIVA na captura é o microfone em uso; o desconhecido nunca conta como em uso)."""
     pid: int
     peak: float
+    state: int = STATE_UNKNOWN
 
 
 def active_endpoints(flow: int) -> list[tuple[str, Any]]:
@@ -48,31 +53,40 @@ def activate_manager(device: Any) -> Any:
 
 
 def endpoint_sessions(manager: Any) -> list[Session]:
-    """As sessões de um endpoint, menos a dos sons do sistema (pid 0) e as de pid ilegível; o pico que falha vale 0.
-    Levanta quando o próprio endpoint falha (removido ou invalidado): quem percorre o fluxo pula só ele."""
-    from pycaw.pycaw import IAudioMeterInformation, IAudioSessionControl2
-
+    """As sessões de um endpoint, menos a dos sons do sistema (pid 0) e as de pid ilegível; o pico que falha vale 0 e o
+    estado que falha fica desconhecido. Levanta quando o próprio endpoint falha (removido ou invalidado): quem percorre o
+    fluxo pula só ele."""
     out: list[Session] = []
     enum = manager.GetSessionEnumerator()
     for i in range(enum.GetCount()):
         ctl = enum.GetSession(i)
-        if ctl is None:
-            continue
-        try:
-            ctl2 = ctl.QueryInterface(IAudioSessionControl2)
-            pid = int(ctl2.GetProcessId())
-        except Exception as e:
-            log.debug("pid da sessão: %s", e)
-            continue
-        if pid <= 0:
-            continue
-        peak = 0.0
-        try:
-            peak = float(ctl2.QueryInterface(IAudioMeterInformation).GetPeakValue())
-        except Exception as e:
-            log.debug("pico da sessão %s: %s", pid, e)
-        out.append(Session(pid, peak))
+        session = _session(ctl) if ctl is not None else None
+        if session is not None:
+            out.append(session)
     return out
+
+
+def _session(ctl: Any) -> Session | None:
+    from pycaw.pycaw import IAudioMeterInformation, IAudioSessionControl2
+
+    try:
+        ctl2 = ctl.QueryInterface(IAudioSessionControl2)
+        pid = int(ctl2.GetProcessId())
+    except Exception as e:
+        log.debug("pid da sessão: %s", e)
+        return None
+    if pid <= 0:
+        return None
+    peak, state = 0.0, STATE_UNKNOWN
+    try:
+        peak = float(ctl2.QueryInterface(IAudioMeterInformation).GetPeakValue())
+    except Exception as e:
+        log.debug("pico da sessão %s: %s", pid, e)
+    try:
+        state = int(ctl2.GetState())
+    except Exception as e:
+        log.debug("estado da sessão %s: %s", pid, e)
+    return Session(pid, peak, state)
 
 
 def peaks_by_pid(groups: Iterable[Iterable[Session]]) -> dict[int, float]:
@@ -101,6 +115,7 @@ class FlowSessions:
         self._key: tuple[int, tuple[str, ...]] | None = None    # com `keep`: (thread, ids do fluxo) dos guardados
         self._managers: dict[str, Any] = {}                     # com `keep`: id -> IAudioSessionManager2
         self.activations = 0                                    # instrumentação: gerenciadores ativados até aqui
+        self.failed = 0                                         # endpoints que falharam na última leitura
 
     def read(self) -> dict[str, list[Session]]:
         """As sessões por id de endpoint, na ordem do sistema; o endpoint que falha fica de fora desta leitura. Levanta
@@ -117,6 +132,7 @@ class FlowSessions:
                 sessions = self._read_endpoint(managers, eid, device)
                 if sessions is not None:
                     out[eid] = sessions
+            self.failed = len(devices) - len(out)
             return out
 
     def close(self) -> None:

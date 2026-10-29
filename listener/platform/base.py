@@ -12,6 +12,7 @@ import numpy as np
 
 NAME_ID_PREFIX = "name:"        # o id de um aparelho sem id do sistema: o prefixo e o nome (que pode ter nome de pessoa)
 TEXT_SCALE_PERCENT = (100, 225)  # F5.4 (A-08): a faixa do "Tamanho do texto" da acessibilidade do Windows
+KIND_MEETING, KIND_BROWSER = "meeting", "browser"   # F5.7 (L1): os tipos de `WatchedApp`
 
 
 def log_id(device_id: str | None) -> str:
@@ -112,6 +113,34 @@ class PlayingApp:
         return f"{base} — {self.title}" if self.title else base
 
 
+@dataclass(frozen=True, slots=True)
+class WatchedApp:
+    """F5.7 (L1): um app da lista de fábrica do aviso de reunião sem gravação. `exe` em minúsculas; `label` é o nome na
+    tela ("Teams"); `kind` é `KIND_MEETING` (app de reunião) ou `KIND_BROWSER` (navegador)."""
+    exe: str
+    label: str
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class AppAudio:
+    """F5.7 (L1): os sinais de um app (a raiz, D-055) numa leitura. `mic`: alguma sessão de captura ATIVA em qualquer
+    microfone; `peak`: o maior pico agora entre as saídas (0 a 1); `service`: só navegador, o serviço reconhecido pelo
+    título da janela ("Google Meet" ou vazio), nunca o título. No modo só pelo registro, `pid` 0 e `peak` 0."""
+    pid: int
+    exe: str
+    mic: bool
+    peak: float
+    service: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AudioActivity:
+    """F5.7 (L1): uma leitura do sensor. `degraded`: só o indicador de microfone do sistema (sem pid, pico nem serviço)."""
+    apps: tuple[AppAudio, ...]
+    degraded: bool = False
+
+
 # Callback de áudio: (bloco float32 com shape (frames, canais), perf_counter do primeiro frame). Roda na thread do
 # driver: só copiar e enfileirar. Callback de erro: motivo em texto quando a stream morre sozinha (dispositivo sumiu).
 type AudioCallback = Callable[[np.ndarray, float], None]
@@ -137,6 +166,15 @@ class MicMute(Protocol):
     def set_device(self, device: AudioDevice | None, muted: bool = False) -> bool: ...   # True se achou o endpoint
     def get(self) -> bool | None: ...          # None = não sei
     def set(self, muted: bool) -> bool: ...    # True se conseguiu
+
+
+class MicWatch(Protocol):
+    """F5.7 (L1): a espera da mudança do indicador de microfone do sistema, sem callback. `wait` na thread que lê: True
+    quando o indicador mudou (e já rearmado: o aviso do sistema é de uma vez só), False no tempo-limite ou depois de
+    `cancel`; `cancel` de qualquer thread acorda quem espera; `close` solta tudo, na thread que lê, depois de sair do `wait`."""
+    def wait(self, timeout_s: float) -> bool: ...
+    def cancel(self) -> None: ...
+    def close(self) -> None: ...
 
 
 class Hotkeys(Protocol):
@@ -226,6 +264,26 @@ class Platform(Protocol):
     def sync_stdout_handle(self) -> None: ...
     def lower_own_priority(self) -> bool: ...        # o worker se rebaixa ao nascer (nunca `preexec_fn`)
     def memory_rss(self) -> int | None: ...          # RSS do próprio processo em bytes, só para o log
+
+    # F5.7 (L1): o sensor do aviso de reunião sem gravação; sem ele (outras plataformas, CP15), None ou vazio.
+    # `audio_activity` e `close_audio_activity` só na thread que lê: os objetos do sistema nascem, vivem e morrem nela.
+    # `titles_for`: os executáveis (minúsculos) cujo título de janela vira `service`; com `degraded`, só o indicador de
+    # microfone do sistema. Levanta quando a leitura inteira falha: quem lê conta as falhas e espaça as tentativas
+    def audio_activity(self, titles_for: frozenset[str] = frozenset(), degraded: bool = False) -> AudioActivity | None:
+        del titles_for, degraded                           # sem sensor nesta plataforma
+        return None
+
+    def close_audio_activity(self) -> None:
+        return None
+
+    def mic_users(self) -> frozenset[str] | None:          # ids opacos das entradas em uso do indicador de microfone
+        return None
+
+    def watched_apps(self) -> tuple[WatchedApp, ...]:      # a lista de fábrica dos apps de reunião e dos navegadores
+        return ()
+
+    def mic_watch(self) -> MicWatch | None:                # None quando o sistema não avisa (aí quem lê consulta)
+        return None
 
     # pastas do sistema
     def config_dir(self) -> Path: ...

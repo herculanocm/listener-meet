@@ -19,8 +19,9 @@ from typing import override
 import numpy as np
 
 from listener.capture.clock import ManualClock
-from listener.platform.base import (AudioCallback, AudioDevice, ChildProcess, Endpoint, Endpoints, ErrorCallback, Platform,
-                                    PlayingApp)
+from listener.platform.base import (AudioActivity, AudioCallback, AudioDevice, ChildProcess, Endpoint, Endpoints,
+                                    ErrorCallback, Platform, PlayingApp, WatchedApp)
+from tests.fake_activity import FAKE_WATCHED, FakeMicWatch
 
 MIC = AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)
 SPEAKERS = Endpoint("fake-out-0", "Alto-falantes Fake")
@@ -242,6 +243,14 @@ class FakePlatform(Platform):
         self.capture_exclusion = True                         # F5.3 (A-13): o que `exclude_from_capture` devolve
         self.excluded: list[int] = []                         # as janelas que pediram para sair da captura
         self.text_scale_factor = 1.0                          # F5.4 (A-08): o "Tamanho do texto" do sistema simulado
+        # F5.7 (L1): o sensor de mentira; o teste troca a leitura, faz a leitura inteira falhar e muda o indicador
+        self.activity: AudioActivity | None = AudioActivity(())
+        self.degraded_reading: AudioActivity | None = AudioActivity((), degraded=True)
+        self.activity_error: Exception | None = None
+        self.activity_reads: list[tuple[frozenset[str], bool]] = []   # (titles_for, degraded) de cada leitura
+        self.activity_closed = 0
+        self.mic_user_ids: frozenset[str] | None = frozenset()
+        self.watch: FakeMicWatch | None = FakeMicWatch()
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -332,6 +341,31 @@ class FakePlatform(Platform):
     @override
     def list_playing_apps(self) -> list[PlayingApp]:
         return [PlayingApp(pid=4242, exe="meeting.exe", title="Reunião", peak=0.5, is_meeting_app=True)]
+
+    @override
+    def audio_activity(self, titles_for: frozenset[str] = frozenset(), degraded: bool = False) -> AudioActivity | None:
+        self.activity_reads.append((titles_for, degraded))
+        if degraded:
+            return self.degraded_reading
+        if self.activity_error is not None:
+            raise self.activity_error
+        return self.activity
+
+    @override
+    def close_audio_activity(self) -> None:
+        self.activity_closed += 1
+
+    @override
+    def mic_users(self) -> frozenset[str] | None:
+        return self.mic_user_ids
+
+    @override
+    def watched_apps(self) -> tuple[WatchedApp, ...]:
+        return FAKE_WATCHED
+
+    @override
+    def mic_watch(self) -> FakeMicWatch | None:
+        return self.watch
 
     def _stream(self, sample_rate: int, channels: int, on_audio: AudioCallback, on_error: ErrorCallback | None,
                 freq: float, silent: list[tuple[float, float]] | None = None) -> FakeStream:

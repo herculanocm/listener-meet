@@ -29,7 +29,7 @@ from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform,
                     PlayingApp, log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
-from . import endpoints, processes, sessions
+from . import activity, endpoints, processes, sessions
 from .endpoints import com_init as _com_init
 from .hotkeys import Win32Hotkeys
 
@@ -410,7 +410,7 @@ class _Win32MicMute(MicMute):
                 return True
 
 
-class Win32Platform(Platform):
+class Win32Platform(activity.Win32Activity, Platform):
     name = "win32"
 
     def __init__(self) -> None:
