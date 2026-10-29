@@ -3,19 +3,14 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Em curso: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
-  padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
-  tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura
-  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono). L3, excluir reunião, feito (`426c25e`);
-  L1, a ata a pedido, feito (`fe0658f` a lógica: sem pedido não sai ata, executivo, pré-resumo nem parcial; `f017f01`
-  a tela: o popup, as caixas ao parar e na troca de idioma, a linha com o estado na reunião, "Resumo parcial" no
-  warm-up); falta o L2 (os prompts nas Configurações).
-- **Proposta: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, rascunho de 29/10, pedido do dono): avisar
-  quando uma chamada começa sem gravação (o microfone em uso por outro app, medido nesta máquina), sem roubar o foco e
-  fora da captura; "Gravar…" abre o "Antes de gravar" com o app. Consultas de UX, arquitetura e medição incorporadas;
-  aguarda a aprovação do dono (CP13) e as perguntas 1 a 6 da spec; o código começa depois da F5.6.
-- **Próximo passo do dono:** testar a F5.6 L1 pela Parte 15 e a L3 pela Parte 14, a F5.5 pela Parte 13 e a F5.4
-  pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
+- **Em curso:** nenhuma fase. A F5.6 está implementada (veja "Concluído"), e a F5.7 espera a aprovação do dono.
+- **Proposta: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, rascunho de 29/10, pedido do dono).
+  - O que faz: avisa quando uma chamada começa sem gravação, sem roubar o foco e sem aparecer na tela compartilhada. O
+    sinal é o microfone em uso por outro app, medido nesta máquina. "Gravar…" abre o "Antes de gravar" com o app.
+  - Consultas de UX, arquitetura e medição incorporadas.
+  - Aguarda a aprovação do dono (CP13) e as perguntas 1 a 6 da spec.
+- **Próximo passo do dono:** testar a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
+  Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
   depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
   uso, chaves, gravação curta de ponta a ponta, reunião aberta, busca com o Gemini, busca local, ao vivo, reuniões reais
@@ -25,7 +20,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   chaves (D-053):** segue pela Parte 2, agora no grupo "Chaves de acesso", e refaz a Parte 3 numa chamada de verdade. A
   pasta do banco daquele teste (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 de 26/10, fora da Lixeira e sem
   nenhum processo da LLM nela (os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`): perguntar ao dono.
-- **Concluído de 25 a 28/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
+- **Concluído de 25 a 29/10, no Windows** (o detalhe nas seções Implementação das specs e em `decisoes.md`):
   - [x] F5: R7 e R8 e o fechamento (**F5 implementada**: `af2ea3d`, `6e0f235`, `b21d675`).
   - [x] "Verificar no Windows" sem o dono: itens 1 e 2 inteiros e a parte sem o dono dos itens 3, 5, 7, 8 e 9, com seis
         defeitos corrigidos (ctypes duas vezes, corrida do worker leve, isolamento dos testes, tradução do Qt, largura
@@ -74,6 +69,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   - [x] **F5.5 implementada** (28/10, `features/F5.5-vozes-numeradas.md`, D-062): spec com a revisão de arquitetura
         (`579bddb`) e o código com a revisão do diff, R-01 a R-05 (`3b9320c`); também a página de chaves sem lambda
         (`7fb2df7`) e o worktree da F5.3 removido. Falta o dono verificar no Windows (Parte 13).
+  - [x] **F5.6 implementada** (28 e 29/10, `features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063 e D-064).
+        - L3, excluir reunião: `426c25e`.
+        - L1a, ata, resumo e ações só a pedido: `fe0658f`.
+        - L1b, o popup e os estados: `f017f01`.
+        - L2, os prompts nas Configurações: `2a8c98e`.
+
+        Cada lote passou por revisão do diff por um agente novo, com cada achado corrigido junto de um teste. Ao todo
+        são 894 testes. Falta o dono verificar no Windows (Partes 14 a 16).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).

@@ -101,6 +101,6 @@ Tamanho-alvo: 3 KB.
 | U-089 | Ao parar: "Gerar ata e ações" e "Gerar resumo" no resumo da gravação, com a última escolha | Resumo | implementada (F5.6 L1, 29/10) |
 | U-090 | Pedido de ata ou resumo com popup: vozes sem nome, custo e "Gerar quando todos tiverem nome" | Reunião | implementada (F5.6 L1, 29/10) |
 | U-091 | Resumo parcial do ao vivo como caixa no "Antes de gravar", desmarcada | Warm-up | implementada (F5.6 L1, 29/10) |
-| U-092 | Página Prompts: as instruções de cada tarefa da LLM editáveis, o formato à vista, restaurar padrão | Config. | aprovada (F5.6 L2, D-063) |
+| U-092 | Página Prompts: as instruções de cada tarefa da LLM editáveis, o formato à vista, restaurar padrão | Config. | implementada (F5.6 L2, 29/10) |
 | U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | implementada (F5.6 L3, 29/10) |
 | U-094 | Aviso de reunião sem gravação: cartão sem foco e fora da captura com "Gravar…" (abre o "Antes de gravar" com o app como fonte) e "Agora não" (até a chamada acabar), um lembrete, a bandeja e o cartão nas Configurações; substitui a U-012 | Aviso, bandeja | proposta (F5.7, rascunho de 29/10) |

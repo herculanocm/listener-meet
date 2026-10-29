@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 15 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 16 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -270,6 +270,35 @@ Antes: a chave do Gemini configurada; uma conversa de 3 min com pelo menos duas 
 - [ ] No notebook a 150 %: a reunião com a linha nova cabe sem cortar os botões.
 - Devolva: as linhas do `listener.log` com "pedido", o custo estimado contra o cobrado (Custos), o tempo da ata, se o
   título ficou bom e qualquer popup ou botão que confundiu.
+
+## Parte 16 — F5.6 L2: os prompts nas Configurações (15 min)
+Antes: **reinicie o app**, porque a página nova só aparece depois disso. Tenha a chave do Gemini e uma reunião
+processada com falas.
+- [ ] Configurações, Prompts: a lista mostra as 11 tarefas e quando cada uma roda. Escolha "Ata e ações". Aparecem as
+      instruções do app em inglês, o selo "Padrão do app" e a contagem de caracteres; embaixo, "O que vai junto, fixo".
+      O Tab sai do editor em vez de escrever no texto.
+- [ ] Escreva instruções em português, por exemplo: "Você escreve a ata para a diretoria; destaque valores, prazos e
+      quem decidiu. Escreva em {idioma}.". Clique em Salvar e peça a ata numa reunião. Confira:
+      - a ata segue as suas instruções;
+      - as citações [mm:ss] e "Voz 2" continuam certas;
+      - em Custos, a chamada aparece como `minutes/1.2+u` seguido de seis letras e números.
+- [ ] Deixe o texto vazio e clique em Salvar. Faça o mesmo com `{cliente}` no texto e depois com mais de 4.000
+      caracteres. Em cada caso, o Salvar abre a página e a tarefa, o editor fica com borda vermelha e uma faixa explica
+      o problema. Nada é gravado.
+- [ ] "Restaurar padrão" volta ao texto do app, com o selo "Padrão do app".
+- [ ] Em Identificação das vozes, Transcrição revisada e Título aparece o aviso de que mexer ali piora a identificação
+      e a transcrição.
+- [ ] Edite um prompt enquanto um job de LLM está rodando. O job termina com o texto antigo e o seguinte usa o novo.
+- [ ] Se uma ata sair fora do formato com as suas instruções, a linha da reunião mostra "falhou", a nota e o botão
+      "Restaurar o prompt padrão". Clique nele e depois em "Gerar de novo".
+- [ ] Se você usa a transcrição pela LLM: edite as instruções dela e processe uma reunião. O `listener.log` mostra a
+      linha com `+u`.
+- [ ] No notebook a 150 % e com texto ampliado, a página cabe na tela. Com o leitor de tela, a lista e os botões são
+      lidos com nome.
+- Devolva:
+  - o resultado de uma busca no `listener.log` por um pedaço das suas instruções (não pode aparecer nada);
+  - a ata gerada com as suas instruções;
+  - qualquer coisa que confundiu.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
