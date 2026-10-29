@@ -29,7 +29,7 @@ from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform,
                     PlayingApp, log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
-from . import endpoints, processes
+from . import endpoints, processes, sessions
 from .endpoints import com_init as _com_init
 from .hotkeys import Win32Hotkeys
 
@@ -434,6 +434,7 @@ class Win32Platform(Platform):
         self._audio_signature: tuple[Any, ...] | None = None    # U-043: os endpoints na última leitura do PortAudio
         self._indices: dict[str, int] = {}                       # id -> índice nesta leitura do PortAudio (A-02)
         self._endpoints = endpoints.EndpointReader()             # F5.3 (A-19): o Core Audio, com os nomes em cache
+        self._render_sessions = sessions.FlowSessions(endpoints.FLOW_RENDER)   # F5.7: todas as saídas, sem guardar COM
         self._apps_sig: tuple[tuple[int, str], ...] | None = None   # o último conjunto de apps com som que foi para o log
         self._procs_cache: tuple[float, dict[int, processes.ProcInfo], dict[int, str]] | None = None
 
@@ -655,29 +656,17 @@ class Win32Platform(Platform):
 
     @override
     def list_playing_apps(self) -> list[PlayingApp]:
+        """F5.7 (item 10): as sessões de todas as saídas ativas, não só a padrão (`sessions.py`, com os gerenciadores criados
+        e soltos na leitura, na thread do `_Poller`); o mesmo pid em duas saídas é uma linha só, com o maior pico; a saída
+        que falha fica de fora e a falha geral dá a lista vazia."""
         t0 = time.perf_counter()
-        _com_init()
         try:
-            from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
-        except Exception as e:
-            log.debug("pycaw indisponível: %s", e)
-            return []
-        try:
-            sessions = AudioUtilities.GetAllSessions()
+            reading = self._render_sessions.read()
         except Exception as e:
             log.warning("sessões de áudio: %s", e)
             return []
-        peaks: dict[int, float] = {}
-        for s in sessions:
-            pid = _session_pid(s)
-            if not pid:
-                continue
-            peak = 0.0
-            try:
-                peak = float(s._ctl.QueryInterface(IAudioMeterInformation).GetPeakValue())
-            except Exception as e:
-                log.debug("pico da sessão %s: %s", pid, e)
-            peaks[pid] = max(peaks.get(pid, 0.0), peak)
+        peaks = sessions.peaks_by_pid(reading.values())
+        n_sessions = sum(len(group) for group in reading.values())
         apps: list[PlayingApp] = []
         if peaks:
             procs, titles = self._processes()
@@ -696,10 +685,10 @@ class Win32Platform(Platform):
         if sig != self._apps_sig:                          # uma linha quando a lista muda, não a cada 0,5 s do warm-up
             self._apps_sig = sig
             log.debug("apps com som mudaram: %s (%d sessões, %.0f ms)",
-                      ", ".join(f"{a.exe} (pid {a.pid}, pico {a.peak:.2f})" for a in apps) or "nenhum", len(sessions),
+                      ", ".join(f"{a.exe} (pid {a.pid}, pico {a.peak:.2f})" for a in apps) or "nenhum", n_sessions,
                       self.last_list_apps_ms)
         elif self.last_list_apps_ms > SLOW_LIST_APPS_MS:
-            log.debug("lista de apps com som lenta: %.0f ms (%d sessões)", self.last_list_apps_ms, len(sessions))
+            log.debug("lista de apps com som lenta: %.0f ms (%d sessões)", self.last_list_apps_ms, n_sessions)
         return apps
 
     # ---------------------------------------------------------------- captura

@@ -61,13 +61,19 @@ def scan() -> Scan | None:
         flows: dict[int, list[tuple[str, Any]]] = {}
         defaults: list[str] = []
         for flow in (FLOW_CAPTURE, FLOW_RENDER):
-            col = enumerator.EnumAudioEndpoints(flow, STATE_ACTIVE)
-            flows[flow] = [(str(dev.GetId()), dev) for dev in (col.Item(i) for i in range(col.GetCount()))]
+            flows[flow] = active(enumerator, flow)
             defaults += [_default_id(enumerator, flow, role) for role in (ROLE_CONSOLE, ROLE_COMMUNICATIONS)]
         return Scan(flows[FLOW_CAPTURE], flows[FLOW_RENDER], (defaults[0], defaults[1], defaults[2], defaults[3]))
     except Exception as e:
         log.debug("endpoints de áudio: %s", e)
         return None
+
+
+def active(enumerator: Any, flow: int) -> list[tuple[str, Any]]:
+    """(id, IMMDevice) dos endpoints ativos de um fluxo, na ordem do sistema, só com o id (o `CreateDevice` do pycaw lê
+    todas as propriedades); F5.7: também a enumeração de `sessions.py`."""
+    col = enumerator.EnumAudioEndpoints(flow, STATE_ACTIVE)
+    return [(str(dev.GetId()), dev) for dev in (col.Item(i) for i in range(col.GetCount()))]
 
 
 def signature() -> tuple[object, ...] | None:
