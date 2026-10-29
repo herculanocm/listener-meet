@@ -24,7 +24,7 @@ Tamanho-alvo: 3 KB.
 | U-009 | Custo e latência por provedor: testar conexão mostra latência; tokens e custo por reunião e por mês | Configurações | aprovada (F3) |
 | U-010 | Indicador de tamanho do banco com projeção; backup com progresso | Configurações | aprovada (F6) |
 | U-011 | Exportar ata e transcrição (.md, .docx, área de transferência) sob demanda (D-012) | Histórico | implementada (F5: .md e área de transferência; .docx na F5.1) |
-| U-012 | Notificação de reunião detectada com "Gravar agora" (último preset) e "ignorar por 1 h" (D-010) | Bandeja | aprovada (F6); revista na U-094 (F5.7, proposta) |
+| U-012 | Notificação de reunião detectada com "Gravar agora" (último preset) e "ignorar por 1 h" (D-010) | Bandeja | substituída pela U-094 (F5.7, D-065) |
 | U-013 | Assistente de primeiro uso: token HF, chave do provedor, teste do mic, app de reunião | Primeiro uso | aprovada (F6; versão mínima na F1) |
 | U-014 | Tema claro e escuro seguindo o sistema; DPI alto | Geral | implementada (F5.4: tema e DPI, 28/10; escolher à mão na F6) |
 | U-015 | Preset "sala de reunião": diariza também o L e desliga "L é sempre eu" | Warm-up | aprovada (metadado na F1; lógica na F2) |
@@ -103,4 +103,4 @@ Tamanho-alvo: 3 KB.
 | U-091 | Resumo parcial do ao vivo como caixa no "Antes de gravar", desmarcada | Warm-up | implementada (F5.6 L1, 29/10) |
 | U-092 | Página Prompts: as instruções de cada tarefa da LLM editáveis, o formato à vista, restaurar padrão | Config. | implementada (F5.6 L2, 29/10) |
 | U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | implementada (F5.6 L3, 29/10) |
-| U-094 | Aviso de reunião sem gravação: cartão sem foco e fora da captura com "Gravar…" (abre o "Antes de gravar" com o app como fonte) e "Agora não" (até a chamada acabar), um lembrete, a bandeja e o cartão nas Configurações; substitui a U-012 | Aviso, bandeja | proposta (F5.7, rascunho de 29/10) |
+| U-094 | Aviso de reunião sem gravação: cartão sem foco e fora da captura com "Gravar…" (abre o "Antes de gravar" com o app como fonte) e "Agora não" (até a chamada acabar), um lembrete, a bandeja e o cartão nas Configurações; substitui a U-012 | Aviso, bandeja | aprovada (F5.7, D-065) |

@@ -3,12 +3,12 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
-- **Em curso:** nenhuma fase. A F5.6 está implementada (veja "Concluído"), e a F5.7 espera a aprovação do dono.
-- **Proposta: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, rascunho de 29/10, pedido do dono).
+- **Em curso: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, D-065, aprovada com as perguntas 1 a 6 no
+  padrão).
   - O que faz: avisa quando uma chamada começa sem gravação, sem roubar o foco e sem aparecer na tela compartilhada. O
     sinal é o microfone em uso por outro app, medido nesta máquina. "Gravar…" abre o "Antes de gravar" com o app.
-  - Consultas de UX, arquitetura e medição incorporadas.
-  - Aguarda a aprovação do dono (CP13) e as perguntas 1 a 6 da spec.
+  - Lotes: a correção do "Apps tocando agora" (todas as saídas), num commit à parte; L1, a plataforma; L2, as regras;
+    L3, a interface.
 - **Próximo passo do dono:** testar a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
   Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
