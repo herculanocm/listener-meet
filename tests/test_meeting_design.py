@@ -178,7 +178,7 @@ def test_minutes_read_formatted_edit_the_markdown_and_editing_means_open_or_modi
     asked: list[JobStep] = []
     tab = TextTab(store, mid, SummaryKind.MINUTES, asked.append)
     qtbot.addWidget(tab)
-    tab.reload(set(), {}, False)
+    tab.reload(set(), {}, "")
     assert tab.stack.currentWidget() is tab.reader and not tab.editing()
     shown = tab.reader.toPlainText()
     assert "Decisões" in shown and "##" not in shown and "**" not in shown            # formatada, não o Markdown cru
@@ -187,7 +187,7 @@ def test_minutes_read_formatted_edit_the_markdown_and_editing_means_open_or_modi
     assert tab.stack.currentWidget() is tab.editor and tab.editing() and tab.btn_save.isVisibleTo(tab)
     assert tab.btn_save.property(KIND_PROP) == PRIMARY
     _minutes(store, mid, job, "# Nova versão")                                       # chega outra versão com o Markdown aberto
-    tab.reload(set(), {}, False)
+    tab.reload(set(), {}, "")
     assert tab.newer and tab.editor.toPlainText() == MINUTES_MD and not tab.notice_bar.isHidden()   # R3-01: aberto já é edição
     tab.cancel_edit()                                                                # cancelar descarta e mostra a nova
     assert not tab.editing() and tab.stack.currentWidget() is tab.reader and "Nova versão" in tab.reader.toPlainText()
@@ -206,7 +206,7 @@ def test_without_minutes_the_empty_state_offers_to_generate_and_waiting_moves_th
     asked: list[JobStep] = []
     tab = TextTab(store, mid, SummaryKind.MINUTES, asked.append)
     qtbot.addWidget(tab)
-    tab.reload(set(), {}, False)
+    tab.reload(set(), {}, "")
     assert tab._empty is None                                                        # escondida, o vazio ainda não nasceu
     tab.show()
     assert isinstance(tab.stack.currentWidget(), EmptyState) and tab.empty.label.text() == "Ata ainda não gerada."
@@ -214,10 +214,10 @@ def test_without_minutes_the_empty_state_offers_to_generate_and_waiting_moves_th
     assert not tab.info.isVisibleTo(tab)                                             # o vazio diz tudo: sem a origem nem o Editar
     tab.empty.action.click()
     assert asked == [JobStep.MINUTES]
-    tab.reload(set(), {}, True)                                                      # LLM em andamento: a ação apagada
-    assert not tab.empty.action.isEnabled()
+    tab.reload(set(), {}, "sem chave")                                               # L1b: apagada, com o motivo na dica
+    assert not tab.empty.action.isEnabled() and tab.empty.action.toolTip() == "sem chave"
     tab.set_extra("A ata espera a identificação de 2 voz(es).", "Gerar ata mesmo assim", lambda: None)
-    tab.reload(set(), {}, False)
+    tab.reload(set(), {}, "")
     assert not tab.empty.action.isVisibleTo(tab) and tab.btn_extra.isVisibleTo(tab) and not tab.notice_bar.isHidden()
     assert tab.notice_bar.kind == "info"                                             # a espera informa; não é aviso
 

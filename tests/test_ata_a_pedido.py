@@ -242,16 +242,16 @@ def test_the_title_reads_the_opening_lines_cut_at_a_speaker_change(store):
 
 
 # ---------------------------------------------------------------- Aceite 1: quem enfileira a ata (AST, R-07)
-# o caminho da ata: o módulo e as funções dele que pedem, liberam, encadeiam ou enfileiram
+# o caminho da ata: o módulo e as funções dele que pedem, liberam, encadeiam ou enfileiram. F5.6 L1b: o `ask_now` das abas
+# saiu; a tela pede por `llm_ask.ask` (o popup antes) e só `llm_ask.submit` chama `request`
 TARGETS: dict[str, frozenset[str]] = {
     "llm_requests": frozenset({"request", "release", "after_pipeline", "_enqueue_or_join", "enqueue_or_join"}),
-    "llm_tabs": frozenset({"ask_now"}), "llm_steps": frozenset({"enqueue_llm_job"})}
+    "llm_ask": frozenset({"ask", "submit"}), "llm_steps": frozenset({"enqueue_llm_job"})}
 # a lista fechada de quem chama (`chamado <- arquivo:Classe.função`): um chamador novo falha o teste até entrar aqui
 ALLOWED: frozenset[str] = frozenset({
     "after_pipeline <- runner.py:JobRunner._enqueue_llm", "after_pipeline <- llm_requests.py:request",
-    "release <- review.py:ReviewDialog.release_summary", "request <- llm_tabs.py:ask_now",
-    "ask_now <- llm_tabs.py:request_llm_step", "ask_now <- llm_tabs.py:LlmTabsGroup.release_now",
-    "ask_now <- llm_tabs.py:LlmTabsGroup.refresh_names",
+    "release <- review.py:ReviewDialog.release_summary", "request <- llm_ask.py:submit", "submit <- llm_ask.py:ask",
+    "ask <- llm_tabs.py:LlmTabsGroup.ask", "ask <- summary.py:SummaryDialog.ask", "ask <- meeting_language.py:MeetingLanguage._ask_llm",
     "_enqueue_or_join <- llm_requests.py:_apply", "_enqueue_or_join <- llm_requests.py:release",
     "enqueue_llm_job+requested <- llm_requests.py:_enqueue_or_join", "enqueue_llm_job <- llm_steps.py:enqueue_after_pipeline",
     "enqueue_llm_job <- llm_tabs.py:request_llm_step",
@@ -328,7 +328,7 @@ def _calls(filename: str, source: str) -> set[str]:
 
 def test_only_the_closed_list_asks_for_the_minutes_executive_and_pre_summary():
     """`enqueue_llm_job` recusa ata, executivo e pré-resumo sem `requested` (`test_llm_steps`); no código do app, só a lista
-    fechada chama `request`, `release`, `after_pipeline`, `ask_now`, `_enqueue_or_join` e `enqueue_llm_job` (só
+    fechada chama `request`, `release`, `after_pipeline`, `ask`, `submit`, `_enqueue_or_join` e `enqueue_llm_job` (só
     `_enqueue_or_join` passa `requested`, ninguém escreve essas tarefas na chamada) e só `llm_steps` põe um job `llm` direto
     na fila (`kind` por posição, por palavra-chave ou o literal)."""
     found: set[str] = set()

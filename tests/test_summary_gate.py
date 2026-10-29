@@ -253,6 +253,13 @@ def test_the_minutes_tab_offers_generate_now_and_refresh_only_what_exists(qtbot,
     _pipeline(store, mid)
     _names(store, mid)
     group = LlmTabsGroup(store, mid)
+    asked: list[tuple[str, ...]] = []
+
+    def now(_parent, q):                                                                      # F5.6 L1b: o popup, "agora"
+        asked.append(q.tasks)
+        return llm_requests.Mode.NOW
+
+    group.choose = now
     ata = group.text_tabs[str(SummaryKind.MINUTES)]
     qtbot.addWidget(ata)
     group.reload()
@@ -271,6 +278,7 @@ def test_the_minutes_tab_offers_generate_now_and_refresh_only_what_exists(qtbot,
     ata.btn_extra.click()
     refresh = json.loads(_llm_jobs(store, mid)[-1]["params_json"])["tasks"]
     assert refresh == ["minutes"]                                                             # sem executivo nem pré-resumo
+    assert asked == [("minutes",), ("minutes",)]                                              # os dois pelo popup
 
 
 def test_a_request_is_never_cut_by_the_cost_alert(platform, store):

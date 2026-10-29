@@ -151,6 +151,9 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("llm.proxy_url", "", _NOW, "Proxy HTTP(S) (vazio = o do sistema)", _text, phase="F3"),
     SettingSpec("llm.ca_bundle", "", _NOW, "Certificado raiz PEM (vazio = padrão)", _text, phase="F3"),
     SettingSpec("llm.system_certs", True, _NOW, "Aceitar certificados do sistema (truststore)", _bool, phase="F3"),
+    # F5.6 L1b (U-089, A-19, A-47): a última escolha das caixas "Gerar ata e ações" e "Gerar resumo" (ao parar e na troca de
+    # idioma), fora do preset; espécies separadas por vírgula, vazio = nenhuma (o padrão da primeira vez)
+    SettingSpec("llm.ask_last", "", _NOW, "Última escolha de ata e resumo ao parar a gravação", _text, phase="F5.6", internal=True),
     # F4 (item 10): grupo "Ao vivo"; vale na próxima gravação, salvo o intervalo do resumo parcial, que vale em uso (CP8)
     SettingSpec("live.enabled", _default_live(), _NEXT, "Legenda ao vivo ligada (padrão do warm-up)", _bool, phase="F4"),
     SettingSpec("live.names", True, _NEXT, "Nomes ao vivo (padrão do warm-up)", _bool, phase="F4"),

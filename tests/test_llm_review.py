@@ -10,6 +10,7 @@ import pytest
 
 from listener.model import ActionStatus, DecisionSource, JobKind, JobStatus, SummaryKind
 from listener.pipeline import review
+from listener.pipeline.llm_requests import Mode
 from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
 pytest.importorskip("PySide6")
@@ -117,6 +118,7 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     assert minutes_tab.btn_regen.isEnabled()
     from listener.model import JobStep
 
+    dlg.llm.choose = lambda _parent, _q: Mode.NOW                                           # F5.6 L1b: o popup, "agora"
     job_id = dlg.regenerate(JobStep.MINUTES)
     job = store.jobs.get(job_id)
     assert job["kind"] == JobKind.LLM and json.loads(job["params_json"])["tasks"] == ["minutes"] and launched == [True]

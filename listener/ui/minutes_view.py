@@ -12,7 +12,10 @@
   ação contextual dela (`btn_extra`).
 - A leitura e o estado vazio nascem quando a página precisa deles, e o vazio de uma aba escondida só quando ela aparece
   ([fato, 28/10] criados sempre, as três abas de texto deixavam a reunião e a revisão mais lentas para abrir: cada widget
-  a mais é criado e polido na abertura)."""
+  a mais é criado e polido na abertura).
+- F5.6 L1b (A-10, Comportamento 1): "Gerar de novo", a ação do estado vazio e a da faixa ficam ligadas com job de LLM ativo
+  (o pedido entra na fila atrás dele); apagadas só pelo motivo que o grupo passa na recarga (`blocked`: sem chave, ou a
+  própria espécie "gerando"), que vira a dica."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -41,7 +44,6 @@ INDEXED_KINDS = frozenset({SummaryKind.MINUTES, SummaryKind.EXECUTIVE})   # F5: 
 STALE_MARK = "gerados antes do reprocessamento"
 NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" grava o seu texto sobre a versão nova (o texto "
                 "da LLM fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
-BUSY_TIP = "há um job de LLM em andamento para esta reunião"
 HEADING_GAP = 12                 # px lógicos antes de cada título da leitura (o primeiro, colado no topo)
 
 
@@ -71,7 +73,7 @@ class TextTab(QWidget):
         self._loaded: tuple[int | None, str] | None = None       # (versão, texto) que estão no editor
         self.newer = False                                       # chegou versão nova durante a edição
         self.edit_mode = False                                   # A-15: o Markdown aberto ("Editar")
-        self._last: tuple[set[str], dict[str, str], bool] = (set(), {}, False)
+        self._last: tuple[set[str], dict[str, str], str] = (set(), {}, "")
         self.info = QLabel("")
         self.info.setWordWrap(True)
         note(self.info)                                          # U-079: a origem em legenda
@@ -81,7 +83,8 @@ class TextTab(QWidget):
         self._extra_action: Callable[[], Any] | None = None
         self._reader: QTextBrowser | None = None                 # A-15: a leitura formatada (sob demanda)
         self._empty: EmptyState | None = None                    # U-059 (sob demanda)
-        self._busy = self._waiting = self._deferred = False
+        self._blocked = ""                                       # L1b: por que pedir está apagado; vazio = ligado
+        self._waiting = self._deferred = False
         self.editor = QPlainTextEdit()
         self.stack = QStackedWidget()
         self.stack.addWidget(self.editor)
@@ -145,6 +148,8 @@ class TextTab(QWidget):
         self._bar.setVisible(bool(text))
         self._bar.action.setText(self._extra_label)
         self._bar.action.setVisible(bool(self._extra_label and self._extra_action is not None))
+        self._bar.action.setEnabled(not self._blocked)
+        self._bar.action.setToolTip(self._blocked)
 
     @property
     def reader(self) -> QTextBrowser:
@@ -166,10 +171,10 @@ class TextTab(QWidget):
         return self._empty
 
     def _sync_empty(self) -> None:
-        """A ação do estado vazio: apagada com a LLM em andamento; escondida quando a faixa oferece a dela (U-042)."""
+        """A ação do estado vazio: apagada pelo motivo da recarga (L1b); escondida quando a faixa oferece a dela (U-042)."""
         if self._empty is not None:
-            self._empty.action.setEnabled(not self._busy)
-            self._empty.action.setToolTip(BUSY_TIP if self._busy else "")
+            self._empty.action.setEnabled(not self._blocked)
+            self._empty.action.setToolTip(self._blocked)
             self._empty.action.setVisible(not self._waiting)
 
     # ---------------------------------------------------------------- estado
@@ -191,8 +196,9 @@ class TextTab(QWidget):
         self._row.invalidate()          # [fato, 28/10] numa aba escondida, o mínimo da fileira ficava o de todos os botões à vista
         self.updateGeometry()           # (e o da aba e do cartão em volta, que somavam a largura deles)
 
-    def reload(self, stale: set[str], skipped: dict[str, str], busy: bool, *, force: bool = False) -> None:
-        self._last = (stale, skipped, busy)
+    def reload(self, stale: set[str], skipped: dict[str, str], blocked: str = "", *, force: bool = False) -> None:
+        """`blocked`: por que pedir está apagado (sem chave, a espécie "gerando"; L1b), vazio = ligado."""
+        self._last = (stale, skipped, blocked)
         row = self.store.summaries.current(self.meeting_id, self.kind)
         current = (int(row["id"]) if row else None, self.store.summaries.display_text(row))
         if current != self._loaded:
@@ -204,11 +210,11 @@ class TextTab(QWidget):
         if self.summary_id != current[0]:                        # a versão aberta ficou para trás: o rótulo fala dela
             shown = self.store.summaries.get(self.summary_id) if self.summary_id is not None else None
         self.info.setText("ainda não gerado" if shown is None else origin_text(dict(shown)))
+        self._blocked = blocked
         self._notices(stale, skipped, row is None)
         self.btn_reload.setVisible(self.newer)
-        self._busy = busy
-        self.btn_regen.setEnabled(not busy)
-        self.btn_regen.setToolTip(BUSY_TIP if busy else "")
+        self.btn_regen.setEnabled(not blocked)
+        self.btn_regen.setToolTip(blocked)
         self.btn_save.setEnabled(self.summary_id is not None)
         self._page()
         self._sync_empty()

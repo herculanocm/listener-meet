@@ -35,7 +35,7 @@ shots   janelas reais em (-10000, -10000) com WA_ShowWithoutActivating: o DPI ve
         (com WA_DontShowOnScreen os diálogos saem em DPR 1; a plataforma offscreen não tem as fontes do Windows). F5.4
         (A-03, A-21): `--escuro` força o esquema escuro no Qt (o Windows segue como está) e `--dpr1` desliga a escala
         (`QT_ENABLE_HIGHDPI_SCALING=0` antes do `QApplication`); o tema é aplicado como no app. `cortados` e `pequenos`
-        estão em `scripts/probe_ui.py`. F5.6: o Histórico com seleção, o menu e a confirmação em `scripts/probe_f56.py`.
+        estão em `scripts/probe_ui.py`. F5.6: Histórico, caixas, popup, barra e warm-up em `scripts/probe_f56.py`.
 tempos  `scripts/probe_ui.py`: mediana de 7 aberturas por janela, em rodadas alternadas, e o menor de 3 processos; com
         `--base PASTA`, as rodadas alternam o código de antes (uma cópia, `git archive <commit> listener tests`) e o atual.
 player  a reunião é silêncio (nada audível) em pedaços de 60 s; o primeiro som roda em processos novos, um frio e um com o
@@ -470,7 +470,7 @@ def cmd_shots(args) -> None:
         shot(su, name)
         discard(su)
     l4_shots(store, p, shot, tabs_of, app, Path(tempfile.mkdtemp(prefix="listener-shots-l4-")))   # F5.4 L4
-    f56_shots(store, shot, app)                           # F5.6 L3: o Histórico com seleção, o menu e a confirmação
+    f56_shots(store, shot, app, p)                        # F5.6: L3 (Histórico) e L1b (caixas, popup, barra, warm-up)
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")

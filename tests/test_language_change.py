@@ -180,9 +180,8 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     assert bar.label.text() == "Idioma: pt-BR" and bar.button.text() == "Trocar para Inglês (en)…" and bar.button.isEnabled()
     asked: list[tuple[str, str]] = []
 
-    def no(_parent, text, yes):
+    def no(_parent, text, yes, _boxes=None):                                         # None: cancelou
         asked.append((text, yes))
-        return False
 
     bar.confirm = no
     bar.button.click()
@@ -190,8 +189,9 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     assert yes == "Reprocessar em Inglês (en)" and not reprocess.active_jobs(store, mid) and launched == []
     assert "Tempo estimado: " in text and "refaz a separação de vozes" in text and "custo estimado: US$" in text
     assert "desatualizados" in text and "versão anterior" not in text and "pré-resumo" not in text      # F5.6 (R-06)
+    assert "marque abaixo" in text                                                   # F5.6 L1b (A-49): as caixas
     assert "refaz o título, a identificação das vozes e a transcrição revisada" in text
-    bar.confirm = lambda *_a: True
+    bar.confirm = lambda *_a: frozenset()
     bar.button.click()
     job = reprocess.pending_language(store, mid)
     assert job is not None and job[1] == "en" and launched == [False] and f"job {job[0]}" in win.message.text()
@@ -263,9 +263,9 @@ def test_the_open_meeting_offers_to_undo_and_then_the_other_language_again(qtbot
     bar = win.language_bar
     asked: list[tuple[str, str]] = []
 
-    def yes(_parent, text, button):
+    def yes(_parent, text, button, _boxes=None):
         asked.append((text, button))
-        return True
+        return frozenset()
 
     bar.confirm = yes
     bar.button.click()                                                                # pt-BR -> en, na fila

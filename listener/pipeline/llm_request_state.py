@@ -2,7 +2,9 @@
 "Resumo" (`request_states`, numa leitura por recarga, A-15), por que uma versão está desatualizada (calculado: o job, o
 idioma, os nomes da F5.5 v2, o resumo mais antigo que a ata), quais tarefas um pedido leva (`resolve`: o resumo sai da ata,
 que vai junto só quando falta ou está desatualizada, P-07), o custo (`estimate`) e as vozes sem nome (`voices`). Os pedidos
-em si ficam em `llm_requests`, que reexporta tudo isto."""
+em si ficam em `llm_requests`, que reexporta tudo isto. L1b (o "Para o L1b" do L1a): o custo inclui o núcleo quando o
+encadeamento do processamento vigente ficou pendente (`pending_core`: processado sem chave, ou o encadeamento que falhou),
+porque o próximo pedido o põe na fila na frente da ata."""
 from __future__ import annotations
 
 import json
@@ -11,14 +13,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from ..config.defaults import SPECS
 from ..config.language import meeting_language, output_code
 from ..llm.costs import estimate_tokens, price_for
 from ..llm.jobconfig import LlmJobConfig
-from ..model import JobKind, JobStatus, JobStep, SummaryKind
+from ..model import EventType, JobKind, JobStatus, JobStep, SummaryKind
 from ..store.jobs import ACTIVE
 from . import summary_gate
-from .llm_steps import REQUEST_ONLY, TASK_ORDER, estimate_steps, job_params, tasks_of
-from .reprocess import REPLACES
+from .llm_steps import REQUEST_ONLY, TASK_ORDER, TASKS_AFTER_MEETING, auto_tasks_for, estimate_steps, job_params, tasks_of
+from .reprocess import REPLACES, target_language
 from .summary_gate import Asked, Ledger
 
 if TYPE_CHECKING:
@@ -67,6 +70,7 @@ class Estimate:
     tokens: int                         # da transcrição (ou da duração)
     by_duration: bool                   # sem transcrição: pela duração ("~ estimado", A-17)
     tasks: tuple[str, ...]              # as tarefas contadas (a ata junto do resumo quando ela vai, P-07)
+    core: tuple[str, ...] = ()          # o núcleo pendente que vai na frente (`pending_core`), contado no custo
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +87,32 @@ class Fresh:
     names: bool                         # os nomes mudaram depois da ata (F5.5 v2)
 
 
+def unchained(store: Store, meeting_id: int, job_id: int) -> bool:
+    """O processamento concluído por esta versão do runner (`llm_chain` no `job_done`) sem o marcador `llm_chained`: o
+    encadeamento da LLM ainda não rodou (a corrida entre o `finish` e o enfileiramento) ou falhou (A-12, R-02, R-05)."""
+    if job_id in summary_gate.ledger(store, meeting_id).chained:
+        return False
+    return any(isinstance(e.get("data"), dict) and e["data"].get("job_id") == job_id and e["data"].get("llm_chain")
+               for e in store.meetings.list_events_of(meeting_id, (EventType.JOB_DONE,)))
+
+
+def pending_core(store: Store, meeting_id: int) -> tuple[JobStep, ...]:
+    """L1b: o núcleo que o próximo pedido encadeia antes da ata, quando o processamento vigente não encadeou (sem chave no
+    fim dele, R-04; o encadeamento que falhou, R-02): o que `enqueue_after_pipeline` poria na fila. Vazio quando já encadeou,
+    sem transcrição pronta ou com `llm.auto_tasks` desligado (salvo a troca de idioma, que refaz o núcleo, A-06)."""
+    ready = ready_job(store, meeting_id)
+    if ready is None or not unchained(store, meeting_id, ready):
+        return ()
+    job = store.jobs.get(ready) or {}
+    if target_language(job) is not None:
+        core = set(TASKS_AFTER_MEETING)
+    elif store.get(SPECS["llm.auto_tasks"]):
+        core = set(auto_tasks_for(store, meeting_id, str(job.get("kind") or JobKind.MEETING)))
+    else:
+        core = set()
+    return tuple(t for t in TASK_ORDER if t in core)
+
+
 def ready_job(store: Store, meeting_id: int) -> int | None:
     """O job vigente quando já terminou (a transcrição pronta); None sem processamento concluído."""
     job_id = store.segments.current_job_id(meeting_id)
@@ -90,10 +120,12 @@ def ready_job(store: Store, meeting_id: int) -> int | None:
     return job_id if row is not None and str(row["status"]) == JobStatus.DONE else None
 
 
-def resolve(store: Store, meeting_id: int, tasks: Iterable[JobStep | str]) -> list[JobStep]:
-    """P-07: o resumo sai da ata; ela vai junto só quando falta ou está desatualizada e nenhum job da fila a gera antes."""
+def resolve(store: Store, meeting_id: int, tasks: Iterable[JobStep | str], *, new_transcript: bool = False) -> list[JobStep]:
+    """P-07: o resumo sai da ata; ela vai junto só quando falta ou está desatualizada e nenhum job da fila a gera antes.
+    `new_transcript` (revisão do L1b, R-03): o pedido fica preso a um processamento que ainda vai rodar, e a ata de agora
+    estará desatualizada quando ele for aplicado."""
     want = {JobStep(str(t)) for t in tasks if str(t) in {str(s) for s in REQUEST_ONLY}}
-    if want & SUMMARY_STEPS and JobStep.MINUTES not in want and _minutes_outdated(store, meeting_id):
+    if want & SUMMARY_STEPS and JobStep.MINUTES not in want and (new_transcript or _minutes_outdated(store, meeting_id)):
         want.add(JobStep.MINUTES)
     return [t for t in TASK_ORDER if t in want]
 
@@ -112,13 +144,14 @@ def active_llm(store: Store, meeting_id: int) -> list[JobRow]:
 
 
 # ---------------------------------------------------------------- o que a tela mostra (L1b)
-def request_states(store: Store, meeting_id: int) -> dict[Species, RequestState]:
+def request_states(store: Store, meeting_id: int, *, led: Ledger | None = None, names: bool | None = None) -> dict[Species, RequestState]:
     """A-13, A-14: o estado de "Ata e ações" e de "Resumo" numa leitura (A-15), na ordem: falhou (o último job com a tarefa
-    em erro, salvo um pedido mais novo), gerando, pedido, desatualizado (calculado), gerado em, não gerado."""
-    led = summary_gate.ledger(store, meeting_id)
+    em erro sobre a transcrição vigente, salvo um pedido mais novo), gerando, pedido, desatualizado (calculado), gerado em, não
+    gerado. `led` e `names` (o livro dos pedidos e `names_changed`), quando quem chama já os leu na mesma recarga (R-06)."""
+    led = led if led is not None else summary_gate.ledger(store, meeting_id)
     jobs = store.jobs.for_meeting(meeting_id)
     rows = store.summaries.current_all(meeting_id)
-    now = fresh(store, meeting_id)
+    now = fresh(store, meeting_id, names)
     by_id = {int(j["id"]): j for j in jobs}
     llm = [j for j in jobs if str(j.get("kind")) == JobKind.LLM]
     return {sp: _state(sp, led, llm, by_id, rows, now) for sp in Species}
@@ -132,7 +165,7 @@ def _state(sp: Species, led: Ledger, llm: list[JobRow], by_id: Mapping[int, JobR
            now: Fresh) -> RequestState:
     steps = {str(t) for t in SPECIES_TASKS[sp]}
     asked_at = max((a.created_at for a in led.asked if steps & set(a.tasks) and alive(a, led, by_id)), default=None)
-    failed = _failed(llm, steps)
+    failed = _failed(llm, steps, now.job_id)
     if failed is not None and (asked_at is None or asked_at < str(failed.get("finished_at") or "")):
         return RequestState(State.FAILED, error=str(failed.get("error") or ""))
     if any(str(j["status"]) in ACTIVE and not j.get("cancel_requested") and steps & {str(t) for t in tasks_of(j)} for j in llm):
@@ -175,10 +208,13 @@ def follow(by_id: Mapping[int, JobRow], job_id: int) -> int:
     return job_id
 
 
-def _failed(llm: list[JobRow], steps: set[str]) -> JobRow | None:
-    """O último job com uma das tarefas, quando terminou em erro sem as fazer todas (o `done` das que saíram)."""
+def _failed(llm: list[JobRow], steps: set[str], current: int | None) -> JobRow | None:
+    """O último job com uma das tarefas, quando terminou em erro sem as fazer todas (o `done` das que saíram) sobre a
+    transcrição vigente (`current`). R-01 da revisão do L1b: a falha sobre uma transcrição que o reprocessamento ou a troca de
+    idioma trocou não é mais "falhou" (o "Gerar de novo" pediria sem perguntar sobre a transcrição nova): a espécie fica no
+    estado da versão que existe (desatualizada pela transcrição) ou "não gerado"."""
     last = next((j for j in llm if steps & {str(t) for t in tasks_of(j)}), None)     # `for_meeting`: o mais novo primeiro
-    if last is None or str(last["status"]) != JobStatus.ERROR:
+    if last is None or str(last["status"]) != JobStatus.ERROR or job_params(last).get("parent_job_id") != current:
         return None
     try:
         done = set(json.loads(last.get("timings_json") or "{}").get("llm", {}).get("done") or ())
@@ -203,19 +239,24 @@ def stale(sp: Species, present: Sequence[SummaryRow | None], rows: Mapping[str, 
     return tuple(out)
 
 
-def fresh(store: Store, meeting_id: int) -> Fresh:
+def fresh(store: Store, meeting_id: int, names: bool | None = None) -> Fresh:
     language = output_code(meeting_language(store, store.get_meeting(meeting_id)))
-    return Fresh(store.segments.current_job_id(meeting_id), language, summary_gate.names_changed(store, meeting_id))
+    changed = summary_gate.names_changed(store, meeting_id) if names is None else names
+    return Fresh(store.segments.current_job_id(meeting_id), language, changed)
 
 
-def estimate(store: Store, meeting_id: int, tasks: Iterable[JobStep | str]) -> Estimate:
+def estimate(store: Store, meeting_id: int, tasks: Iterable[JobStep | str], *, new_transcript: bool = False) -> Estimate:
     """A-17: o custo do pedido pela transcrição (`LENGTH(text)` em SQL, sem montar o contexto da LLM na thread da tela) ou,
-    sem ela, pela duração (`TOKENS_PER_MIN`, "~ estimado")."""
-    steps = resolve(store, meeting_id, tasks)
+    sem ela, pela duração (`TOKENS_PER_MIN`, "~ estimado"). L1b: com o encadeamento pendente, o núcleo entra na conta; preso
+    a um processamento por rodar (`new_transcript`, R-03), a ata conta como desatualizada e o núcleo de agora não entra (o
+    processamento novo o encadeia sozinho)."""
+    steps = resolve(store, meeting_id, tasks, new_transcript=new_transcript)
     ready = ready_job(store, meeting_id)
+    core: tuple[JobStep, ...] = ()
     if ready is not None:
         chars, lines = store.segments.text_size(meeting_id, ready)
         tokens, by_duration = estimate_tokens(chars + LINE_CHARS * lines), False
+        core = pending_core(store, meeting_id) if steps and not new_transcript else ()
     else:
         minutes = int((store.get_meeting(meeting_id) or {}).get("duration_ms") or 0) / 60_000
         tokens, by_duration = int(minutes * TOKENS_PER_MIN), True
@@ -223,9 +264,9 @@ def estimate(store: Store, meeting_id: int, tasks: Iterable[JobStep | str]) -> E
     usd: float | None = None
     if cfg.ready and steps:
         prices = store.providers.list_prices(cfg.provider_kind or None)
-        per = estimate_steps(tokens, steps, lambda strong: price_for(prices, cfg.provider_kind, cfg.model_for(strong)))
+        per = estimate_steps(tokens, [*core, *steps], lambda strong: price_for(prices, cfg.provider_kind, cfg.model_for(strong)))
         usd = None if any(v is None for v in per.values()) else round(sum(v or 0.0 for v in per.values()), 4)
-    return Estimate(usd, tokens, by_duration, tuple(str(s) for s in steps))
+    return Estimate(usd, tokens, by_duration, tuple(str(s) for s in steps), tuple(str(c) for c in core))
 
 
 def voices(store: Store, meeting_id: int) -> Voices:
@@ -237,4 +278,4 @@ def voices(store: Store, meeting_id: int) -> Voices:
 
 
 __all__ = ["Estimate", "Fresh", "RequestState", "Species", "State", "Voices", "active_llm", "alive", "estimate", "follow", "fresh",
-           "ready_job", "request_state", "request_states", "resolve", "stale", "voices"]
+           "pending_core", "ready_job", "request_state", "request_states", "resolve", "stale", "unchained", "voices"]

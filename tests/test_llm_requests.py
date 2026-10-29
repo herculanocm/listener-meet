@@ -326,7 +326,7 @@ def test_a_request_follows_the_job_restored_by_the_undo(platform, store):
 def test_bind_never_holds_a_request_to_a_dead_processing(platform, store):
     """R-01: preso a um processamento cancelado ou com erro e sem substituto, o pedido vai para o próximo (a tela não promete
     "sai quando o processamento terminar"); com substituto, para ele."""
-    from listener.ui.llm_tabs import ask_now
+    from listener.ui.llm_ask import submit
 
     mid = _record(platform, store)
     _provider_ready(store)
@@ -338,13 +338,14 @@ def test_bind_never_holds_a_request_to_a_dead_processing(platform, store):
     assert _claim(store) == err
     store.jobs.finish(err, JobStatus.ERROR, error="falhou")
     assert _ask(store, mid, ["minutes"], after=err).outcome == llm_requests.Outcome.NEXT
-    assert ask_now(store, mid, ["minutes"], "teste")[1] == "Ata: sai quando a reunião for processada."
+    assert submit(store, mid, ["minutes"], Mode.NOW, "teste").message == "Ata: sai quando a reunião for processada."
     old = store.jobs.enqueue(mid)
     assert _claim(store) == old
     new = reprocess.request_reprocess(store, mid, "en").job_id                       # o que roda é cancelado e substituído
     res = _ask(store, mid, ["executive"], after=old)
     assert res.outcome == llm_requests.Outcome.BOUND and res.after_job_id == new
-    assert ask_now(store, mid, ["executive"], "teste")[1] == "Resumo executivo: sai quando o processamento da reunião terminar."
+    bound = submit(store, mid, ["executive"], Mode.NOW, "teste").message
+    assert bound == "Resumo executivo: sai quando o processamento da reunião terminar."
 
 
 def test_a_failed_chain_keeps_the_request_and_the_next_request_chains_first(platform, store, monkeypatch):
@@ -374,7 +375,7 @@ def test_a_failed_chain_keeps_the_request_and_the_next_request_chains_first(plat
 def test_without_a_key_at_the_end_the_request_stays_and_comes_out_with_the_key(platform, store):
     """R-04: a chave sai entre o pedido e o fim do processamento: nada é gasto nem marcado, o pedido segue "pedido"; o "agora"
     sem chave tem a mensagem dele; com a chave de volta, o próximo pedido encadeia e leva o de antes."""
-    from listener.ui.llm_tabs import ask_now
+    from listener.ui.llm_ask import submit
 
     mid = _record(platform, store)
     _provider_ready(store)
@@ -383,7 +384,8 @@ def test_without_a_key_at_the_end_the_request_stays_and_comes_out_with_the_key(p
     store.providers.update_provider("gemini", api_key="")
     assert _heavy(store) == job and _llm(store, mid) == [] and not _events(store, mid, EventType.LLM_RELEASED)
     assert llm_requests.request_state(store, mid, Species.MINUTES).state == State.REQUESTED
-    assert ask_now(store, mid, ["minutes"], "teste") == (None, llm_requests.NO_KEY)
+    refused = submit(store, mid, ["minutes"], Mode.NOW, "teste")
+    assert (refused.job_id, refused.message) == (None, llm_requests.NO_KEY)
     _provider_ready(store)
     other = _ask(store, mid, ["executive"])
     assert [_tasks(store, j["id"]) for j in _llm(store, mid)] == [["identify", "title", "revise"], ["minutes", "executive"]]

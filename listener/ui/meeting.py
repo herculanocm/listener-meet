@@ -19,7 +19,10 @@ controlador, cujo clique volta à aba Chat).
 
 F5.4 L4: o título em 20 px sem moldura até o foco, os fatos em legenda e o "Exportar" com a seta inteira (U-078); o aviso
 numa faixa (U-057); a ata, o executivo e o pré-resumo formatados (U-079, `ui/minutes_view.py`); os marcadores e o "Resumo"
-em `ui/meeting_parts.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17)."""
+em `ui/meeting_parts.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17).
+
+F5.6 L1b (item 11, U-090): sob os fatos, "Gerar ata e ações" e "Gerar resumo" com o estado de cada um (`ui/llm_request_bar.py`,
+do `LlmTabsGroup`); todo pedido passa pelo popup."""
 from __future__ import annotations
 
 from collections import deque
@@ -79,7 +82,7 @@ class MeetingWindow(QWidget):
         self.exported: deque[str] = deque(maxlen=100)        # instrumentação dos testes: o que foi copiado ou salvo
         self.setMinimumSize(*MIN_SIZE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
-                                compact_title=True, parent=self)
+                                compact_title=True, request_bar=True, parent=self)
 
         # --- cabeçalho ---
         self.btn_review = QPushButton("Revisar falantes…")
@@ -139,6 +142,8 @@ class MeetingWindow(QWidget):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addLayout(facts)
+        if self.llm.bar is not None:
+            lay.addWidget(self.llm.bar)
         lay.addWidget(self.message_bar)
         lay.addWidget(self.tabs, 1)
         if self.bar is not None:

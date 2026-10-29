@@ -52,7 +52,8 @@ F5.3 L4 (U-049, U-050): os dispositivos da gravação moram em `ui/recording_dev
 de alerta e o painel do botão 🎧); aqui só o fio: o gravador chama `_release_player_for_mic` antes de reler o PortAudio
 (o player solta a saída, "pausado para trocar o microfone", A-17) e a primeira leitura do poller do mudo depois de uma
 troca de microfone é ignorada (A-18). O log da gravação leva o id do microfone, nunca o nome do aparelho (A-22).
-F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py` (o Histórico pede; gravar interrompe)."""
+F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py` (o Histórico pede; gravar interrompe).
+F5.6 L1b (U-089): o resumo da gravação recebe o job do processamento (o pedido de ata ao parar fica preso a ele)."""
 from __future__ import annotations
 
 import functools
@@ -86,6 +87,7 @@ from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
 from .live_prepare import RAG, preparer, shutdown_preparer
+from .llm_tabs import llm_done_text
 from .meeting import MeetingWindow
 from .meeting_delete import MeetingDeleter
 from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HISTORY_READY, IDENTITY_READY, Notice, NoticeAction,
@@ -785,10 +787,11 @@ class Controller(QObject):
             self.platform.mic_mute().set(False)
         self._finish(rec)
         self._clear_lease()
-        self._enqueue_processing(rec.meeting_id)
+        job = self._enqueue_processing(rec.meeting_id)
         if not self._quitting:
             self._start_sweep()                          # F5.1 (A-07): os vetores que o local adiou durante a gravação
-            SummaryDialog(self.store, rec.meeting_id, stats, on_edited=self.on_edited).exec()
+            SummaryDialog(self.store, rec.meeting_id, stats, on_edited=self.on_edited, after_job_id=job,   # F5.6 (U-089)
+                          on_launch=self.launch_worker, on_message=self.notify).exec()
 
     def cancel_recording(self) -> None:
         if not self.recorder or self.state == AppState.SAVING:
@@ -1135,7 +1138,7 @@ class Controller(QObject):
             if self._identity_only(job, mid):                    # F5.3: avisa (revê a A-14 da F5.2, que não avisava)
                 self._notify_meeting(mid, IDENTITY_READY)
             else:
-                self._notify_meeting(mid, self._llm_done_text(job))
+                self._notify_meeting(mid, llm_done_text(dict(job)))      # "ata pronta · US$ 0,32" (U-020)
             if mid in self._reviews:
                 self._reviews[mid].reload()
         else:
@@ -1152,13 +1155,13 @@ class Controller(QObject):
             self._meetings[mid].reload()
 
     def _reload_meeting_header(self, meeting_id: int) -> None:
-        """R-07: um job da reunião acabou em erro ou cancelado: a janela aberta dela relê o cabeçalho; uma troca de idioma
-        que não foi até o fim sai do "(reprocessando)" e o botão volta a oferecer o outro idioma."""
+        """R-07: um job da reunião acabou em erro ou cancelado: a janela aberta dela relê tudo (a troca de idioma sai do
+        "(reprocessando)"; F5.6 L1b, R-02: a barra e as abas da LLM saem de "gerando" e mostram "falhou")."""
         win = self._meetings.get(meeting_id)
         if win is None:
             return
         try:
-            win.reload_header()
+            win.reload()
         except Exception as e:  # a janela relê na próxima vez; o polling não para por ela
             log.debug("reunião %s: cabeçalho não relido: %s", meeting_id, e)
 
@@ -1221,12 +1224,6 @@ class Controller(QObject):
             return
         self._no_llm_warned = True
         self.notify(NO_PROVIDER)
-
-    def _llm_done_text(self, job: Any) -> str:
-        """"ata pronta · US$ 0,32" (U-020) pelo `timings_json.llm` do job."""
-        from .llm_tabs import llm_done_text
-
-        return llm_done_text(dict(job))
 
     def open_review(self, meeting_id: int) -> ReviewDialog | None:
         """Revisão mínima de falantes (F2 item 13): não modal, uma por reunião; sem voz pendente mostra "tudo confirmado"."""

@@ -29,8 +29,8 @@ from ..log import get_logger
 from ..model import EventType, JobKind, JobStatus, JobStep, MeetingStatus
 from ..store.jobs import ACTIVE
 from . import summary_gate
-from .llm_request_state import (Estimate, RequestState, Species, State, Voices, active_llm, alive, estimate, follow, ready_job,
-                                request_state, request_states, resolve, voices)
+from .llm_request_state import (Estimate, RequestState, Species, State, Voices, active_llm, alive, estimate, follow, pending_core,
+                                ready_job, request_state, request_states, resolve, unchained, voices)
 from .llm_steps import NO_SPEECH, REQUEST_ONLY, TASK_ORDER, enqueue_after_pipeline, enqueue_llm_job, job_params, tasks_of
 from .reprocess import active_jobs
 from .summary_gate import Asked, Ledger
@@ -93,7 +93,7 @@ def request(store: Store, meeting_id: int, tasks: Iterable[JobStep | str], mode:
                  f"já, sobre o job {bound}" if now else f"preso ao job {bound}" if bound else "o próximo processamento")
         if not now or bound is None:
             return RequestResult(rid, after_job_id=bound, outcome=Outcome.BOUND if bound else Outcome.NEXT)
-        if _unchained(store, meeting_id, bound):                         # A-12 (R-02, R-05): o núcleo entra antes da ata
+        if unchained(store, meeting_id, bound):                         # A-12 (R-02, R-05): o núcleo entra antes da ata
             after_pipeline(store, meeting_id, bound, str((store.jobs.get(bound) or {}).get("kind") or JobKind.MEETING))
             return _settled(store, meeting_id, rid)
         job_id, waiting = _apply(store, meeting_id, bound, [Asked(rid, wanted, str(how), origin, bound)], origin)
@@ -125,15 +125,6 @@ def _bind(store: Store, meeting_id: int, after_job_id: int | None) -> tuple[bool
         return False, None
     ready = ready_job(store, meeting_id)
     return ready is not None, ready
-
-
-def _unchained(store: Store, meeting_id: int, job_id: int) -> bool:
-    """O processamento concluído por esta versão do runner (`llm_chain` no `job_done`) sem o marcador `llm_chained`: o
-    encadeamento da LLM ainda não rodou (a corrida entre o `finish` e o enfileiramento) ou falhou (A-12, R-02, R-05)."""
-    if job_id in summary_gate.ledger(store, meeting_id).chained:
-        return False
-    return any(isinstance(e.get("data"), dict) and e["data"].get("job_id") == job_id and e["data"].get("llm_chain")
-               for e in store.meetings.list_events_of(meeting_id, (EventType.JOB_DONE,)))
 
 
 def _settled(store: Store, meeting_id: int, request_id: int) -> RequestResult:
@@ -347,4 +338,5 @@ def identity_only(store: Store, meeting_id: int, job: Mapping[str, Any]) -> bool
 
 
 __all__ = ["Estimate", "Mode", "Outcome", "RequestResult", "RequestState", "Species", "State", "Voices", "after_pipeline", "estimate",
-           "identity_only", "release", "request", "request_state", "request_states", "resolve", "summary_waits", "voices"]
+           "identity_only", "pending_core", "release", "request", "request_state", "request_states", "resolve", "summary_waits",
+           "voices"]
