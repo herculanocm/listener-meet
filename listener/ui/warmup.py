@@ -18,7 +18,8 @@ F5.4 L2: duas colunas, Áudio (o microfone e a saída, em cartões) e Reunião (
 janela inteira dentro da área livre pelo `fit_to_screen` (A-17); a falta de chave numa faixa no rodapé, ao lado do Gravar, o
 primário com o ícone de gravar (U-066); as fontes com o medidor de cada uma e "Reunião" em selo, e a sala e o ao vivo numa
 linha "Opções" (U-067). Os avisos do microfone, do eco e dos modelos do ao vivo viram faixas (U-057); os links vão a métodos,
-não a lambdas que prendam o diálogo (R-06)."""
+não a lambdas que prendam o diálogo (R-06).
+Os presets e a última escolha moram em `ui/warmup_source.py` (refactor antes da F5.7: o arquivo não cresce)."""
 from __future__ import annotations
 
 import functools
@@ -30,8 +31,8 @@ from typing import TYPE_CHECKING, Any, override
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QShowEvent
-from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog,
-                               QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+                               QLineEdit, QPushButton, QVBoxLayout, QWidget)
 
 from ..capture.align import estimate_offset
 from ..capture.audio import resample, rms, to_mono
@@ -41,17 +42,17 @@ from ..config.language import LANGUAGES, default_language, label
 from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glossary, request_glossary, split_names
 from ..log import get_logger
 from ..model import SourceKind
-from ..platform.base import log_id, pick_device
 from .common import fit_to_screen
 from .components import Card, InfoBar
 from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, fill_mic_combo, refresh_mics
 from .icons import set_icon
 from .keys import missing_keys, missing_keys_text
 from .meters import LevelMeter
-from .sources import SYSTEM_FOLLOW, SourceKey, SourceTable
+from .sources import SourceTable
 from .tasks import run_task
 from .theme import METRICS, Tone, note, primary
 from .warmup_live import LiveBoxes
+from .warmup_source import SourceChoiceMixin
 
 if TYPE_CHECKING:
     from ..platform.base import AudioDevice, CaptureHandle, Platform
@@ -66,7 +67,7 @@ AUDIO_STRETCH, MEETING_STRETCH = 5, 4
 LINKED_BARS = frozenset({"keys", "live"})            # as faixas com o link para as Configurações
 
 
-class WarmupDialog(QDialog):
+class WarmupDialog(SourceChoiceMixin, QDialog):
     def __init__(self, platform: Platform, store: Store, parent: QWidget | None = None, on_settings: Any = None,
                  on_late_call: Callable[[int], Any] | None = None):
         super().__init__(parent)
@@ -543,92 +544,6 @@ class WarmupDialog(QDialog):
         if self.on_settings is not None:
             self.on_settings()
         self._update_keys_note()
-
-    # ---------------------------------------------------------------- presets e última escolha
-    def _restore_last_choice(self) -> None:
-        last_preset = self.store.get_setting("warmup.last_preset_id")
-        if last_preset:
-            i = self.preset_combo.findData(int(last_preset))
-            if i >= 0:
-                self.preset_combo.setCurrentIndex(i)
-                return
-        self._select_mic(self.store.get_setting("warmup.last_mic_device_id"), self.store.get_setting("warmup.last_mic_device_name"))
-        self._select_source(self.store.get_setting("warmup.last_source_kind"), self.store.get_setting("warmup.last_source_exe"),
-                            self.store.get_setting("warmup.last_output_id"))
-        self.room_check.setChecked(self.store.get_setting("warmup.last_in_room") == "1")
-
-    def _select_mic(self, device_id: str, device_name: str) -> bool:
-        """Seleciona o microfone salvo (id estável, depois nome); sem nenhum salvo, o "Padrão do Windows (acompanha)" (F5.3,
-        pergunta 11); o salvo que sumiu avisa e cai nele (F1.1 A3). Log com o id, nunca o nome do aparelho (A-22)."""
-        if device_id or device_name:
-            dev = pick_device(self._devices, device_id or None, device_name or None)
-            if dev is not None:
-                self.mic_combo.setCurrentIndex(max(0, self.mic_combo.findData(dev.id)))
-                self._set_mic_note("")
-                return True
-            self._set_mic_note(f"O microfone salvo ({device_name or device_id}) não está nesta máquina; usando o padrão do "
-                               "Windows.")
-            log.warning("microfone salvo %s não encontrado; usando o padrão", log_id(device_id))
-        self.mic_combo.setCurrentIndex(0)
-        return False
-
-    def _select_source(self, kind: str, exe: str, output_id: str = "") -> None:
-        """Aplica agora se a lista de apps já chegou; senão fica pendente para a primeira lista (sem chutar tempo). O sistema
-        inteiro vai na saída salva (U-051) ou, sem ela, na padrão."""
-        if kind == SourceKind.APP and exe and self.sources.select_exe(exe):
-            self._pending_source = None
-            return
-        if kind == SourceKind.SYSTEM:
-            if not (output_id and self.sources.select_key(SourceKey(SourceKind.SYSTEM, output_id=output_id))):
-                self.sources.select_key(SYSTEM_FOLLOW)
-            self._pending_source = None
-            return
-        self._pending_source = (kind, exe)
-
-    def _apply_pending_source(self) -> None:
-        if self._pending_source is not None:
-            kind, exe = self._pending_source
-            self._pending_source = None
-            if not (kind == SourceKind.APP and exe and self.sources.select_exe(exe)):
-                self.sources.select_key(SYSTEM_FOLLOW)
-
-    def _apply_preset(self, index: int) -> None:
-        pid = self.preset_combo.itemData(index)
-        if pid is None:
-            return
-        p = self.store.get_preset(int(pid))
-        if not p:
-            return
-        self._select_mic(p.get("mic_device_id") or "", p.get("mic_device_name") or "")
-        self._select_source(p["source_kind"], p.get("source_exe") or "")
-        self.room_check.setChecked(bool(p.get("is_in_room")))
-        self.live.set_values(p.get("live_enabled"), p.get("live_names"))
-
-    def _save_preset(self) -> None:
-        name, ok = QInputDialog.getText(self, "Salvar preset", "Nome do preset:")
-        if not ok or not name.strip():
-            return
-        dev = self._selected_device()
-        spec = self.sources.selected_spec()
-        pid = self.store.upsert_preset(name.strip(), dev.id if dev else None, dev.name if dev else None,
-                                       spec.kind, spec.exe or None, is_in_room=self.room_check.isChecked(),
-                                       live_enabled=self.live_check.isChecked(), live_names=self.names_check.isChecked())
-        if self.preset_combo.findData(pid) < 0:
-            self.preset_combo.addItem(name.strip(), pid)
-        self.preset_combo.setCurrentIndex(self.preset_combo.findData(pid))
-        QMessageBox.information(self, "Preset", f"Preset “{name.strip()}” salvo.")
-
-    def _save_last_choice(self) -> None:
-        dev = self._selected_device()
-        spec = self.sources.selected_spec()
-        pid = self.preset_combo.currentData()
-        self.store.set_setting("warmup.last_preset_id", pid if pid is not None else "")
-        self.store.set_setting("warmup.last_mic_device_id", dev.id if dev else "")
-        self.store.set_setting("warmup.last_mic_device_name", dev.name if dev else "")
-        self.store.set_setting("warmup.last_source_kind", str(spec.kind))
-        self.store.set_setting("warmup.last_source_exe", spec.exe or "")
-        self.store.set_setting("warmup.last_output_id", spec.output_id)              # F5.3 (U-051): vazio = acompanha
-        self.store.set_setting("warmup.last_in_room", "1" if self.room_check.isChecked() else "0")
 
     # ---------------------------------------------------------------- resultado
     def meeting_language(self) -> str:

@@ -66,7 +66,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from contextlib import suppress
 
-from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon, QWidget
 
 from ..capture.clock import Clock, SessionClock
@@ -104,6 +104,7 @@ from .toast import ToastManager
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
+from .widget_parts import save_widget_pos, widget_prefs
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -667,8 +668,7 @@ class Controller(QObject):
             self._set_live_status("unavailable", reason="erro")
         self._start_partial(meeting_id)
         live_line = self.live is not None and bool(self.store.get(SPECS["live.in_widget"]))
-        self.widget = RecordingWidget(size=self._saved_widget_size(), pos=self._saved_widget_pos(), live_line=live_line,
-                                      shortcuts=self._widget_shortcuts())
+        self.widget = RecordingWidget(live_line=live_line, **widget_prefs(self.store))
         w = self.widget
         w.height_changed.connect(self.toasts.relayout)    # F5.4 L2 (A-16): o widget cresceu para cima; os avisos sobem junto
         w.live_clicked.connect(self.open_live_window)
@@ -684,7 +684,7 @@ class Controller(QObject):
         w.alert_clicked.connect(self.devices.on_alert)
         self.devices.start()
         w.settings_requested.connect(self.open_settings)
-        w.moved.connect(self._save_widget_pos)          # R-06: método, não lambda com `self` (o ciclo pelo C++)
+        w.moved.connect(functools.partial(save_widget_pos, self.store))   # R-06: sem lambda com `self` (o ciclo pelo C++)
         w.show()
         if self.tray:
             self.tray.set_state(AppState.RECORDING)
@@ -1825,25 +1825,3 @@ class Controller(QObject):
         self.player.stop()                               # o som para já; o resto da saída fica com o emergency_stop
         self.app.quit()                                  # aboutToQuit -> emergency_stop fecha atalhos e banco
 
-    def _save_widget_pos(self, pos: QPoint) -> None:
-        self.store.set_setting("ui.widget_pos", f"{pos.x()},{pos.y()}")
-
-    def _saved_widget_pos(self) -> QPoint | None:
-        raw = self.store.get_setting("ui.widget_pos")
-        try:
-            x, y = (int(v) for v in raw.split(","))
-            return QPoint(x, y)
-        except ValueError:
-            return None
-
-    def _widget_shortcuts(self) -> dict[str, str]:
-        """F5.4 L2 (U-061): os atalhos globais das ações do widget, para a dica dos botões."""
-        return {name: self.store.get_setting(f"hotkeys.{name}") or "" for name in ("pause", "mark", "mute", "stop")}
-
-    def _saved_widget_size(self) -> tuple[int, int]:
-        raw = self.store.get_setting("ui.widget_size") or "320x96"
-        try:
-            w, h = (int(v) for v in raw.lower().split("x"))
-        except ValueError:
-            return (320, 96)
-        return (w, h)

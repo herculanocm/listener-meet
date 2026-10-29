@@ -1,10 +1,12 @@
 """Peças do widget de gravação (F5.4 L2), separadas de `ui/widget.py` para os dois ficarem abaixo de 400 linhas: a hora
 (mm:ss e, passando de 1 h, h:mm:ss; U-062), o atalho escrito como o Windows o escreve (U-061), a linha cortada com o texto
 inteiro na dica (a legenda do F4 e o alerta da F5.3), o rótulo de ícone e o popup do marcador (U-068: no tema, com o ícone
-do marcador e a hora em nota, sobre o cartão com borda e cantos de 8 px). `ui/widget.py` as reexporta."""
+do marcador e a hora em nota, sobre o cartão com borda e cantos de 8 px). `ui/widget.py` as reexporta.
+As preferências do widget no banco (posição, tamanho e os atalhos das dicas) saíram do `ui/controller.py` (refactor antes da
+F5.7, que precisa de espaço nele)."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QCursor, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
@@ -18,8 +20,10 @@ from .theme import Tone, note, qcolor, surface_tokens
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
+    from ..store import Store
 
 log = get_logger("ui.widget")
+DEFAULT_SIZE = (320, 96)
 CLICK_SLOP_PX = 6
 ICON_PX = 16
 CHANNEL_NAMES = {"L": "microfone", "R": "saída"}
@@ -178,5 +182,34 @@ class MarkerPopup(QDialog):
         return self.edit.text().strip()
 
 
+# ---------------------------------------------------------------- preferências no banco (saíram do controlador)
+def save_widget_pos(store: Store, pos: QPoint) -> None:
+    store.set_setting("ui.widget_pos", f"{pos.x()},{pos.y()}")
+
+
+def saved_widget_pos(store: Store) -> QPoint | None:
+    try:
+        x, y = (int(v) for v in store.get_setting("ui.widget_pos").split(","))
+    except ValueError:
+        return None
+    return QPoint(x, y)
+
+
+def saved_widget_size(store: Store) -> tuple[int, int]:
+    raw = store.get_setting("ui.widget_size") or "320x96"
+    try:
+        w, h = (int(v) for v in raw.lower().split("x"))
+    except ValueError:
+        return DEFAULT_SIZE
+    return (w, h)
+
+
+def widget_prefs(store: Store) -> dict[str, Any]:
+    """O tamanho, a posição e (F5.4 L2, U-061) os atalhos globais das ações do widget, para a dica dos botões."""
+    shortcuts = {name: store.get_setting(f"hotkeys.{name}") or "" for name in ("pause", "mark", "mute", "stop")}
+    return {"size": saved_widget_size(store), "pos": saved_widget_pos(store), "shortcuts": shortcuts}
+
+
 __all__ = ["CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "CaptionLine", "ElidedLabel", "MarkerPopup",
-           "caption_text", "channel_letter", "clock_text", "hbox", "health_icon", "icon_label", "shortcut_text"]
+           "caption_text", "channel_letter", "clock_text", "hbox", "health_icon", "icon_label", "save_widget_pos",
+           "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs"]
