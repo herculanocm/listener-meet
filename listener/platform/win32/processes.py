@@ -7,6 +7,7 @@ assinaturas ctypes ficam no nível do módulo (M-12); `root_of`, `root_pid_for`,
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from collections.abc import Iterable
 from ctypes import wintypes
@@ -141,23 +142,28 @@ def loopback_targets(root: int, session_pids: Iterable[int], procs: dict[int, Pr
     return targets
 
 
-def window_titles_by_pid() -> dict[int, str]:
-    """Título da maior janela visível de cada processo."""
+def window_titles_by_pid(only: set[int] | None = None) -> dict[int, str]:
+    """Título da maior janela visível de cada processo, menos as do próprio processo: o texto de uma janela nossa vem por
+    `SendMessage` à thread dona (a da interface) e espera enquanto ela está ocupada (2 s medidos na revisão da F5.7, R-05).
+    O pid vem antes do texto; com `only`, o texto só é lido para esses pids."""
     if sys.platform != "win32":
         raise OSError("window_titles_by_pid só existe no Windows")
     user32 = ctypes.windll.user32
+    own = os.getpid()
     titles: dict[int, tuple[int, str]] = {}
 
     def cb(hwnd: int, _lparam: int) -> bool:
         if not user32.IsWindowVisible(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == own or (only is not None and pid.value not in only):
             return True
         n = user32.GetWindowTextLengthW(hwnd)
         if n <= 0:
             return True
         buf = ctypes.create_unicode_buffer(n + 1)
         user32.GetWindowTextW(hwnd, buf, n + 1)
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         rect = wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
         area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
