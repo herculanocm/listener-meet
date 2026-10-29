@@ -205,13 +205,19 @@ class KeysPage(QWizardPage):
         form.addRow("Hugging Face", self.hf_token)
         form.addRow("", note(HF_HELP, links=True))
         form.addRow(note(WIZARD_NOTE))
-        self.provider.currentIndexChanged.connect(lambda _i: self._changed())
-        self.key.textChanged.connect(lambda _t: self._changed(help_text=False))
+        self.provider.currentIndexChanged.connect(self._on_provider_changed)      # métodos, nunca lambda com `self`
+        self.key.textChanged.connect(self._on_key_edited)
         self.test_btn.clicked.connect(self.run_test)
         self._changed()
 
     def chosen(self) -> str:
         return str(self.provider.currentData())
+
+    def _on_provider_changed(self, _index: int) -> None:
+        self._changed()
+
+    def _on_key_edited(self, _text: str) -> None:
+        self._changed(help_text=False)
 
     def _changed(self, *, help_text: bool = True) -> None:
         """Outra LLM ou outra chave: o teste anterior não vale mais."""
