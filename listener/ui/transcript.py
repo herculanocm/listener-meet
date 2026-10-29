@@ -19,9 +19,9 @@ fica; parado ou com outra reunião tocando, some. F5.4 (A-11): a faixa no tom de
 tema vigente (claro e escuro), refeitos quando o tema muda.
 
 F5.4 L4: a fala pelo `SpeechDelegate` (U-081: o [mm:ss] em legenda e o ponto na cor da faixa do falante na linha do tempo,
-o nome em negrito), a voz sem pessoa como "Voz N" (U-035, `ui/voices.py`; o `DisplayRole` leva o mesmo nome) e, sem falas,
-o estado vazio (U-059). A barra de rolagem fica sempre à vista: a largura das falas não muda quando ela aparece, e a altura
-de cada uma é medida uma vez só."""
+o nome em negrito), a voz sem pessoa como "Voz N" (U-035; F5.5 A-18: o nome de `review.transcript_rows`, o mesmo da ata,
+da exportação e da busca; o `DisplayRole` leva o mesmo nome) e, sem falas, o estado vazio (U-059). A barra de rolagem fica
+sempre à vista: a largura das falas não muda quando ela aparece, e a altura de cada uma é medida uma vez só."""
 from __future__ import annotations
 
 import bisect
@@ -46,7 +46,6 @@ from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
 from .speech_delegate import COLOR_ROLE, ROLE_ROLE, SPEAKER_ROLE, STAMP_ROLE, TEXT_ROLE, SpeechDelegate
 from .theme import Tokens, Tone, note, qcolor, tokens
 from .timeline import build_lanes, lane_of_rows
-from .voices import voice_names
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -230,9 +229,8 @@ class TranscriptTab(QWidget):
         self.reload(force=True)
 
     def _rows(self) -> list[review.TranscriptRow]:
-        """As falas com o nome da tela: "Voz N" no lugar do rótulo interno da voz sem pessoa (U-035)."""
-        rows = review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
-        return voice_names(self.store, self.meeting_id).rows(rows)
+        """As falas com o nome da tela: "Voz N" no lugar do rótulo interno da voz sem pessoa (U-035), já na leitura (F5.5)."""
+        return review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
 
     def reload(self, force: bool = False) -> bool:
         """Relê as falas; sem mudança, a lista fica como está (seleção e rolagem); com mudança, refaz e devolve as duas. True

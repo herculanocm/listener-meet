@@ -51,7 +51,7 @@ class Utterance:
     segment_id: int
     t_start_ms: int
     t_end_ms: int
-    speaker: str                                  # "Nome — Cargo", "Nome" ou "Voz SPK_1"
+    speaker: str                                  # "Nome — Cargo", "Nome" ou "Voz 2" (F5.5)
     person_id: int | None
     text: str
     words: tuple[tuple[int, int, str], ...] = ()  # (início, fim, palavra) do `words_json`: só para cortar fala longa

@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..types import Message
-from .common import Line, MeetingCtx, Person, header, ids_schema, system, text_block, user
+from .common import VOICE_LABELS, Line, MeetingCtx, Person, header, ids_schema, system, text_block, user
 
-PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
+PROMPT_VERSION = "1.2"                  # U-041 (A-10): o cabeçalho lista os falantes; F5.5 (A-20): "Voz 2" sem tradução
 
 
 def _item(extra: dict | None = None) -> dict:
@@ -36,10 +36,10 @@ SYSTEM = ("You write meeting minutes from a transcript. Report only what was act
           "the owner is one of the listed people; due_text is the deadline as said; due_date is that deadline as an absolute "
           "YYYY-MM-DD computed from the meeting date, or null. Highlights: one entry per user marker, describing what was being "
           "discussed around that time and taking the user's note into account. Context: two to four sentences on what the meeting "
-          "was about.")
+          f"was about. {VOICE_LABELS}")
 REDUCE_SYSTEM = ("You consolidate structured notes taken from consecutive blocks of one long meeting into the final minutes. Merge "
                  "duplicates, keep the segment_ids from the notes, keep the chronological order and do not add anything that is not "
-                 "in the notes.")
+                 f"in the notes. {VOICE_LABELS}")
 
 
 @dataclass(frozen=True, slots=True)

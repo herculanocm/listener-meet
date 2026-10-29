@@ -23,12 +23,12 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QList
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import review, summary_gate
+from ..pipeline.voices import VoiceNames, voice_names
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .common import click_focused_button, keep_until_destroyed
 from .player import ERROR, PlayerState
 from .review_cards import KeyButton, VoiceCardDelegate, card_item, stage_primary
 from .review_person import PersonActionsMixin
-from .voices import VoiceNames, voice_names
 
 if TYPE_CHECKING:
     from ..store import Store

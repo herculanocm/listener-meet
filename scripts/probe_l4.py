@@ -97,7 +97,7 @@ def furnish(store: Any, mid: int) -> int:
     from listener.rag import chat_global, index
     from listener.store.actions import ActionInsert
     from listener.store.summaries import SummaryInsert
-    from listener.ui.voices import voice_names
+    from listener.pipeline.voices import voice_names
 
     names = voice_names(store, mid)
     first = next(cid for cid, n in names.by_cluster.items() if n == 1)

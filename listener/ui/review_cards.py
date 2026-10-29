@@ -25,7 +25,7 @@ from .theme import KIND_PROP, PRIMARY, Tone, font_for, qcolor, set_kind, surface
 
 if TYPE_CHECKING:
     from ..pipeline.review import ReviewItem
-    from .voices import VoiceNames
+    from ..pipeline.voices import VoiceNames
 
 TITLE_ROLE = Qt.ItemDataRole.UserRole + 0x5201      # "Voz 2"
 DETAIL_ROLE = Qt.ItemDataRole.UserRole + 0x5202     # o resumo da voz (pyannote, LLM, similaridade)

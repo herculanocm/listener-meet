@@ -22,11 +22,13 @@ from ..store.profiles import normalize
 from ..store.segments import ClusterRow, resolve_person, role_of
 from .runner import STITCH_ARTIFACT, USER_CLUSTER
 from .types import unpack_artifact
+from .voices import NO_NAMES, VoiceNames, numbering, speaker_of, voice_label
 
 log = get_logger("pipeline.review")
 
 CLIP_S = 5.0
 PLAY_LEAD_MS = 150          # R-14: tocar a partir da primeira palavra menos 150 ms
+type Reading = tuple[dict[int, dict[str, Any]], int | None, dict[int, ClusterRow], list[dict[str, Any]]]   # `reading`
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +76,7 @@ class ReviewItem:
 
     @property
     def title(self) -> str:
-        return f"Voz {self.label}" if self.channel == "R" else f"Voz {self.label} (canal {self.channel})"
+        return voice_label(self.label) if self.channel == "R" else f"{voice_label(self.label)} (canal {self.channel})"
 
     def summary(self) -> str:
         if self.merged_into is not None:
@@ -175,20 +177,17 @@ def pending(items: list[ReviewItem]) -> list[ReviewItem]:
     return [i for i in items if i.pending and i.merged_into is None]
 
 
-def _speaker(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow]) -> tuple[str, str, int | None]:
-    """(nome, cargo do dia, pessoa) de um segmento: a pessoa do segmento, senão a do cluster (mescla incluída); sem pessoa, o
-    rótulo da voz e cargo vazio."""
-    pid = s.get("person_id")
-    if pid is None and s.get("cluster_id") is not None and int(s["cluster_id"]) in clusters:
-        pid = resolve_person(clusters[int(s["cluster_id"])], clusters)
-    person = people.get(int(pid)) if pid is not None else None
-    if pid is None or person is None:
-        return (f"Voz {s.get('cluster')}" if s.get("cluster") else "Desconhecido"), "", None
-    return str(person["name"]), role_of(s, person), int(pid)
+def _speaker(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow],
+             names: VoiceNames = NO_NAMES) -> tuple[str, str, int | None]:
+    """(nome, cargo do dia, pessoa) de um segmento (`voices.speaker_of`): sem pessoa, cargo vazio e "Voz N" pelos números de
+    `names` (F5.5, A-15); sem eles, o nome interno "Voz <rótulo>" (o da assinatura v1, A-13)."""
+    person, name = speaker_of(s, clusters, people, names)
+    return (name, "", None) if person is None else (name, role_of(s, person), int(person["id"]))
 
 
-def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow], prefer_llm: bool) -> TranscriptRow:
-    name, role, pid = _speaker(s, people, clusters)
+def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow], prefer_llm: bool,
+         names: VoiceNames) -> TranscriptRow:
+    name, role, pid = _speaker(s, people, clusters, names)
     first = int(s["t_start_ms"])
     try:
         words = json.loads(s.get("words_json") or "[]")
@@ -200,40 +199,40 @@ def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict
                          str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm, pid)
 
 
-def _reading(store: Store, meeting_id: int) -> tuple[dict[int, dict[str, Any]], int | None, dict[int, ClusterRow]]:
+def reading(store: Store, meeting_id: int, speakers: bool = True) -> Reading:
+    """(pessoas, job vigente, clusters dele, `segments.speakers()`; vazio com `speakers` falso): a leitura comum (F5.5, A-17)."""
     job_id = store.segments.current_job_id(meeting_id)
-    return _people(store), job_id, {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
+    clusters = {int(c["id"]): c for c in store.segments.list_clusters(meeting_id, job_id)}
+    return _people(store), job_id, clusters, store.segments.speakers(meeting_id, job_id) if speakers else []
 
 
 def transcript_rows(store: Store, meeting_id: int, prefer_llm: bool = True) -> list[TranscriptRow]:
-    """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, o rótulo da voz; toca da primeira palavra menos 150 ms.
+    """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, "Voz N" (F5.5, A-15); toca da primeira palavra menos 150 ms.
     `prefer_llm` mostra a transcrição revisada quando existe (P4); o texto original fica sempre na linha."""
-    people, job_id, clusters = _reading(store, meeting_id)
-    return [_row(s, people, clusters, prefer_llm) for s in store.segments.list_segments(meeting_id, job_id)]
+    people, job_id, clusters, _ = reading(store, meeting_id, speakers=False)
+    segments = store.segments.list_segments(meeting_id, job_id)
+    names = numbering(clusters.values(), job_id, segments)          # A-17: a primeira fala de cada voz, das falas já lidas
+    return [_row(s, people, clusters, prefer_llm, names) for s in segments]
 
 
-def transcript_rows_between(store: Store, meeting_id: int, windows: Iterable[tuple[int, int]],
-                            prefer_llm: bool = True) -> list[TranscriptRow]:
-    """As mesmas linhas da leitura, só dos segmentos vigentes que cruzam as janelas [t0, t1), sem repetir, em ordem de tempo
-    (F5 R6-02: o chat global manda poucas falas de reuniões longas). Sem ler `words_json`: toca do começo do segmento."""
-    people, job_id, clusters = _reading(store, meeting_id)
+def transcript_rows_between(store: Store, meeting_id: int, windows: Iterable[tuple[int, int]], prefer_llm: bool = True,
+                            read: Reading | None = None) -> list[TranscriptRow]:
+    """As linhas da leitura só dos segmentos vigentes que cruzam as janelas [t0, t1), sem repetir, em ordem de tempo, sem
+    `words_json` (F5 R6-02); "Voz N" da reunião inteira, pela `read` dada (o chat global) ou uma nova (F5.5, A-17)."""
+    people, job_id, clusters, speakers = read or reading(store, meeting_id)
+    names = numbering(clusters.values(), job_id, speakers, "first")
     seen: dict[int, TranscriptRow] = {}
     for t0, t1 in windows:
         for s in store.segments.overlapping(meeting_id, job_id, t0, t1):
             if int(s["id"]) not in seen:
-                seen[int(s["id"])] = _row(s, people, clusters, prefer_llm)
+                seen[int(s["id"])] = _row(s, people, clusters, prefer_llm, names)
     return sorted(seen.values(), key=lambda r: (r.t_start_ms, r.segment_id))
 
 
-def participants(store: Store, meeting_id: int) -> list[str]:
+def participants(store: Store, meeting_id: int, read: Reading | None = None) -> list[str]:
     """"Nome — Cargo" de quem fala na reunião (pessoas resolvidas, na ordem da primeira fala), sem ler as falas."""
-    people, job_id, clusters = _reading(store, meeting_id)
-    out: dict[str, None] = {}
-    for s in store.segments.speakers(meeting_id, job_id):
-        name, role, pid = _speaker(s, people, clusters)
-        if pid is not None:
-            out.setdefault(f"{name} — {role}" if role else name)
-    return list(out)
+    people, _job, clusters, speakers = read or reading(store, meeting_id)
+    return list(dict.fromkeys(f"{n} — {r}" if r else n for n, r, p in (_speaker(s, people, clusters) for s in speakers) if p is not None))
 
 
 # ---------------------------------------------------------------- áudio do card

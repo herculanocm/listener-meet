@@ -75,7 +75,9 @@ def minutes(req: Request) -> dict[str, Any]:
     title = _after(text, "Title: ").split("\n", 1)[0].strip() or "a reunião"
     first = lines[0] if lines else None
     last = lines[-1] if lines else None
-    speaker = next((ln.speaker for ln in lines if not ln.speaker.startswith("SPK_")), None)
+    from ..pipeline.voices import VOICE_PREFIX
+
+    speaker = next((ln.speaker for ln in lines if not ln.speaker.startswith(("SPK_", VOICE_PREFIX))), None)   # F5.5 (A-11)
     highlights = []
     for mid, mm, ss in MARKER_RE.findall(text):
         t_ms = (int(mm) * 60 + int(ss)) * 1000

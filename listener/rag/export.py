@@ -82,7 +82,7 @@ class ExportAction:
 @dataclass(frozen=True, slots=True)
 class ExportLine:
     t_ms: int
-    speaker: str                 # "Nome — Cargo", "Nome" ou "Voz SPK_1"
+    speaker: str                 # "Nome — Cargo", "Nome" ou "Voz 2" (F5.5)
     text: str
 
 

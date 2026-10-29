@@ -11,6 +11,7 @@ from ..types import Message, Role
 
 LANGUAGE_NAMES = {"pt-br": "Brazilian Portuguese", "pt": "Portuguese", "en": "English", "es": "Spanish", "fr": "French", "de": "German",
                   "it": "Italian"}
+VOICE_LABELS = "Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them."   # F5.5 (A-20, P-03)
 LINE_RE = re.compile(r"^#(?P<id>\d+) \[(?P<mm>\d+):(?P<ss>\d{2})\] (?P<speaker>[^:]+): (?P<text>.*)$")
 
 
@@ -18,7 +19,7 @@ LINE_RE = re.compile(r"^#(?P<id>\d+) \[(?P<mm>\d+):(?P<ss>\d{2})\] (?P<speaker>[
 class Line:
     segment_id: int
     t_start_ms: int
-    speaker: str                  # "Ana (CFO)" para resolvidos, "SPK_3" para pendentes
+    speaker: str                  # "Ana (CFO)" para resolvidos, "Voz 2" sem pessoa (F5.5; na identidade, "SPK_3" na pendente)
     text: str
     label: str | None = None      # rótulo do cluster (SPK_n) mesmo quando o nome está resolvido
 

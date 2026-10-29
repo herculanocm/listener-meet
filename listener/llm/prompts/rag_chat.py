@@ -11,9 +11,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..types import Message, Role
-from .common import language_instruction, stamp
+from .common import VOICE_LABELS, language_instruction, stamp
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"                  # F5.5 (A-20): "Voz 2" sem tradução
 SCHEMA = None
 HISTORY_TURNS = 8
 SYSTEM = ("You answer questions about the user's past meetings using only the excerpts below, grouped by meeting. Each meeting "
@@ -21,7 +21,7 @@ SYSTEM = ("You answer questions about the user's past meetings using only the ex
           "and the time from the excerpt lines you rely on (for example: 'o prazo foi fechado para sexta [R1 12:03]'); put several "
           "citations in one bracket separated by ';' ([R1 12:03; R2 05:10]) and cite [R<n>] alone when the line has no time. "
           "Never invent aliases, times or facts. If the excerpts do not answer the question, say plainly that you did not find it "
-          "in the meetings. Be concise.")
+          f"in the meetings. Be concise. {VOICE_LABELS}")
 NO_EXCERPTS = "(no excerpts were found for this question)"
 KIND_NAMES = {"transcricao": "transcript", "decisao": "decision", "destaque": "highlight", "pendencia": "open point",
               "proximo_passo": "next step", "ata": "minutes", "acao": "action item", "executivo": "executive summary",

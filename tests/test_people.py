@@ -135,4 +135,4 @@ def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platfor
     assert store._q("SELECT COUNT(*) FROM rag_chunks WHERE text LIKE ? OR speakers LIKE ?", (f"%{CANARY}%",) * 2)[0][0] == 0
     assert store._q("SELECT COUNT(*) FROM rag_fts WHERE rag_fts MATCH ?", ('"canario"',))[0][0] == 0
     assert CANARY not in caplog.text
-    assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == "minutes/1.1"
+    assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == "minutes/1.2"

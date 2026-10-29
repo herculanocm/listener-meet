@@ -105,7 +105,7 @@ def test_clip_range_from_segments_or_stitch_and_transcript_rows(platform, store)
     review.new_person(store, items2[0].cluster_id, "Ana", role="CFO")
     rows = review.transcript_rows(store, mid2)
     assert [r.line for r in rows] == ["[00:00] Ana — CFO: bom dia pessoal", "[00:00] Eu — Gerente: oi gente sim claro",
-                                      "[00:01] Voz SPK_1: tudo certo então"]
+                                      "[00:01] Voz 2: tudo certo então"]
     assert rows[0].play_from_ms == 50 and rows[1].play_from_ms == 150 and rows[2].play_from_ms == 1600 - 150
     assert rows[2].role == "" and rows[0].stamp == "00:00"
 
@@ -230,8 +230,9 @@ def test_reading_does_not_name_pending_voices_and_merge_into_suggestion_confirms
     assert all(i.status == ClusterStatus.UNNAMED and i.person_id == ana for i in items)   # sugestão guardada
     assert items[0].summary().startswith("sem nome; parecida com Ana")
     rows = review.transcript_rows(store, mid)
-    assert [r.name for r in rows if r.channel == "R"] == ["Voz SPK_0", "Voz SPK_1"]        # e não "Ana"
+    assert [r.name for r in rows if r.channel == "R"] == ["Voz 1", "Voz 2"]                # e não "Ana"
     review.merge(store, items[1].cluster_id, items[0].cluster_id)
+    assert [r.name for r in review.transcript_rows(store, mid) if r.channel == "R"] == ["Voz 1", "Voz 1"]   # F5.5: o número do alvo
     c1 = store.segments.get_cluster(items[1].cluster_id)
     assert c1["merged_into"] == items[0].cluster_id and c1["status"] == ClusterStatus.UNNAMED and c1["person_id"] == ana
     assert [e[2] for e in store.profiles.embeddings(store.profiles.profile_for(ana, "fake-tone-256")["id"])] == ["cadastro"]

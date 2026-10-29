@@ -17,7 +17,7 @@ import difflib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, override
 
@@ -41,12 +41,13 @@ from ..store import Store
 from ..store.actions import ActionInsert
 from ..store.jobs import JobRow
 from ..store.llm_calls import LlmCallInsert
-from ..store.segments import ClusterRow, SegmentRow, resolve_person, role_of
+from ..store.segments import ClusterRow, SegmentRow, role_of
 from ..store.summaries import SummaryInsert
 from . import summary_gate
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep
 from .reprocess import target_language
 from .runner import USER_CLUSTER
+from .voices import numbering, speaker_of
 
 log = get_logger("pipeline.llm")
 
@@ -102,6 +103,7 @@ class Context:
     clusters: tuple[ClusterRow, ...]
     people: dict[int, dict[str, Any]]
     lines: tuple[Line, ...]
+    identify_lines: tuple[Line, ...]            # F5.5 (A-14): as mesmas, com o rótulo interno na voz pendente
     by_id: dict[int, tuple[str, int]]           # segment_id -> (texto, t_start_ms)
     candidates: tuple[Person, ...]
     marker_notes: dict[int, str]
@@ -324,31 +326,27 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int) -> Context:
     by_cluster = {int(c["id"]): c for c in clusters}
     people = {int(p["id"]): dict(p) for p in store.people.list_people()}
     me = store.get_me()
+    names = numbering(clusters, parent_job_id, segments)          # F5.5 (A-15, A-17): os números da tela, das falas já lidas
     lines: list[Line] = []
+    identify: list[Line] = []
     by_id: dict[int, tuple[str, int]] = {}
     speakers: dict[int, Person] = {}                     # U-041 (A-10): quem fala, na ordem da primeira fala
     for s in segments:
         text = str(s.get("text") or "")
         cid = s.get("cluster_id")
         crow = by_cluster.get(int(cid)) if cid is not None else None
-        pid = s.get("person_id")
-        if pid is None and crow is not None:
-            pid = resolve_person(crow, by_cluster)
         label = str(crow["cluster"]) if crow is not None else None
-        who: Mapping[str, Any] | None = None
-        if pid is not None and int(pid) in people:
-            who = people[int(pid)]
-        elif crow is not None and str(crow["status"]) in PENDING:
-            speaker = str(crow["cluster"])
-        elif s.get("channel") == "L" and me is not None:
-            who = dict(me)                               # o canal L sem pessoa gravada: você, com o seu cargo (A-09)
-        else:
-            speaker = f"Voz {label}" if label else "Voz"
+        who, speaker = speaker_of(s, by_cluster, people, names)  # sem pessoa, "Voz 2", pendente ou não (A-02, A-15)
+        if who is None and crow is None and s.get("channel") == "L" and me is not None:
+            who = dict(me)                               # a fala sem cluster no canal L: você, com o seu cargo (A-09, A-04)
         if who is not None:
             role = role_of(s, who)                       # o cargo do dia; só nulo cai no da ficha (D-016)
             speaker = str(who["name"]) + (f" ({role})" if role else "")
             speakers.setdefault(int(who["id"]), Person(int(who["id"]), str(who["name"]), role, str(who.get("company") or "")))
-        lines.append(Line(int(s["id"]), int(s["t_start_ms"]), speaker, text, label))
+        line = Line(int(s["id"]), int(s["t_start_ms"]), speaker, text, label)
+        lines.append(line)
+        pending = who is None and crow is not None and str(crow["status"]) in PENDING
+        identify.append(Line(line.segment_id, line.t_start_ms, str(label), text, label) if pending else line)   # A-14, como antes
         by_id[int(s["id"])] = (text, int(s["t_start_ms"]))
     expected: list[Person] = []
     try:
@@ -365,7 +363,8 @@ def build_context(store: Store, meeting_id: int, parent_job_id: int) -> Context:
                      tuple(expected), markers, output_code(meeting_language(store, meeting)),
                      str(meeting.get("glossary") or ""), tuple(speakers.values()))
     candidates = tuple(Person(pid, str(p["name"]), str(p.get("role") or ""), str(p.get("company") or "")) for pid, p in people.items())
-    return Context(meeting, ctx, segments, clusters, people, tuple(lines), by_id, candidates, {m.id: m.note for m in markers})
+    return Context(meeting, ctx, segments, clusters, people, tuple(lines), tuple(identify), by_id, candidates,
+                   {m.id: m.note for m in markers})
 
 
 def estimate_meeting_usd(store: Store, meeting_id: int, steps: Sequence[JobStep] = TASKS_AFTER_MEETING) -> float | None:
@@ -462,8 +461,8 @@ class LlmJobRunner(BaseJobRunner):
         self._done_steps = {t for t in self.tasks if 0 in self.store.jobs.artifact_indexes(self.job_id, t)}
         self._prices = self.store.providers.list_prices(self.config.provider_kind or None)
         if any(t != JobStep.TEST for t in self.tasks):
-            self.ctx = build_context(self.store, self.meeting_id, self.parent_job_id)
-            self._speakers = summary_gate.speakers_digest(self.store, self.meeting_id)   # R-02: os nomes que a ata usou
+            self.ctx = ctx = build_context(self.store, self.meeting_id, self.parent_job_id)   # R-02, F5.5 (A-13): os nomes da ata
+            self._speakers = summary_gate.rows_digest(ctx.segments, ctx.people, ctx.clusters, self.parent_job_id, key="t_start_ms")
         asyncio.run(watched(self._run_tasks()))           # D-058: laço preso em código nativo não trava a fila
         failed = [o for o in self.outcomes.values() if not o.ok]
         if failed:
@@ -716,7 +715,7 @@ class LlmJobRunner(BaseJobRunner):
             return
         labels = [str(c["cluster"]) for c in pending]
         window = self._window(strong=True)
-        lines: tuple[Line, ...] = ctx.lines
+        lines: tuple[Line, ...] = ctx.identify_lines                      # F5.5 (A-14): "SPK_1" na voz pendente
         if estimate_tokens(render_lines(lines)) > WINDOW_SHARE * window:
             lines = neighbourhood(lines, set(labels))
         blocks = [lines]
@@ -847,7 +846,7 @@ class LlmJobRunner(BaseJobRunner):
         self.store.add_event(self.meeting_id, None, EventType.JOB_STEP,
                              {"job_id": self.job_id, "step": "minutes_done", "strategy": strategy,
                               "decisions": len(data.get("decisions") or []), "actions": len(rows), "summary_id": summary_id,
-                              "speakers": self._speakers})               # A-15: os nomes mudaram depois desta ata?
+                              "speakers": self._speakers, "speakers_v": summary_gate.SPEAKERS_V})   # A-15; F5.5 (A-13)
 
     def _minutes_json(self) -> str:
         row = self.store.summaries.current(self.meeting_id, SummaryKind.MINUTES)

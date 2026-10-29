@@ -125,7 +125,8 @@ def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[Meetin
     e as linhas enviadas com tempo (o que uma citação pode ligar). Falas: os segmentos vigentes que cruzam o intervalo do
     trecho, lidos só nessas janelas (sem `words_json`; R6-02: ler a reunião inteira custava ~55 ms por reunião de 2 h), sem
     repetir, em ordem de tempo; sem nenhum (reprocessada e ainda não reindexada), o texto do trecho. Ata, ação, executivo e
-    marca da reunião: uma linha com o tipo, o tempo quando há e o texto. Participantes: quem fala na reunião inteira."""
+    marca da reunião: uma linha com o tipo, o tempo quando há e o texto. Participantes: quem fala na reunião inteira; a mesma
+    leitura de `segments.speakers()` dá os participantes e os números das vozes ("Voz 2", F5.5 A-17), uma por reunião."""
     by_meeting: dict[int, list[SearchHit]] = {}
     for h in hits:
         by_meeting.setdefault(h.meeting_id, []).append(h)
@@ -137,11 +138,12 @@ def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[Meetin
             continue
         alias = f"R{len(blocks) + 1}"
         windows = _windows(mhits)
-        rows = review.transcript_rows_between(store, mid, windows, prefer_llm=True) if windows else []
+        read = review.reading(store, mid)                 # F5.5 (A-17): uma leitura de `segments.speakers()` por reunião
+        rows = review.transcript_rows_between(store, mid, windows, prefer_llm=True, read=read) if windows else []
         lines, sent = _lines(mhits, rows)
         title = str(meeting.get("title") or meeting.get("title_llm") or "")
         date = str(meeting.get("started_at") or "")[:10]
-        people = ", ".join(review.participants(store, mid))
+        people = ", ".join(review.participants(store, mid, read))
         blocks.append(MeetingBlock(alias, mid, title, date, people or _clean(str(meeting.get("expected_participants") or "")), lines))
         targets[alias] = Target(mid, title, date, sent)
     return blocks, targets

@@ -46,9 +46,9 @@ def _minutes(store: Any, mid: int, job: int, text: str = MINUTES_MD) -> int:
     return store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", text, "gemini", "m", "minutes/1.0", job, None, "pt-BR"))
 
 
-# ---------------------------------------------------------------- U-035: as vozes numeradas, só na tela
+# ---------------------------------------------------------------- U-035 e F5.5: as vozes numeradas
 def test_voices_are_numbered_by_first_speech_and_a_merge_takes_the_target_number():
-    from listener.ui.voices import number_voices
+    from listener.pipeline.voices import number_voices
 
     clusters = [{"id": 10, "channel": "R", "cluster": "SPEAKER_03", "merged_into": None},
                 {"id": 11, "channel": "R", "cluster": "SPEAKER_00", "merged_into": None},
@@ -57,11 +57,10 @@ def test_voices_are_numbered_by_first_speech_and_a_merge_takes_the_target_number
                 {"id": 14, "channel": "L", "cluster": "L", "merged_into": None}]               # o canal do usuário fica fora
     names = number_voices(clusters, {10: 9_000, 11: 2_000, 12: 1_000})
     assert names.by_cluster == {11: 2, 10: 1, 12: 1, 13: 3}                      # a mescla leva o grupo para a primeira fala dele
-    assert names.by_label[("R", "SPEAKER_03")] == 1 and ("L", "L") not in names.by_label
     assert names.title(13, "Voz SPEAKER_02") == "Voz 3" and names.title(14, "Voz L") == "Voz L"
 
 
-def test_transcript_timeline_and_review_show_voz_n_while_the_pipeline_keeps_the_internal_label(qtbot, platform, store):
+def test_transcript_timeline_and_review_show_voz_n_like_the_reading_and_the_export(qtbot, platform, store):
     from listener.rag import export
     from listener.ui.meeting import MeetingWindow
     from listener.ui.review import ReviewDialog
@@ -70,8 +69,8 @@ def test_transcript_timeline_and_review_show_voz_n_while_the_pipeline_keeps_the_
     mid, items = _processed(platform, store)
     review.new_person(store, items[0].cluster_id, "Ana", role="CFO")              # a primeira voz ganha nome; a segunda segue sem
     raw = [r.name for r in review.transcript_rows(store, mid)]
-    assert "Voz SPK_1" in raw                                                        # o que vai à LLM e à busca não muda
-    assert "Voz SPK_1" in export.transcript_markdown(export.gather(store, mid))
+    assert "Voz 2" in raw and not any("SPK" in n for n in raw)                      # F5.5: a leitura já dá o nome da tela
+    assert "Voz 2" in export.transcript_markdown(export.gather(store, mid))
     win = MeetingWindow(store, mid)
     qtbot.addWidget(win)
     shown = [r.name for r in win.transcript.model.rows]

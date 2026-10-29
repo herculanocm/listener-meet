@@ -169,7 +169,7 @@ def test_excerpts_use_the_current_segments_by_time_aliases_by_relevance_and_line
     msgs = rag_chat.build(ctx)
     assert [m.role for m in msgs] == [Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.USER, Role.ASSISTANT, Role.USER]
     assert "[R<n> mm:ss]" in msgs[0].text and "Brazilian Portuguese" in msgs[0].text and "[R1] Orçamento 2027" in msgs[1].text
-    assert msgs[-1].text == "e agora?" and prompts.prompt_version(LlmTask.RAG_CHAT) == "rag_chat/1.0"
+    assert msgs[-1].text == "e agora?" and prompts.prompt_version(LlmTask.RAG_CHAT) == "rag_chat/1.1"
     assert prompts.schema_for(LlmTask.RAG_CHAT) is None
     assert rag_chat.NO_EXCERPTS in rag_chat.build(rag_chat.RagChatCtx([], [], "x", "en"))[1].text
     # dois de uma reunião e um da outra: apelidos na ordem do melhor trecho
@@ -215,7 +215,7 @@ def test_global_chat_end_to_end_streaming_follow_up_records_rating_and_html(stor
     assert json.loads(msgs[1]["citations_json"]) == list(ans.citations) and msgs[1]["cost_usd"] == ans.cost_usd
     call = store.llm_calls.get(ans.call_id)
     assert (call["task"], call["meeting_id"], call["job_id"], call["strategy"], call["prompt_version"]) == ("rag_chat", None, None,
-                                                                                                             "stream", "rag_chat/1.0")
+                                                                                                             "stream", "rag_chat/1.1")
     embeds = store._q("SELECT cost_usd FROM llm_calls WHERE task = 'rag_embed' AND meeting_id IS NULL")
     assert len(embeds) == 1 and ans.cost_usd == pytest.approx(call["cost_usd"] + embeds[0][0], abs=1e-6)  # o chat e o vetor
     req, _resp = store.llm_calls.payloads(ans.call_id)

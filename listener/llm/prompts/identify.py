@@ -33,8 +33,8 @@ SYSTEM = ("You identify who the unnamed speakers of a meeting transcript are, us
 @dataclass(frozen=True, slots=True)
 class IdentifyCtx:
     meeting: MeetingCtx
-    lines: Sequence[Line]
-    pending: Sequence[str]            # rótulos SPK_n por decidir
+    lines: Sequence[Line]             # `Context.identify_lines` (F5.5, A-14): a voz pendente pelo rótulo, como antes
+    pending: Sequence[str]            # rótulos SPK_n por decidir (as outras vozes sem pessoa vêm como "Voz 2")
     candidates: Sequence[Person]      # pessoas cadastradas (id, nome, cargo, empresa)
 
 

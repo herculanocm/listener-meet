@@ -3,26 +3,30 @@ automáticas ligadas, o job `llm` leva só a identidade por contexto e a transcr
 executivo, pré-resumo e título ficam adiados no evento `llm_deferred` (job pai e tarefas). `release` enfileira as adiadas
 uma vez por job pai (`llm_released`), quando a revisão fica sem voz pendente, no "Concluir" ou em "Gerar ata mesmo assim".
 Reprocessar troca o job pai: adiamento de job velho não libera (A-13). Os nomes que mudam depois da ata pronta acendem o
-aviso "Atualizar a ata com os nomes" pela assinatura dos falantes gravada no `minutes_done` (A-15; um hash, sem nomes).
-Só eventos da reunião: sem esquema novo."""
+aviso "Atualizar a ata com os nomes" pela assinatura dos falantes gravada no `minutes_done` (A-15; um hash, sem nomes),
+versionada (F5.5 A-13, P-01): a v1, sobre o nome interno ("Voz SPK_1"), das atas de antes; a v2, sobre o nome mostrado
+("Voz 2"), das novas, que acende também numa mescla de vozes sem pessoa. Só eventos da reunião: sem esquema novo."""
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
 from ..model import PIPELINE_JOB_KINDS, EventType, JobStep, SummaryKind
 from . import review
+from .voices import NO_NAMES, numbering
 
 if TYPE_CHECKING:
     from ..store import Store
+    from ..store.segments import ClusterRow
 
 log = get_logger("pipeline.summary_gate")
 
 EARLY = frozenset({JobStep.IDENTIFY, JobStep.REVISE})   # saem logo: ajudam a revisar (a identidade sugere quem é quem)
+SPEAKERS_V = 2                 # F5.5 (A-13): a versão da assinatura que as atas novas gravam (`speakers_v`; sem ela, a 1)
 REFRESH = (JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY)   # "Atualizar a ata com os nomes" (D-057, decisão 5)
 
 
@@ -101,23 +105,37 @@ def release(store: Store, meeting_id: int, reason: str, *, force: bool = False) 
 
 
 # ---------------------------------------------------------------- nomes depois da ata (A-15)
-def speakers_digest(store: Store, meeting_id: int) -> str:
-    """Hash de quem fala na leitura de agora (rótulo da voz, pessoa, nome e cargo do dia): muda quando um nome muda. Um
-    hash e não os nomes: o evento fica no banco e o esquecimento (U-041) não precisaria reescrevê-lo."""
-    seen = sorted({(r.channel, r.name, r.role, r.person_id or 0) for r in review.transcript_rows(store, meeting_id)})
-    return hashlib.sha256(json.dumps(seen, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+def rows_digest(rows: Iterable[Mapping[str, Any]], people: dict[int, dict[str, Any]], clusters: Iterable[ClusterRow],
+                job_id: int | None, version: int = SPEAKERS_V, key: str = "first") -> str:
+    """Hash de (canal, nome, cargo do dia, pessoa) de quem fala nas falas `rows` (`segments.speakers()`, com a primeira fala
+    em `first`, ou os próprios segmentos, com `key = t_start_ms`): muda quando um nome muda. A v1 dá à voz sem pessoa o
+    nome interno ("Voz SPK_1", o valor de antes da F5.5); a v2, o nome mostrado ("Voz 2"), que muda também numa mescla.
+    Um hash e não os nomes: o evento fica no banco e o esquecimento (U-041) não precisaria reescrevê-lo."""
+    rows, by_id = list(rows), {int(c["id"]): c for c in clusters}
+    names = NO_NAMES if version == 1 else numbering(by_id.values(), job_id, rows, key)
+    seen: set[tuple[str, str, str, int]] = set()
+    for s in rows:
+        name, role, pid = review._speaker(s, people, by_id, names)
+        seen.add((str(s.get("channel") or ""), name, role, pid or 0))
+    return hashlib.sha256(json.dumps(sorted(seen), ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
+def speakers_digest(store: Store, meeting_id: int, version: int = SPEAKERS_V) -> str:
+    """A assinatura de quem fala na leitura de agora (o job vigente), sem ler as falas (A-13: `segments.speakers()`)."""
+    people, job_id, clusters, speakers = review.reading(store, meeting_id)
+    return rows_digest(speakers, people, clusters.values(), job_id, version)
 
 
 def names_changed(store: Store, meeting_id: int) -> bool:
     """A ata atual foi gerada com outros nomes: só quando ela é do job vigente (D-043) e tem a assinatura gravada; ata
-    antiga, sem assinatura, não acende o aviso."""
+    antiga, sem assinatura, não acende o aviso. A comparação é na versão gravada (F5.5 A-13: sem `speakers_v`, a 1)."""
     row = store.summaries.current(meeting_id, SummaryKind.MINUTES)
     if row is None or row.get("job_id") != store.segments.current_job_id(meeting_id):
         return False
-    digest = None
+    digest, version = None, 1
     for e in store.list_events(meeting_id):
         raw = e.get("data")
         data = raw if isinstance(raw, dict) else {}
         if data.get("step") == "minutes_done" and data.get("summary_id") == row["id"]:
-            digest = data.get("speakers")
-    return bool(digest) and digest != speakers_digest(store, meeting_id)
+            digest, version = data.get("speakers"), int(data.get("speakers_v") or 1)
+    return bool(digest) and digest != speakers_digest(store, meeting_id, version)

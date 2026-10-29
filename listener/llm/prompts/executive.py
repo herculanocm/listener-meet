@@ -4,15 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..types import Message
-from .common import MeetingCtx, header, system, user
+from .common import VOICE_LABELS, MeetingCtx, header, system, user
 
-PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
+PROMPT_VERSION = "1.2"                  # U-041 (A-10): o cabeçalho lista os falantes; F5.5 (A-20): "Voz 2" sem tradução
 MAX_CHARS = 1500
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["text"],
                 "properties": {"text": {"type": "string", "maxLength": MAX_CHARS}}}
 SYSTEM = ("You write the executive summary of a meeting for someone who was not there: what it was about, what was decided, what "
           "is pending and the key next steps, in one or two short paragraphs of plain prose (no bullet points, no headings). Use "
-          f"only the minutes given. Hard limit: {MAX_CHARS - 200} characters.")
+          f"only the minutes given. Hard limit: {MAX_CHARS - 200} characters. {VOICE_LABELS}")
 
 
 @dataclass(frozen=True, slots=True)
