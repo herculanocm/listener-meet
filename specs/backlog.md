@@ -5,9 +5,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Onde paramos (28/10/2026, Windows nativo; tudo commitado; push do dono)
 - **Em curso: F5.5, vozes numeradas** (`features/F5.5-vozes-numeradas.md`, D-062): "Voz 2" também na ata, na
   exportação, na busca e no chat; aprovada com a revisão de arquitetura, em implementação.
-- **Em conversa com o dono: F5.6** (28/10): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos
-  os nomes; os prompts de cada tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz.
-  Perguntas 1 a 16 no chat, à espera da resposta; a spec vem depois da F5.5.
+- **Depois: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
+  padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
+  tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura em
+  curso; o código começa depois da F5.5 (arquivos em comum).
 - **Próximo passo do dono:** testar a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook,
   teclado), a F5.3 pela Parte 11 (idioma, fila, aviso, fone no meio da gravação) e a
   F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
