@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 14 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 15 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -243,6 +243,22 @@ Antes: anote, em Pessoas, quantas pessoas têm perfil de voz; tenha duas reuniõ
 - [ ] Depois de alguns minutos parado, o `listener.log` mostra a liberação de espaço (bytes) ou "pendente" com o
       motivo; anote quanto tempo levou e o tamanho do `listener-audio-AAAA-MM.db` antes e depois.
 - Devolva: o trecho do `listener.log` da exclusão e da liberação de espaço, e qualquer erro na tela.
+
+## Parte 15 — F5.6 L1a: ata só a pedido (15 min)
+Antes: a chave do Gemini configurada. O popup e as caixas ao parar vêm no L1b; aqui só os botões que já existem.
+- [ ] Grave 3 min de conversa e pare. Depois do processamento, sem clique: título, vozes identificadas e transcrição
+      revisada. As abas mostram "Ata ainda não gerada.", "Resumo executivo ainda não gerado." e "Pré-resumo ainda não
+      gerado.", e o custo da reunião não tem chamada de ata.
+- [ ] Na aba Ata, "Gerar ata": a ata sai pela fila. Anote quanto tempo levou. "Gerar de novo" refaz só a ata.
+- [ ] Mude o nome de uma voz numa reunião com ata: aparece "Atualizar a ata com os nomes", que refaz só o que já
+      existia.
+- [ ] Troque o idioma de uma reunião com ata: a pergunta diz que refaz título, identificação e revisada e que ata,
+      resumo e ações ficam desatualizados. Depois, a ata é a mesma.
+- [ ] Se tiver uma reunião antiga com a revisão pela metade, termine a revisão: nenhuma ata nova sai sozinha.
+- [ ] Ao vivo: em Configurações, Ao vivo, deixe "Resumo parcial automático" desmarcado (o padrão) e grave 5 min com o
+      ao vivo. A janela diz "o automático está desligado nesta gravação"; "Atualizar resumo agora" gera um parcial; o
+      `--check` da reunião mostra 0 parciais automáticos.
+- Devolva: as linhas do `listener.log` com "pedido" e "só a pedido", o tempo da ata e se o título ficou bom.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.

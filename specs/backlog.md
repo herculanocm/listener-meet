@@ -7,13 +7,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
   tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura
   incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono). L3, excluir reunião, feito (`426c25e`);
-  faltam L1a, L1b e L2, nessa ordem.
-- **Próximo passo do dono:** testar a F5.6 L3 pela Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro
-  (claro, escuro, contraste
-  alto, notebook,
-  teclado), a F5.3 pela Parte 11 (idioma, fila, aviso, fone no meio da gravação) e a
-  F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
-  da pessoa, a ata depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
+  L1a, a lógica da ata a pedido, feito (`fe0658f`: sem pedido não sai ata, executivo, pré-resumo nem parcial; os botões
+  que já existem viram pedido); faltam L1b (popup, caixas ao parar, botões com estado, warm-up) e L2 (prompts).
+- **Próximo passo do dono:** testar a F5.6 L1a pela Parte 15 e a L3 pela Parte 14, a F5.5 pela Parte 13 e a F5.4
+  pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
+  aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
+  depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
   uso, chaves, gravação curta de ponta a ponta, reunião aberta, busca com o Gemini, busca local, ao vivo, reuniões reais
   e situações de borda) e devolve o que cada parte pede; a LLM registra os números em `decisoes.md`, marca aqui e
   corrige o que aparecer (pedido do dono, 25/10: a LLM roda sozinha o que não depende dele e o acompanha no resto). Sem
@@ -96,7 +95,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `AGENTS.md`).
 
 ## Estado em 28/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**, F5.6 L3: 743 testes
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**, F5.6 L3 e L1a: 779 testes
   mais 7 pulados no Windows com `--tudo` (85 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
@@ -221,6 +220,10 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   `R/SPK_0` e `L/SPK_0` chegam à identidade os dois como "SPK_0"; `_merge_identify` e `_apply_identify` casam pelo
   rótulo, então só um dos clusters recebe a sugestão, talvez o errado. Proposta: o rótulo com o canal na entrada da
   identidade e a busca por (canal, rótulo), numa spec pequena.
+- Teste talvez intermitente (visto na revisão do L1a da F5.6):
+  `test_rag_ui.py::test_the_system_loopback_never_opens_with_the_player_playing` falhou uma vez numa rodada inteira com
+  `-x`; depois, 0 falhas em 15 rodadas sozinho e nas rodadas inteiras seguintes. Se voltar a falhar, guardar a saída e
+  ver a espera do player.
 
 ## Medições a registrar em `decisoes.md`
 pyannote community-1 por hora em CPU (B4) · tamanho do banco por hora de reunião (G1) · deriva por canal e
