@@ -14,7 +14,8 @@ Quando ler: ao detalhar ou implementar esta fase (T2). Tabelas: `dados.md`.
    de provedores; editor de atalhos capturando as teclas; presets; pasta de modelos; tamanho do banco com
    projeção e backup com progresso (U-010); mover o banco; restaurar padrão.
 4. Notificação de reunião detectada (U-012, D-010): sessões de áudio do Windows; lista de apps observados
-   configurável; "Gravar agora" com o último preset; "ignorar por 1 h"; nunca grava sozinho.
+   configurável; "Gravar agora" com o último preset; "ignorar por 1 h"; nunca grava sozinho. Trazido para a F5.7
+   (`F5.7-aviso-reuniao-sem-gravar.md`, U-094, rascunho de 29/10); sai daqui quando ela for aprovada.
 5. Assistente de primeiro uso completo (U-013): token do Hugging Face, chave do provedor, teste do
    microfone, app de reunião, pasta de modelos.
 6. Tema claro e escuro seguindo o sistema, DPI alto (U-014); empacotamento com atalho (PyInstaller só se

@@ -10,6 +10,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   L1, a ata a pedido, feito (`fe0658f` a lógica: sem pedido não sai ata, executivo, pré-resumo nem parcial; `f017f01`
   a tela: o popup, as caixas ao parar e na troca de idioma, a linha com o estado na reunião, "Resumo parcial" no
   warm-up); falta o L2 (os prompts nas Configurações).
+- **Proposta: F5.7** (`features/F5.7-aviso-reuniao-sem-gravar.md`, U-094, rascunho de 29/10, pedido do dono): avisar
+  quando uma chamada começa sem gravação (o microfone em uso por outro app, medido nesta máquina), sem roubar o foco e
+  fora da captura; "Gravar…" abre o "Antes de gravar" com o app. Consultas de UX, arquitetura e medição incorporadas;
+  aguarda a aprovação do dono (CP13) e as perguntas 1 a 6 da spec; o código começa depois da F5.6.
 - **Próximo passo do dono:** testar a F5.6 L1 pela Parte 15 e a L3 pela Parte 14, a F5.5 pela Parte 13 e a F5.4
   pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
