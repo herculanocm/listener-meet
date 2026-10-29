@@ -114,6 +114,10 @@ class JobsRepo:
         return self.core.execute("UPDATE processing_jobs SET params_json = ? WHERE id = ? AND status = ?",
                                  (payload, job_id, JobStatus.PENDING)) > 0
 
+    def set_config(self, job_id: int, config_json: str) -> None:
+        """F5.6 L2 (R-08): o snapshot do job `llm` com as instruções só das tarefas dele, gravado pelo runner na primeira vez."""
+        self.core.execute("UPDATE processing_jobs SET config_json = ? WHERE id = ?", (config_json, job_id))
+
     def list_jobs(self, limit: int = 50, *, kinds: Iterable[JobKind | str] | None = None,
                   exclude_kinds: Iterable[JobKind | str] | None = None, statuses: Iterable[JobStatus | str] | None = None) -> list[JobRow]:
         """Ativos primeiro (na ordem da fila), depois os terminados mais recentes; `kinds`, `exclude_kinds` e `statuses` filtram

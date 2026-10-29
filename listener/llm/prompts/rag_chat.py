@@ -4,24 +4,26 @@ falas `#<segment_id> [mm:ss] Nome — Cargo: texto` dos segmentos que o trecho c
 reprocessamento troca os ids, F5A-06) e uma linha por item de ata, ação, executivo ou marca da reunião com o tipo, o
 `[mm:ss]` quando há tempo e o texto; o histórico curto da conversa (as citações das respostas anteriores já legíveis: os
 apelidos valem só para a pergunta atual); a pergunta por último. Resposta em texto livre citando `[R1 12:03]`; o projeto
-liga cada citação à linha enviada mais próxima, até 5 s (`rag/citations.py`)."""
+liga cada citação à linha enviada mais próxima, até 5 s (`rag/citations.py`). F5.6 L2 (A-24): as instruções (o papel e o
+estilo) são do usuário; os apelidos, as citações, não inventar e dizer quando não achou ficam. Versão 1.2: o "Be concise."
+veio para as instruções (antes ficava no meio do contrato), para o estilo ser do usuário sem contradizer o contrato."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..types import Message, Role
-from .common import VOICE_LABELS, language_instruction, stamp
+from .common import VOICE_LABELS, language_instruction, stamp, system_text
 
-PROMPT_VERSION = "1.1"                  # F5.5 (A-20): "Voz 2" sem tradução
+PROMPT_VERSION = "1.2"                  # F5.6 L2: "Be concise." nas instruções (editáveis); F5.5 (A-20): "Voz 2" sem tradução
 SCHEMA = None
 HISTORY_TURNS = 8
-SYSTEM = ("You answer questions about the user's past meetings using only the excerpts below, grouped by meeting. Each meeting "
-          "has an alias such as [R1], valid only for the current question. Cite every statement as [R<n> mm:ss], taking the alias "
-          "and the time from the excerpt lines you rely on (for example: 'o prazo foi fechado para sexta [R1 12:03]'); put several "
-          "citations in one bracket separated by ';' ([R1 12:03; R2 05:10]) and cite [R<n>] alone when the line has no time. "
-          "Never invent aliases, times or facts. If the excerpts do not answer the question, say plainly that you did not find it "
-          f"in the meetings. Be concise. {VOICE_LABELS}")
+INSTRUCTIONS = "You answer questions about the user's past meetings using only the excerpts below, grouped by meeting. Be concise."
+CONTRACT = ("Each meeting has an alias such as [R1], valid only for the current question. Cite every statement as [R<n> mm:ss], "
+            "taking the alias and the time from the excerpt lines you rely on (for example: 'o prazo foi fechado para sexta [R1 "
+            "12:03]'); put several citations in one bracket separated by ';' ([R1 12:03; R2 05:10]) and cite [R<n>] alone when the "
+            "line has no time. Never invent aliases, times or facts. If the excerpts do not answer the question, say plainly that "
+            f"you did not find it in the meetings. {VOICE_LABELS}")
 NO_EXCERPTS = "(no excerpts were found for this question)"
 KIND_NAMES = {"transcricao": "transcript", "decisao": "decision", "destaque": "highlight", "pendencia": "open point",
               "proximo_passo": "next step", "ata": "minutes", "acao": "action item", "executivo": "executive summary",
@@ -70,10 +72,11 @@ def render_blocks(blocks: Sequence[MeetingBlock]) -> str:
     return "\n\n".join(b.render() for b in blocks) or NO_EXCERPTS
 
 
-def build(ctx: RagChatCtx) -> tuple[Message, ...]:
+def build(ctx: RagChatCtx, instructions: str | None = None) -> tuple[Message, ...]:
     excerpts = Message(Role.USER, "Excerpts from the user's meetings (aliases are valid only for this question; transcript lines are "
                                   f"#segment_id [mm:ss] speaker: text):\n\n{render_blocks(ctx.blocks)}")
     ack = Message(Role.ASSISTANT, "Understood. I will answer only from these excerpts, citing [R<n> mm:ss].")
     history = tuple(Message(Role.ASSISTANT if role == "assistant" else Role.USER, text) for role, text in ctx.history[-HISTORY_TURNS:])
-    return (Message(Role.SYSTEM, f"{SYSTEM}\n{language_instruction(ctx.output_language)}"), excerpts, ack, *history,
+    text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.output_language)
+    return (Message(Role.SYSTEM, f"{text}\n{language_instruction(ctx.output_language)}"), excerpts, ack, *history,
             Message(Role.USER, ctx.question))

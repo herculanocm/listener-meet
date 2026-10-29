@@ -67,12 +67,19 @@ def interpolate_words(utterances: list[dict[str, Any]], t0_ms: int, t1_ms: int) 
 
 
 class LLMAudioTranscriber:
-    """`Transcriber` sobre `LLMProvider.complete` com `AudioPart`; `provider_factory` cria o provedor dentro do event loop."""
+    """`Transcriber` sobre `LLMProvider.complete` com `AudioPart`; `provider_factory` cria o provedor dentro do event loop.
+    F5.6 L2 (A-26): `instructions` são as do usuário para a tarefa (None = as do app), lidas ao montar o transcritor; a
+    transcrição não grava `llm_calls`: a marca vai ao log, pelo hash (A-46), e ao `timings_json` do job (revisão, R-06:
+    `prompt_version`, que o runner grava na etapa; o `name` fica igual, porque é a chave da velocidade medida)."""
 
-    def __init__(self, provider_factory: Callable[[], LLMProvider], kind: ProviderKind, model: str, provider_id: str = ""):
+    def __init__(self, provider_factory: Callable[[], LLMProvider], kind: ProviderKind, model: str, provider_id: str = "",
+                 instructions: str | None = None):
         self.provider_factory = provider_factory
         self.kind = kind
         self.model = model
+        self.instructions = instructions
+        mine = (instructions or "").strip()
+        self.prompt_version = prompts.prompt_version(LlmTask.TRANSCRIBE, mine) if mine else ""
         self.name = f"llm:{provider_id or kind}:{model}"
         self.calls: list[tuple[int, int, str]] = []          # (idx, bytes de áudio, mime)
 
@@ -105,7 +112,8 @@ class LLMAudioTranscriber:
             try:
                 for part, t0, t1 in parts:
                     ctx = prompts.transcribe.TranscribeCtx(part, language, initial_prompt)
-                    req = Request(LlmTask.TRANSCRIBE, self.model, prompts.transcribe.build(ctx), prompts.transcribe.SCHEMA,
+                    msgs = prompts.transcribe.build(ctx, self.instructions)
+                    req = Request(LlmTask.TRANSCRIBE, self.model, msgs, prompts.transcribe.SCHEMA,
                                   max_output_tokens=8192, timeout_s=300.0)
                     comp = await provider.complete(req)
                     self.calls.append((window.idx, len(part.data), part.mime))
@@ -142,4 +150,6 @@ def llm_transcriber(store: Store) -> LLMAudioTranscriber:
     def factory() -> LLMProvider:
         return build_provider(store, cfg.provider_id)[0]
 
-    return LLMAudioTranscriber(factory, ProviderKind(cfg.provider_kind), cfg.fast_model, cfg.provider_id)
+    if cfg.prompt(LlmTask.TRANSCRIBE):
+        log.info("transcrição pela LLM com instruções suas (%s)", cfg.version(LlmTask.TRANSCRIBE))
+    return LLMAudioTranscriber(factory, ProviderKind(cfg.provider_kind), cfg.fast_model, cfg.provider_id, cfg.prompt(LlmTask.TRANSCRIBE))

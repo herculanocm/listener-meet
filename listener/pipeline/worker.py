@@ -131,13 +131,18 @@ def build_deps(config: JobConfig, token: str, fake: bool, store: Store | None = 
 
 
 def llm_transcriber_key(store: Store, config: JobConfig) -> tuple[str, str]:
-    """(provedor, modelo rápido) do provedor ativo quando o transcritor é a LLM: trocar nas Configurações reconstrói."""
+    """(provedor, modelo rápido) do provedor ativo quando o transcritor é a LLM: trocar nas Configurações reconstrói. F5.6 L2
+    (A-26): com instruções suas na transcrição pelo áudio, o modelo leva o hash delas (`+u<hash>`, nunca o texto): instruções
+    novas também reconstroem, sem esperar o worker sair ocioso."""
     if config.transcriber != "llm":
         return ("", "")
+    from ..config.prompts import text_hash
     from ..llm.jobconfig import LlmJobConfig
+    from ..llm.types import LlmTask
 
     cfg = LlmJobConfig.from_store(store)
-    return (cfg.provider_id, cfg.fast_model)
+    mine = cfg.prompt(LlmTask.TRANSCRIBE)
+    return (cfg.provider_id, f"{cfg.fast_model}+u{text_hash(mine.strip())}" if mine else cfg.fast_model)
 
 
 def config_snapshot(store: Store) -> str:
@@ -147,10 +152,11 @@ def config_snapshot(store: Store) -> str:
 
 
 def llm_snapshot(store: Store) -> str:
-    """`LlmJobConfig` do provedor ativo (nunca a chave) para o `config_json` do job `llm` (F3 item 15)."""
+    """`LlmJobConfig` do provedor ativo (nunca a chave) para o `config_json` do job `llm` (F3 item 15); sem as instruções
+    (F5.6 L2, R-08): o runner congela só as das tarefas do job, e o `index` não leva nenhuma."""
     from ..llm.jobconfig import LlmJobConfig
 
-    return LlmJobConfig.from_store(store).to_json()
+    return LlmJobConfig.from_store(store).claim_json()
 
 
 def main(argv: list[str] | None = None) -> int:

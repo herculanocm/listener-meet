@@ -213,7 +213,8 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
         for kind in ("decisions", "actions"):
             prev[kind] = [{k: v for k, v in it.items() if k != "t_ms"} for it in previous.get(kind) or () if isinstance(it, dict)]
         previous_json = json.dumps(prev, ensure_ascii=False, separators=(",", ":"))
-    req = Request(LlmTask.PARTIAL, cfg.fast_model, prompts.partial.build(PartialCtx(ctx, previous_json, lines)), prompts.partial.SCHEMA,
+    msgs = cfg.build(LlmTask.PARTIAL, PartialCtx(ctx, previous_json, lines))      # F5.6 L2 (A-26): as instruções suas
+    req = Request(LlmTask.PARTIAL, cfg.fast_model, msgs, prompts.partial.SCHEMA,
                   max_output_tokens=MAX_OUTPUT_TOKENS, reasoning=TASK_REASONING[LlmTask.PARTIAL], timeout_s=TIMEOUT_S)
 
     async def go() -> tuple[Completion | None, LlmError | None, bool]:
@@ -242,7 +243,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     comp, err, was_cancelled = run_async(go())
     alive = store.get_meeting(meeting_id) is not None
     call_mid = meeting_id if alive else None
-    version, digest = prompts.prompt_version(LlmTask.PARTIAL), schema_hash(prompts.partial.SCHEMA)
+    version, digest = cfg.version(LlmTask.PARTIAL), schema_hash(prompts.partial.SCHEMA)       # F5.6 L2 (A-28): `+u<hash>`
     payload_req = [{"role": str(m.role), "text": m.text} for m in req.messages] if cfg.store_payloads else None
     if was_cancelled or err is not None or comp is None:
         message = "cancelado" if was_cancelled else redact.GLOBAL.redact(str(err) if err is not None else "sem resposta")

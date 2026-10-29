@@ -202,7 +202,7 @@ def test_the_llm_reads_voz_n_while_the_identity_keeps_the_internal_label(platfor
     sent = "\n".join(str(m["text"]) for m in req)
     assert answer.error is None and "Voz 2: " in sent and "SPK_" not in sent and VOICE_LABELS in req[0]["text"]
     assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == "minutes/1.2"
-    assert store._q("SELECT prompt_version FROM llm_calls WHERE id = ?", (answer.call_id,))[0][0] == "chat/1.2"
+    assert store._q("SELECT prompt_version FROM llm_calls WHERE id = ?", (answer.call_id,))[0][0] == "chat/1.3"
 
 
 def test_every_prompt_that_writes_about_the_speakers_keeps_the_voice_labels():
@@ -221,7 +221,7 @@ def test_every_prompt_that_writes_about_the_speakers_keeps_the_voice_labels():
                "chat global": prompts.rag_chat.build(prompts.rag_chat.RagChatCtx([], [], "q", "en"))}
     assert {task: VOICE_LABELS in msgs[0].text for task, msgs in systems.items()} == dict.fromkeys(systems, True)
     tasks = (LlmTask.MINUTES, LlmTask.CHAT, LlmTask.EXECUTIVE, LlmTask.PRE_SUMMARY, LlmTask.RAG_CHAT)
-    assert [prompts.prompt_version(t) for t in tasks] == ["minutes/1.2", "chat/1.2", "executive/1.2", "pre_summary/1.2", "rag_chat/1.1"]
+    assert [prompts.prompt_version(t) for t in tasks] == ["minutes/1.2", "chat/1.3", "executive/1.2", "pre_summary/1.2", "rag_chat/1.2"]
 
 
 def test_in_the_room_preset_an_ignored_voice_of_channel_l_is_voz_n_and_not_the_user(store):

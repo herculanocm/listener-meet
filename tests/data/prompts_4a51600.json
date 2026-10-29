@@ -1,0 +1,417 @@
+{
+ "cases": {
+  "chat/first-en": [
+   [
+    "system",
+    "You answer questions about one meeting using only its transcript below. Quote the moment you rely on as [mm:ss] taken from the transcript lines (for example: 'o prazo foi fechado para sexta [12:03]'). If the transcript does not answer the question, say so. Be concise. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nTranscript (#segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.",
+    []
+   ],
+   [
+    "assistant",
+    "Understood. I will answer questions about this meeting citing [mm:ss] from the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Who opened?",
+    []
+   ]
+  ],
+  "chat/history": [
+   [
+    "system",
+    "You answer questions about one meeting using only its transcript below. Quote the moment you rely on as [mm:ss] taken from the transcript lines (for example: 'o prazo foi fechado para sexta [12:03]'). If the transcript does not answer the question, say so. Be concise. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nTranscript (#segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ],
+   [
+    "assistant",
+    "Understood. I will answer questions about this meeting citing [mm:ss] from the transcript.",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 3 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 4 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 5 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 6 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 7 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 8 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 9 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 10 {x}",
+    []
+   ],
+   [
+    "user",
+    "Qual o prazo {x}?",
+    []
+   ]
+  ],
+  "executive/en": [
+   [
+    "system",
+    "You write the executive summary of a meeting for someone who was not there: what it was about, what was decided, what is pending and the key next steps, in one or two short paragraphs of plain prose (no bullet points, no headings). Use only the minutes given. Hard limit: 1300 characters. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nMinutes (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "executive/full": [
+   [
+    "system",
+    "You write the executive summary of a meeting for someone who was not there: what it was about, what was decided, what is pending and the key next steps, in one or two short paragraphs of plain prose (no bullet points, no headings). Use only the minutes given. Hard limit: 1300 characters. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nMinutes (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "glossary/bare-en": [
+   [
+    "system",
+    "Before a meeting is recorded, you prepare a short glossary for the speech recognizer: proper names, acronyms, product and company names, technical terms likely to be said, derived from the title, the participants and the user's own glossary. Up to 40 terms, most likely first, no duplicates, no common words. Also match each unresolved participant name to one of the listed known people when it is clearly the same person (nickname, first name, typo); otherwise person_id null.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Title: (none)\nParticipants as typed: (none)\nUnresolved participant names: (none)\nKnown people: (none)\nUser glossary: (none)",
+    []
+   ]
+  ],
+  "glossary/full": [
+   [
+    "system",
+    "Before a meeting is recorded, you prepare a short glossary for the speech recognizer: proper names, acronyms, product and company names, technical terms likely to be said, derived from the title, the participants and the user's own glossary. Up to 40 terms, most likely first, no duplicates, no common words. Also match each unresolved participant name to one of the listed known people when it is clearly the same person (nickname, first name, typo); otherwise person_id null.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Title: Orçamento {2027}\nParticipants as typed: Ana, {Bia}\nUnresolved participant names: Bia\nKnown people: (7) Ana Souza — CFO, ACME\nUser glossary: OKR",
+    []
+   ]
+  ],
+  "identify/bare-en": [
+   [
+    "system",
+    "You identify who the unnamed speakers of a meeting transcript are, using only textual clues: people addressing each other by name, self-introductions, roles mentioned, who answers to whom. Speakers labelled SPK_n are unresolved; the others are already known. For each unresolved speaker return either the person_id of a listed candidate or a new_name (never both), a confidence between 0 and 1, and up to 5 pieces of evidence, each with the segment_id and a short quote copied verbatim from that segment. If there is no clue, return person_id null, new_name null and confidence 0. Never invent names.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nUnresolved speakers: SPK_2, SPK_3\n\nCandidates (person_id) name — role, company: (none)\n\nTranscript (format: #segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n\nExample of one speaker entry: {\"cluster\": \"SPK_2\", \"person_id\": 7, \"new_name\": null, \"confidence\": 0.8, \"evidence\": [{\"segment_id\": 143, \"quote\": \"valeu, Rodrigo\"}]}",
+    []
+   ]
+  ],
+  "identify/full": [
+   [
+    "system",
+    "You identify who the unnamed speakers of a meeting transcript are, using only textual clues: people addressing each other by name, self-introductions, roles mentioned, who answers to whom. Speakers labelled SPK_n are unresolved; the others are already known. For each unresolved speaker return either the person_id of a listed candidate or a new_name (never both), a confidence between 0 and 1, and up to 5 pieces of evidence, each with the segment_id and a short quote copied verbatim from that segment. If there is no clue, return person_id null, new_name null and confidence 0. Never invent names.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nUnresolved speakers: SPK_2\n\nCandidates (person_id) name — role, company: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\n\nTranscript (format: #segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.\n\nExample of one speaker entry: {\"cluster\": \"SPK_2\", \"person_id\": 7, \"new_name\": null, \"confidence\": 0.8, \"evidence\": [{\"segment_id\": 143, \"quote\": \"valeu, Rodrigo\"}]}",
+    []
+   ]
+  ],
+  "minutes/block-en": [
+   [
+    "system",
+    "You write meeting minutes from a transcript. Report only what was actually said. Every decision, action, highlight, open point and next step must cite the segment_ids that support it (the numbers after '#'); use an empty list only when there is truly no supporting segment. Actions: owner_text is the name as said in the meeting; owner_person_id only when the owner is one of the listed people; due_text is the deadline as said; due_date is that deadline as an absolute YYYY-MM-DD computed from the meeting date, or null. Highlights: one entry per user marker, describing what was being discussed around that time and taking the user's note into account. Context: two to four sentences on what the meeting was about. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nKnown people (person_id) name — role, company: (none)\n\nThis is block 2 of 3 of the meeting; write notes for this block only.\n\nTranscript (format: #segment_id [mm:ss] speaker: text):\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "minutes/direct": [
+   [
+    "system",
+    "You write meeting minutes from a transcript. Report only what was actually said. Every decision, action, highlight, open point and next step must cite the segment_ids that support it (the numbers after '#'); use an empty list only when there is truly no supporting segment. Actions: owner_text is the name as said in the meeting; owner_person_id only when the owner is one of the listed people; due_text is the deadline as said; due_date is that deadline as an absolute YYYY-MM-DD computed from the meeting date, or null. Highlights: one entry per user marker, describing what was being discussed around that time and taking the user's note into account. Context: two to four sentences on what the meeting was about. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nKnown people (person_id) name — role, company: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\n\nTranscript (format: #segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "minutes/reduce": [
+   [
+    "system",
+    "You consolidate structured notes taken from consecutive blocks of one long meeting into the final minutes. Merge duplicates, keep the segment_ids from the notes, keep the chronological order and do not add anything that is not in the notes. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nKnown people: (7) Ana Souza — CFO, ACME\n\nBlock 1 notes:\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}\n\nBlock 2 notes:\n{}",
+    []
+   ]
+  ],
+  "minutes/reduce-en": [
+   [
+    "system",
+    "You consolidate structured notes taken from consecutive blocks of one long meeting into the final minutes. Merge duplicates, keep the segment_ids from the notes, keep the chronological order and do not add anything that is not in the notes. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nKnown people: (none)\n\nBlock 1 notes:\n{}",
+    []
+   ]
+  ],
+  "partial/first": [
+   [
+    "system",
+    "You keep a running summary of a meeting that is still happening, written from live captions. Captions are automatic: they may have recognition errors, and the speaker label may be wrong or just 'Participante'. You receive the previous running summary (JSON) and the captions since then. Return the updated summary of the whole meeting so far, not only of the new part: 'summary' in plain prose, at most 1000 characters; 'decisions' are possible decisions taken so far; 'actions' are possible action items so far, with 'owner' as said in the meeting or null. Keep the items of the previous summary, with their caption_id, unless the new captions contradict them; never repeat an item; at most 15 items per list, the most relevant ones. Every item cites in 'caption_id' the caption that supports it (the number after '#'); null only when no caption supports it. Report only what was said; these are possible decisions and actions, not final ones. Example item in Brazilian Portuguese: {\"text\": \"Cortar 8% do orçamento de marketing\", \"caption_id\": 41}.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nPrevious running summary (JSON):\n(none: this is the first running summary of the meeting)\n\nNew captions (format: #caption_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?",
+    []
+   ]
+  ],
+  "partial/next-en": [
+   [
+    "system",
+    "You keep a running summary of a meeting that is still happening, written from live captions. Captions are automatic: they may have recognition errors, and the speaker label may be wrong or just 'Participante'. You receive the previous running summary (JSON) and the captions since then. Return the updated summary of the whole meeting so far, not only of the new part: 'summary' in plain prose, at most 1000 characters; 'decisions' are possible decisions taken so far; 'actions' are possible action items so far, with 'owner' as said in the meeting or null. Keep the items of the previous summary, with their caption_id, unless the new captions contradict them; never repeat an item; at most 15 items per list, the most relevant ones. Every item cites in 'caption_id' the caption that supports it (the number after '#'); null only when no caption supports it. Report only what was said; these are possible decisions and actions, not final ones. Example item in Brazilian Portuguese: {\"text\": \"Cortar 8% do orçamento de marketing\", \"caption_id\": 41}.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nPrevious running summary (JSON):\n{\"summary\": \"Orçamento\", \"decisions\": [], \"actions\": [{\"text\": \"Enviar {planilha}\", \"caption_id\": 3, \"owner\": null}]}\n\nNew captions (format: #caption_id [mm:ss] speaker: text):\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "pre_summary/bare-en": [
+   [
+    "system",
+    "You write a very short summary of a meeting (two or three sentences) stating the subject and the main outcome, using only the minutes given. Hard limit: 500 characters. Plain prose, no bullet points. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nMinutes (JSON):\n{}",
+    []
+   ]
+  ],
+  "pre_summary/full": [
+   [
+    "system",
+    "You write a very short summary of a meeting (two or three sentences) stating the subject and the main outcome, using only the minutes given. Hard limit: 500 characters. Plain prose, no bullet points. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nMinutes (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "rag_chat/blocks": [
+   [
+    "system",
+    "You answer questions about the user's past meetings using only the excerpts below, grouped by meeting. Each meeting has an alias such as [R1], valid only for the current question. Cite every statement as [R<n> mm:ss], taking the alias and the time from the excerpt lines you rely on (for example: 'o prazo foi fechado para sexta [R1 12:03]'); put several citations in one bracket separated by ';' ([R1 12:03; R2 05:10]) and cite [R<n>] alone when the line has no time. Never invent aliases, times or facts. If the excerpts do not answer the question, say plainly that you did not find it in the meetings. Be concise. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Excerpts from the user's meetings (aliases are valid only for this question; transcript lines are #segment_id [mm:ss] speaker: text):\n\n[R1] Orçamento {2027} — 2026-10-20 — Ana Souza — CFO\n#102 [01:05] Voz 2: O corte de 8% fica?\ndecision: Corte de 8% aprovado\naction item [02:05]: Enviar a planilha\n\n[R2] (sem título) — ? — (participantes não identificados)\n#11 [00:05] Ana Souza — CFO: Abertura {idioma}",
+    []
+   ],
+   [
+    "assistant",
+    "Understood. I will answer only from these excerpts, citing [R<n> mm:ss].",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 3 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 4 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 5 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 6 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 7 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 8 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 9 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 10 {x}",
+    []
+   ],
+   [
+    "user",
+    "O que decidimos {x}?",
+    []
+   ]
+  ],
+  "rag_chat/empty-en": [
+   [
+    "system",
+    "You answer questions about the user's past meetings using only the excerpts below, grouped by meeting. Each meeting has an alias such as [R1], valid only for the current question. Cite every statement as [R<n> mm:ss], taking the alias and the time from the excerpt lines you rely on (for example: 'o prazo foi fechado para sexta [R1 12:03]'); put several citations in one bracket separated by ';' ([R1 12:03; R2 05:10]) and cite [R<n>] alone when the line has no time. Never invent aliases, times or facts. If the excerpts do not answer the question, say plainly that you did not find it in the meetings. Be concise. Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Excerpts from the user's meetings (aliases are valid only for this question; transcript lines are #segment_id [mm:ss] speaker: text):\n\n(no excerpts were found for this question)",
+    []
+   ],
+   [
+    "assistant",
+    "Understood. I will answer only from these excerpts, citing [R<n> mm:ss].",
+    []
+   ],
+   [
+    "user",
+    "Anything?",
+    []
+   ]
+  ],
+  "revise/bare-en": [
+   [
+    "system",
+    "You lightly edit an automatic speech transcript: fix punctuation, capitalization, obvious recognition errors, proper names, acronyms and glossary terms, and remove fillers (hum, né, tipo) when they add nothing. Keep the speaker's words, meaning, numbers, dates and language; do not summarize, do not translate, do not merge or split segments. Return one entry per segment to edit, with the same segment_id; segments that need no change may be omitted. Context segments are marked as such and must not be returned.\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\n\nSegments to edit (#segment_id [mm:ss] speaker: text):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "revise/context": [
+   [
+    "system",
+    "You lightly edit an automatic speech transcript: fix punctuation, capitalization, obvious recognition errors, proper names, acronyms and glossary terms, and remove fillers (hum, né, tipo) when they add nothing. Keep the speaker's words, meaning, numbers, dates and language; do not summarize, do not translate, do not merge or split segments. Return one entry per segment to edit, with the same segment_id; segments that need no change may be omitted. Context segments are marked as such and must not be returned.\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nContext before (do not return):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n\nSegments to edit (#segment_id [mm:ss] speaker: text):\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n\nContext after (do not return):\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "title/opening-en": [
+   [
+    "system",
+    "You propose a short, specific title for a meeting from its summary or, when there is none, from the opening of its transcript: subject plus the main outcome when there is one, at most 60 characters, no quotes, no trailing period. Example in Brazilian Portuguese: \"Orçamento 2027: corte de 8% aprovado\".\nWrite all free text in English. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nOpening of the transcript:\n#101 [00:00] Ana: Bom dia",
+    []
+   ]
+  ],
+  "title/summary": [
+   [
+    "system",
+    "You propose a short, specific title for a meeting from its summary or, when there is none, from the opening of its transcript: subject plus the main outcome when there is one, at most 60 characters, no quotes, no trailing period. Example in Brazilian Portuguese: \"Orçamento 2027: corte de 8% aprovado\".\nWrite all free text in Brazilian Portuguese. Never translate proper names, acronyms, product names or glossary terms; keep them exactly as they appear in the transcript.",
+    []
+   ],
+   [
+    "user",
+    "Meeting date: 2026-10-29\nTitle: Orçamento 2027 {Q1}\nExpected participants (as typed by the user): Ana, Bruno e {fulano}\nExpected participants with a profile: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nIdentified speakers in this meeting (person_id, name — role, company): (7) Ana Souza — CFO, ACME\nGlossary (keep spelling): ACME, OKR, {idioma}\nMarkers set by the user during the meeting: marker 1 at [01:10]: \"corte {8%}\"; marker 2 at [02:10]\n\nSummary:\nCorte de 8% aprovado {ok}",
+    []
+   ]
+  ],
+  "transcribe/bare": [
+   [
+    "system",
+    "Transcribe the attached meeting audio verbatim in its original language. Split it into utterances at speaker changes and natural pauses (at most about 15 seconds each), with start_s and end_s in seconds relative to the beginning of the audio. Keep numbers as digits, keep names and acronyms as said, no commentary, no translation. Return language as a two-letter code.",
+    []
+   ],
+   [
+    "user",
+    "Transcribe the audio.",
+    [
+     "janela 1 {idioma}"
+    ]
+   ]
+  ],
+  "transcribe/hints": [
+   [
+    "system",
+    "Transcribe the attached meeting audio verbatim in its original language. Split it into utterances at speaker changes and natural pauses (at most about 15 seconds each), with start_s and end_s in seconds relative to the beginning of the audio. Keep numbers as digits, keep names and acronyms as said, no commentary, no translation. Return language as a two-letter code.",
+    []
+   ],
+   [
+    "user",
+    "The language is pt. Likely names and terms: ACME, {idioma}, OKR",
+    [
+     "janela 1 {idioma}"
+    ]
+   ]
+  ]
+ },
+ "head": "4a51600"
+}

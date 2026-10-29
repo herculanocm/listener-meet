@@ -11,6 +11,10 @@ caixas e o "Antes de gravar" com o "Resumo parcial". Nada é pedido à LLM. Revi
 fila (R-04) e com a ata adiada que sai de novo (o desvio 9), e a reunião sem chave no tamanho mínimo (R-08: a nota da barra
 quebra a linha em vez de cortar).
 
+L2 (U-092, A-51): a página Prompts com uma tarefa do núcleo aberta (com o aviso), a ata editada, o aviso do padrão que mudou
+depois da edição, os três erros do Salvar (vazio, variável desconhecida, texto longo) e a barra da reunião em "falhou" com
+"Restaurar o prompt padrão". Nada é salvo: o diálogo só é fotografado e descartado (o Salvar barrado não grava).
+
 `f56_shots(store, shot, app, platform)` usa o `shot` do `win_probe` (a foto, os `cortados` e os `pequenos` de cada tela). O
 banco é o temporário da sonda."""
 from __future__ import annotations
@@ -171,6 +175,7 @@ def l1b_shots(store: Any, shot: Callable[..., None], platform: Any = None) -> No
     _narrow_shot(store, shot, mid)
     if platform is not None:
         _warmup_shot(store, shot, platform)
+        l2_shots(store, shot, platform)
 
 
 def _narrow_shot(store: Any, shot: Callable[..., None], mid: int) -> None:
@@ -207,4 +212,56 @@ def _asked_species(_species: Any) -> None:
     """O `on_ask` da barra na sonda: a foto não pede nada."""
 
 
-__all__ = ["f56_shots", "l1b_shots"]
+# ---------------------------------------------------------------- L2 (U-092, A-51)
+MINE = ("Você escreve a ata de reuniões de um comitê de crédito para a diretoria. Destaque os valores, os prazos e quem "
+        "decidiu; use frases curtas. Escreva em {idioma}.")
+ERRORS = (("vazio", "   "), ("variavel", "Escreva a ata para {cliente} em {idioma}."), ("longo", "Ata. " * 820))
+
+
+def l2_shots(store: Any, shot: Callable[..., None], platform: Any) -> None:
+    """A página Prompts: o núcleo com o aviso, a ata editada, o padrão que mudou e os três erros do Salvar; e a barra em
+    "falhou" com "Restaurar o prompt padrão"."""
+    from listener.config import prompts as prompt_settings
+    from listener.llm.types import LlmTask
+    from listener.ui.settings_min import SettingsDialog
+    from listener.ui.settings_prompts import PROMPTS_TITLE
+
+    store.set_setting(prompt_settings.key("executive"), "Resumo para o conselho, em três frases.")
+    store.set_setting(prompt_settings.base_key("executive"), "000000000000")     # um padrão de antes: o aviso acende
+    sd = SettingsDialog(store, platform, {})
+    try:
+        sd.nav.setCurrentRow(list(sd.pages).index(PROMPTS_TITLE))
+        sd.select_prompt(LlmTask.IDENTIFY)
+        shot(sd, "f56-prompts-nucleo-identidade")
+        sd.select_prompt(LlmTask.MINUTES).edit.setPlainText(MINE)
+        shot(sd, "f56-prompts-ata-editada")
+        sd.select_prompt(LlmTask.EXECUTIVE)
+        shot(sd, "f56-prompts-padrao-mudou")
+        pane = sd.select_prompt(LlmTask.MINUTES)
+        for name, text in ERRORS:
+            pane.edit.setPlainText(text)
+            sd._save()                                    # barrado: a página, a tarefa, o editor marcado e a faixa
+            shot(sd, f"f56-prompts-erro-{name}")
+        sd.reject()
+    finally:
+        _discard(sd)
+        prompt_settings.restore(store, ["executive"])
+    _failed_bar_shot(shot)
+
+
+def _failed_bar_shot(shot: Callable[..., None]) -> None:
+    """A-29: a ata falhou fora do esquema com as instruções do usuário; o resumo, gerado."""
+    from listener.pipeline.llm_requests import RequestState, Species, State
+    from listener.ui.llm_request_bar import RequestBar
+
+    error = "Ata falhou: resposta fora do esquema após reenvio: $.decisions: esperava lista"
+    states = {Species.MINUTES: RequestState(State.FAILED, error=error, job_id=7, custom=("minutes",)),
+              Species.SUMMARY: RequestState(State.DONE, "2026-10-29T15:39:00.000-03:00")}
+    bar = RequestBar(_asked_species, on_restore=_asked_species)
+    bar.show_states(states)
+    bar.resize(760, bar.heightForWidth(760) if bar.hasHeightForWidth() else bar.sizeHint().height())
+    shot(bar, "f56-barra-falhou-prompt-personalizado")
+    _discard(bar)
+
+
+__all__ = ["f56_shots", "l1b_shots", "l2_shots"]

@@ -226,8 +226,8 @@ def test_the_title_reads_the_opening_lines_cut_at_a_speaker_change(store):
     assert 1200 < sum(estimate_tokens(ln.render()) + 1 for ln in cut) <= 1500 * 1.15
     meeting = MeetingCtx("x", "2026-10-29", None, (), (), "pt-BR")
     user = prompts.title.build(prompts.title.TitleCtx(meeting, "falas", True))[1].text
-    assert "Opening of the transcript:\nfalas" in user and "Summary:" not in user and "from its summary:" not in prompts.title.SYSTEM
-    assert prompts.prompt_version(LlmTask.TITLE) == "title/1.2"
+    assert "Opening of the transcript:\nfalas" in user and "Summary:" not in user and "from its summary:" not in prompts.title.INSTRUCTIONS
+    assert prompts.prompt_version(LlmTask.TITLE) == "title/1.3"
     ana, bia = store.people.create_person("Ana"), store.people.create_person("Bia")
     mid = store.create_meeting("Longa", None, None, None)
     store.finish_meeting(mid, 60_000)

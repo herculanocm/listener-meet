@@ -18,7 +18,7 @@ from urllib.parse import unquote, urlsplit
 from ..log import get_logger
 from . import models_table, redact
 from .adapters_common import EMBED_TIMEOUT_S
-from .base import BadResponseError, LlmError, LlmStream, LLMProvider, ProviderUnavailableError, classify_exception
+from .base import OFF_SCHEMA, BadResponseError, LlmError, LlmStream, LLMProvider, ProviderUnavailableError, classify_exception
 from .schema import SchemaError, parse_json_text, validate
 from .types import Completion, ConnectionTest, Embeddings, EmbedTask, Message, ModelInfo, ProviderKind, Request, Role
 
@@ -195,7 +195,7 @@ class RetryingProvider:
             return self._validated(req, comp)
         except (SchemaError, ValueError) as e:
             if not self.resend_on_invalid:
-                raise BadResponseError(f"resposta fora do esquema: {e}", text=comp.text) from e
+                raise BadResponseError(f"{OFF_SCHEMA}: {e}", text=comp.text) from e
             self.resends += 1
             log.info("%s: resposta de %s fora do esquema (%s); reenviando uma vez", self.id, req.task, e)
             fix = req.with_messages((*req.messages, Message(Role.ASSISTANT, comp.text[:20_000]),
@@ -205,7 +205,7 @@ class RetryingProvider:
             try:
                 return self._validated(req, comp2)
             except (SchemaError, ValueError) as e2:
-                raise BadResponseError(f"resposta fora do esquema após reenvio: {e2}", text=comp2.text) from e2
+                raise BadResponseError(f"{OFF_SCHEMA} após reenvio: {e2}", text=comp2.text) from e2
 
     async def _grown(self, req: Request, first: Completion) -> tuple[Request, Completion]:
         """Reenvio único com o dobro de `max_output_tokens`, sem passar do limite de saída do modelo (modelo fora da tabela:

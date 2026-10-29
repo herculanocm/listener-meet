@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from ..config import prompts as prompt_settings
 from ..config.defaults import SPECS, SettingSpec
 from ..log import get_logger
 from .core import Core, _now
@@ -94,7 +95,10 @@ SHOWN_MAX = 80
 
 def _shown(key: str, value: str | None) -> str:
     """O valor de uma configuração para o log: nunca o de uma chave ou token, nem texto livre (o glossário tem nomes: só o
-    tamanho), nem credencial numa URL (o proxy `http://user:senha@host`); longo, cortado (o `rtf_json`)."""
+    tamanho), nem credencial numa URL (o proxy `http://user:senha@host`); longo, cortado (o `rtf_json`). F5.6 L2 (A-46): das
+    instruções de um prompt, só o hash."""
+    if key.startswith(prompt_settings.PREFIX):
+        return prompt_settings.shown(key, value)
     if value is None:
         return "(padrão)"
     low = key.lower()

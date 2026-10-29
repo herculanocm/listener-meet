@@ -1,12 +1,14 @@
 """Identidade por contexto (handoff §4, F3 item 5, CP11): só vozes pendentes (`SPK_n`) entram; a LLM sugere `person_id` da
-lista de candidatos ou `new_name`, com evidência `{segment_id, quote}` que o projeto confere contra o segmento."""
+lista de candidatos ou `new_name`, com evidência `{segment_id, quote}` que o projeto confere contra o segmento. F5.6 L2
+(A-24): as instruções (o que procurar) são do usuário; o contrato (os rótulos, um `person_id` ou um `new_name`, a evidência
+copiada do segmento, nunca inventar nome) fica."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..types import Message
-from .common import Line, MeetingCtx, Person, header, system, text_block, user
+from .common import Line, MeetingCtx, Person, header, system, system_text, text_block, user
 
 PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
 SCHEMA: dict = {
@@ -22,12 +24,12 @@ SCHEMA: dict = {
                 "type": "object", "additionalProperties": False, "required": ["segment_id", "quote"],
                 "properties": {"segment_id": {"type": "integer"}, "quote": {"type": "string", "maxLength": 200}}}}}}}},
 }
-SYSTEM = ("You identify who the unnamed speakers of a meeting transcript are, using only textual clues: people addressing each "
-          "other by name, self-introductions, roles mentioned, who answers to whom. Speakers labelled SPK_n are unresolved; the "
-          "others are already known. For each unresolved speaker return either the person_id of a listed candidate or a new_name "
-          "(never both), a confidence between 0 and 1, and up to 5 pieces of evidence, each with the segment_id and a short quote "
-          "copied verbatim from that segment. If there is no clue, return person_id null, new_name null and confidence 0. Never "
-          "invent names.")
+INSTRUCTIONS = ("You identify who the unnamed speakers of a meeting transcript are, using only textual clues: people addressing "
+                "each other by name, self-introductions, roles mentioned, who answers to whom.")
+CONTRACT = ("Speakers labelled SPK_n are unresolved; the others are already known. For each unresolved speaker return either the "
+            "person_id of a listed candidate or a new_name (never both), a confidence between 0 and 1, and up to 5 pieces of "
+            "evidence, each with the segment_id and a short quote copied verbatim from that segment. If there is no clue, return "
+            "person_id null, new_name null and confidence 0. Never invent names.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +40,10 @@ class IdentifyCtx:
     candidates: Sequence[Person]      # pessoas cadastradas (id, nome, cargo, empresa)
 
 
-def build(ctx: IdentifyCtx) -> tuple[Message, ...]:
+def build(ctx: IdentifyCtx, instructions: str | None = None) -> tuple[Message, ...]:
     cands = "; ".join(p.render() for p in ctx.candidates) or "(none)"
-    return (system(SYSTEM, ctx.meeting),
+    text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
+    return (system(text, ctx.meeting),
             user(header(ctx.meeting), f"Unresolved speakers: {', '.join(ctx.pending)}",
                  f"Candidates (person_id) name — role, company: {cands}", text_block("Transcript", ctx.lines),
                  'Example of one speaker entry: {"cluster": "SPK_2", "person_id": 7, "new_name": null, "confidence": 0.8, '

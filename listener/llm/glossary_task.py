@@ -121,7 +121,7 @@ def request_glossary(store: Store, title: str | None, participants: str | None, 
     fixed = str(store.get(SPECS["pipeline.glossary"]))
     lang = output_code(language) if language else default_language(store)
     ctx = prompts.glossary.GlossaryCtx(title, participants, unresolved, known, fixed, lang)
-    req = Request(LlmTask.GLOSSARY, cfg.fast_model, prompts.glossary.build(ctx), prompts.glossary.SCHEMA, max_output_tokens=1024,
+    req = Request(LlmTask.GLOSSARY, cfg.fast_model, cfg.build(LlmTask.GLOSSARY, ctx), prompts.glossary.SCHEMA, max_output_tokens=1024,
                   reasoning=TASK_REASONING[LlmTask.GLOSSARY], timeout_s=30.0)
 
     async def go() -> tuple[Any, LlmError | None]:
@@ -135,7 +135,7 @@ def request_glossary(store: Store, title: str | None, participants: str | None, 
 
     comp, err = run_async(go())
     prices = store.providers.list_prices(cfg.provider_kind or None)
-    version, digest = prompts.prompt_version(LlmTask.GLOSSARY), schema_hash(prompts.glossary.SCHEMA)
+    version, digest = cfg.version(LlmTask.GLOSSARY), schema_hash(prompts.glossary.SCHEMA)     # F5.6 L2 (A-28): `+u<hash>`
     if err is not None or comp is None:
         message = redact.GLOBAL.redact(str(err)) if err is not None else CANCELLED
         call_id = store.llm_calls.insert(LlmCallInsert(None, None, str(LlmTask.GLOSSARY), cfg.provider_id, cfg.fast_model, version, digest,

@@ -36,10 +36,14 @@ class StepTiming:
     speech_s: float = 0.0
     wall_s: float = 0.0
     model: str = ""
+    prompt: str = ""        # F5.6 L2 (R-06): `transcribe/1.0+u<hash>` com instruções suas; fora do `model`, chave da velocidade
 
     def as_dict(self) -> dict[str, Any]:
-        return {"audio_s": round(self.audio_s, 3), "speech_s": round(self.speech_s, 3), "wall_s": round(self.wall_s, 3),
-                "model": self.model}
+        out: dict[str, Any] = {"audio_s": round(self.audio_s, 3), "speech_s": round(self.speech_s, 3), "wall_s": round(self.wall_s, 3),
+                               "model": self.model}
+        if self.prompt:
+            out["prompt"] = self.prompt
+        return out
 
 
 class BaseJobRunner:
@@ -200,12 +204,14 @@ class BaseJobRunner:
         weight = self.step_weights.get(self._step or "", 0.0) * self._share
         return round(min(1.0, self._done_weight + weight * max(0.0, min(1.0, step_fraction))), 4)
 
-    def _timing(self, step: JobStep | str, model: str = "") -> StepTiming:
+    def _timing(self, step: JobStep | str, model: str = "", prompt: str = "") -> StepTiming:
         t = self.timings.get(str(step))
         if t is None:
             t = self.timings[str(step)] = StepTiming(model=model)
         if model and not t.model:
             t.model = model
+        if prompt and not t.prompt:
+            t.prompt = prompt
         return t
 
     def _timings_dict(self) -> dict[str, Any]:
@@ -219,4 +225,4 @@ class BaseJobRunner:
         for k, v in data.items():
             if isinstance(v, dict):
                 self.timings[k] = StepTiming(float(v.get("audio_s", 0)), float(v.get("speech_s", 0)), float(v.get("wall_s", 0)),
-                                             str(v.get("model", "")))
+                                             str(v.get("model", "")), str(v.get("prompt", "")))

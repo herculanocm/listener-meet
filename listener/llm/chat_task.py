@@ -137,11 +137,11 @@ def run_chat(store: Store, meeting_id: int, question: str, emit: Callable[[str],
     ctx = build_context(store, meeting_id, parent)
     history = [(str(m["role"]), str(m["text"])) for m in store.chat.list_for_meeting(meeting_id, HISTORY_TURNS)]
     chat_ctx = prompts.chat.ChatCtx(ctx.meeting_ctx, ctx.lines, history, question)
-    req = Request(LlmTask.CHAT, cfg.fast_model, prompts.chat.build(chat_ctx), None, max_output_tokens=2048,
+    req = Request(LlmTask.CHAT, cfg.fast_model, cfg.build(LlmTask.CHAT, chat_ctx), None, max_output_tokens=2048,
                   reasoning=TASK_REASONING[LlmTask.CHAT], timeout_s=120.0, cache_prefix=True)
     store.chat.add(meeting_id, ChatRole.USER, question)
     comp, text, err = run_async(ask(store, cfg.provider_id, req, emit, cancelled))
-    version = prompts.prompt_version(LlmTask.CHAT)
+    version = cfg.version(LlmTask.CHAT)                       # F5.6 L2 (A-28): `chat/1.3+u<hash>` com instruções suas
     task = str(LlmTask.CHAT)
     if err is not None:
         message = redact.GLOBAL.redact(str(err))

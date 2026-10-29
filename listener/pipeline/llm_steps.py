@@ -10,7 +10,9 @@ provedor devolve "request too large". Custo estimado antes de rodar: acima de `l
 soma o que ela já gastou fora deste job (resumo parcial ao vivo, glossário, chat, jobs anteriores; F4 Q6).
 F5.3 (A-02, A-06): toda saída sai no idioma da reunião (`build_context`); depois de uma troca de idioma (o job pai com
 `reason = language`), o núcleo entra como pedido manual, sem o corte do alerta de custo. F5.6 (A-05): sozinho, só o núcleo
-(identidade, título, revisada); ata, executivo e pré-resumo só a pedido (`llm_requests`, que passa `requested`)."""
+(identidade, título, revisada); ata, executivo e pré-resumo só a pedido (`llm_requests`, que passa `requested`). F5.6 L2: o
+prompt de cada tarefa sai do snapshot do job (`config.build` e `config.version`, com as instruções do usuário que o runner
+congela, só as das tarefas dele, R-08); `TaskOutcome` e o `timings_json.llm`, com `off_schema` (R-01), em `llm_outcome.py`."""
 from __future__ import annotations
 
 import asyncio
@@ -45,6 +47,7 @@ from ..store.segments import ClusterRow, SegmentRow, role_of
 from ..store.summaries import SummaryInsert
 from . import summary_gate
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep
+from .llm_outcome import TaskOutcome, llm_timings
 from .reprocess import target_language
 from .runner import USER_CLUSTER
 from .voices import numbering, speaker_of
@@ -82,15 +85,6 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 STOPWORDS = {"pt": {"de", "que", "não", "nao", "para", "com", "uma", "isso", "está", "esta", "mas", "ele", "ela", "você", "voce"},
              "en": {"the", "and", "that", "with", "this", "have", "for", "not", "you", "are", "was", "but"},
              "es": {"que", "los", "las", "pero", "una", "está", "esta", "con", "por", "para", "usted", "muy"}}
-
-
-@dataclass(slots=True)
-class TaskOutcome:
-    step: JobStep
-    ok: bool
-    error: str | None = None
-    permanent: bool = False
-    skipped: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +203,7 @@ def enqueue_test_job(store: Store, meeting_id: int | None = None) -> int | None:
 
 
 def llm_config_snapshot(store: Store) -> str:
-    return LlmJobConfig.from_store(store).to_json()
+    return LlmJobConfig.from_store(store).claim_json()
 
 
 def job_params(job: JobRow) -> dict[str, Any]:
@@ -435,7 +429,7 @@ class LlmJobRunner(BaseJobRunner):
                 raise LlmError(STALE_TRANSCRIPT, permanent=True)
         self.parent_job_id = int(parent or 0)
         if not self.config.ready:
-            self.config = LlmJobConfig.from_json(self.job.get("config_json"))
+            self.config = LlmJobConfig.for_job(self.store, self.job, self.tasks)      # R-08: só as instruções das tarefas dele
         if not self.config.ready:
             self.config = LlmJobConfig.from_store(self.store)
         if not self.config.ready:
@@ -506,8 +500,7 @@ class LlmJobRunner(BaseJobRunner):
     @override
     def _timings_dict(self) -> dict[str, Any]:
         out = super()._timings_dict()
-        out["llm"] = {"cost_usd": round(self.cost_usd, 6), "estimated_usd": self.estimated_usd, "calls": self.calls,
-                      "skipped": dict(self._skipped), "done": [str(s) for s, o in self.outcomes.items() if o.ok and not o.skipped]}
+        out["llm"] = llm_timings(self.outcomes, self._skipped, self.cost_usd, self.estimated_usd, self.calls)   # R-01: `off_schema`
         return out
 
     @override
@@ -643,7 +636,7 @@ class LlmJobRunner(BaseJobRunner):
                       reasoning=TASK_REASONING[task], timeout_s=240.0 if strong else 120.0, cache_prefix=cache_prefix)
         payload_req = ([{"role": str(m.role), "text": m.text, "audio": [a.label for a in m.audio]} for m in messages]
                        if self.config.store_payloads else None)
-        version, digest = prompts.prompt_version(task), (schema_hash(schema) if schema else None)
+        version, digest = self.config.version(task), (schema_hash(schema) if schema else None)
         t0 = time.perf_counter()
         async with self._sem:
             try:
@@ -716,7 +709,7 @@ class LlmJobRunner(BaseJobRunner):
             present = [lb for lb in labels if any(ln.label == lb or ln.speaker == lb for ln in block)]
             if not present:
                 continue
-            msgs = prompts.identify.build(prompts.identify.IdentifyCtx(ctx.meeting_ctx, block, present, ctx.candidates))
+            msgs = self.config.build(LlmTask.IDENTIFY, prompts.identify.IdentifyCtx(ctx.meeting_ctx, block, present, ctx.candidates))
             try:
                 comp, _ = await self._call(LlmTask.IDENTIFY, msgs, prompts.identify.SCHEMA, strategy=strategy)
             except RequestTooLargeError:
@@ -726,7 +719,7 @@ class LlmJobRunner(BaseJobRunner):
                 for sub in split_blocks(block, half):
                     sub_present = [lb for lb in present if any(ln.label == lb or ln.speaker == lb for ln in sub)]
                     if sub_present:
-                        comp, _ = await self._call(LlmTask.IDENTIFY, prompts.identify.build(prompts.identify.IdentifyCtx(
+                        comp, _ = await self._call(LlmTask.IDENTIFY, self.config.build(LlmTask.IDENTIFY, prompts.identify.IdentifyCtx(
                             ctx.meeting_ctx, sub, sub_present, ctx.candidates)), prompts.identify.SCHEMA, strategy="map_reduce:2")
                         self._merge_identify(best, comp)
                 continue
@@ -776,7 +769,7 @@ class LlmJobRunner(BaseJobRunner):
         strategy = "direct"
         if direct:
             try:
-                msgs = prompts.minutes.build(prompts.minutes.MinutesCtx(ctx.meeting_ctx, ctx.lines, people))
+                msgs = self.config.build(LlmTask.MINUTES, prompts.minutes.MinutesCtx(ctx.meeting_ctx, ctx.lines, people))
                 comp, call_id = await self._call(LlmTask.MINUTES, msgs, prompts.minutes.SCHEMA)
             except RequestTooLargeError:
                 direct = False
@@ -797,12 +790,12 @@ class LlmJobRunner(BaseJobRunner):
                 notes.append(saved.decode("utf-8"))
                 continue
             self.checkpoint()
-            msgs = prompts.minutes.build(prompts.minutes.MinutesCtx(ctx.meeting_ctx, block, people, (i, len(blocks))))
+            msgs = self.config.build(LlmTask.MINUTES, prompts.minutes.MinutesCtx(ctx.meeting_ctx, block, people, (i, len(blocks))))
             comp, _ = await self._call(LlmTask.MINUTES, msgs, prompts.minutes.SCHEMA, strategy=strategy)
             text = json.dumps(comp.data, ensure_ascii=False)
             self.store.jobs.put_artifact(self.job_id, JobStep.MINUTES, i + 1, text.encode("utf-8"))
             notes.append(text)
-        msgs = prompts.minutes.build_reduce(prompts.minutes.ReduceCtx(ctx.meeting_ctx, notes, people))
+        msgs = self.config.build(LlmTask.MINUTES, prompts.minutes.ReduceCtx(ctx.meeting_ctx, notes, people), reduce=True)
         comp, call_id = await self._call(LlmTask.MINUTES, msgs, prompts.minutes.SCHEMA, strategy=strategy)
         return comp, call_id, strategy
 
@@ -814,7 +807,7 @@ class LlmJobRunner(BaseJobRunner):
         people_names = {pid: str(p["name"]) for pid, p in ctx.people.items()}
         md = render_minutes(data, ctx.by_id, ctx.meeting_ctx.output_language, people_names, ctx.marker_notes)
         row = SummaryInsert(self.meeting_id, SummaryKind.MINUTES, json.dumps(data, ensure_ascii=False), md, self.config.provider_id,
-                            self.config.model_for(True), prompts.prompt_version(LlmTask.MINUTES), self.parent_job_id, call_id,
+                            self.config.model_for(True), self.config.version(LlmTask.MINUTES), self.parent_job_id, call_id,
                             ctx.meeting_ctx.output_language)
         summary_id = self.store.summaries.insert(row)
         rows: list[ActionInsert] = []
@@ -845,13 +838,13 @@ class LlmJobRunner(BaseJobRunner):
 
     async def _task_summary(self, kind: SummaryKind, task: LlmTask, module: Any) -> None:
         ctx = self._ctx()
-        minutes_json = self._minutes_json()
-        comp, call_id = await self._call(task, module.build(prompts.executive.SummaryCtx(ctx.meeting_ctx, minutes_json)), module.SCHEMA)
+        msgs = self.config.build(task, prompts.executive.SummaryCtx(ctx.meeting_ctx, self._minutes_json()))
+        comp, call_id = await self._call(task, msgs, module.SCHEMA)
         text = str((comp.data or {}).get("text") or "").strip()
         if not text:
             raise LlmError(f"{task}: resposta vazia")
         self.store.summaries.insert(SummaryInsert(self.meeting_id, kind, json.dumps(comp.data, ensure_ascii=False), text,
-                                                  self.config.provider_id, comp.model, prompts.prompt_version(task), self.parent_job_id,
+                                                  self.config.provider_id, comp.model, self.config.version(task), self.parent_job_id,
                                                   call_id, ctx.meeting_ctx.output_language))
 
     async def _task_executive(self) -> None:
@@ -874,7 +867,7 @@ class LlmJobRunner(BaseJobRunner):
                 summary = ""
         opening = not summary
         summary = summary or render_lines(prompts.title.opening(ctx.lines))
-        msgs = prompts.title.build(prompts.title.TitleCtx(ctx.meeting_ctx, summary, opening))
+        msgs = self.config.build(LlmTask.TITLE, prompts.title.TitleCtx(ctx.meeting_ctx, summary, opening))
         comp, _ = await self._call(LlmTask.TITLE, msgs, prompts.title.SCHEMA)
         title = str((comp.data or {}).get("title") or "").strip().strip('"').rstrip(".")
         if not title:
@@ -897,7 +890,7 @@ class LlmJobRunner(BaseJobRunner):
             before = todo[max(0, first - REVISE_CONTEXT):first]
             after = todo[last + 1:last + 1 + REVISE_CONTEXT]
             try:
-                msgs = prompts.revise.build(prompts.revise.ReviseCtx(ctx.meeting_ctx, before, block, after))
+                msgs = self.config.build(LlmTask.REVISE, prompts.revise.ReviseCtx(ctx.meeting_ctx, before, block, after))
                 comp, _ = await self._call(LlmTask.REVISE, msgs, prompts.revise.SCHEMA)
             except LlmError as e:
                 results[bi] = []

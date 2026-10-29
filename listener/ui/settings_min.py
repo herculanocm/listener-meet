@@ -13,7 +13,8 @@ opções em lista, e o que o usuário não mexeu volta para o banco com o texto 
 o estado em selo (U-075); sem jargão interno na tela (U-076). Um erro de validação abre a página, marca o campo e explica
 numa faixa, sem caixa de mensagem (U-072); a marca sai quando o valor do campo muda, também na tabela de preços (revisão da
 F5.4, R-09). O valor salvo que a `SPECS` recusa, num editor tipado, dá lugar ao padrão, gravado ao salvar, com o aviso numa
-faixa no topo da página (R-04)."""
+faixa no topo da página (R-04). F5.6 L2 (U-092): a página "Prompts" (`ui/settings_prompts.py`), depois da LLM, com as
+instruções de cada tarefa; o Salvar valida e grava as tarefas abertas nela."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -23,8 +24,8 @@ from typing import TYPE_CHECKING, Any, override
 from PySide6.QtCore import QSize, Qt, SignalInstance
 from PySide6.QtGui import QPalette, QShowEvent
 from PySide6.QtWidgets import (QAbstractButton, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
-                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QSpinBox, QStackedWidget, QTableWidget, QVBoxLayout,
-                               QWidget)
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QSpinBox, QStackedWidget, QTableWidget,
+                               QVBoxLayout, QWidget)
 
 from ..config.defaults import HF_PROVIDER_ID, HOTKEY_KEYS, SPECS, validate_setting
 from ..llm.jobconfig import audio_capable
@@ -37,6 +38,7 @@ from .providers import ProviderTabs
 from .settings_editors import SettingEditor, make_editor
 from .settings_general import SUBTITLES, TOAST_SECONDS, GeneralPagesMixin, audio_cost_text, breakable_path
 from .settings_pages import SettingsPage
+from .settings_prompts import PromptsMixin
 from .settings_search import SearchMixin, vectors_note
 
 if TYPE_CHECKING:
@@ -73,7 +75,7 @@ def offer_local_reindex(store: Store, parent: QWidget | None, on_launch: Callabl
 
 def change_signal(widget: QWidget) -> SignalInstance | None:
     """R-09: o sinal de "o valor mudou" de cada tipo de campo que a validação marca (None nos outros)."""
-    if isinstance(widget, QLineEdit | QSpinBox | QDoubleSpinBox):
+    if isinstance(widget, QLineEdit | QSpinBox | QDoubleSpinBox | QPlainTextEdit):     # F5.6 L2: as instruções de um prompt
         return widget.textChanged
     if isinstance(widget, QComboBox):
         return widget.currentTextChanged
@@ -95,7 +97,7 @@ def ask_reindex(parent: QWidget | None, text: str, yes: str, no: str) -> bool:
     return box.clickedButton() is accept
 
 
-class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
+class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
     def __init__(self, store: Store, platform: Platform, hotkey_errors: dict[str, str] | None = None,
                  parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None, *, recording: bool = False,
                  model_preparer: ModelPreparer | None = None):
@@ -119,7 +121,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
         self.provider_tabs = ProviderTabs(store, on_launch)            # a chave de cada sub-aba vai para a primeira página
         self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
         built = (self._keys_page(), self._language_page(), self._capture_page(), self._hotkeys_page(), self._processing_page(),
-                 self._llm_page(), self._live_page(), self._search_page(), self._data_page())
+                 self._llm_page(), self._prompts_page(), self._live_page(), self._search_page(), self._data_page())
         self.pages: dict[str, SettingsPage] = {page.page_title: page for page in built}
         self._lay_out()
         self.refresh_index_status()
@@ -142,6 +144,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
             self.nav.addItem(item)
             self.stack.addWidget(page)
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.stack.currentChanged.connect(self._page_changed)            # F5.6 L2: a página Prompts monta a lista ao aparecer
         self.nav.setCurrentRow(0)
         self.right = QVBoxLayout()
         self.right.setContentsMargins(0, 0, 0, 0)
@@ -167,6 +170,9 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
 
     def page(self, title: str) -> SettingsPage:
         return self.pages[title]
+
+    def _page_changed(self, index: int) -> None:
+        self.prompt_page_shown(self.stack.widget(index))
 
     def editor(self, key: str) -> SettingEditor:
         """A-14: o editor de uma chave (`raw()` e `set_raw()`)."""
@@ -226,7 +232,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
             seen.add(combo)
         if not self.log_path.text().strip():
             return "Informe o arquivo de log.", self.log_path
-        return self.provider_tabs.validation_problem()
+        return self.prompt_problem() or self.provider_tabs.validation_problem()
 
     def validation_error(self) -> str | None:
         """Primeiro erro dos campos ou None; separado do `_save` para os testes."""
@@ -263,6 +269,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
             tab = self.provider_tabs.tab_of(widget)
             if tab is not None:
                 self.provider_tabs.tabs.setCurrentWidget(tab)
+            self.reveal_prompt(widget)                       # F5.6 L2: a tarefa do editor de instruções com o erro
             theme.set_invalid(widget, True)
             self._invalid.append(widget)
             self._watch(widget)
@@ -302,6 +309,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, QDialog):
             return
         for key, ed in self._editors.items():
             self.store.set_setting(key, ed.raw())
+        self.save_prompts()
         token = self.hf_token.text().strip()
         if token != self.store.settings.provider_key(HF_PROVIDER_ID):
             self.store.upsert_provider(HF_PROVIDER_ID, "huggingface", api_key=token or None)

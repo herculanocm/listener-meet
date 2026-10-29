@@ -4,17 +4,22 @@ idioma, os nomes da F5.5 v2, o resumo mais antigo que a ata), quais tarefas um p
 que vai junto só quando falta ou está desatualizada, P-07), o custo (`estimate`) e as vozes sem nome (`voices`). Os pedidos
 em si ficam em `llm_requests`, que reexporta tudo isto. L1b (o "Para o L1b" do L1a): o custo inclui o núcleo quando o
 encadeamento do processamento vigente ficou pendente (`pending_core`: processado sem chave, ou o encadeamento que falhou),
-porque o próximo pedido o põe na fila na frente da ata."""
+porque o próximo pedido o põe na fila na frente da ata. F5.6 L2 (A-29): "falhou" com a resposta fora do esquema numa tarefa
+que usava instruções do usuário (as do job) ainda nas Configurações diz quais (`custom`), para a tela oferecer "Restaurar o
+prompt padrão". Revisão do L2: só a tarefa que falhou fora do esquema (`timings_json.llm.off_schema`, R-01) e só quando o
+texto salvo agora é o mesmo que o job usou (R-02)."""
 from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from ..config import prompts as prompt_settings
 from ..config.defaults import SPECS
 from ..config.language import meeting_language, output_code
+from ..llm.base import OFF_SCHEMA
 from ..llm.costs import estimate_tokens, price_for
 from ..llm.jobconfig import LlmJobConfig
 from ..model import EventType, JobKind, JobStatus, JobStep, SummaryKind
@@ -62,6 +67,8 @@ class RequestState:
     when: str | None = None             # `created_at` da versão atual (gerado em dd/mm; também no desatualizado)
     reasons: tuple[str, ...] = ()       # desatualizado: os motivos (STALE_*)
     error: str = ""                     # falhou: o erro do job (já redigido)
+    job_id: int | None = None           # falhou: o job
+    custom: tuple[str, ...] = ()        # falhou fora do esquema com instruções suas: as tarefas (A-29, "Restaurar o prompt padrão")
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +161,7 @@ def request_states(store: Store, meeting_id: int, *, led: Ledger | None = None, 
     now = fresh(store, meeting_id, names)
     by_id = {int(j["id"]): j for j in jobs}
     llm = [j for j in jobs if str(j.get("kind")) == JobKind.LLM]
-    return {sp: _state(sp, led, llm, by_id, rows, now) for sp in Species}
+    return {sp: blamed(store, sp, _state(sp, led, llm, by_id, rows, now), by_id) for sp in Species}
 
 
 def request_state(store: Store, meeting_id: int, species: Species | str) -> RequestState:
@@ -167,7 +174,7 @@ def _state(sp: Species, led: Ledger, llm: list[JobRow], by_id: Mapping[int, JobR
     asked_at = max((a.created_at for a in led.asked if steps & set(a.tasks) and alive(a, led, by_id)), default=None)
     failed = _failed(llm, steps, now.job_id)
     if failed is not None and (asked_at is None or asked_at < str(failed.get("finished_at") or "")):
-        return RequestState(State.FAILED, error=str(failed.get("error") or ""))
+        return RequestState(State.FAILED, error=str(failed.get("error") or ""), job_id=int(failed["id"]))
     if any(str(j["status"]) in ACTIVE and not j.get("cancel_requested") and steps & {str(t) for t in tasks_of(j)} for j in llm):
         return RequestState(State.RUNNING)
     if asked_at is not None:
@@ -216,11 +223,37 @@ def _failed(llm: list[JobRow], steps: set[str], current: int | None) -> JobRow |
     last = next((j for j in llm if steps & {str(t) for t in tasks_of(j)}), None)     # `for_meeting`: o mais novo primeiro
     if last is None or str(last["status"]) != JobStatus.ERROR or job_params(last).get("parent_job_id") != current:
         return None
+    return None if steps <= done_steps(last) else last
+
+
+def done_steps(job: JobRow) -> set[str]:
+    """As tarefas que o job fez (`timings_json.llm.done`)."""
+    return job_steps(job, "done")
+
+
+def job_steps(job: JobRow, key: str) -> set[str]:
+    """Uma lista de tarefas do `timings_json.llm` do job: `done` ou `off_schema` (as que falharam fora do esquema, R-01)."""
     try:
-        done = set(json.loads(last.get("timings_json") or "{}").get("llm", {}).get("done") or ())
-    except (ValueError, AttributeError):
-        done = set()
-    return None if steps <= done else last
+        return set(json.loads(job.get("timings_json") or "{}").get("llm", {}).get(key) or ())
+    except (ValueError, AttributeError, TypeError):
+        return set()
+
+
+def blamed(store: Store, sp: Species, rs: RequestState, by_id: Mapping[int, JobRow]) -> RequestState:
+    """A-29: "falhou" com a resposta fora do esquema numa tarefa da espécie que rodou com instruções do usuário (as do
+    `config_json` do job): o estado leva essas tarefas em `custom`. Revisão do L2: só as que falharam elas mesmas fora do
+    esquema (R-01: a ata do app fora do esquema não culpa o executivo personalizado, que nem chegou a chamar a LLM) e só
+    quando o texto salvo agora é o que o job usou (R-02: um texto novo, ainda não usado, não leva a culpa)."""
+    job = by_id.get(rs.job_id) if rs.job_id is not None else None
+    if rs.state != State.FAILED or job is None or OFF_SCHEMA not in rs.error:
+        return rs
+    used = LlmJobConfig.from_json(job.get("config_json")).prompts
+    off = job_steps(job, "off_schema") & {str(t) for t in SPECIES_TASKS[sp]} & set(used)
+    if not off:
+        return rs
+    now = prompt_settings.custom_prompts(store)
+    same = [str(t) for t in TASK_ORDER if str(t) in off and now.get(str(t), "").strip() == used[str(t)].strip()]
+    return replace(rs, custom=tuple(same))
 
 
 def stale(sp: Species, present: Sequence[SummaryRow | None], rows: Mapping[str, SummaryRow], now: Fresh) -> tuple[str, ...]:
@@ -277,5 +310,6 @@ def voices(store: Store, meeting_id: int) -> Voices:
     return Voices(summary_gate.pending_voices(store, meeting_id) if ready else 0, ready, identifying)
 
 
-__all__ = ["Estimate", "Fresh", "RequestState", "Species", "State", "Voices", "active_llm", "alive", "estimate", "follow", "fresh",
-           "pending_core", "ready_job", "request_state", "request_states", "resolve", "stale", "unchained", "voices"]
+__all__ = ["Estimate", "Fresh", "RequestState", "Species", "State", "Voices", "active_llm", "alive", "blamed", "done_steps", "estimate",
+           "follow", "fresh", "job_steps", "pending_core", "ready_job", "request_state", "request_states", "resolve", "stale",
+           "unchained", "voices"]

@@ -1,17 +1,21 @@
 """O que os prompts compartilham (contrato "Prompts"): contexto da reunião, linhas `#<segment_id> [mm:ss] <rótulo>: <texto>`,
 instrução de idioma (`output_language` injetado; glossário, nomes e siglas nunca traduzidos). Instruções em inglês com
-exemplos em pt-BR [exp: melhor obediência entre modelos]. Nenhum SDK aqui."""
+exemplos em pt-BR [exp: melhor obediência entre modelos]. Nenhum SDK aqui. F5.6 L2 (A-24 a A-26): cada tarefa separa as
+`INSTRUCTIONS` (o papel e o estilo, que o usuário pode trocar nas Configurações) do `CONTRACT` (formato, esquema, citações,
+rótulos de voz: fixo, CP2); `system_text` junta os dois, e o padrão sai igual, byte a byte, ao texto de antes."""
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from ...config.prompts import VARIABLE
 from ..types import Message, Role
 
 LANGUAGE_NAMES = {"pt-br": "Brazilian Portuguese", "pt": "Portuguese", "en": "English", "es": "Spanish", "fr": "French", "de": "German",
                   "it": "Italian"}
 VOICE_LABELS = "Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them."   # F5.5 (A-20, P-03)
+ORIGINAL_LANGUAGE = "the original language"   # `{idioma}` sem idioma conhecido (a transcrição pelo áudio sem dica)
 LINE_RE = re.compile(r"^#(?P<id>\d+) \[(?P<mm>\d+):(?P<ss>\d{2})\] (?P<speaker>[^:]+): (?P<text>.*)$")
 
 
@@ -111,6 +115,29 @@ def header(ctx: MeetingCtx) -> str:
 
 def system(text: str, ctx: MeetingCtx) -> Message:
     return Message(Role.SYSTEM, f"{text}\n{language_instruction(ctx.output_language)}")
+
+
+def own(default: str, custom: str | None, language: str | None) -> str:
+    """As instruções da tarefa (F5.6 L2, A-26): as do usuário, sem os espaços das pontas e com `{idioma}` trocado pelo nome
+    do idioma, ou as do app (`custom` vazio ou None). Só essa troca: nada de `str.format` sobre o texto do usuário; chaves
+    soltas vão como estão (não quebram nem injetam campos)."""
+    text = (custom or "").strip()
+    if not text:
+        return default
+    return text.replace(VARIABLE, language_name(language) if language else ORIGINAL_LANGUAGE)
+
+
+def compose(instructions: str, contract: str) -> str:
+    """Instruções e contrato numa mensagem: separados por um espaço (o padrão sai como o texto de antes da F5.6 L2) ou por
+    uma quebra de linha quando as instruções têm mais de uma linha."""
+    sep = "\n" if "\n" in instructions else " "
+    return f"{instructions}{sep}{contract}"
+
+
+def system_text(default: str, contract: str, custom: str | None, language: str | None) -> str:
+    """O texto do sistema de uma tarefa: as instruções (as do usuário ou `default`) e depois o contrato, que tem a última
+    palavra (A-24)."""
+    return compose(own(default, custom, language), contract)
 
 
 def user(*blocks: str) -> Message:

@@ -51,6 +51,9 @@ class ProviderUnavailableError(LlmError):
         super().__init__(message, permanent=True)
 
 
+OFF_SCHEMA = "resposta fora do esquema"         # o começo do erro do `RetryingProvider` (F5.6 L2, A-29: a tela o reconhece)
+
+
 class BadResponseError(LlmError):
     """Resposta sem JSON válido, bloqueada ou vazia; o `RetryingProvider` reenvia uma vez com a mensagem de erro."""
 

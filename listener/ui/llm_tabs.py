@@ -17,7 +17,8 @@ apagado com o aviso (Comportamento 1). A recarga lê `request_states` uma vez (A
 ações" e "Gerar resumo" (`request_bar`, só na reunião aberta, `ui/llm_request_bar.py`). F5.4 L4: a ata, o executivo e o
 pré-resumo (`TextTab`, com a leitura formatada, A-15) foram para `ui/minutes_view.py` e as ações (`ActionsTab`, U-080) para
 `ui/actions_table.py`, reexportadas daqui; o título do cabeçalho da reunião em 20 px, sem moldura até o foco, e o menu "LLM"
-num botão com a seta inteira (U-078)."""
+num botão com a seta inteira (U-078). F5.6 L2 (A-29): "Restaurar o prompt padrão" da barra restaura direto as instruções das
+tarefas que falharam fora do esquema (`restore_prompts`) e recarrega."""
 from __future__ import annotations
 
 import functools
@@ -29,6 +30,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QVBoxLayout, QWidget
 
+from ..config import prompts as prompt_settings
 from ..llm.costs import fmt_usd
 from ..log import get_logger
 from ..model import JobKind, JobStatus, JobStep, SummaryKind
@@ -41,7 +43,7 @@ from . import llm_ask
 from .actions_table import ActionsTab
 from .llm_ask import step_label
 from .llm_request import Chooser, choose
-from .llm_request_bar import LABELS, RUNNING_TIP, RequestBar
+from .llm_request_bar import LABELS, RESTORED, RUNNING_TIP, RequestBar
 from .minutes_view import KIND_STEP, TextTab
 from .style import FLAT_PROP
 from .theme import note, role
@@ -234,7 +236,7 @@ class LlmTabsGroup(QObject):
         self.actions_tab = ActionsTab(store, meeting_id, on_edited=on_edited)
         self.cost = QLabel("")
         note(self.cost)
-        self.bar: RequestBar | None = RequestBar(self.ask_species) if request_bar else None
+        self.bar: RequestBar | None = RequestBar(self.ask_species, on_restore=self.restore_prompts) if request_bar else None
 
     def reload(self) -> bool:
         busy = llm_job_active(self.store, self.meeting_id)
@@ -320,6 +322,13 @@ class LlmTabsGroup(QObject):
         else:
             self.reload()
         return job_id
+
+    def restore_prompts(self, tasks: Sequence[str]) -> list[str]:
+        """A-29: as instruções das tarefas voltam às do app (`prompt.<tarefa>` vazio); o "Gerar de novo" pede com elas."""
+        done = prompt_settings.restore(self.store, tasks)
+        log.info("reunião %s: prompt padrão restaurado pela barra (%s)", self.meeting_id, ", ".join(done) or "nada a restaurar")
+        self._queued(None, RESTORED)
+        return done
 
     def regenerate(self, step: JobStep) -> int | None:
         """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar.

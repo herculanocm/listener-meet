@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from ..config.language import default_language
-from ..llm import chat_task, prompts, redact
+from ..llm import chat_task, redact
 from ..llm.aio import run_async
 from ..llm.base import classify_exception
 from ..llm.costs import cost_usd, price_for
@@ -215,7 +215,7 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     if cancelled is not None and cancelled():
         return GlobalChatAnswer("", "", (), None, thread_id, None, None, None, None, True, found.hybrid, found.reason, aliases, len(picked))
     ctx = RagChatCtx(blocks, _history(store, previous), question, default_language(store))
-    req = Request(LlmTask.RAG_CHAT, cfg.fast_model, prompts.rag_chat.build(ctx), None, max_output_tokens=MAX_OUTPUT_TOKENS,
+    req = Request(LlmTask.RAG_CHAT, cfg.fast_model, cfg.build(LlmTask.RAG_CHAT, ctx), None, max_output_tokens=MAX_OUTPUT_TOKENS,
                   reasoning=TASK_REASONING[LlmTask.RAG_CHAT], timeout_s=120.0)
     with store.transaction():
         if thread_id is None:
@@ -227,7 +227,7 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     except Exception as e:  # SDK ausente, chave apagada no meio: a pergunta fica, com o erro na tela e em `llm_calls`
         comp, text, err = None, "", classify_exception(e)
     stopped = comp is None and cancelled is not None and cancelled()     # parou no meio do streaming (a parte que chegou fica)
-    version = prompts.prompt_version(LlmTask.RAG_CHAT)
+    version = cfg.version(LlmTask.RAG_CHAT)                   # F5.6 L2 (A-28): `rag_chat/1.2+u<hash>` com instruções suas
     task = str(LlmTask.RAG_CHAT)
     common = (found.hybrid, found.reason, aliases, len(picked))
     if err is not None:

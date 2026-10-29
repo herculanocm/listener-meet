@@ -462,7 +462,7 @@ class JobRunner(BaseJobRunner):
                                       self.meeting.get("glossary"))
                 t0 = time.perf_counter()
                 tw = transcriber.transcribe(w, language=self.language, initial_prompt=prompt)
-                timing = self._timing(step, transcriber.name)
+                timing = self._timing(step, transcriber.name, getattr(transcriber, "prompt_version", ""))   # F5.6 L2 (R-06)
                 timing.wall_s += time.perf_counter() - t0
                 timing.audio_s += w.duration_ms / 1000
                 timing.speech_s += tw.speech_ms / 1000
