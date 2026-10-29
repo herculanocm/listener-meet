@@ -2,12 +2,14 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (28/10/2026, Windows nativo; tudo commitado; push do dono)
+## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
 - **Em curso: F5.6** (`features/F5.6-ata-a-pedido-prompts-excluir.md`, D-063, aprovada com as perguntas 1 a 16 no
   padrão): ata, resumo e ações só a pedido, com um popup que recomenda esperar todos os nomes; os prompts de cada
   tarefa da LLM nas Configurações; excluir reunião no Histórico sem perder perfil de voz. Revisão de arquitetura
-  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono); lotes L3, L1a, L1b e L2, nessa ordem.
-- **Próximo passo do dono:** testar a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste
+  incorporada (A-01 a A-51; P-01 a P-07 no padrão até a resposta do dono). L3, excluir reunião, feito (`426c25e`);
+  faltam L1a, L1b e L2, nessa ordem.
+- **Próximo passo do dono:** testar a F5.6 L3 pela Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro
+  (claro, escuro, contraste
   alto, notebook,
   teclado), a F5.3 pela Parte 11 (idioma, fila, aviso, fone no meio da gravação) e a
   F5.2 pela Parte 10 (fone conectado com o app aberto, ficha
@@ -94,8 +96,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `AGENTS.md`).
 
 ## Estado em 28/10/2026
-- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**: 710 testes mais 7
-  pulados no Windows com `--tudo` (85 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
+- Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**, F5.6 L3: 743 testes
+  mais 7 pulados no Windows com `--tudo` (85 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
   limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
   Esquema v8. Nada do app importa torch, ML, os SDKs de LLM, onnxruntime, tokenizers nem docx no nível do módulo (teste
@@ -182,9 +184,8 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
 - Pasta de modelos ainda não está nas Configurações (entra na F2).
 - Testes de interface só cobrem abrir e fechar as telas (pytest-qt offscreen); interação real fica para a F6.
 - O eco do warm-up é medido só no "Testar 3 s", não de forma contínua; o `--check` dá o número preciso.
-- F5: `_fail` de um job cuja reunião foi apagada levanta IntegrityError e derruba o worker (F5A-17, para a F6, junto
-  com apagar reunião); o filtro de pessoa varre `rag_chunks` (~35 ms a cada 20 mil trechos) e `vector_version` conta o
-  índice a cada busca: medir com o banco real.
+- F5: o filtro de pessoa varre `rag_chunks` (~35 ms a cada 20 mil trechos) e `vector_version` conta o índice a cada
+  busca: medir com o banco real. (A F5A-17, o worker caindo com a reunião apagada, foi corrigida na F5.6 L3.)
 - Suíte acima da meta de 8 s. Dividida em 26/10 (D-050): os testes `lento` (telas por fixture, subprocesso, tempo
   real, contas pesadas; 104 com a F5.1) ficam fora do padrão local; neste notebook a rápida levava 34 a 40 s e a inteira
   52 a 58 s, e com a F5.1, à tarde, 25 s (342 testes) e 55 s (445) (no Linux de desenvolvimento a inteira era ~22 s).

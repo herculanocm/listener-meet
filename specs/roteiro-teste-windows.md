@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 13 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 14 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -228,6 +228,21 @@ Antes: uma reunião com pelo menos uma voz sem nome e a chave da LLM (a da Parte
 - [ ] Com a ata nova pronta, mescle duas vozes sem nome na revisão: a reunião passa a oferecer "Atualizar a ata com os
       nomes".
 - Devolva: o trecho da varredura no `listener.log` e qualquer "SPK_" ou "Voice" que aparecer.
+
+## Parte 14 — F5.6 L3: excluir reunião (15 min)
+Antes: anote, em Pessoas, quantas pessoas têm perfil de voz; tenha duas reuniões de teste que pode perder.
+- [ ] No Histórico, selecione as duas (Ctrl+clique), clique com o botão direito e "Excluir 2 reuniões…": a confirmação
+      lista as duas, diz o que sai e o que fica e o foco começa em "Cancelar". Confirme: "Excluindo 1 de 2…", depois o
+      aviso de pronto, e elas somem da lista, da busca e das ações abertas.
+- [ ] Os perfis de voz continuam os mesmos: abra a próxima reunião processada e veja os nomes reconhecidos como antes.
+- [ ] Com uma reunião aberta numa janela, exclua-a pelo Histórico: a janela fecha antes. Com o player tocando, ele para.
+- [ ] Comece a processar uma reunião de teste e exclua-a no meio: o app não trava, a fila não mostra erro e o worker
+      continua (o log dele mostra "evento … não gravado").
+- [ ] Durante uma gravação, tente excluir a reunião que está sendo gravada: ela aparece à parte, com o motivo, e o
+      botão de excluir fica apagado quando é a única.
+- [ ] Depois de alguns minutos parado, o `listener.log` mostra a liberação de espaço (bytes) ou "pendente" com o
+      motivo; anote quanto tempo levou e o tamanho do `listener-audio-AAAA-MM.db` antes e depois.
+- Devolva: o trecho do `listener.log` da exclusão e da liberação de espaço, e qualquer erro na tela.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
