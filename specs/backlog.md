@@ -92,7 +92,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
       para a entrada da LLM, a exportação e o índice. Respondida (D-062): feita na F5.5.
   14. F5.4, Aceite 5: o "Antes de gravar" e a revisão ~5 ms mais devagar que antes da F5.4. Respondida (D-062): aceito.
   15. F5.6 L1 (R-03 da revisão do L1a): numa reunião já revisada com voz sem nome, "Gerar quando todos tiverem nome"
-      espera a última voz ou um novo "Concluir", e o popup avisa (sim, espera; a alternativa é gerar na hora com "Voz 2").
+      espera a última voz ou um novo "Concluir", e o popup avisa. Respondida (D-064): espera.
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
