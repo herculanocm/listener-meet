@@ -98,8 +98,8 @@ Tamanho-alvo: 3 KB.
 | U-086 | Revisão: voz em cartão com estado em selo; atalho em selo de tecla; primário segue a etapa | Revisão | implementada (F5.4 L4, 28/10) |
 | U-087 | Ficha da pessoa: Apagar pessoa em vermelho à esquerda, longe de Salvar | Revisão | implementada (F5.4 L4, 28/10) |
 | U-088 | Assistente sem a faixa vazia do Aero: título de 20 px, Passo n de 6, Próximo primário | Assistente | implementada (F5.4 L4, 28/10) |
-| U-089 | Ao parar: "Gerar ata e ações" e "Gerar resumo" no resumo da gravação, com a última escolha | Resumo | aprovada (F5.6 L1, D-063) |
-| U-090 | Pedido de ata ou resumo com popup: vozes sem nome, custo e "Gerar quando todos tiverem nome" | Reunião | aprovada (F5.6 L1, D-063) |
-| U-091 | Resumo parcial do ao vivo como caixa no "Antes de gravar", desmarcada | Warm-up | aprovada (F5.6 L1, D-063) |
+| U-089 | Ao parar: "Gerar ata e ações" e "Gerar resumo" no resumo da gravação, com a última escolha | Resumo | implementada (F5.6 L1, 29/10) |
+| U-090 | Pedido de ata ou resumo com popup: vozes sem nome, custo e "Gerar quando todos tiverem nome" | Reunião | implementada (F5.6 L1, 29/10) |
+| U-091 | Resumo parcial do ao vivo como caixa no "Antes de gravar", desmarcada | Warm-up | implementada (F5.6 L1, 29/10) |
 | U-092 | Página Prompts: as instruções de cada tarefa da LLM editáveis, o formato à vista, restaurar padrão | Config. | aprovada (F5.6 L2, D-063) |
-| U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | aprovada (F5.6 L3, D-063) |
+| U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | implementada (F5.6 L3, 29/10) |

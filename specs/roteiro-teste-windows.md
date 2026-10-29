@@ -244,21 +244,32 @@ Antes: anote, em Pessoas, quantas pessoas têm perfil de voz; tenha duas reuniõ
       motivo; anote quanto tempo levou e o tamanho do `listener-audio-AAAA-MM.db` antes e depois.
 - Devolva: o trecho do `listener.log` da exclusão e da liberação de espaço, e qualquer erro na tela.
 
-## Parte 15 — F5.6 L1a: ata só a pedido (15 min)
-Antes: a chave do Gemini configurada. O popup e as caixas ao parar vêm no L1b; aqui só os botões que já existem.
-- [ ] Grave 3 min de conversa e pare. Depois do processamento, sem clique: título, vozes identificadas e transcrição
-      revisada. As abas mostram "Ata ainda não gerada.", "Resumo executivo ainda não gerado." e "Pré-resumo ainda não
-      gerado.", e o custo da reunião não tem chamada de ata.
-- [ ] Na aba Ata, "Gerar ata": a ata sai pela fila. Anote quanto tempo levou. "Gerar de novo" refaz só a ata.
-- [ ] Mude o nome de uma voz numa reunião com ata: aparece "Atualizar a ata com os nomes", que refaz só o que já
-      existia.
-- [ ] Troque o idioma de uma reunião com ata: a pergunta diz que refaz título, identificação e revisada e que ata,
-      resumo e ações ficam desatualizados. Depois, a ata é a mesma.
+## Parte 15 — F5.6 L1: ata, resumo e ações só a pedido (25 min)
+Antes: a chave do Gemini configurada; uma conversa de 3 min com pelo menos duas pessoas.
+- [ ] Grave e, no "Gravação salva", deixe "Gerar ata e ações" e "Gerar resumo" desmarcadas (o padrão na primeira vez) e
+      dê OK. Depois do processamento, sem clique: título, vozes identificadas e transcrição revisada; a linha sob os
+      fatos da reunião mostra "não gerado" nos dois, as abas mostram "Ata ainda não gerada." e o custo da reunião não
+      tem chamada de ata.
+- [ ] Grave outra e marque "Gerar ata e ações" antes do OK: abre o popup ("a identificação das vozes ainda não rodou",
+      a recomendação e o custo "estimado pela duração"), com "Gerar quando todos tiverem nome" em destaque; Enter
+      escolhe ele. Teste também o Esc no popup: nada é pedido. Na próxima gravação, a caixa já vem marcada.
+- [ ] Com o pedido "quando todos tiverem nome": depois do processamento, a linha diz "pedido · espera N vozes"; dê
+      nome à última voz na revisão: a ata sai uma vez ("gerando", depois "gerado em dd/mm").
+- [ ] Numa reunião com voz sem nome, "Gerar resumo" e "Gerar agora mesmo assim": sai já, com "Voz 2" (a ata vai junto
+      se faltar). Anote quanto tempo levou.
+- [ ] Mude o nome de uma voz numa reunião com ata: a linha diz "desatualizado (nomes)" e a faixa oferece "Atualizar a
+      ata com os nomes", que abre o popup.
+- [ ] Troque o idioma de uma reunião com ata, com "Gerar ata e ações" marcada: o popup inclui a ata no custo; no fim do
+      reprocessamento a ata sai no idioma novo. Sem caixa, a ata fica "desatualizado (transcrição)".
+- [ ] Sem chave (tire-a por um momento em Configurações, Chaves de acesso): as caixas do "Gravação salva", os botões da
+      reunião e "Resumo parcial" no "Antes de gravar" ficam apagados, com o aviso de configurar a chave.
 - [ ] Se tiver uma reunião antiga com a revisão pela metade, termine a revisão: nenhuma ata nova sai sozinha.
-- [ ] Ao vivo: em Configurações, Ao vivo, deixe "Resumo parcial automático" desmarcado (o padrão) e grave 5 min com o
-      ao vivo. A janela diz "o automático está desligado nesta gravação"; "Atualizar resumo agora" gera um parcial; o
-      `--check` da reunião mostra 0 parciais automáticos.
-- Devolva: as linhas do `listener.log` com "pedido" e "só a pedido", o tempo da ata e se o título ficou bom.
+- [ ] Ao vivo: no "Antes de gravar", "Resumo parcial" vem desmarcada; grave 5 min com a legenda. A janela diz "o
+      automático está desligado nesta gravação"; "Atualizar resumo agora" gera um parcial; o `--check` da reunião
+      mostra 0 parciais automáticos. Marque a caixa numa segunda gravação: o parcial sai sozinho no intervalo.
+- [ ] No notebook a 150 %: a reunião com a linha nova cabe sem cortar os botões.
+- Devolva: as linhas do `listener.log` com "pedido", o custo estimado contra o cobrado (Custos), o tempo da ata, se o
+  título ficou bom e qualquer popup ou botão que confundiu.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
