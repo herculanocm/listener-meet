@@ -16,5 +16,6 @@ Tamanho-alvo: 2,5 KB.
 | F5 RAG e histórico | FTS5 e vetores, busca híbrida, chat com citações, histórico com player por frase | G5: 10 perguntas sobre 5 ou mais reuniões, 8 com citação certa; clique toca o ponto certo | 8,5 d (revisto em 25/10) |
 | F5.1 Busca local e linha do tempo | embeddings locais (D-021), linha do tempo (U-008), destaque contínuo (U-025), .docx | G5 com o embedder local | 3 d |
 | F5.4 Design das telas | sistema visual do Windows 11 nos dois temas, ícones próprios e as telas revistas (D-061) | uso real (B1): telas claras e escuras a 150 % sem texto cortado, nenhuma janela mais lenta | 4 a 5 d [chute] |
+| F5.5 Vozes numeradas | "Voz 2" também na ata, na exportação, na busca e no chat (D-062) | uso real (B1): o mesmo nome da voz na tela e no que sai dela | 1 d [chute] |
 | F6 Telas e UX de fábrica | janela principal, perfis, configurações totais, presets, notificação de reunião, backup, tema escolhido à mão (o do sistema veio na F5.4), primeiro uso | G6: 1 semana de uso diário sem terminal; todo o CP8 editável em uso | 7 a 10 d |
 | F7 Linux e macOS | adaptadores de plataforma e empacotamento (CP15) | G7: testes da plataforma simulada passam nos 3 sistemas; uma reunião real em cada | sem estimativa |
