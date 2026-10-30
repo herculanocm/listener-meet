@@ -45,7 +45,7 @@ from ..capture.audio import StreamResampler
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..platform.base import OutputStream
-from .player_route import ROUTE_CHECK_S, ROUTE_STUCK, Follow, OutputDevices, Reroute, drain, ran_dry
+from .player_route import ROUTE_CHECK_S, ROUTE_STUCK, Follow, OutputDevices, OutputName, Reroute, drain, ran_dry
 from .player_source import EMPTY as _EMPTY
 from .player_source import (Chunks, audio_ms, audio_path_missing, meeting_ms, mix, next_pause, pause_intervals, position_ms, seek_target,
                             skip_paused)
@@ -133,6 +133,7 @@ class PlayerState(NamedTuple):
     title: str = ""
     message: str = ""
     note: str = ""               # D-067: a saída não acompanhou o padrão do Windows (tocando ou pausado)
+    endpoint: str = ""           # F5.9 (item 10): o endpoint do fluxo que toca ("" = parado ou não se sabe); a barra põe o nome
 
     @property
     def active(self) -> bool:
@@ -228,8 +229,7 @@ class PlaybackEngine:
         self._end_t = 0
         self._paused_at = 0
         self.opened = 0                         # instrumentação: fluxos de saída abertos
-        self.underflows = 0                     # instrumentação: buracos que o dispositivo contou no último som (R7-02)
-        self.starved = 0                        # instrumentação: esperas pela alimentadora no último som
+        self.underflows = self.starved = 0      # instrumentação: buracos na saída (underflow) e esperas pela alimentadora (R7-02)
 
     # ---------------------------------------------------------------- interface (thread do Qt)
     def play(self, req: PlayRequest) -> None:
@@ -352,7 +352,7 @@ class PlaybackEngine:
             req = self._req
             t = self._position_locked() if self._state == PLAYING else self._paused_at
             return PlayerState(self._state, req.meeting_id if req else None, t, self._duration, req.title if req else "", self._message,
-                               self.route.note if self._state in (PLAYING, PAUSED) else "")
+                               self.route.note if self._state in (PLAYING, PAUSED) else "", self.route.endpoint)
 
     @property
     def alive(self) -> bool:
@@ -551,7 +551,7 @@ class PlaybackEngine:
         sess.playing = True
         with self._cv:
             self._feed = _Feed(sess, start_t, max(sess.block, int(sess.rate * self.queue_s)))
-            self._written, self._anchors, self._state, self._message = 0, [(0, start_t)], PLAYING, ""
+            self._written, self._anchors, self._state, self._message, self.route.endpoint = 0, [(0, start_t)], PLAYING, "", sess.endpoint
             self._rate, self._latency, self._duration, self._end_t = sess.rate, sess.latency, sess.duration_ms, sess.end_t
             self._cv.notify_all()
 
@@ -799,6 +799,7 @@ class Player(QObject):
         self.engine = PlaybackEngine(store, factory, probe=devices.default_output_id if devices is not None else None, clock=clock)
         self.reroute = (Reroute(self.engine, devices.refresh_audio_devices, devices.audio_devices_changed, clock)   # D-067
                         if devices is not None else None)
+        self.names = OutputName(devices)                # F5.9 (item 10): o nome da saída para a barra, só quando o id muda
         self.guard: Callable[[PlayRequest], bool] | None = None
         self.before_play: Callable[[], object] | None = None   # U-043: o controlador relê os dispositivos (saída nova)
         self.requests: deque[PlayRequest] = deque(maxlen=REQUESTS_KEPT)   # instrumentação dos testes
@@ -931,6 +932,5 @@ class Player(QObject):
 
 
 __all__ = ["ERROR", "PAUSED", "PLAYING", "ROUTE_CHECK_S", "ROUTE_STUCK", "STOPPED", "OutputDevices", "OutputStream", "PlayRequest",
-           "PlaybackEngine", "Player", "PlayerState", "audio_ms",
-           "audio_path_missing", "meeting_ms", "mix", "next_pause", "pause_intervals", "position_ms", "prewarm_audio", "seek_target",
-           "skip_paused", "sounddevice_output"]
+           "PlaybackEngine", "Player", "PlayerState", "audio_ms", "audio_path_missing", "meeting_ms", "mix", "next_pause",
+           "pause_intervals", "position_ms", "prewarm_audio", "seek_target", "skip_paused", "sounddevice_output"]

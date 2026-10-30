@@ -221,6 +221,55 @@ def test_errors_without_device_without_audio_file_and_without_audio(store):
     assert eng.snapshot().message == "sem dispositivo de saída de áudio (Invalid device)" and refused.calls[-1] == "close"
 
 
+def test_the_state_carries_the_output_endpoint_and_the_bar_names_it_in_the_tooltip(qtbot, store):
+    """F5.9 (item 10, pergunta 4): `PlayerState.endpoint` é o endpoint do fluxo que toca (vazio parado); o nome é resolvido
+    pelo dono dos dispositivos só quando o id muda, com cache por id, e vai só para a dica do título da barra ("saída:
+    <nome>"); sem a leitura do Core Audio, sem dica."""
+    from types import SimpleNamespace
+
+    from listener.platform.base import Endpoint, Endpoints
+    from listener.ui.player import Player, PlayerState
+    from listener.ui.player_bar import PlayerBar
+    from listener.ui.player_route import OutputName
+
+    reading: dict[str, Endpoints | None] = {"now": Endpoints(render=(Endpoint("ep-alto", "Alto-falantes"),), render_default="ep-alto")}
+    names = OutputName(SimpleNamespace(audio_endpoints=lambda refresh_names=False: reading["now"]))
+    assert names.name("") == "" and names.reads == 0
+    assert names.name("ep-alto") == "Alto-falantes" and names.name("ep-alto") == "Alto-falantes" and names.reads == 1   # com cache
+    assert names.name("ep-sumiu") == "" and names.name("ep-sumiu") == "" and names.reads == 2           # desconhecido: guardado
+    reading["now"] = None
+    assert names.name("ep-novo") == "" and names.name("ep-novo") == "" and names.reads == 4            # sem leitura: tenta de novo
+    assert OutputName(FakeOutputs()).name("ep-alto") == ""                                               # sem `audio_endpoints`
+    mid = _meeting(store, seconds=4, pause=None)
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(rate=SR, permits=permits, system="ep-alto")
+    player = Player(store, outs)
+    reading["now"] = Endpoints(render=(Endpoint("ep-alto", "Alto-falantes"),), render_default="ep-alto")
+    player.names = OutputName(SimpleNamespace(audio_endpoints=lambda refresh_names=False: reading["now"]))
+    bar = PlayerBar(player, mid)
+    qtbot.addWidget(bar)
+    assert player.state().endpoint == "" and bar.what.toolTip() == ""
+    assert player.play_from(mid, 0)
+    qtbot.waitUntil(lambda: player.state().endpoint == "ep-alto", timeout=3000)
+    bar.show_state(player.state())
+    assert bar.what.toolTip() == "saída: Alto-falantes" and player.names.reads == 1
+    bar.show_state(player.state())
+    assert player.names.reads == 1                                                                        # o id não mudou
+    other = PlayerBar(player, mid + 1)
+    qtbot.addWidget(other)
+    other.show_state(player.state())
+    assert other.what.toolTip() == ""                                                                     # outra reunião: sem dica
+    bar.show_state(PlayerState(PLAYING, mid, 0, 1000, "t", endpoint=""))
+    assert bar.what.toolTip() == ""
+    permits.release(1000)
+    player.stop(meeting_id=mid)
+    qtbot.waitUntil(lambda: player.state().state == STOPPED and not player.engine.alive, timeout=3000)
+    assert player.state().endpoint == ""
+    bar.show_state(player.state())
+    assert bar.what.toolTip() == ""
+    assert player.shutdown() is True
+
+
 def test_player_signals_guard_and_bar(qtbot, store):
     from listener.ui.player import Player
     from listener.ui.player_bar import PlayerBar                  # F5.4 L4: a barra saiu do `ui/player.py`

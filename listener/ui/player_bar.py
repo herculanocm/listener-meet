@@ -139,6 +139,8 @@ class PlayerBar(QWidget):
         # acompanhou o padrão do Windows, tocando ou pausado
         text = st.message if st.state in (ERROR, PAUSED) and (mine or st.meeting_id is None) else ""
         self.note.setText(text or (st.note if mine and st.active else ""))
+        name = self.player.names.name(st.endpoint) if mine and st.active else ""   # F5.9 (item 10): só a dica, pelo id
+        self.what.setToolTip(f"saída: {name}" if name else "")
 
 
 __all__ = ["EMPTY_TIME", "PlayerBar", "tabular"]

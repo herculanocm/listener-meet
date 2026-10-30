@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
-from ..platform.base import OutputStream, OutputUnknownError, log_id
+from ..platform.base import Endpoints, OutputStream, OutputUnknownError, log_id
 from ..platform.common import portaudio
 
 log = get_logger("ui.player")
@@ -104,13 +104,42 @@ class RouteEngine(Protocol):
     def _start_run(self, sess: Any, t_ms: int) -> None: ...
 
 
+class OutputName:
+    """F5.9 (item 10): o nome da saída do player para a dica da barra, só na tela (A-22). Resolvido quando o id muda e guardado
+    por id (enumerar os endpoints custa ~14 ms; o estado chega à barra a cada 100 ms); id vazio, sem nome; sem a leitura do
+    Core Audio (outra plataforma, o fake do player), vazio. Na thread da interface (o COM da leitura exige)."""
+
+    def __init__(self, devices: object) -> None:
+        self._read: Callable[[], Endpoints | None] | None = getattr(devices, "audio_endpoints", None)   # `Platform.audio_endpoints`
+        self._names: dict[str, str] = {}
+        self.reads = 0                                     # instrumentação: leituras do Core Audio
+
+    def name(self, endpoint_id: str) -> str:
+        if not endpoint_id or self._read is None:
+            return ""
+        if endpoint_id not in self._names:
+            try:
+                reading = self._read()
+            except Exception as e:  # a leitura que falhou não fica guardada: a próxima tenta de novo
+                log.debug("player: o nome da saída %s não foi lido: %s", log_id(endpoint_id), e)
+                return ""
+            self.reads += 1
+            if reading is None:
+                return ""
+            ep = reading.output(endpoint_id)
+            self._names[endpoint_id] = ep.name if ep is not None else ""
+        return self._names[endpoint_id]
+
+
 class Follow:
-    """A escritora acompanhando o padrão. `note`, `stuck` e `has_stream` sob o `_cv` do motor; o resto, só a escritora."""
+    """A escritora acompanhando o padrão. `note`, `stuck`, `has_stream` e `endpoint` sob o `_cv` do motor; o resto, só a
+    escritora. F5.9 (item 10): `endpoint` é o do fluxo que toca (posto em `_start_run`, limpo em `reset`), para a barra."""
 
     def __init__(self, engine: RouteEngine, probe: Callable[[], str | None] | None, clock: Callable[[], float]):
         self.engine, self.probe, self.clock = engine, probe, clock
         self.next_check = 0.0
         self.note = ""
+        self.endpoint = ""
         self.stuck: tuple[str, int] | None = None     # (padrão que não abriu, leitura do PortAudio): não tenta de novo
         self.reread: tuple[str, int] | None = None    # o mesmo, quando reler a lista pode resolver (a `Reroute` lê)
         self.has_stream = False
@@ -217,8 +246,8 @@ class Follow:
                 self.stuck = self.reread = None
 
     def reset(self) -> None:
-        """(sob o `_cv`) O som acabou: sem fluxo, sem aviso."""
-        self.has_stream, self.note, self.stuck, self.reread = False, "", None, None
+        """(sob o `_cv`) O som acabou: sem fluxo, sem aviso, sem endpoint."""
+        self.has_stream, self.note, self.stuck, self.reread, self.endpoint = False, "", None, None, ""
 
 
 class RerouteEngine(Protocol):
