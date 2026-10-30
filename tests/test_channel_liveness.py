@@ -90,6 +90,60 @@ def test_the_microphone_that_dies_without_on_error_is_lost_and_comes_back(platfo
     assert store.continuity(rec.meeting_id, "L") == []
 
 
+def test_the_alive_probe_runs_once_a_second(platform, store, recorder_factory):
+    """Item 1, a cadência: a prova de vida roda a cada `ALIVE_EVERY_S` (1 s), não a cada tique; a stream que morre logo depois
+    de uma prova só é vista na seguinte."""
+    rec = recorder_factory()
+    rec.start()
+    platform.pump(0.5)
+    rec.check_devices()                                                        # a prova aos 0,5 s: viva
+    platform.pump(0.1)
+    platform.kill_r()                                                          # morre aos 0,6 s
+    platform.app_fail = platform.system_fail = True
+    platform.pump(0.4)
+    rec.check_devices()                                                        # 1,0 s: sem prova ainda
+    assert rec.health()["R"] != Health.LOST and "R" not in rec.snapshot.lost and _lost_events(store, rec.meeting_id) == []
+    platform.pump(0.6)
+    rec.check_devices()                                                        # 1,6 s: a prova seguinte
+    assert rec.health()["R"] == Health.LOST and [e["reason"] for e in _lost_events(store, rec.meeting_id)] == ["process_exit"]
+    platform.app_fail = platform.system_fail = False
+    rec.stop()
+
+
+def test_a_manual_switch_ends_the_lost_episode_so_the_next_loss_is_reported(tmp_path, store):
+    """Revisão do L1: o canal que volta por uma troca manual (não pela reabertura) encerra o episódio perdido; a perda
+    seguinte sai com `device_lost` e o motivo novo, nos dois canais."""
+    fake = FakePlatform(tmp_path, mic_fail=True)
+    rec = Recorder(fake, store, store.create_meeting(None, None, None, None), make_config(), clock=fake.clock, inline_worker=True)
+    rec.start()
+    fake.pump(0.3)
+    rec.check_devices()                                                        # `never_opened` (e a tentativa falha)
+    fake.mic_fail = False
+    assert rec.switch_mic(MIC).ok and rec.L.lost_since is None and rec.L.lost_reason == ""   # a troca à mão
+    fake.pump(0.3)
+    _live_mics(fake)[0].die()                                                  # e depois o microfone morre calado
+    fake.pump(1.1)
+    rec.check_devices()
+    assert rec.health()["L"] == Health.LOST and rec.L.lost_reason == LostReason.STREAM_STOPPED
+    assert [e["reason"] for e in _lost_events(store, rec.meeting_id)] == ["never_opened", "stream_stopped"]
+    dead = fake.kill_r()                                                       # o R: o app sai, e nada reabre
+    fake.app_fail = fake.system_fail = True
+    fake.pump(1.1)
+    rec.check_devices()
+    assert dead.stop_calls == 1 and rec.health()["R"] == Health.LOST and rec.R.lost_reason == LostReason.PROCESS_EXIT
+    fake.system_fail = False
+    assert rec.switch_source(SYSTEM) and rec.R.lost_since is None and rec.R.lost_reason == ""    # a troca à mão
+    fake.pump(0.3)
+    fake.kill_r()                                                              # o loopback do sistema morre depois
+    fake.pump(1.1)
+    rec.check_devices()
+    assert rec.health()["R"] == Health.LOST and rec.R.lost_reason == LostReason.STREAM_STOPPED
+    assert [e["reason"] for e in _lost_events(store, rec.meeting_id)] == ["never_opened", "stream_stopped", "process_exit",
+                                                                            "stream_stopped"]
+    fake.app_fail = False
+    rec.stop()
+
+
 def test_the_microphone_that_refuses_at_start_is_lost_not_off_and_opens_later(tmp_path, store):
     """Aceite 4 (item 2): o microfone que não abre no `start()` deixa o L perdido (não desligado) com `device_lost` dizendo
     "não iniciou" (`never_opened`); a reabertura de 5 s o abre quando ele responde."""
@@ -110,6 +164,7 @@ def test_the_microphone_that_refuses_at_start_is_lost_not_off_and_opens_later(tm
     assert rec.health()["L"] == Health.OK and rec.L.lost_reason == "" and len(_live_mics(platform)) == 1
     rec.stop()
     assert _types(store, mid).count("device_back") == 1 and _types(store, mid).count("device_lost") == 1
+    assert EventType.DEVICE_CHANGE not in _types(store, mid)                   # abrir pela primeira vez não é troca
 
 
 def test_the_output_that_refuses_at_start_is_lost_not_off_and_opens_later(tmp_path, store):
@@ -132,7 +187,7 @@ def test_the_output_that_refuses_at_start_is_lost_not_off_and_opens_later(tmp_pa
     platform.pump(0.5)
     assert rec.health()["R"] == Health.OK and rec.output_open and rec.source.kind == "system"
     rec.stop()
-    assert _types(store, mid).count("device_back") == 1
+    assert _types(store, mid).count("device_back") == 1 and EventType.DEVICE_CHANGE not in _types(store, mid)
     platform.app_fail = platform.system_fail = True
     app = Recorder(platform, store, store.create_meeting(None, None, None, None), make_config(), clock=platform.clock,
                    inline_worker=True)

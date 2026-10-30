@@ -96,6 +96,12 @@ class ReopenMixin:
             self._lost_sid[channel] = sid
             self._post(_Lost(channel, sid, reason))
 
+    def _channel_back(self, st: ChannelState) -> None:
+        """O canal abriu de novo (a reabertura de 5 s, uma troca manual ou da vigia, o anterior que voltou numa troca que
+        falhou): o episódio perdido acaba aqui, e a próxima perda ganha motivo e `device_lost` novos (revisão do L1). O
+        `last_reopen` fica como cada caminho o deixa (a primeira reabertura do R depois de uma troca é imediata, R-03)."""
+        st.lost_since, st.lost_reason = None, ""
+
     def _output_lost(self, reason: str, kind: str = LostReason.STREAM_STOPPED) -> None:
         """R-03: nem a fonte pedida nem a anterior abriram: o canal fica perdido (à vista como desconectado) e a reabertura
         de 5 em 5 s tenta a anterior."""
@@ -156,11 +162,12 @@ class ReopenMixin:
             after = self.mic_open_id if st.name == "L" else self.output_open_id
         if not ok:
             return
-        st.lost_since, st.lost_reason = None, ""
+        self._channel_back(st)
         log.info("canal %s voltou (%s)", st.name, st.detail)
         self.sink.add_event(self.meeting_id, self._ms(), EventType.DEVICE_BACK,
                             {"channel": st.name, "detail": st.detail, "endpoint_id": log_id(after)})
-        if after != before:                               # outro aparelho: o escolhido de volta ou o padrão
+        if before and after != before:                    # outro aparelho: o escolhido de volta ou o padrão (o que nunca
+            # abriu e abre agora não é troca: o `start()` normal também não emite)
             wanted = (self.mic_device.id if self.mic_device else "") if st.name == "L" else self.source.output_id
             self._device_event(st.name, DeviceReason.BACK if wanted and after == wanted else DeviceReason.DEFAULT)
 

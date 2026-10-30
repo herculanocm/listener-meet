@@ -427,10 +427,12 @@ class Recorder(ReopenMixin):
             self.mic_device = device
             err = self._swap_mic(device, strict)
             if err is None:
-                self.L.lost_since, self.L.last_reopen = None, self.clock.rel()
+                self.L.last_reopen = self.clock.rel()     # a reabertura de 5 s não corre atrás de uma troca que deu certo
             else:
                 self.mic_device = prev
                 self._restore_mic(recording)
+            if self._l_handle is not None:                # o pedido, ou o anterior de volta: o episódio perdido acaba
+                self._channel_back(self.L)
         if err is None:
             self._device_event("L", reason)
         else:
@@ -544,7 +546,9 @@ class Recorder(ReopenMixin):
             device_only = spec.kind == prev.kind == SourceKind.SYSTEM
             self._drop_source()
             ok = self._open_source(spec)
-            if not ok and not self._open_source(prev):
+            if ok or self._open_source(prev):
+                self._channel_back(self.R)                # a pedida, ou a anterior de volta: o episódio perdido acaba
+            else:
                 self._output_lost(f"{spec.log_text()} e {prev.log_text()} não abriram")
         if ok and device_only:
             self._device_event("R", reason)
