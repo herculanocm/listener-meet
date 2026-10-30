@@ -11,17 +11,24 @@ import numpy as np
 INT16_SCALE = np.float32(32767.0)
 
 
+FC_GAIN = np.float32(0.707)    # F5.9 (item 6): o centro no downmix (ITU-R BS.775, -3 dB)
+
+
 def to_mono(x: np.ndarray) -> np.ndarray:
-    """Média dos canais em float32. Estéreo pela soma dos dois (18x mais rápido que `mean(axis=1)`, medido)."""
+    """Mono em float32. 1 canal como está; estéreo pela soma dos dois (18x mais rápido que `mean(axis=1)`, medido). F5.9
+    (item 6, D-070): acima de 2 canais a média de todos abaixava a chamada 9,5 a 12 dB (o loopback do sistema numa saída
+    de 6 ou 8 canais, HDMI para TV ou receiver, traz a chamada em FL e FR): 4 canais (quad: o índice 2 é BL) só FL e FR;
+    3 e 5 ou mais, 0,5·FL + 0,5·FR + 0,707·FC (ITU-R BS.775). Puro, sem nada do SO: a F7 reaproveita (CP15)."""
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 1:
         return x
     n_ch = x.shape[1]
     if n_ch == 1:
         return x[:, 0]
-    if n_ch == 2:
-        return (x[:, 0] + x[:, 1]) * np.float32(0.5)
-    return x @ np.full(n_ch, 1.0 / n_ch, dtype=np.float32)
+    front = (x[:, 0] + x[:, 1]) * np.float32(0.5)
+    if n_ch in (2, 4):
+        return front
+    return front + x[:, 2] * FC_GAIN
 
 
 def resample(x: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:

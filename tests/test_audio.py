@@ -23,8 +23,26 @@ def test_to_mono_variants_and_rms():
     assert to_mono(x).tolist() == [0.5, 0.5]
     assert to_mono(np.array([0.25], np.float32)).tolist() == [0.25]
     assert to_mono(np.ones((4, 1), np.float32)).shape == (4,)
-    assert to_mono(np.ones((4, 3), np.float32)) == pytest.approx(np.ones(4))
+    assert to_mono(np.ones((4, 3), np.float32)) == pytest.approx(np.full(4, 1.707), abs=1e-3)   # F5.9: FL, FR e FC
     assert rms(np.zeros(0)) == 0.0 and rms(np.full((10, 2), 0.5, np.float32)) == pytest.approx(0.5)
+
+
+def test_the_downmix_keeps_the_front_pair_and_adds_the_center_at_minus_3_db():
+    """F5.9 (item 6, Aceite 6; a regra de D-070): o mesmo tom em FL e FR num bloco de 8 canais dá o RMS mono do estéreo
+    (±1 %; a média de todos dava -12 dB); quad só FL e FR (o índice 2 é BL); 5.1 e 3 canais com o centro a 0,707; mono e
+    estéreo como antes."""
+    sr = 48000
+    tone = (0.5 * np.sin(2 * np.pi * 440 * np.arange(sr) / sr)).astype(np.float32)
+    stereo = np.stack([tone, tone], axis=1)
+    eight = np.zeros((sr, 8), np.float32)
+    eight[:, 0] = eight[:, 1] = tone
+    eight[:, 4:] = 0.9                                      # as traseiras e as laterais não entram
+    assert rms(to_mono(eight)) == pytest.approx(rms(to_mono(stereo)), rel=0.01)
+    assert to_mono(np.array([[1.0, 1.0, 5.0, 5.0]], np.float32)).tolist() == [1.0]                    # quad: FL e FR
+    assert to_mono(np.array([[0.2, 0.4, 1.0, 9.0, 9.0, 9.0]], np.float32)) == pytest.approx([1.007], abs=1e-3)   # 5.1
+    assert to_mono(np.array([[0.2, 0.4, 1.0]], np.float32)) == pytest.approx([1.007], abs=1e-3)                  # 3
+    assert to_mono(tone).tolist() == tone.tolist() and to_mono(stereo).tolist() == tone.tolist()            # como antes
+    assert to_mono(np.zeros((0, 6), np.float32)).shape == (0,)
 
 
 def test_int16_rounds_instead_of_truncating():
