@@ -21,26 +21,28 @@ que registra os quadros). Q9: o controlador põe um `guard` chamado antes de o s
 sistema inteiro: o som do player entraria no canal R) e pausa o som com um aviso na barra (`pause(aviso)`, R7-01). Títulos
 e avisos em texto puro na barra (R7-07). F5.3 (A-17): `release_output` solta o fluxo de saída e espera a escritora
 confirmar, para a troca de microfone que relê o PortAudio (que só reinicia sem stream aberto); fecha também o fluxo que a
-pausa do R8-01 deixa aberto a gravação inteira com o sistema inteiro."""
+pausa do R8-01 deixa aberto a gravação inteira com o sistema inteiro. As funções puras e os pedaços decodificados moram em
+`player_source.py` (este módulo reexporta os nomes)."""
 from __future__ import annotations
 
 import importlib
 import threading
 import time
-from collections import OrderedDict, deque
-from collections.abc import Callable, Iterable, Mapping
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from ..capture.audio import StreamResampler, decode_flac, resample
+from ..capture.audio import StreamResampler
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
-from ..model import EventType
 from ..platform.common import portaudio
-from ..store.core import LEGACY_AUDIO_FILE
+from .player_source import EMPTY as _EMPTY
+from .player_source import (Chunks, audio_ms, audio_path_missing, meeting_ms, mix, next_pause, pause_intervals, position_ms, seek_target,
+                            skip_paused)
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -54,8 +56,6 @@ POLL_MS = 100                    # a interface lê a posição a cada 100 ms
 JOIN_S = 3.0                     # sair do app: espera a thread do player até isto
 FEED_JOIN_S = 2.0                # a escritora espera a alimentadora terminar a janela em curso até isto
 SEEK_MS = 10_000                 # -10 s e +10 s da barra
-GAIN = np.float32(0.5)           # L e R misturados com ganho ½ cada
-CHUNKS_KEPT = 3                  # pedaços decodificados guardados por canal (o da janela e os vizinhos)
 REQUESTS_KEPT = 100              # instrumentação dos testes: os últimos pedidos
 
 STOPPED, PLAYING, PAUSED, ERROR = "stopped", "playing", "paused", "error"
@@ -139,108 +139,7 @@ class PlayerState(NamedTuple):
         return self.state in (PLAYING, PAUSED)
 
 
-# ---------------------------------------------------------------- funções puras
-def pause_intervals(events: Iterable[Mapping[str, Any]]) -> list[tuple[int, int | None]]:
-    """Intervalos [pausa, retomada) da gravação a partir dos eventos `pause` e `resume` em ordem de tempo (D-011); uma pausa
-    sem retomada vai até o fim (None); pausa repetida sem retomada no meio conta a primeira."""
-    out: list[tuple[int, int | None]] = []
-    start: int | None = None
-    for e in sorted((e for e in events if e.get("t_ms") is not None), key=lambda e: int(e["t_ms"])):
-        kind, t = str(e.get("type")), int(e["t_ms"])
-        if kind == EventType.PAUSE and start is None:
-            start = t
-        elif kind == EventType.RESUME and start is not None:
-            if t > start:
-                out.append((start, t))
-            start = None
-    if start is not None:
-        out.append((start, None))
-    return out
-
-
-def skip_paused(t_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int | None:
-    """Onde o som começa a partir de `t_ms`: ele mesmo fora das pausas, o fim da pausa que o contém, None numa pausa que vai
-    até o fim da reunião."""
-    t = int(t_ms)
-    for a, b in intervals:
-        if a <= t and (b is None or t < b):
-            if b is None:
-                return None
-            t = b
-    return t
-
-
-def next_pause(t_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int | None:
-    """Começo da próxima pausa depois de `t_ms` (a janela decodificada para ali)."""
-    starts = [a for a, _b in intervals if a > t_ms]
-    return min(starts) if starts else None
-
-
-def audio_ms(t_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int:
-    """Tempo de áudio no instante `t_ms` da reunião: ele menos o que as pausas da gravação tomaram antes dele (um instante
-    dentro de uma pausa vale o começo dela)."""
-    t = int(t_ms)
-    paused = 0
-    for a, b in sorted(intervals):
-        if a >= t:
-            break
-        paused += (t if b is None else min(b, t)) - a
-    return t - paused
-
-
-def meeting_ms(u_ms: int, intervals: Iterable[tuple[int, int | None]]) -> int:
-    """O instante da reunião com `u_ms` de áudio (o inverso de `audio_ms`): sempre fora das pausas, salvo a que vai até o fim
-    (não há áudio depois dela: o começo dela)."""
-    t = int(u_ms)
-    for a, b in sorted(intervals):
-        if t < a:
-            break
-        if b is None:
-            return a
-        t += b - a
-    return t
-
-
-def seek_target(base_ms: int, delta_ms: int, intervals: Iterable[tuple[int, int | None]], end_ms: int) -> int:
-    """O ponto do -10 s ou +10 s em tempo de áudio (R7-04): as pausas da gravação não contam nos dois sentidos. Para trás, um
-    alvo dentro de [a, b) vira a - (b - alvo), e assim por diante a cada pausa atravessada; para frente, b + (alvo - a);
-    piso 0 e teto no fim do áudio. Antes, o alvo dentro da pausa ia para o fim dela e o -10 s ficava preso ali."""
-    spans = list(intervals)
-    u = max(0, audio_ms(base_ms, spans) + int(delta_ms))
-    return max(0, min(meeting_ms(u, spans), max(0, int(end_ms) - 1)))
-
-
-def mix(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    """L e R com ganho ½ cada, no comprimento do maior (o menor completa com silêncio)."""
-    n = max(len(left), len(right))
-    out = np.zeros(n, np.float32)
-    out[:len(left)] += np.asarray(left, np.float32) * GAIN
-    out[:len(right)] += np.asarray(right, np.float32) * GAIN
-    return out
-
-
-def position_ms(anchors: Iterable[tuple[int, int]], frames: int, rate: int) -> int:
-    """Tempo da reunião no quadro de saída `frames`: a última âncora (quadro, ms) antes dele mais o que andou desde ela."""
-    best: tuple[int, int] | None = None
-    for f0, t0 in anchors:
-        if f0 <= frames and (best is None or f0 >= best[0]):
-            best = (f0, t0)
-    if best is None or rate <= 0:
-        return 0
-    return int(best[1] + (frames - best[0]) * 1000 / rate)
-
-
-def audio_path_missing(store: Store, meeting: Mapping[str, Any]) -> str | None:
-    """O arquivo de áudio do mês da reunião quando ele falta na pasta do banco (o `attach` do app criaria um vazio)."""
-    name = str(meeting.get("audio_file") or LEGACY_AUDIO_FILE)
-    return None if (store.base_dir / name).exists() else name
-
-
 # ---------------------------------------------------------------- motor (sem Qt)
-_EMPTY = np.zeros(0, np.float32)
-_EMPTY.setflags(write=False)
-
-
 @dataclass(slots=True, eq=False)
 class _Session:
     req: PlayRequest
@@ -289,65 +188,11 @@ class _Pause:
     release: bool = False
 
 
-class _Chunks:
-    """Os pedaços FLAC de um som para a alimentadora (R7-02): cada um decodificado uma vez (`AudioRepo.get_chunk`) e posto na
-    taxa gravada; as janelas saem deles pela posição no tempo, em amostras absolutas (sem deriva entre janelas), com
-    silêncio no buraco entre pedaços (como o `decode_range`, F1.1 A17). Guarda os `CHUNKS_KEPT` mais recentes de cada canal;
-    a lista dos pedaços é lida uma vez por som (uma gravação em curso ganha pedaços entre um som e outro)."""
-
-    def __init__(self, store: Store, meeting_id: int, in_rate: int):
-        self.store = store
-        self.meeting_id = meeting_id
-        self.in_rate = in_rate
-        self._meta: dict[str, list[tuple[int, int, int]]] = {}       # canal -> [(idx, primeira amostra, amostras)]
-        self._cache: OrderedDict[tuple[str, int], np.ndarray] = OrderedDict()
-
-    def window(self, channel: str, s0: int, s1: int) -> np.ndarray:
-        """As amostras [s0, s1) do canal, na taxa gravada."""
-        out = np.zeros(max(0, s1 - s0), np.float32)
-        for idx, c0, n in self._list(channel):
-            if c0 >= s1 or c0 + n <= s0:
-                continue
-            samples = self._samples(channel, idx)
-            a_out, a_in = max(0, c0 - s0), max(0, s0 - c0)
-            length = min(len(samples) - a_in, len(out) - a_out)
-            if length > 0:
-                out[a_out:a_out + length] = samples[a_in:a_in + length]
-        return out
-
-    def _list(self, channel: str) -> list[tuple[int, int, int]]:
-        meta = self._meta.get(channel)
-        if meta is None:
-            meta = []
-            for c in self.store.list_chunks(self.meeting_id, channel):
-                sr = int(c.get("sample_rate") or self.in_rate)
-                meta.append((int(c["idx"]), round(int(c["t_start_ms"]) * self.in_rate / 1000), round(int(c["frames"]) * self.in_rate / sr)))
-            self._meta[channel] = meta
-        return meta
-
-    def _samples(self, channel: str, idx: int) -> np.ndarray:
-        key = (channel, idx)
-        hit = self._cache.get(key)
-        if hit is not None:
-            self._cache.move_to_end(key)
-            return hit
-        row = self.store.audio.get_chunk(self.meeting_id, channel, idx)
-        samples = _EMPTY                                         # o pedaço sumiu (reunião apagada): silêncio
-        if row is not None:
-            samples, sr = decode_flac(row["flac"])
-            if sr != self.in_rate:
-                samples = resample(samples, sr, self.in_rate)
-        self._cache[key] = samples
-        while len(self._cache) > CHUNKS_KEPT * max(1, len(self._meta)):
-            self._cache.popitem(last=False)
-        return samples
-
-
 @dataclass(slots=True, eq=False)
 class _Cursor:
     """Onde a alimentadora está no trecho atual (só a thread dela mexe)."""
     feed: _Feed
-    chunks: _Chunks
+    chunks: Chunks
     next_t: int
     resampler: StreamResampler | None
 
@@ -553,43 +398,52 @@ class PlaybackEngine:
             case ("play", PlayRequest() as req):
                 return self._open(sess, req)
             case ("pause", _Pause() as pause):
-                try:
-                    if sess is not None and sess.playing:
-                        sess.pos = self.snapshot().t_ms
-                        self._abort(sess)
-                        sess.playing = False
-                        with self._cv:
-                            if self._feed is not None and self._feed.sess is sess:
-                                self._feed = None         # o que estava pronto sai (R7-02)
-                            self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
-                    if pause.release and sess is not None and not sess.playing:
-                        self._release(sess)               # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
-                finally:
-                    if pause.done is not None:
-                        pause.done.set()                  # quem espera (o gancho do loopback, R8-01) segue
-                return sess
+                return self._on_pause(sess, pause)
             case ("resume", _):
-                if sess is not None and sess.closed:     # pausa que soltou o fluxo: outro, pela fábrica, do mesmo ponto
-                    return self._open(None, replace(sess.req, t_ms=sess.pos))
-                if sess is not None and not sess.playing:
-                    self._start_run(sess, sess.pos)
-                return sess
+                return self._on_resume(sess)
             case ("seek", int() as delta):
-                if sess is None:
-                    return None
-                base = self.snapshot().t_ms if sess.playing else sess.pos
-                target = seek_target(base, delta, sess.pauses, sess.end_t)     # em tempo de áudio (R7-04)
-                if sess.playing:
-                    self._abort(sess)
-                    self._start_run(sess, target)
-                else:
-                    sess.pos = target
-                    with self._cv:
-                        self._paused_at = target
-                return sess
+                return self._on_seek(sess, delta)
             case _:                                   # "stop" e "quit"
                 self._close(sess)
                 return None
+
+    def _on_pause(self, sess: _Session | None, pause: _Pause) -> _Session | None:
+        try:
+            if sess is not None and sess.playing:
+                sess.pos = self.snapshot().t_ms
+                self._abort(sess)
+                sess.playing = False
+                with self._cv:
+                    if self._feed is not None and self._feed.sess is sess:
+                        self._feed = None         # o que estava pronto sai (R7-02)
+                    self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
+            if pause.release and sess is not None and not sess.playing:
+                self._release(sess)               # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
+        finally:
+            if pause.done is not None:
+                pause.done.set()                  # quem espera (o gancho do loopback, R8-01) segue
+        return sess
+
+    def _on_resume(self, sess: _Session | None) -> _Session | None:
+        if sess is not None and sess.closed:         # pausa que soltou o fluxo: outro, pela fábrica, do mesmo ponto
+            return self._open(None, replace(sess.req, t_ms=sess.pos))
+        if sess is not None and not sess.playing:
+            self._start_run(sess, sess.pos)
+        return sess
+
+    def _on_seek(self, sess: _Session | None, delta: int) -> _Session | None:
+        if sess is None:
+            return None
+        base = self.snapshot().t_ms if sess.playing else sess.pos
+        target = seek_target(base, delta, sess.pauses, sess.end_t)     # em tempo de áudio (R7-04)
+        if sess.playing:
+            self._abort(sess)
+            self._start_run(sess, target)
+        else:
+            sess.pos = target
+            with self._cv:
+                self._paused_at = target
+        return sess
 
     def _open(self, sess: _Session | None, req: PlayRequest) -> _Session | None:
         """Um "tocar" novo: lê a reunião, reaproveita o fluxo aberto (descartando o som que estava nele) ou abre um."""
@@ -783,7 +637,7 @@ class PlaybackEngine:
     def _cursor(self, cur: _Cursor | None, feed: _Feed) -> _Cursor:
         """O começo de um trecho: no mesmo som, os pedaços já decodificados ficam (servem ao ±10 s); outro som, outra lista."""
         sess = feed.sess
-        chunks = cur.chunks if cur is not None and cur.feed.sess is sess else _Chunks(self.store, sess.req.meeting_id, sess.in_rate)
+        chunks = cur.chunks if cur is not None and cur.feed.sess is sess else Chunks(self.store, sess.req.meeting_id, sess.in_rate)
         resampler = StreamResampler(sess.in_rate, sess.rate) if sess.in_rate != sess.rate else None
         return _Cursor(feed, chunks, feed.start_t, resampler)
 
@@ -810,7 +664,7 @@ class PlaybackEngine:
         cur.next_t = stop
         return (cur.resampler.process(x) if cur.resampler is not None else x), None, False
 
-    def _decode(self, chunks: _Chunks, sess: _Session, t0: int, t1: int) -> np.ndarray:
+    def _decode(self, chunks: Chunks, sess: _Session, t0: int, t1: int) -> np.ndarray:
         """[t0, t1) de L e R misturados (ou do canal pedido) na taxa gravada, cortado dos pedaços já decodificados."""
         s0, s1 = round(t0 * sess.in_rate / 1000), round(t1 * sess.in_rate / 1000)
         parts = [chunks.window(ch, s0, s1) for ch in sess.channels]
@@ -1016,4 +870,5 @@ class Player(QObject):
 
 
 __all__ = ["ERROR", "PAUSED", "PLAYING", "STOPPED", "OutputStream", "PlayRequest", "PlaybackEngine", "Player", "PlayerState", "audio_ms",
-           "meeting_ms", "mix", "pause_intervals", "position_ms", "prewarm_audio", "seek_target", "skip_paused", "sounddevice_output"]
+           "audio_path_missing", "meeting_ms", "mix", "next_pause", "pause_intervals", "position_ms", "prewarm_audio", "seek_target",
+           "skip_paused", "sounddevice_output"]
