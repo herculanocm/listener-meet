@@ -104,4 +104,4 @@ Tamanho-alvo: 3 KB.
 | U-092 | Página Prompts: as instruções de cada tarefa da LLM editáveis, o formato à vista, restaurar padrão | Config. | implementada (F5.6 L2, 29/10) |
 | U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | implementada (F5.6 L3, 29/10) |
 | U-094 | Aviso de reunião sem gravação: cartão sem foco e fora da captura com "Gravar…" (abre o "Antes de gravar" com o app como fonte) e "Agora não" (até a chamada acabar), um lembrete, a bandeja e o cartão nas Configurações; substitui a U-012 | Aviso, bandeja | implementada (F5.7 L3, 29/10) |
-| U-095 | Ícone do `.exe` (Explorer e barra) com a marca do app no estado ocioso, um tamanho desenhado por escala; a descrição do arquivo "listener-meet" | Executável | aprovada (F5.8, D-068) |
+| U-095 | Ícone do `.exe` (Explorer e barra) com a marca do app no estado ocioso, um tamanho desenhado por escala; a descrição do arquivo "listener-meet" | Executável | implementada (F5.8, 30/10) |

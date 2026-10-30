@@ -3,11 +3,12 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
-- **F5.8 aprovada** (30/10, `features/F5.8-executavel-windows.md`, D-068 e D-069): o `.exe` pelo PyInstaller em pasta,
-  em implementação.
+- **F5.8 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono gerar e usar o `.exe` numa
+  reunião de verdade, pela Parte 19 do roteiro.
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
   do roteiro, numa chamada de verdade.
-- **Próximo passo do dono:** testar a troca de aparelho pela Parte 18 (D-067) e a F5.7 pela Parte 17 (reinicie o app
+- **Próximo passo do dono:** testar a troca de aparelho pela Parte 18 (D-067), o `.exe` pela Parte 19 (F5.8) e a
+  F5.7 pela Parte 17 (reinicie o app
   antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
   Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
@@ -93,6 +94,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         - A correção: `e7a93d0`.
 
         Revisão do diff por um agente novo. São 1.105 testes. Falta o dono trocar o aparelho de verdade (Parte 18).
+  - [x] **F5.8 implementada** (30/10, `features/F5.8-executavel-windows.md`, U-095, D-068 e D-069): o app abre por um
+        `listener-meet.exe` em pasta, gerado com `scripts/build_exe.py` em ~7 min. Ele tem o desempenho do venv e o
+        ícone da marca.
+        - O comparativo escolheu o PyInstaller: o Nuitka (Python compilado para C) não acelerou nada.
+        - A spec é o `31e9334`, o escopo o `dc2010d` e o código o `46da67b`.
+
+        Revisão de arquitetura e do diff por agentes novos. São 1.134 testes. Falta o dono usar o `.exe` numa reunião
+        de verdade (Parte 19).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -116,6 +125,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   14. F5.4, Aceite 5: o "Antes de gravar" e a revisão ~5 ms mais devagar que antes da F5.4. Respondida (D-062): aceito.
   15. F5.6 L1 (R-03 da revisão do L1a): numa reunião já revisada com voz sem nome, "Gerar quando todos tiverem nome"
       espera a última voz ou um novo "Concluir", e o popup avisa. Respondida (D-064): espera.
+  16. Telemetria do pyannote (vista na revisão da F5.8, de antes dela). O pyannote.audio 4 vem com a telemetria
+      ligada. A cada modelo e pipeline carregados, e a cada diarização, ele manda a `otel.pyannote.ai` a origem do
+      modelo, a versão, um id de sessão, a duração do áudio e o número de falantes. Nunca o áudio nem nomes, mas
+      sai o seu IP. Desligar com `PYANNOTE_METRICS_ENABLED=0` no `worker_env`, uma linha num commit pequeno? (sim)
+  17. F5.8, pergunta 3: uma trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo
+      banco (não agora; uma spec pequena quando você quiser).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).
@@ -207,7 +222,8 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   chamada. Correção: entrar na conta do `leave_if_stuck` do `app.py`, num commit pequeno.
 - **Caminho no log** (visto no L3 da F5.7, de antes dela): o `attach_log` do `app.py`, quando falha, loga o caminho do
   arquivo de log, que tem a pasta do usuário. Isso vai contra a D-053. Trocar pelo código do erro e pôr o `app.py` no
-  teste de privacidade.
+  teste de privacidade. A linha de abertura de todo log também grava `"banco": <pasta>` (`ui/app.py:136`; visto na
+  revisão da F5.8).
 - **F5.7, aviso sem a exclusão da captura** (R-04 da revisão do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam
   a dica e o menu da bandeja, e o ícone fica igual. Proposta: um selo no ícone enquanto houver chamada pendente.
 - **Suíte travada antes de começar (29/10, F5.7; de novo em 30/10, ~6 min na coleta, com o build do Nuitka ao lado;

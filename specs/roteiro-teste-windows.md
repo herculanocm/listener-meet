@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 18 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 19 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -377,6 +377,34 @@ Antes: **reinicie o app**. Tenha o alto-falante e o fone ligados; se der, també
   - a saída da sonda;
   - qualquer caso em que o som não foi para o aparelho escolhido: qual aparelho e o que você fazia;
   - o trecho do `listener.log` da troca (só traz ids de aparelho, nunca nomes).
+
+## Parte 19 — F5.8: o app pelo `listener-meet.exe` (30 min, numa reunião de verdade)
+Antes: feche o app do venv (bandeja › Sair) e espere sumir o `--worker` no Gerenciador de Tarefas. Nunca abra o `.exe` e
+o app do venv juntos: os dois usam o mesmo banco (pergunta 3 da F5.8).
+- [ ] Gere o executável: uma vez, `.venv\Scripts\python.exe -m pip install -r requirements\build-windows.txt`; depois,
+      `.venv\Scripts\python.exe scripts\build_exe.py` (~7 min, a máquina segue usável). A última linha diz o tempo, o
+      tamanho e o número de arquivos.
+- [ ] Copie a pasta `build\exe\dist\listener-meet` inteira para um caminho local e curto, fora do OneDrive (por exemplo
+      `C:\Apps\listener-meet`). Abra o `listener-meet.exe` com duplo clique: o app abre sem janela preta, com a marca
+      na bandeja, na barra e no ícone do arquivo no Explorer. Para fixar: clique direito no ícone da barra › Fixar.
+- [ ] O Gerenciador de Tarefas e o mixer de volume mostram "listener-meet". Anote o tempo da primeira abertura e o de
+      uma segunda.
+- [ ] Grave uma reunião de verdade com a captura por app (Teams ou Meet) e o ao vivo ligado. Na primeira gravação o
+      Windows pode pedir o microfone para o caminho novo. Confira:
+      - as legendas aparecem;
+      - ao parar, o processamento roda (em Detalhes, `listener-meet.exe` com `--worker`), sem janela preta e sem o
+        cursor de "carregando" a cada processo;
+      - peça a ata e toque um trecho;
+      - durante a gravação, o aviso de reunião sem gravação não aparece por causa do próprio app.
+- [ ] A bandeja e os atalhos globais funcionam como no venv.
+- [ ] Abra o `.exe` direto de `build\exe\dist\listener-meet` e, com ele aberto, rode o build de novo: ele recusa
+      ("feche o listener-meet...") e a pasta fica intacta. A cópia em outro lugar não trava o build.
+- [ ] Antivírus: `Get-MpThreatDetection` não traz nada novo, e nenhum aviso do SmartScreen ao abrir.
+- Devolva:
+  - a última linha do build e os dois tempos de abertura;
+  - qualquer caixa de erro (print);
+  - as linhas de erro do `listener.log` e do `listener-worker.log`;
+  - a saída do `Get-MpThreatDetection`.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
