@@ -79,7 +79,7 @@ from ..live.client import EXIT, LiveClient, live_models_dir, models_ready
 from ..live.protocol import BYE, CAPTION, CPU, ERROR, READY, STATE, Hello
 from ..llm import local_embed, partial_task
 from ..llm.prompts.common import stamp
-from ..log import get_logger
+from ..log import argv_text, get_logger
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, AppState, EventType, JobKind, JobStatus, JobStep, MeetingStatus, SourceKind
 from ..store.jobs import HELD
 from ..pipeline import llm_requests, review
@@ -1059,7 +1059,7 @@ class Controller(QObject):
             return False
         self._worker_spawned_at[light] = time.monotonic()
         log.info("worker%s lançado (pid %s) para %d job(s) ativo(s) (%s): %s", " leve" if light else "", pid, len(active),
-                 ", ".join(f"{j['id']}:{j.get('kind')}" for j in active[:6]), " ".join(argv))
+                 ", ".join(f"{j['id']}:{j.get('kind')}" for j in active[:6]), argv_text(argv))
         return True
 
     def _poll_fast(self) -> None:

@@ -172,9 +172,15 @@ def check(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Despacha o papel do processo (app, worker, ao vivo, diagnóstico). Na saída, de qualquer papel, a fila do log esvazia
     e o arquivo fecha: a thread do listener é daemon, e as últimas linhas ("app encerrado", "job N concluído") se perdiam
-    quando o processo terminava antes dela."""
+    quando o processo terminava antes dela. F5.8: a exceção que escapa vai para o log antes do `shutdown` (o `excepthook` só
+    roda depois, já sem handler); segue adiante, e no `.exe` sem console o PyInstaller a mostra numa caixa de erro."""
     try:
         return _dispatch(argv)
+    except Exception as e:
+        from .log import log_escaped
+
+        log_escaped(e)
+        raise
     finally:
         from .log import shutdown
 

@@ -26,7 +26,7 @@ import numpy as np
 
 from ..capture.audio import to_int16
 from ..config.defaults import LIVE_MODELS
-from ..log import get_logger
+from ..log import argv_text, get_logger
 from ..platform.base import ChildProcess
 from ..platform.common import paths
 from .protocol import BYE, CPU, GAP, SILENCED, STATS, Hello, decode_line, encode_audio, encode_control
@@ -130,7 +130,7 @@ class LiveClient:
             t = threading.Thread(target=target, name=name, daemon=True)
             self._threads.append(t)
             t.start()
-        log.info("ao vivo lançado (pid %s): %s", proc.pid, " ".join(self.argv))
+        log.info("ao vivo lançado (pid %s): %s", proc.pid, argv_text(self.argv))
 
     # ---------------------------------------------------------------- desvio (thread de trabalho do gravador)
     def tap(self, channel: str, start_frame: int, rate: int, block: np.ndarray, flags: int) -> None:

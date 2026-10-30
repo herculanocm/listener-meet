@@ -75,9 +75,20 @@ def test_the_users_are_opaque_ids_without_the_own_entry():
     assert len(consent.user_ids(entries, "outro")) == 3                       # sem ignorar: o Python entra
 
 
-def test_the_own_entry_is_the_base_interpreter_path(monkeypatch):
-    monkeypatch.setattr(sys, "_base_executable", r"C:\Users\Fulano\Python312\python.exe", raising=False)
-    assert consent.own_entry() == "C:#Users#Fulano#Python312#python.exe"
+def test_the_own_entries_are_the_base_interpreter_path_and_filter_by_default(monkeypatch):
+    """Sob o venv, o `python.exe` base (filho do lançador), cru e resolvido, em minúsculas; sem `own`, `user_ids` e o modo
+    só pelo registro tiram o próprio app por eles. Os nomes ficam guardados no processo (F5.8): o teste limpa antes e
+    depois."""
+    consent.own_entries.cache_clear()
+    try:
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        monkeypatch.setattr(sys, "_base_executable", OWN.replace("#", "\\"), raising=False)
+        assert consent.own_entries() == {OWN.lower()}
+        entries = consent.mic_entries(_registry()) or []
+        assert consent.user_ids(entries) == consent.user_ids(entries, OWN) and len(consent.user_ids(entries)) == 2
+        assert consent.degraded_activity(entries) == consent.degraded_activity(entries, OWN)
+    finally:
+        consent.own_entries.cache_clear()
 
 
 def test_an_entry_becomes_its_executable_file_name():

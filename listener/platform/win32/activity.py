@@ -55,8 +55,9 @@ def match_service(title: str) -> str:
 
 def own_tree(pid: int, procs: dict[int, ProcInfo]) -> frozenset[int]:
     """O próprio app: a raiz de `pid` (sob o venv, o lançador `python.exe` pai do interpretador) e os descendentes com o
-    executável do interpretador (o filho ao vivo, os workers). Um navegador aberto por um link do app, ou um processo cujo
-    ppid velho caiu num pid reaproveitado pelo lançador (o explorer), ficam fora (R-02)."""
+    executável do interpretador (o filho ao vivo, os workers). Empacotado (F5.8), os filhos são o mesmo `listener-meet.exe`:
+    o nome do próprio processo entra no conjunto, e o explorer que o abriu está em `SHELL`. Um navegador aberto por um link
+    do app, ou um processo cujo ppid velho caiu num pid reaproveitado pelo lançador (o explorer), ficam fora (R-02)."""
     root = processes.app_root(pid, procs) if pid in procs else pid
     names = INTERPRETERS | ({procs[pid].name.lower()} if pid in procs else set())
     children: dict[int, list[int]] = {}

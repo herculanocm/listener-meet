@@ -21,7 +21,7 @@ from ..config.defaults import SPECS
 from ..live.client import is_fake, live_models_dir, required_models, whisper_model_dir
 from ..live.protocol import decode_line
 from ..llm import local_embed
-from ..log import get_logger
+from ..log import argv_text, get_logger
 from ..platform.common import process
 
 if TYPE_CHECKING:
@@ -105,7 +105,7 @@ class ModelPreparer(QObject):
         self.proc = proc
         self.starts += 1
         self._error, self._done = "", False
-        log.info("preparo de %s lançado (pid %s): %s", WHAT_TEXT[self.what], proc.pid, " ".join(argv))
+        log.info("preparo de %s lançado (pid %s): %s", WHAT_TEXT[self.what], proc.pid, argv_text(argv))
         self._set({"state": "running", "model": "", "status": "iniciando…", "fraction": 0.0})
         threading.Thread(target=self._read, args=(proc,), name="live-prepare", daemon=True).start()
         return True

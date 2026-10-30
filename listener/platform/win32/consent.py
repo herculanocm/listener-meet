@@ -8,6 +8,7 @@ O registro diz quem segura o microfone mesmo com o Core Audio falhando (o modo s
 `RegNotifyChangeKeyValue` avisa a mudança sem consulta nem callback (`Win32MicWatch`)."""
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import functools
 import hashlib
@@ -15,6 +16,7 @@ import sys
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from ...log import get_logger
@@ -125,15 +127,34 @@ def _entry(reg: Registry, path: str, name: str, packaged: bool) -> ConsentEntry 
     return ConsentEntry(name, packaged, start, stop)
 
 
-def own_entry() -> str:
-    """O nome da entrada do próprio app: o interpretador de verdade (sob o venv, o `python.exe` base, filho do lançador)."""
-    return str(getattr(sys, "_base_executable", "") or sys.executable).replace("\\", "#")
+def entry_name(exe: str, resolve: bool = True) -> str:
+    """O nome da entrada de um executável não empacotado: o caminho com as barras invertidas trocadas por `#`. Com
+    `resolve`, o caminho resolvido (F5.8: o longo, para um caminho 8.3 como `HERCUL~1.CON`); o cru quando não dá para
+    resolver. Fora do Windows (os testes do registro falso) um caminho do Windows não tem o que resolver."""
+    path = str(exe)
+    if resolve and sys.platform == "win32":
+        with contextlib.suppress(OSError):
+            path = str(Path(exe).resolve())
+    return path.replace("\\", "#")
+
+
+@functools.cache
+def own_entries() -> frozenset[str]:
+    """Os nomes possíveis da entrada do próprio app, em minúsculas: o caminho cru e o resolvido (não se sabe qual o Windows
+    guarda numa unidade mapeada, num `subst` ou numa junção). Empacotado (F5.8), o próprio `listener-meet.exe`; sob o venv,
+    o interpretador de verdade (o `python.exe` base, filho do lançador)."""
+    exe = sys.executable if getattr(sys, "frozen", False) else (getattr(sys, "_base_executable", "") or sys.executable)
+    return frozenset(entry_name(exe, resolve).lower() for resolve in (False, True))
+
+
+def _own_names(own: str | None) -> frozenset[str]:
+    return own_entries() if own is None else frozenset({own.lower()})
 
 
 def user_ids(entries: Iterable[ConsentEntry], own: str | None = None) -> frozenset[str]:
     """Ids opacos (hash do nome) das entradas em uso, menos a do próprio app: servem só para ver se o conjunto mudou."""
-    own_l = (own if own is not None else own_entry()).lower()
-    return frozenset(_opaque(e.name) for e in entries if e.in_use and e.name.lower() != own_l)
+    own_names = _own_names(own)
+    return frozenset(_opaque(e.name) for e in entries if e.in_use and e.name.lower() not in own_names)
 
 
 def _opaque(name: str) -> str:
@@ -151,8 +172,8 @@ def entry_exe(entry: ConsentEntry) -> str:
 
 def degraded_activity(entries: Iterable[ConsentEntry], own: str | None = None) -> AudioActivity:
     """O modo só pelo registro: um app por executável em uso (menos o próprio app), com microfone, sem pid nem pico."""
-    own_l = (own if own is not None else own_entry()).lower()
-    exes = {exe for e in entries if e.in_use and e.name.lower() != own_l and (exe := entry_exe(e))}
+    own_names = _own_names(own)
+    exes = {exe for e in entries if e.in_use and e.name.lower() not in own_names and (exe := entry_exe(e))}
     return AudioActivity(tuple(AppAudio(0, exe, True, 0.0) for exe in sorted(exes)), degraded=True)
 
 

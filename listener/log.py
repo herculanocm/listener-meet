@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from importlib import metadata
 from pathlib import Path
@@ -25,6 +25,8 @@ STDERR_HANDLER = "listener.stderr"
 FILE_HANDLER = "listener.file"
 QUEUE_HANDLER = "listener.queue"
 _FORMAT = "%(asctime)s %(levelname)-7s [%(threadName)s] %(name)s: %(message)s"
+# as flags do app (`__main__`, worker, ao vivo) cujo valor é um caminho: nunca vão ao log (`argv_text`, F5.8)
+PATH_FLAGS = frozenset({"--db", "--app", "--check"})
 
 
 class _State:
@@ -33,6 +35,7 @@ class _State:
     fault_file: IO[str] | None = None
     notify: Callable[[str], None] | None = None
     hooks_installed = False
+    logged: BaseException | None = None    # a exceção que o `main` já pôs no log (F5.8): o `excepthook` não a repete
 
 
 _state = _State()
@@ -43,7 +46,8 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 
 def setup(level: str = "INFO") -> logging.Logger:
-    """Configura o logger do app com saída em stderr atrás de uma fila. Chamar uma vez, antes de abrir o banco."""
+    """Configura o logger do app com saída em stderr atrás de uma fila. Chamar uma vez, antes de abrir o banco. Sem stderr
+    (o `.exe` sem console aberto pelo Explorer, F5.8), sem o handler dele: só o arquivo, ligado depois."""
     log = logging.getLogger(LOGGER_NAME)
     log.setLevel(_level(level))
     log.propagate = False
@@ -55,10 +59,13 @@ def setup(level: str = "INFO") -> logging.Logger:
         from .llm.redact import install_log_filter
 
         install_log_filter(LOGGER_NAME)           # chaves de API nunca chegam a stderr nem ao arquivo (CP10, F3 R-6)
-        stderr = logging.StreamHandler(sys.stderr)
-        stderr.name = STDERR_HANDLER
-        stderr.setFormatter(logging.Formatter(_FORMAT))
-        _restart_listener(q, [stderr])
+        handlers: list[logging.Handler] = []
+        if sys.stderr is not None:
+            stderr = logging.StreamHandler(sys.stderr)
+            stderr.name = STDERR_HANDLER
+            stderr.setFormatter(logging.Formatter(_FORMAT))
+            handlers.append(stderr)
+        _restart_listener(q, handlers)
     _install_hooks()
     return log
 
@@ -116,14 +123,48 @@ def set_crash_notifier(fn: Callable[[str], None] | None) -> None:
 
 
 def log_versions(extra: dict[str, str] | None = None) -> None:
-    """Linha de abertura: Python, sistema, SQLite e as bibliotecas que importam para diagnóstico."""
+    """Linha de abertura: Python, sistema (`exe` no executável empacotado, F5.8), SQLite e as bibliotecas que importam para
+    diagnóstico."""
     parts = [f"python {sys.version.split()[0]}", f"{sys.platform}", f"sqlite {sqlite3.sqlite_version}"]
+    if getattr(sys, "frozen", False):
+        parts.insert(2, "exe")
     for dist in ("numpy", "scipy", "soundfile", "sounddevice", "proc-tap", "PySide6", "PyAudioWPatch", "pycaw"):
         with suppress(metadata.PackageNotFoundError):
             parts.append(f"{dist} {metadata.version(dist)}")
     for k, v in (extra or {}).items():
         parts.append(f"{k} {v}")
     get_logger().info("listener-meet %s; %s", _app_version(), ", ".join(parts))
+
+
+def argv_text(argv: Sequence[str]) -> str:
+    """O comando de um processo lançado, para o log (F5.8): o nome do executável e as flags, sem caminho nenhum (a pasta do
+    app e a do banco ficam fora). O valor das flags de `PATH_FLAGS` sai sempre, também relativo e no `--k=v`; outro valor
+    fica quando não parece caminho (`listener`, `rag`, o id da reunião)."""
+    if not argv:
+        return ""
+    out = [Path(argv[0]).name]
+    skip = False
+    for arg in argv[1:]:
+        flag, eq, value = arg.partition("=") if arg.startswith("-") else (arg, "", "")
+        if skip and not flag.startswith("-"):    # o valor da flag de caminho anterior
+            skip = False
+            continue
+        skip = False
+        if not flag.startswith("-") and _looks_like_path(arg):
+            continue
+        if flag in PATH_FLAGS:
+            out.append(flag)
+            skip = not eq                        # `--db PASTA`: a próxima é a pasta; `--db=PASTA`: já veio junto
+        elif not arg.startswith("-"):
+            if not _looks_like_path(arg):        # um argumento solto com cara de caminho (um script) sai inteiro
+                out.append(arg)
+        else:
+            out.append(arg if not eq or not _looks_like_path(value) else flag)
+    return " ".join(out)
+
+
+def _looks_like_path(value: str) -> bool:
+    return any(c in value for c in ("/", "\\", ":"))
 
 
 def shutdown() -> None:
@@ -172,12 +213,21 @@ def drain(timeout_s: float = 1.0) -> None:
 
 
 def handle_exception(exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:
-    """`sys.excepthook` do app: traceback no log e aviso ao usuário; Ctrl+C segue o caminho padrão."""
+    """`sys.excepthook` do app: traceback no log e aviso ao usuário; Ctrl+C segue o caminho padrão. A que o `main` já pôs no
+    log (`log_escaped`) não vai de novo: aqui, depois do `shutdown`, cairia no `lastResort` e repetiria o traceback."""
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc, tb)
         return
-    get_logger().error("exceção não tratada", exc_info=(exc_type, exc, tb))
+    if exc is None or exc is not _state.logged:
+        get_logger().error("exceção não tratada", exc_info=(exc_type, exc, tb))
     _notify_user(f"{exc_type.__name__}: {exc}")
+
+
+def log_escaped(exc: BaseException) -> None:
+    """A exceção que escapa do `main` vai ao log antes do `shutdown` (F5.8: o `excepthook` só roda depois, já sem handler) e
+    fica marcada, para o `excepthook` não a repetir."""
+    get_logger().error("exceção não tratada", exc_info=exc)
+    _state.logged = exc
 
 
 def handle_thread_exception(args: threading.ExceptHookArgs) -> None:

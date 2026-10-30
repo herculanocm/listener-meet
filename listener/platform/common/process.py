@@ -18,7 +18,8 @@ LIVE_FLAG = "--live"             # F4: processo ao vivo (legendas), preso à gra
 
 
 def worker_command(light: bool = False) -> list[str]:
-    """`python -m listener --worker [--light]` no venv; `<exe> --worker [--light]` quando congelado (PyInstaller, R-10)."""
+    """`python -m listener --worker [--light]` no venv; `listener-meet.exe --worker [--light]` no executável empacotado
+    (PyInstaller, R-10; F5.8), que liga `sys.frozen` e tem o próprio `.exe` em `sys.executable`."""
     flags = [WORKER_FLAG, LIGHT_FLAG] if light else [WORKER_FLAG]
     if getattr(sys, "frozen", False):
         return [sys.executable, *flags]
@@ -26,7 +27,7 @@ def worker_command(light: bool = False) -> list[str]:
 
 
 def live_command(db_dir: str | Path, meeting_id: int) -> list[str]:
-    """`python -m listener --live --db DIR --meeting ID` no venv; `<exe> --live ...` quando congelado (F4)."""
+    """`python -m listener --live --db DIR --meeting ID` no venv; `listener-meet.exe --live ...` empacotado (F4, F5.8)."""
     flags = [LIVE_FLAG, "--db", str(db_dir), "--meeting", str(int(meeting_id))]
     if getattr(sys, "frozen", False):
         return [sys.executable, *flags]

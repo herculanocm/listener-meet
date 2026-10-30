@@ -30,9 +30,7 @@ from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, En
                     PlayingApp, log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
 from . import activity, endpoints, output, processes, sessions
-from .endpoints import by_name as _by_name
-from .endpoints import com_init as _com_init
-from .endpoints import names_match as _names_match
+from .endpoints import by_name as _by_name, com_init as _com_init, names_match as _names_match
 from .hotkeys import Win32Hotkeys
 
 log = get_logger("platform.win32")
@@ -44,6 +42,7 @@ MEETING_EXES = {"ms-teams.exe", "teams.exe", "zoom.exe", "cpthost.exe", "webex.e
 MEETING_TITLE_HINTS = ("meet", "teams", "zoom", "webex", "reunião", "meeting", "chamada", "call")
 ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 CREATE_NO_WINDOW, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00004000   # worker da F2 e ao vivo da F4
+CHILD_FLAGS, STARTF_FORCEOFFFEEDBACK = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, 0x00000080   # F5.8: sem o cursor "carregando"
 PROCESS_SET_INFORMATION = 0x0200                       # F4: EcoQoS do filho ao vivo (SetProcessInformation)
 PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling (PROCESS_INFORMATION_CLASS)
 POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
@@ -866,9 +865,9 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, Platform):
         `CREATE_NO_WINDOW` o lançador ganha um console sem janela, o interpretador o herda e o worker sobrevive ao app."""
         if sys.platform != "win32":
             return process.spawn_detached(argv, env)
-        flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
         p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.DEVNULL,  # noqa: S603
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=CHILD_FLAGS,
+                             startupinfo=subprocess.STARTUPINFO(dwFlags=STARTF_FORCEOFFFEEDBACK))
         return int(p.pid)
 
     @override
@@ -877,9 +876,9 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, Platform):
         desligado logo depois de nascer (falha só vai para o log)."""
         if sys.platform != "win32":
             return process.spawn_child(argv, env)
-        flags = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
         return subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.PIPE,  # noqa: S603
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True, creationflags=CHILD_FLAGS,
+                                startupinfo=subprocess.STARTUPINFO(dwFlags=STARTF_FORCEOFFFEEDBACK))
 
     @override
     def disable_own_power_throttling(self) -> bool:
