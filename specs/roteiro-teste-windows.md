@@ -275,7 +275,8 @@ Antes: a chave do Gemini configurada; uma conversa de 3 min com pelo menos duas 
 Antes: **reinicie o app**, porque a página nova só aparece depois disso. Tenha a chave do Gemini e uma reunião
 processada com falas.
 - [ ] Configurações, Prompts: a lista mostra as 11 tarefas e quando cada uma roda. Escolha "Ata e ações". Aparecem as
-      instruções do app em inglês, o selo "Padrão do app" e a contagem de caracteres; embaixo, "O que vai junto, fixo".
+      instruções do app em português (D-071; antes eram em inglês), o selo "Padrão do app" e a contagem de caracteres;
+      embaixo, "O que vai junto, fixo".
       O Tab sai do editor em vez de escrever no texto.
 - [ ] Escreva instruções em português, por exemplo: "Você escreve a ata para a diretoria; destaque valores, prazos e
       quem decidiu. Escreva em {idioma}.". Clique em Salvar e peça a ata numa reunião. Confira:
