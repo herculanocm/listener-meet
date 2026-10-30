@@ -50,9 +50,11 @@ dataclass `frozen, slots` montada do dicionário validado. Sem pydantic nem msgs
 (pydantic vem com os SDKs, mas não entra no WSL nem no CI base). `SCHEMA_VERSION` por tarefa; hash gravado em `llm_calls`.
 
 ## Prompts (`llm/prompts/<task>.py`)
-`PROMPT_VERSION = "1.0"`, `SCHEMA`, `build(ctx) -> tuple[Message, ...]`. Instruções em inglês com `output_language`
-injetado e exemplos em pt-BR; glossário, nomes próprios e siglas nunca traduzidos; `summaries.prompt_version` e
-`llm_calls.prompt_version` gravam `"minutes/1.0"`; mudar o texto do prompt sobe a versão (regra de revisão de diff).
+`PROMPT_VERSION = "2.0"`, `SCHEMA`, `build(ctx) -> tuple[Message, ...]`. Instruções e contrato em pt-BR, o idioma padrão
+do app (D-071, 30/10: o experimento em inglês acabou), com `output_language` injetado como instrução de idioma e `{idioma}`
+trocado pelo nome do idioma em português ("português do Brasil", "inglês"); glossário, nomes próprios e siglas nunca
+traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version` gravam `"minutes/2.0"`; mudar o texto do prompt sobe a
+versão (regra de revisão de diff) e a cópia congelada `tests/data/prompts_ptbr.json` é gerada de novo.
 Classe por tarefa (`TASK_CLASS`): rápido = glossary, title, pre_summary, revise, transcribe, chat; forte = identify,
 minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de pensamento zero), `LOW` no forte.
 

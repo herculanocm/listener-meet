@@ -3,6 +3,10 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
+- **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
+  versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
+  ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
+  chat, "Voz 2" sem tradução; se piorar, o `prompt_version` das chamadas diz qual texto foi usado.
 - **F5.9 implementada** (30/10; o detalhe está no item do Concluído). **Primeira gravação real com o `.exe` em 30/10
   (reunião 8, Teams, 15 min):** L e R íntegros até o fim, sem WARNING; números em `decisoes.md` (Medições). Mas aos
   13,5 s o dono trocou o R para o sistema inteiro no widget (`source_change{user}`), o que encerra a volta ao app
@@ -121,6 +125,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
         Revisão de arquitetura e do diff por agentes novos. São 1.134 testes. Falta o dono usar o `.exe` numa reunião
         de verdade (Parte 19).
+  - [x] **D-071, os prompts em pt-BR** (30/10, pedido do dono): instruções, contrato, cabeçalhos, instrução de idioma,
+        canário, reenvio fora do esquema e a ferramenta do Anthropic, tudo em pt-BR; versão 2.0 em todos os módulos;
+        `tests/data/prompts_ptbr.json` no lugar da cópia de `4a51600` (que ficou sem uso, à espera do OK para apagar);
+        o aviso de padrão mudado para quem editou sobre o inglês. Código e testes em `d8a06b1`. A suíte rápida: 804
+        passaram, 6 pulados, 371 lentos fora (1.181 testes).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
