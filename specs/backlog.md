@@ -7,7 +7,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   completa dos canais L e R, da captura ao player). Três defeitos (o R não percebe a própria morte; o canal que não
   abre no começo nunca é tentado de novo; os processos do app são fixados na abertura), três fragilidades e quatro
   melhorias, em quatro lotes. A revisão de arquitetura está aplicada (D-070); o dono aprovou pelo chat com as quatro
-  perguntas no padrão (sim). O L1 está com o programador; depois dele, o revisor do diff, o L2 e o L3; o L4 por último.
+  perguntas no padrão (sim). **L1 implementado e revisado** (`65e790b`, `f66bf3f`, `dbe99c3`, `a96568b`; 1.147
+  testes). O L2 está com o programador; depois o L3; o L4 por último. Dois itens que a revisão do L1 deixou, fora do
+  lote: `tests/test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info` é instável na
+  suíte inteira (3 falhas em 7, 9/9 isolado; tempo ou ordem) e o `pyproject` não liga o `C901` (o limite de
+  complexidade 10 é só convenção).
 - **F5.8 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono gerar e usar o `.exe` numa
   reunião de verdade, pela Parte 19 do roteiro. A telemetria do pyannote foi desligada depois (`5b6496a`, pergunta 16).
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
