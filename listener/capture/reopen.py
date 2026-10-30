@@ -185,7 +185,7 @@ class ReopenMixin:
             return
         self._fallback_at = now
         app = self._fallback_app()
-        if app is not None and self.switch_source(app, DeviceReason.BACK):
+        if app is not None and self.switch_source(app, DeviceReason.BACK) and self.source.kind == SourceKind.APP:
             log.info("reunião %s: o app %s voltou (pid %s): a fonte do R de volta a ele", self.meeting_id, app.exe, app.pid)
 
     def _reopen_lost(self, st: ChannelState) -> None:
@@ -223,13 +223,12 @@ class ReopenMixin:
         """O R perdido (M-09): a fonte de agora de novo; F5.9 (item 4): gravando o sistema no lugar do app, o app primeiro,
         se a raiz nova dele está lá. Nada abriu, segue perdido (R-03), à vista como desconectado."""
         self._drop_source()
+        before = self.source
         app = self._fallback_app()
-        if app is not None and self._open_source(app):
-            if self.source.kind == SourceKind.APP:        # o app mesmo, e não o sistema de novo por dentro
-                self._source_event(DeviceReason.BACK)
-            return True
-        if self._open_source(self.source):
-            return True
-        self.R.active = True
-        self._mark_lost("R", "a saída não reabriu")
-        return False
+        if not ((app is not None and self._open_source(app)) or self._open_source(before)):
+            self.R.active = True
+            self._mark_lost("R", "a saída não reabriu")
+            return False
+        if self.source.kind != before.kind:               # o app de volta, ou o app morto que caiu no sistema por dentro
+            self._source_event(DeviceReason.BACK if self.source.kind == SourceKind.APP else DeviceReason.FALLBACK)
+        return True

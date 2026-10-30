@@ -5,6 +5,8 @@ do sistema antes (A-15); a raiz que já falhou não é tentada de novo (cada ten
 o fallback tenta o app antes do sistema."""
 from __future__ import annotations
 
+import logging
+
 from listener.capture.recorder import Recorder, SourceSpec
 from listener.model import DeviceReason, EventType, Health
 from listener.ui.recording_alerts import FALLBACK_TEXT, alert_line
@@ -28,7 +30,7 @@ def _recorder(platform: FakePlatform, store, source: SourceSpec | None = None) -
     return Recorder(platform, store, store.create_meeting(None, None, None, None), cfg, clock=platform.clock, inline_worker=True)
 
 
-def test_the_app_that_does_not_open_falls_back_with_the_event_and_the_alert(tmp_path, store):
+def test_the_app_that_does_not_open_falls_back_with_the_event_and_the_alert(tmp_path, store, caplog):
     """O fallback no `start()`: um `source_change{fallback, fallback_exe}` só; o alerta "app sem loopback"; a raiz que
     falhou segue lá e não é tentada de novo; `reopen_output` preserva o `fallback_exe`."""
     platform = FakePlatform(tmp_path, app_fail=True)
@@ -45,8 +47,39 @@ def test_the_app_that_does_not_open_falls_back_with_the_event_and_the_alert(tmp_
     rec.check_devices()                                        # a raiz que falhou (4242) segue lá: nada a tentar
     assert rec.source.kind == "system" and len(_source_changes(store, rec.meeting_id)) == 1
     assert rec.reopen_output(DeviceReason.DEFAULT) and rec.source.fallback_exe == EXE
+    platform.root_pids[EXE] = 4243                             # a raiz nova, mas o app recusa de novo: cai no sistema
+    platform.pump(5.1)
+    with caplog.at_level(logging.INFO, logger="listener"):
+        rec.check_devices()
+    assert rec.source.kind == "system" and rec.source.fallback_exe == EXE and "de volta a ele" not in caplog.text
+    assert [c["reason"] for c in _source_changes(store, rec.meeting_id)] == ["fallback", "fallback"]
     rec.stop()
     assert store.continuity(rec.meeting_id, "R") == []
+
+
+def test_the_fallback_through_the_reopening_is_on_the_trail(tmp_path, store):
+    """Gravando o app, o app morre e não volta: a reabertura cai no sistema por dentro, e a trilha tem `device_lost`,
+    `source_change{fallback}` e `device_back`, nessa ordem; o app de volta depois sai como `back`."""
+    platform = FakePlatform(tmp_path)
+    rec = _recorder(platform, store)
+    rec.start()
+    platform.pump(0.5)
+    platform.kill_r()                                          # o app morreu
+    platform.app_fail = True
+    platform.pump(1.1)
+    rec.check_devices()                                        # perdido; a reabertura imediata cai no sistema
+    platform.pump(0.5)
+    assert rec.source.kind == "system" and rec.source.fallback_exe == EXE and rec.health()["R"] == Health.OK
+    types = _types(store, rec.meeting_id)
+    assert types.index("device_lost") < types.index("source_change") < types.index("device_back")
+    assert [c["reason"] for c in _source_changes(store, rec.meeting_id)] == ["fallback"]
+    platform.app_fail = False
+    platform.root_pids[EXE] = 4243
+    platform.pump(5.1)
+    rec.check_devices()
+    platform.pump(0.3)
+    assert rec.source.kind == "app" and [c["reason"] for c in _source_changes(store, rec.meeting_id)] == ["fallback", "back"]
+    rec.stop()
 
 
 def test_the_source_goes_back_to_the_app_when_its_new_root_appears(tmp_path, store):
@@ -83,12 +116,14 @@ def test_a_manual_switch_ends_the_return_and_a_manual_app_that_fails_is_a_fallba
     rec.start()
     platform.pump(0.3)
     assert rec.switch_source(SYSTEM) and rec.source.fallback_exe == ""
+    changes = _source_changes(store, rec.meeting_id)                 # o fim do fallback fica na trilha
+    assert [c["reason"] for c in changes] == ["fallback", "user"] and (changes[1]["kind"], changes[1]["fallback_exe"]) == ("system", "")
     platform.app_fail = False
     platform.root_pids[EXE] = 4243
     platform.pump(5.1)
     rec.check_devices()
     platform.pump(0.3)
-    assert rec.source.kind == "system" and [c["reason"] for c in _source_changes(store, rec.meeting_id)] == ["fallback"]
+    assert rec.source.kind == "system" and len(_source_changes(store, rec.meeting_id)) == 2
     assert alert_line(rec, rec.health(), None, None) is None
     rec.stop()
     platform.app_fail = True

@@ -89,14 +89,83 @@ def test_the_watch_sums_a_process_that_starts_playing_later_and_stops_the_one_th
     outputs.managers["ep-fone"].sessions = [FakeSession(24, 0.5)]        # outro neto, em outro formato: fica de fora
     assert watch.rescan(flow) == [] and taps.pids() == [20, 22] and fake.calls[-1] == ("stop", 24)
     assert flow.activations == 3                                         # `keep`: refeitos quando o fone entrou, depois guardados
+    assert watch.rescan(flow) == [] and fake.calls.count(("stop", 24)) == 1 and taps.skipped == {24}   # uma tentativa só
+    assert len(mixer._pending) == 1                                      # e nenhum slot no mixer para o que ficou de fora
     fake.exited[22] = True                                               # o WebView2 saiu: o tap para, sem sair do mixer
-    assert watch.rescan(flow) == [] and ("stop", 22) in fake.calls and taps.pids() == [20, 22]
+    assert watch.rescan(flow) == [] and ("stop", 22) in fake.calls and taps.pids() == [20, 22] and taps.dead == {22}
+    outputs.managers["ep-fone"].sessions = [FakeSession(23, 0.5)]        # o filho do parado ganha sessão: tap próprio
+    assert watch.rescan(flow) == [23] and taps.pids() == [20, 22, 23] and fake.calls[-1] == ("start", 23)
     outputs.down = True                                                  # o Core Audio fora: a releitura fica para a próxima
-    assert watch.rescan(flow) == [] and watch.rescans == 5
+    assert watch.rescan(flow) == [] and watch.rescans == 7
     taps.close()
-    assert fake.calls.count(("stop", 20)) == 1 and fake.calls.count(("stop", 22)) == 1 and not taps.add(23)
+    assert fake.calls.count(("stop", 20)) == 1 and fake.calls.count(("stop", 22)) == 1 and fake.calls.count(("stop", 23)) == 1
+    assert fake.calls.count(("stop", 24)) == 1 and not taps.add(25)
     flow.close()
     assert outputs.alive() == 0
+
+
+def test_a_reused_pid_gets_a_new_tap_in_place_of_the_stopped_one():
+    from listener.capture.mixer import FrameMixer
+    from listener.platform.win32.app_loopback import AppTaps, AppWatch
+
+    tree, fake = _tree(), _Taps()
+    mixer = FrameMixer(1, 48000, 2, lambda block, t: None)
+    taps = AppTaps(20, fake.open(20, lambda block, t: mixer.feed(0, block, t)), mixer, fake.open)
+    outputs = Outputs({"ep-fone": FakeManager([FakeSession(22, 0.5)])})
+    watch = AppWatch(taps, lambda: tree, lambda: _flow(outputs))
+    flow = _flow(outputs)
+    taps.start()
+    assert watch.rescan(flow) == [22]
+    fake.exited[22] = True
+    gone = tree.pop(22)                                                  # saiu: some do snapshot (a sessão pode ficar)
+    assert watch.rescan(flow) == [] and taps.dead == {22}
+    assert watch.rescan(flow) == [] and fake.calls.count(("start", 22)) == 1   # a sessão que ficou não reabre o tap
+    tree[22], _ = gone, fake.exited.pop(22)                              # o pid 22 reaproveitado por um processo novo
+    assert watch.rescan(flow) == [22] and taps.dead == set() and fake.calls.count(("start", 22)) == 2
+    taps.close()
+    assert fake.calls.count(("stop", 22)) == 2
+    flow.close()
+
+
+def test_a_tap_opened_while_the_taps_close_is_stopped_and_the_lock_is_free_during_the_open():
+    """A interface fecha os taps sob a trava enquanto a vigia abre um (o proc-tap espera a ativação por até 10 s): a
+    abertura corre fora da trava, e o recém-aberto, com tudo já fechado, para na hora."""
+    from listener.capture.mixer import FrameMixer
+    from listener.platform.win32.app_loopback import AppTaps
+
+    fake = _Taps()
+    mixer = FrameMixer(1, 48000, 2, lambda block, t: None)
+
+    def open_and_close(pid: int, on_audio: Any, on_error: Any = None) -> Any:
+        handle = fake.open(pid, on_audio, on_error)
+        taps.close()                                                     # travaria aqui se `add` segurasse a trava
+        return handle
+
+    taps = AppTaps(20, fake.open(20, lambda block, t: None), mixer, open_and_close)
+    taps.start()
+    assert not taps.add(22) and fake.calls.count(("stop", 22)) == 1 and taps.pids() == [20] and not taps.skipped
+
+
+def test_the_watch_survives_a_failing_rescan_and_logs_once(monkeypatch, caplog):
+    import logging
+
+    from listener.capture.mixer import FrameMixer
+    from listener.platform.win32.app_loopback import AppTaps, AppWatch
+
+    outputs = Outputs({"ep-padrao": FakeManager([FakeSession(21, 0.1)])})
+    fake = _Taps()
+    taps = AppTaps(20, fake.open(20, lambda block, t: None), FrameMixer(1, 48000, 2, lambda block, t: None), fake.open)
+    monkeypatch.setattr(taps, "stop_dead", lambda: 1 // 0)              # uma falha fora da leitura, a cada releitura
+    watch = AppWatch(taps, _tree, lambda: _flow(outputs), every_s=0.01)
+    with caplog.at_level(logging.WARNING, logger="listener"):
+        watch.start()
+        deadline = time.monotonic() + 3.0
+        while watch.errors < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert watch.errors >= 3 and watch.is_alive()                     # segue viva
+        watch.close()
+    assert not watch.is_alive() and outputs.alive() == 0
+    assert sum("releitura falhou" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_the_app_loopback_handle_runs_the_watch_between_start_and_stop(monkeypatch):

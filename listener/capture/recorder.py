@@ -549,7 +549,7 @@ class Recorder(ReopenMixin):
             if self._stopped:
                 return False
             prev = self.source
-            device_only = spec.kind == prev.kind == SourceKind.SYSTEM
+            device_only = spec.kind == prev.kind == SourceKind.SYSTEM and spec.fallback_exe == prev.fallback_exe
             self._drop_source()
             ok = self._open_source(spec)
             if ok or self._open_source(prev):

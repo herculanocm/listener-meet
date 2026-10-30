@@ -6,7 +6,6 @@ de saída para somar o processo novo (a chamada que entra depois do "Gravar") e 
 `Win32Platform`: o snapshot com cache (`_processes`) e as sessões de saída (`_render_sessions`) são dele."""
 from __future__ import annotations
 
-import functools
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -61,16 +60,33 @@ class _ProcessLife:
             self.handle = None
 
 
+class _Feed:
+    """O callback de um tap somado: o índice no mixer só existe depois da checagem de formato (`add_source` não gasta um
+    slot com o tap que fica de fora), e o tap só entrega depois do `start()`; sem índice, o bloco cai (nunca vai à raiz)."""
+
+    def __init__(self, mixer: FrameMixer) -> None:
+        self.mixer = mixer
+        self.index = 0
+
+    def __call__(self, block: np.ndarray, t: float) -> None:
+        if self.index > 0:
+            self.mixer.feed(self.index, block, t)
+
+
 class AppTaps:
     """F5.9 (item 3): os taps de um app somados num mixer: a raiz (índice 0) e um por processo mais fundo, no índice que
-    `add_source` deu. A vigia (thread própria) soma os novos e para o que saiu; a interface inicia e fecha; uma trava cobre
-    a lista. Fechado, nada mais entra."""
+    `add_source` deu. A vigia (thread própria) soma os novos e para o que saiu; a interface inicia e fecha; a trava cobre
+    a lista, nunca a abertura de um tap (o proc-tap espera a ativação por até 10 s, e a interface fecha sob esta trava).
+    Uma tentativa por pid, como a raiz: o que recusou, veio em outro formato ou não começou fica em `skipped`; o tap
+    parado fica em `taps` só para o `close`. Fechado, nada mais entra."""
 
     def __init__(self, root: int, main: _StreamHandle, mixer: FrameMixer, open_tap: OpenTap) -> None:
         self.root = root
         self.mixer = mixer
         self._open_tap = open_tap
         self.taps: dict[int, _StreamHandle] = {root: main}
+        self.dead: set[int] = set()                        # os sub-alvos cujo processo saiu (tap parado)
+        self.skipped: set[int] = set()                     # os pids que falharam uma vez
         self.lock = threading.Lock()
         self.started = False
         self.closed = False
@@ -79,21 +95,36 @@ class AppTaps:
         with self.lock:
             return list(self.taps)
 
-    def add(self, pid: int) -> bool:
-        """Um tap a mais, somado ao mixer (já iniciado, se os outros estão): o processo que saiu ou recusou, ou o formato
-        diferente, fica de fora (como a raiz com os seus na abertura)."""
+    def known(self) -> set[int]:
+        """Os pids que não precisam de tap: os vivos e os que já falharam. O parado fica de fora: o filho dele que ganha
+        sessão depois entra, e um pid reaproveitado ganha um tap novo no lugar do parado."""
         with self.lock:
-            if self.closed or pid in self.taps:
-                return False
-            handle = self._open(pid, self.mixer.add_source())
-            if handle is None:
-                return False
-            self.taps[pid] = handle
-            return True
+            return (set(self.taps) - self.dead) | self.skipped
 
-    def _open(self, pid: int, index: int) -> _StreamHandle | None:
+    def add(self, pid: int) -> bool:
+        """Um tap a mais, somado ao mixer: aberto fora da trava e registrado sob ela (fechado no meio, o recém-aberto para);
+        iniciado se os outros já rodam."""
+        feed = _Feed(self.mixer)
+        handle = self._open(pid, feed)
+        if handle is None:
+            self._skip(pid)
+            return False
+        with self.lock:
+            if self.closed or (pid in self.taps and pid not in self.dead):
+                handle.stop()
+                return False
+            feed.index = self.mixer.add_source()
+            self.taps[pid] = handle
+            self.dead.discard(pid)
+            start_it = self.started
+        if start_it and not self._start(pid, handle):
+            self._skip(pid)
+            return False
+        return True
+
+    def _open(self, pid: int, feed: _Feed) -> _StreamHandle | None:
         try:
-            handle = self._open_tap(pid, functools.partial(self.mixer.feed, index))
+            handle = self._open_tap(pid, feed)
         except Exception as e:                            # o processo saiu ou recusou: segue com o que há
             log.warning("loopback do processo %s (do app %s) não abriu: %s", pid, self.root, e)
             return None
@@ -102,21 +133,28 @@ class AppTaps:
                         handle.channels)
             handle.stop()
             return None
-        if self.started:
-            try:
-                handle.start()
-            except Exception as e:
-                log.warning("loopback do processo %s (do app %s) não começou: %s", pid, self.root, e)
-                handle.stop()
-                return None
         return handle
+
+    def _start(self, pid: int, handle: _StreamHandle) -> bool:
+        try:
+            handle.start()
+        except Exception as e:
+            log.warning("loopback do processo %s (do app %s) não começou: %s", pid, self.root, e)
+            handle.stop()
+            return False
+        return True
+
+    def _skip(self, pid: int) -> None:
+        with self.lock:
+            self.skipped.add(pid)
 
     def stop_dead(self) -> list[int]:
         """Os sub-alvos cujo processo saiu têm o tap parado (a thread do proc-tap gira a 1 ms à toa), sem sair do mixer."""
         with self.lock:
-            dead = [pid for pid, h in self.taps.items() if pid != self.root and h.alive() is False]
+            dead = [pid for pid, h in self.taps.items() if pid != self.root and pid not in self.dead and h.alive() is False]
             for pid in dead:
                 self.taps[pid].stop()
+            self.dead.update(dead)
         return dead
 
     def start(self) -> None:
@@ -144,8 +182,9 @@ class AppWatch(threading.Thread):
         self._snapshot = snapshot
         self._flow_factory = flow_factory
         self._every = every_s
-        self._stopping = threading.Event()         # não `_stop`: o `Thread` usa esse nome por dentro
+        self._stopping = threading.Event()                 # não `_stop`: o `Thread` usa esse nome por dentro
         self.rescans = 0                                   # instrumentação
+        self.errors = 0                                    # releituras que falharam fora da leitura (no log, a primeira)
         self.last_ms = 0.0
 
     def run(self) -> None:
@@ -153,12 +192,22 @@ class AppWatch(threading.Thread):
         try:
             flow = self._flow_factory()
             while not self._stopping.wait(self._every):
-                self.rescan(flow)
+                self._rescan_safely(flow)
         except Exception as e:
             log.warning("vigia do loopback do app %s parou: %s", self._taps.root, e)
         finally:
             if flow is not None:
                 flow.close()                               # na thread que leu
+
+    def _rescan_safely(self, flow: sessions.FlowSessions) -> None:
+        """Uma falha fora da leitura não derruba a vigia pelo resto da gravação: contada, e no log uma vez."""
+        try:
+            self.rescan(flow)
+        except Exception as e:
+            self.errors += 1
+            if self.errors == 1:
+                log.warning("vigia do loopback do app %s: releitura falhou (%s); as próximas falhas só são contadas",
+                            self._taps.root, e)
 
     def rescan(self, flow: sessions.FlowSessions) -> list[int]:
         """Uma releitura: para o tap de quem saiu e soma o processo novo; devolve os pids somados. A releitura que falha
@@ -174,7 +223,7 @@ class AppWatch(threading.Thread):
             return []
         for pid in self._taps.stop_dead():
             log.info("loopback do app %s: o processo %s saiu; tap parado", root, pid)
-        added = [pid for pid in new_targets(self._taps.pids(), root, session_pids, procs) if self._taps.add(pid)]
+        added = [pid for pid in new_targets(self._taps.known(), root, session_pids, procs) if self._taps.add(pid)]
         if added:
             log.info("loopback do app %s: processo(s) %s somado(s), %d tap(s)", root, ", ".join(map(str, added)),
                      len(self._taps.pids()))
