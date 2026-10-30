@@ -407,7 +407,9 @@ o app do venv juntos: os dois usam o mesmo banco (pergunta 3 da F5.8).
   - a saída do `Get-MpThreatDetection`.
 
 ## Parte 20 — F5.9: os canais L e R que se recuperam sozinhos (40 min, numa reunião de verdade)
-Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). O log em DEBUG ajuda (`listener.log`).
+Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). O log em DEBUG ajuda (`listener.log`). Não troque a
+fonte do R nem o microfone no widget fora do passo que pede: a troca manual encerra a volta automática ao app (D-067),
+e foi só isso que a rodada de 30/10 (reunião 8) acabou testando.
 - [ ] App que fecha no meio (Aceite 2): gravando o app da reunião com o ao vivo ligado, feche o app da reunião, reabra
       e volte à chamada. Em até 2 s o widget diz "saída desconectada (o app saiu); tentando reabrir…"; em até 10 s
       depois de o som voltar, o R grava o app de novo e o painel de dispositivos volta a marcá-lo. No log:

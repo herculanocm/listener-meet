@@ -3,8 +3,11 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
-- **F5.9 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 20
-  do roteiro, numa reunião de verdade. Quatro itens que as revisões deixaram, fora do lote:
+- **F5.9 implementada** (30/10; o detalhe está no item do Concluído). **Primeira gravação real com o `.exe` em 30/10
+  (reunião 8, Teams, 15 min):** L e R íntegros até o fim, sem WARNING; números em `decisoes.md` (Medições). Mas aos
+  13,5 s o dono trocou o R para o sistema inteiro no widget (`source_change{user}`), o que encerra a volta ao app
+  (D-067): as seis verificações da Parte 20 (app que fecha no meio, chamada que entra depois, microfone atrasado,
+  "agora X", onde a chamada toca, eco) seguem sem resultado. Quatro itens que as revisões deixaram, fora do lote:
   `tests/test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info` é instável na suíte
   inteira (3 falhas em 7, 9/9 isolado; tempo ou ordem); o `pyproject` não liga o `C901` (o limite de complexidade 10
   é só convenção); o nativo do proctap cai no sistema inteiro calado em caminhos de falha (`is_process_specific()`
@@ -108,7 +111,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         fallback; nenhum aparelho casa por prefixo de nome; o downmix de 6 e 8 canais; o aviso de eco depois da troca
         de microfone, com "Marcar como sala"; "agora X" no combo; onde a chamada toca na tabela; a saída na dica do
         player. Quatro lotes, 13 commits (de `65e790b` a `15e257c`), cada um revisado por um agente novo; 1.173
-        testes. Falta o dono usar numa reunião de verdade (Parte 20).
+        testes. Primeira gravação real com o `.exe` em 30/10 (reunião 8, 15 min): íntegra; a Parte 20 segue, porque
+        a troca do R foi manual (D-067) e os cenários automáticos não aconteceram.
   - [x] **F5.8 implementada** (30/10, `features/F5.8-executavel-windows.md`, U-095, D-068 e D-069): o app abre por um
         `listener-meet.exe` em pasta, gerado com `scripts/build_exe.py` em ~7 min. Ele tem o desempenho do venv e o
         ícone da marca.
@@ -279,6 +283,10 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   processo novo do app que comece a tocar no meio da gravação, mais fundo que filho direto da raiz, fica de fora até a
   próxima abertura (reabrir a fonte no widget resolve); (c) o "Windows fatal exception: code 0x8001010d" no log é o
   faulthandler registrando uma exceção COM já tratada (o app segue): ruído, não queda.
+- F2 (Q7), a lease lida só entre janelas (visto na gravação 8, 30/10): o worker pesado que já está numa janela segue
+  por ela, e a de diarização tem 1.200 s de áudio a RTF 1,2 a 1,6, então atravessa uma gravação inteira (o job 47
+  diarizou durante os 15 min da reunião 8 e o ao vivo degradou aos 60 s, com 37 s de atraso). Opções: janela menor na
+  diarização, ou baixar a prioridade do worker enquanto a lease vale; decidir com o dono antes.
 - D-056: dois workers leves podem nascer no mesmo segundo (o pesado, ao terminar, e o polling do app lançam cada um o
   seu, e o intervalo de 60 s entre lançamentos vale por processo): o segundo não acha job e sai ocioso em 60 s.
   Inofensivo (o claim é atômico); custa um processo a mais. Resolver com uma marca de lançamento no banco, se valer.
