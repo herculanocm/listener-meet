@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 17 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 18 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -352,6 +352,31 @@ Nada aqui grava sozinho: o app só grava depois do seu clique em Gravar.
   - numa reunião do Teams e do Zoom pelo navegador, só o formato do título da aba, sem o nome da reunião (é para
     reconhecer a reunião no navegador além do Meet);
   - o resultado de uma busca no `listener.log` pelo nome da reunião (não pode aparecer nada).
+
+## Parte 18 — D-067: o som segue o aparelho escolhido no Windows (15 min)
+Antes: **reinicie o app**. Tenha o alto-falante e o fone ligados; se der, também um fone Bluetooth.
+- [ ] Primeiro a sonda, sem som nenhum (ela toca silêncio): `.venv\Scripts\python.exe scripts\probe_output_follow.py
+      --seconds 120`. Durante os 2 min, troque a saída padrão no Windows várias vezes: ida, volta e algumas trocas
+      seguidas rápidas. Depois de cada troca, a linha deve voltar a "segue" em até ~2 s.
+- [ ] No app, toque uma reunião e confira cada caso:
+      - trocar a saída no Windows com o som tocando: o som passa para o aparelho escolhido em até ~2 s, do mesmo ponto
+        (pode repetir uns 0,2 s e ter um corte curto na troca);
+      - pausar, trocar e retomar;
+      - trocar e logo usar −10 s, +10 s ou clicar em outro ponto;
+      - trocar com o player parado e apertar Tocar;
+      - tirar o fone com o som tocando: o som segue para o novo padrão, sem erro.
+- [ ] Na revisão, o fim de um trecho de 5 s sai inteiro, sem cortar a última palavra.
+- [ ] No "Antes de gravar", "Testar 3 s":
+      - com uma saída escolhida, toca nela;
+      - com o padrão, toca no aparelho padrão de agora.
+- [ ] O medidor do microfone com "Padrão do Windows (acompanha)" segue a troca do microfone padrão.
+- [ ] Fone Bluetooth conectado com o app já aberto e posto como padrão:
+      - sem gravação, o som vai para ele em ~2 s;
+      - com gravação, a barra do player avisa e o som vai para ele quando a gravação acabar.
+- Devolva:
+  - a saída da sonda;
+  - qualquer caso em que o som não foi para o aparelho escolhido: qual aparelho e o que você fazia;
+  - o trecho do `listener.log` da troca (só traz ids de aparelho, nunca nomes).
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.

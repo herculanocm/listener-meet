@@ -5,7 +5,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
   do roteiro, numa chamada de verdade.
-- **Próximo passo do dono:** testar a F5.7 pela Parte 17 (reinicie o app antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
+- **Próximo passo do dono:** testar a troca de aparelho pela Parte 18 (D-067) e a F5.7 pela Parte 17 (reinicie o app
+  antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
   Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
   aviso, fone no meio da gravação) e a F5.2 pela Parte 10 (fone conectado com o app aberto, ficha da pessoa, a ata
   depois da identificação, log em DEBUG) e seguir as partes 1 a 9: primeiro
@@ -83,6 +84,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
         Revisão do diff por um agente novo no L1/L2 e no L3. São 1.072 testes. Falta o dono verificar no Windows
         (Parte 17).
+  - [x] **D-067, o som segue o aparelho escolhido no Windows** (29 e 30/10, pedido do dono). O player passou a abrir
+        pelo endpoint padrão de agora e a segui-lo tocando. A auditoria passou por todo lugar que abre áudio: o "Testar
+        3 s", o medidor, o mudo e o loopback.
+        - O refactor do player: `a249d04`.
+        - A correção: `e7a93d0`.
+
+        Revisão do diff por um agente novo. São 1.105 testes. Falta o dono trocar o aparelho de verdade (Parte 18).
 - **Perguntas abertas ao dono** (padrão entre parênteses; só vale com a resposta dele):
   1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
      (aceitar e medir na Parte 6 do roteiro; a alternativa é o `sentencepiece`, dependência nova).
@@ -200,7 +208,8 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   teste de privacidade.
 - **F5.7, aviso sem a exclusão da captura** (R-04 da revisão do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam
   a dica e o menu da bandeja, e o ícone fica igual. Proposta: um selo no ícone enquanto houver chamada pendente.
-- **Suíte travada antes de começar (29/10, F5.7).** Uma execução de `pytest --tudo` ficou 14 min parada antes do
+- **Suíte travada antes de começar (29/10, F5.7; de novo em 30/10, ~6 min na coleta, com o build do Nuitka ao lado;
+  suspeita: a consulta WMI do `platform.machine()`).** Uma execução de `pytest --tudo` ficou 14 min parada antes do
   primeiro teste, com 2,4 s de CPU. A seguinte, com o mesmo código, passou em 2 min. A causa não foi achada. Se voltar,
   rode com a saída num arquivo, não por `| tail`.
 - Saúde dos canais começa "ok" por até 10 s sem sinal; R não avisa antes (D-050: silêncio no começo é normal); rever
