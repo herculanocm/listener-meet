@@ -44,11 +44,12 @@ def live_prepare_command(db_dir: str | Path | None = None, what: str = "live") -
 
 
 def worker_env(torch_threads: int, base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Ambiente do subprocesso: threads limitadas antes de importar torch e CTranslate2 (D-F2-3), sem avisos de symlink."""
+    """Ambiente do subprocesso: threads limitadas antes de importar torch e CTranslate2 (D-F2-3), sem avisos de symlink e
+    sem a telemetria do pyannote, que vem ligada e manda metadados e o IP a `otel.pyannote.ai` (backlog, pergunta 16)."""
     env = dict(os.environ if base is None else base)
     n = str(max(1, int(torch_threads)))
     env.update({"OMP_NUM_THREADS": n, "MKL_NUM_THREADS": n, "CT2_VERBOSE": "0", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-                "PYTHONUTF8": "1"})
+                "PYTHONUTF8": "1", "PYANNOTE_METRICS_ENABLED": "0"})
     return env
 
 

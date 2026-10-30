@@ -128,7 +128,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   16. Telemetria do pyannote (vista na revisão da F5.8, de antes dela). O pyannote.audio 4 vem com a telemetria
       ligada. A cada modelo e pipeline carregados, e a cada diarização, ele manda a `otel.pyannote.ai` a origem do
       modelo, a versão, um id de sessão, a duração do áudio e o número de falantes. Nunca o áudio nem nomes, mas
-      sai o seu IP. Desligar com `PYANNOTE_METRICS_ENABLED=0` no `worker_env`, uma linha num commit pequeno? (sim)
+      sai o seu IP. Desligar com `PYANNOTE_METRICS_ENABLED=0` no `worker_env`, uma linha num commit pequeno? Respondida
+      (30/10): sim, desligada no `worker_env`, que monta o ambiente do worker, do ao vivo e do preparo.
   17. F5.8, pergunta 3: uma trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo
       banco (não agora; uma spec pequena quando você quiser).
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de

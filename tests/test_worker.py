@@ -70,6 +70,7 @@ def test_worker_command_env_and_memory():
     env = process.worker_env(6, {"PATH": "/x"})
     assert env["OMP_NUM_THREADS"] == env["MKL_NUM_THREADS"] == "6" and env["CT2_VERBOSE"] == "0" and env["PATH"] == "/x"
     assert process.worker_env(0)["OMP_NUM_THREADS"] == "1"
+    assert process.worker_env(1, {"PYANNOTE_METRICS_ENABLED": "1"})["PYANNOTE_METRICS_ENABLED"] == "0"     # telemetria desligada
     from listener.pipeline.worker import _platform_hooks
 
     rss = _platform_hooks()[1]()                           # o caminho do worker: no win32 é o da camada de plataforma
