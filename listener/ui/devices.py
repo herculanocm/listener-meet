@@ -47,7 +47,10 @@ def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice
         log.debug("reler os dispositivos de áudio: %s", e)
         changed = False
     if not changed:
-        if not released and follow and _behind_default(platform, combo, devices, meter):
+        now = _default_now(platform, devices) if follow else None
+        if now is not None:
+            _say_now(combo, now)                           # F5.9 (item 8): o "agora X" acompanha o padrão sem reler a lista
+        if not released and now is not None and _behind_default(combo, meter, now):
             close_meter()                                  # D-067: o "acompanha" vai para o padrão de agora
             return MicRefresh(devices, "", True)
         return MicRefresh(devices, "", True) if released else None
@@ -58,7 +61,7 @@ def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice
         log.warning("listar microfones depois da mudança: %s", e)
         return MicRefresh(devices, "", released)
     keep = combo.currentData()
-    kept = fill_mic_combo(combo, fresh, keep, default.id if default else None, follow=follow)
+    kept = fill_mic_combo(combo, fresh, keep, default, follow=follow)
     old = {d.id for d in devices}
     notes = [f"novo: {', '.join(d.name for d in fresh if d.id not in old)}"] if any(d.id not in old for d in fresh) else []
     if keep and not kept:
@@ -67,33 +70,51 @@ def refresh_mics(platform: Platform, combo: QComboBox, devices: list[AudioDevice
     return MicRefresh(fresh, "; ".join(notes), released or meter_open)
 
 
-def _behind_default(platform: Platform, combo: QComboBox, devices: list[AudioDevice], meter: CaptureHandle | None) -> bool:
-    """D-067: o medidor do "acompanha" aberto num microfone que não é o padrão de agora, que já está na lista."""
-    if meter is None or combo.currentData() != FOLLOW_ID:
-        return False
+def _default_now(platform: Platform, devices: list[AudioDevice]) -> AudioDevice | None:
+    """O microfone padrão de agora (D-067: o padrão de console), quando já está na lista; None sem a leitura do sistema."""
     try:
         now = platform.default_input_id()
-    except Exception as e:  # sem a leitura do sistema: o medidor fica
+    except Exception as e:  # sem a leitura do sistema: nada muda
         log.debug("microfone padrão de agora: %s", e)
-        return False
-    return bool(now) and now != meter.device_id and any(d.id == now for d in devices)
+        return None
+    return next((d for d in devices if d.id == now), None) if now else None
 
 
-def fill_mic_combo(combo: QComboBox, devices: list[AudioDevice], keep_id: object, default_id: str | None,
+def _behind_default(combo: QComboBox, meter: CaptureHandle | None, now: AudioDevice) -> bool:
+    """D-067: o medidor do "acompanha" aberto num microfone que não é o padrão de agora."""
+    return meter is not None and combo.currentData() == FOLLOW_ID and now.id != meter.device_id
+
+
+def follow_text(default: AudioDevice | None) -> str:
+    """F5.9 (item 8): "Padrão do Windows (acompanha): agora <aparelho>", com o padrão de console de agora (A-20, como o
+    painel e a tabela de fontes); sem ele, só o "acompanha". O nome do aparelho só na tela (A-22)."""
+    return f"{FOLLOW_TEXT}: agora {default.name}" if default is not None and default.name else FOLLOW_TEXT
+
+
+def _say_now(combo: QComboBox, now: AudioDevice) -> None:
+    """O item "acompanha" diz o padrão de agora; a dica acompanha quando ele é o escolhido."""
+    if combo.count() and combo.itemData(0) == FOLLOW_ID and combo.itemText(0) != follow_text(now):
+        combo.setItemText(0, follow_text(now))
+        if combo.currentIndex() == 0:
+            combo.setToolTip(combo.currentText())
+
+
+def fill_mic_combo(combo: QComboBox, devices: list[AudioDevice], keep_id: object, default: AudioDevice | None,
                    follow: bool = False) -> bool:
     """Refaz o combo sem disparar a troca de microfone; True quando a escolha anterior segue na lista. Com `follow`, o
-    primeiro item é o "acompanha", que sempre segue, e é ele que fica quando o escolhido saiu."""
+    primeiro item é o "acompanha" (com o padrão de agora, F5.9), que sempre segue, e é ele que fica quando o escolhido
+    saiu; sem `follow`, o padrão é o item que fica."""
     combo.blockSignals(True)
     try:
         combo.clear()
         if follow:
-            combo.addItem(FOLLOW_TEXT, FOLLOW_ID)
+            combo.addItem(follow_text(default), FOLLOW_ID)
         for d in devices:
             combo.addItem(d.name, d.id)
         i = 0 if follow and keep_id == FOLLOW_ID else (combo.findData(keep_id) if keep_id else -1)
         kept = i >= 0
         if not kept:
-            i = 0 if follow else (combo.findData(default_id) if default_id else -1)
+            i = 0 if follow else (combo.findData(default.id) if default is not None else -1)
         combo.setCurrentIndex(max(0, i) if combo.count() else -1)
     finally:
         combo.blockSignals(False)

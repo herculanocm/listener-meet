@@ -408,6 +408,7 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
         apps: list[PlayingApp] = []
         if peaks:
             procs, titles = self._processes()
+            per_output = {eid: processes.group_by_app(sessions.peaks_by_pid([group]), procs) for eid, group in reading.items()}
             # D-055: uma linha por app, com o pid da raiz (o Teams novo toca a chamada num WebView2 fora da árvore do
             # ms-teams.exe que tem a outra sessão); o loopback captura a árvore inteira da raiz
             for root, (peak, members) in processes.group_by_app(peaks, procs).items():
@@ -416,7 +417,8 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
                 title = titles.get(root) or next((titles[m] for m in members if titles.get(m)), "")
                 low = exe.lower()
                 meeting = low in MEETING_EXES or (low in BROWSERS and any(h in title.lower() for h in MEETING_TITLE_HINTS))
-                apps.append(PlayingApp(pid=root, exe=exe, title=title, peak=peak, is_meeting_app=meeting))
+                outputs = tuple((eid, roots[root][0]) for eid, roots in per_output.items() if root in roots)   # F5.9 (item 9)
+                apps.append(PlayingApp(pid=root, exe=exe, title=title, peak=peak, is_meeting_app=meeting, outputs=outputs))
             apps.sort(key=lambda a: (not a.is_meeting_app, -a.peak, a.exe.lower()))
         self.last_list_apps_ms = (time.perf_counter() - t0) * 1000
         sig = tuple(sorted((a.pid, a.exe) for a in apps))

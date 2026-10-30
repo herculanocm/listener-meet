@@ -100,8 +100,9 @@ class PlayingApp:
     pid: int
     exe: str                   # nome do executável
     title: str = ""            # título da janela principal, se conhecido
-    peak: float = 0.0          # pico de áudio recente, 0 a 1
+    peak: float = 0.0          # pico de áudio recente, 0 a 1 (o maior entre as saídas)
     is_meeting_app: bool = False
+    outputs: tuple[tuple[str, float], ...] = ()   # F5.9 (item 9): (id do endpoint, pico) de cada saída em que o app toca
 
     @property
     def label(self) -> str:

@@ -298,14 +298,17 @@ def test_the_follow_meter_left_on_an_old_mic_reopens_on_the_default_of_now(qtbot
     combo = QComboBox()
     qtbot.addWidget(combo)
     fill_mic_combo(combo, platform.devices, "", None, follow=True)
+    assert combo.itemText(0) == "Padrão do Windows (acompanha)"            # sem o padrão: só o "acompanha"
     meter = platform.open_mic(None, 16000, lambda *_: None)
     closed: list[int] = []
     kwargs: dict[str, Any] = {"meter_open": True, "close_meter": lambda: closed.append(1), "follow": True}
     assert meter.device_id == MIC.id and refresh_mics(platform, combo, platform.devices, meter=meter, **kwargs) is None
+    assert combo.itemText(0) == f"Padrão do Windows (acompanha): agora {MIC.name}"   # F5.9 (item 8): o "agora X"
     platform.endpoints = replace(BASE_ENDPOINTS, capture=(Endpoint(MIC.id, MIC.name), Endpoint(MIC2.id, MIC2.name)),
                                  capture_default=MIC2.id, capture_comm=MIC2.id)
     result = refresh_mics(platform, combo, platform.devices, meter=meter, **kwargs)
     assert result is not None and result.reopen and closed == [1] and platform.refreshes == 0
+    assert combo.itemText(0) == f"Padrão do Windows (acompanha): agora {MIC2.name}" and combo.toolTip() == combo.itemText(0)
     assert platform.open_mic(None, 16000, lambda *_: None).device_id == MIC2.id    # a reabertura vai para o padrão de agora
     combo.setCurrentIndex(combo.findData(MIC.id))                        # o escolhido: fica
     assert refresh_mics(platform, combo, platform.devices, meter=meter, **kwargs) is None and closed == [1]

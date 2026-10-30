@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
 
@@ -52,6 +53,28 @@ class SourceKey:
 
 SYSTEM_FOLLOW = SourceKey(SourceKind.SYSTEM)
 type _Row = tuple[SourceKey, str, str, float, bool]       # chave, fonte, janela, pico, app de reunião
+
+
+def levels_by_output(apps: Iterable[PlayingApp]) -> dict[str, float]:
+    """F5.9 (item 9): o maior pico de cada saída entre os apps que tocam nela (a linha de cada saída mostra o nível dela:
+    a chamada no fone de comunicação com o alto-falante como padrão aparece onde toca)."""
+    levels: dict[str, float] = {}
+    for app in apps:
+        for eid, peak in app.outputs:
+            levels[eid] = max(levels.get(eid, 0.0), peak)
+    return levels
+
+
+def plays_on(app: PlayingApp, reading: Endpoints | None) -> str:
+    """F5.9 (item 9): a segunda coluna da linha do app: o título e "toca em: <saídas>" (o nome do aparelho só na tela,
+    A-22; a saída que a leitura não nomeia fica de fora)."""
+    names: list[str] = []
+    for eid, _peak in app.outputs:
+        ep = reading.output(eid) if reading is not None else None
+        if ep is not None and ep.name:
+            names.append(ep.name)
+    where = f"toca em: {', '.join(names)}" if names else ""
+    return " · ".join(part for part in (app.title, where) if part)
 
 
 def _release(thread: QThread) -> None:
@@ -206,13 +229,15 @@ class SourceTable(QWidget):
         reading = self._endpoints
         default = reading.output(reading.render_default) if reading is not None else None
         now = f" (agora: {default.name})" if default is not None and default.name else ""
-        rows: list[_Row] = [(SYSTEM_FOLLOW, SYSTEM_TEXT, f"{FOLLOW_TEXT}{now}", 0.0, False)]
+        levels = levels_by_output(self._apps)              # F5.9 (item 9): o nível de cada saída, pelos apps que tocam nela
+        rows: list[_Row] = [(SYSTEM_FOLLOW, SYSTEM_TEXT, f"{FOLLOW_TEXT}{now}", levels.get(default.id, 0.0) if default else 0.0,
+                             False)]
         for e in reading.render if reading is not None else ():
             comm = reading is not None and e.id == reading.render_comm and reading.render_comm != reading.render_default
             rows.append((SourceKey(SourceKind.SYSTEM, output_id=e.id), SYSTEM_TEXT + (" (comunicação)" if comm else ""),
-                         e.name or e.id, 0.0, False))
-        rows += [(SourceKey(SourceKind.APP, pid=app.pid), app.exe.removesuffix(".exe"), app.title, app.peak, app.is_meeting_app)
-                 for app in self._apps]
+                         e.name or e.id, levels.get(e.id, 0.0), False))
+        rows += [(SourceKey(SourceKind.APP, pid=app.pid), app.exe.removesuffix(".exe"), plays_on(app, reading), app.peak,
+                  app.is_meeting_app) for app in self._apps]
         return rows
 
     def render_apps(self, apps: list[PlayingApp]) -> None:

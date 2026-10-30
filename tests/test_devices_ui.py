@@ -9,7 +9,7 @@ from listener.platform.base import AudioDevice
 pytest.importorskip("PySide6")
 
 BT = AudioDevice("bt-1", "Fone BT (Hands-Free)", "fake", 1, 16000, index=1)
-FOLLOW = "Padrão do Windows (acompanha)"
+FOLLOW = "Padrão do Windows (acompanha): agora Mic Fake"        # F5.9 (item 8): com o padrão de console de agora
 
 
 def _items(combo) -> list[str]:

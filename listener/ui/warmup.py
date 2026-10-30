@@ -163,7 +163,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
     def _build_mic(self) -> None:
         self.mic_box = Card("Microfone (canal L: você)")
         self.mic_combo = QComboBox()
-        fill_mic_combo(self.mic_combo, self._devices, FOLLOW_ID, None, follow=True)   # F5.3: "acompanha" primeiro
+        fill_mic_combo(self.mic_combo, self._devices, FOLLOW_ID, self.platform.default_input_device(), follow=True)   # "acompanha" 1º
         # U-033: o nome do dispositivo cabe cortado no combo e inteiro na lista e na dica; com o nome todo ("Grupo de
         # microfones (Tecnologia Intel® Smart Sound para microfones digitais)") a coluna do áudio engolia a da reunião
         self.mic_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)

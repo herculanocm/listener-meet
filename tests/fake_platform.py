@@ -86,6 +86,7 @@ class FakePlatform(Platform):
         self.played: list[tuple[str, int, int]] = []          # D-067: (endpoint, amostras, taxa) de cada `play_sound`
         self.root_pids: dict[str, int | None] = {"meeting.exe": 4242}   # F5.9 (item 4): a raiz de cada app (o teste muda)
         self.mic_echo_of_r_ms: float | None = None            # F5.9 (item 7): o microfone ouve o R, com este atraso
+        self.apps = [PlayingApp(pid=4242, exe="meeting.exe", title="Reunião", peak=0.5, is_meeting_app=True)]   # o teste muda
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -205,7 +206,7 @@ class FakePlatform(Platform):
 
     @override
     def list_playing_apps(self) -> list[PlayingApp]:
-        return [PlayingApp(pid=4242, exe="meeting.exe", title="Reunião", peak=0.5, is_meeting_app=True)]
+        return list(self.apps)
 
     @override
     def audio_activity(self, titles_for: frozenset[str] = frozenset(), degraded: bool = False) -> AudioActivity | None:
