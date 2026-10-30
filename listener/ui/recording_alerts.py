@@ -13,8 +13,11 @@ from ..capture.recorder import Recorder, SourceSpec
 from ..model import DeviceReason, Health, LostReason, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints
 
-ACTION_USE, ACTION_DEVICES, ACTION_OUTPUTS = "use", "devices", "outputs"
+ACTION_USE, ACTION_DEVICES, ACTION_OUTPUTS, ACTION_ROOM = "use", "devices", "outputs", "room"
 DEVICES_BUTTON = "Dispositivos…"
+ROOM_BUTTON = "Marcar como sala"                                                                                      # F5.9 (item 7)
+ECHO_TEXT = "o microfone novo ouve a reunião: use fone ou marque a sala"
+ECHO_TIP = "Marcar como sala liga 'Sala de reunião' nesta gravação: a identificação final trata o canal do microfone como a sala."
 GONE_TEXT = {"L": "microfone escolhido saiu: gravando no padrão do Windows", "R": "saída escolhida saiu: gravando a saída padrão"}
 BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
 LOST_TEXT = {"L": "microfone desconectado; tentando reabrir…", "R": "saída desconectada; tentando reabrir…"}

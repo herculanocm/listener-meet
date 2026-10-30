@@ -86,6 +86,8 @@ def test_meeting_chunks_markers_events_and_cascade(tmp_path):
     assert s.list_events(mid)[0]["data"] == {"source": "system", "conf": 0.5, "n": 3}    # numpy vira número, não texto
     s.update_title(mid, "novo título")
     assert s.get_meeting(mid)["title"] == "novo título"
+    assert s.meetings.set_in_room(mid, True) and s.get_meeting(mid)["is_in_room"] == 1     # F5.9 (item 7): a sala no meio
+    assert s.meetings.set_in_room(mid, False) and s.get_meeting(mid)["is_in_room"] == 0 and not s.meetings.set_in_room(10**9, True)
     assert s._q("SELECT * FROM revisions")[0]["after"] == "novo título"
     assert s.list_meetings()[0]["id"] == mid
     s.delete_meeting(mid)

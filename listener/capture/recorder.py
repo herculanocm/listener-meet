@@ -46,6 +46,7 @@ from .chunker import ChannelChunker, RawChunk, Tap
 from .clock import Clock, SessionClock
 from .reopen import ReopenMixin, _Lost
 from .sinks import ChunkSink, EncodedChunk, RecorderSink
+from .taps import TapFanout
 
 log = get_logger("capture")
 
@@ -104,6 +105,7 @@ class RecordConfig:
     silence_rms: float = 0.004
     l_alert_seconds: float = 15.0
     r_alert_seconds: float = 20.0
+    echo_corr_min: float = 0.25         # F5.9 (item 7): o limiar do aviso de eco depois da troca de microfone
     stop_timeout_s: float = 120.0       # tempo máximo para gravar os pedaços pendentes ao parar (M-04)
     retry_base_s: float = 1.0           # backoff 1, 2, 4... 30 s (testes e medições usam um valor menor)
 
@@ -114,13 +116,15 @@ class RecordConfig:
                    mic_rate=settings.get(SPECS["capture.mic_rate"]), target_rate=settings.get(SPECS["capture.target_rate"]),
                    chunk_seconds=settings.get(SPECS["capture.chunk_seconds"]), silence_rms=settings.get(SPECS["capture.silence_rms"]),
                    l_alert_seconds=settings.get(SPECS["capture.l_alert_seconds"]),
-                   r_alert_seconds=settings.get(SPECS["capture.r_alert_seconds"]))
+                   r_alert_seconds=settings.get(SPECS["capture.r_alert_seconds"]),
+                   echo_corr_min=settings.get(SPECS["capture.echo_corr_min"]))
 
     def apply_live(self, settings: SettingsReader) -> None:
         """Escopo `now`: vale na gravação em curso."""
         self.silence_rms = settings.get(SPECS["capture.silence_rms"])
         self.l_alert_seconds = settings.get(SPECS["capture.l_alert_seconds"])
         self.r_alert_seconds = settings.get(SPECS["capture.r_alert_seconds"])
+        self.echo_corr_min = settings.get(SPECS["capture.echo_corr_min"])
 
     def validate(self) -> list[str]:
         """Erros que fariam a gravação morrer pedaço a pedaço (M-08); vazio = ok."""
@@ -322,8 +326,8 @@ class Recorder(ReopenMixin):
         self._failures = 0
         self._retry_at: float | None = None
         self._zeros = np.zeros(48000, np.float32)
-        # F4: desvio ao vivo (trocado por referência pela interface, lido pela thread de trabalho)
-        self._live_tap: Tap | None = None
+        # F4: desvio ao vivo (ligado pela interface, lido pela thread de trabalho); F5.9: um fanout, para a vigia de eco
+        self._taps = TapFanout()
         self.tap_errors = 0
 
     # ---------------------------------------------------------------- ciclo (thread da interface)
@@ -666,15 +670,19 @@ class Recorder(ReopenMixin):
 
     def set_live_tap(self, fn: Tap | None) -> None:
         """F4: liga (ou desliga, com None) o desvio ao vivo; vale a partir do próximo bloco da thread de trabalho."""
-        self._live_tap = fn
+        self._taps.set("live", fn)
+
+    def set_tap(self, name: str, fn: Tap | None) -> None:
+        """F5.9 (item 7): outro consumidor do mesmo desvio (a vigia de eco), pelo nome; None o desliga."""
+        self._taps.set(name, fn)
 
     def _tap(self, channel: str, start_frame: int, rate: int, block: np.ndarray, flags: int) -> None:
         """Chamado pelo chunker na thread de trabalho: O(1) e nunca derruba a gravação."""
-        fn = self._live_tap
-        if fn is None:
+        taps = self._taps
+        if taps.empty:
             return
         try:
-            fn(channel, start_frame, rate, block, flags)
+            taps(channel, start_frame, rate, block, flags)
         except Exception:
             self.tap_errors += 1
             if self.tap_errors == 1:

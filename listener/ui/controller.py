@@ -687,7 +687,7 @@ class Controller(QObject):
         w.stop_clicked.connect(self.stop_recording)
         w.cancel_clicked.connect(self.cancel_recording)
         self.devices = RecordingDevices(self.platform, rec, panel_parent=w, on_mic_switched=self._mic_switched,
-                                        open_other_app=self.switch_source, parent=self)
+                                        open_other_app=self.switch_source, rooms=self.store.meetings, parent=self)
         w.devices_clicked.connect(self.devices.open_panel)
         w.alert_clicked.connect(self.devices.on_alert)
         self.devices.start()

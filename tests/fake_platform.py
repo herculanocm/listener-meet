@@ -85,6 +85,7 @@ class FakePlatform(Platform):
         self.default_reads = 0                                # D-067: leituras do padrão de agora
         self.played: list[tuple[str, int, int]] = []          # D-067: (endpoint, amostras, taxa) de cada `play_sound`
         self.root_pids: dict[str, int | None] = {"meeting.exe": 4242}   # F5.9 (item 4): a raiz de cada app (o teste muda)
+        self.mic_echo_of_r_ms: float | None = None            # F5.9 (item 7): o microfone ouve o R, com este atraso
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -250,7 +251,10 @@ class FakePlatform(Platform):
         if found is not None and found.id in self.fail_ids:
             raise RuntimeError("o microfone recusou abrir")
         self.mics_at_open.append(sum(1 for s in self.mic_streams if s.stop_calls == 0))
-        stream = self._stream(sample_rate, 1, on_audio, on_error, freq=440.0)
+        echo = self.mic_echo_of_r_ms
+        stream = self._stream(sample_rate, 1, on_audio, on_error, freq=220.0 if echo is not None else 440.0)
+        if echo is not None:                             # o tom do R (220 Hz) atrasado: a correlação do eco o acha
+            stream.phase = -int(sample_rate * echo / 1000)
         stream.device_id = found.id if found else ""
         stream.fail_start = stream.device_id in self.start_fail_ids
         self.mic_streams.append(stream)                  # U-043: o que o PortAudio do sounddevice abriria

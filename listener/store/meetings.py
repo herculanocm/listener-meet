@@ -156,6 +156,11 @@ class MeetingsRepo:
         self.core.execute("UPDATE meetings SET status = ?, ended_at = ?, duration_ms = ? WHERE id = ?",
                           (status, _now(), int(duration_ms), meeting_id))
 
+    def set_in_room(self, meeting_id: int, in_room: bool) -> bool:
+        """F5.9 (item 7, pergunta 2): liga ou desliga "Sala de reunião" na reunião em curso; o runner lê a reunião no começo
+        do job, então vale para o pipeline final (o ao vivo segue como começou). True quando a reunião existe."""
+        return self.core.execute("UPDATE meetings SET is_in_room = ? WHERE id = ?", (int(bool(in_room)), meeting_id)) > 0
+
     def set_status(self, meeting_id: int, status: MeetingStatus) -> None:
         self.core.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
 

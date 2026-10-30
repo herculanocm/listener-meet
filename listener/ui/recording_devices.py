@@ -15,20 +15,23 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from PySide6.QtCore import QObject, QTimer
+from PySide6.QtWidgets import QMessageBox
 
+from ..capture.echo_watch import EchoWatch
 from ..capture.recorder import REREAD_REFUSED, DeviceSwitch, Recorder, SourceSpec
 from ..log import get_logger
-from ..model import DeviceReason, SourceKind
+from ..model import DeviceReason, EventType, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints, log_id
 from .common import clamp_to_screens
 from .devices_panel import (MIC_FOLLOW, OTHER_APP, OUT_FOLLOW, DevicesPanel, PanelView, is_hands_free, mic_rows, output_rows,
                             panel_notes)
 # F5.9 (L1a): as decisões sem Qt e a linha de alerta moram em `recording_alerts.py`; reexportadas aqui para quem as importa
-from .recording_alerts import (ACTION_DEVICES, ACTION_OUTPUTS, ACTION_USE, BACK_TEXT, DEVICES_BUTTON, GONE_TEXT, Alert,
-                               alert_line, comm_hint, mic_action, missing_edge, output_action)
+from .recording_alerts import (ACTION_DEVICES, ACTION_OUTPUTS, ACTION_ROOM, ACTION_USE, BACK_TEXT, DEVICES_BUTTON, ECHO_TEXT,
+                               ECHO_TIP, GONE_TEXT, ROOM_BUTTON, Alert, alert_line, comm_hint, mic_action, missing_edge,
+                               output_action)
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
@@ -49,19 +52,27 @@ def endpoint_device(ep: Endpoint) -> AudioDevice:
 
 
 # ---------------------------------------------------------------- a gravação
+class RoomStore(Protocol):
+    """F5.9 (item 7, pergunta 2): quem liga "Sala de reunião" na reunião em curso (o `MeetingsRepo` do banco)."""
+    def set_in_room(self, meeting_id: int, in_room: bool) -> bool: ...
+
+
 class RecordingDevices(QObject):
-    """Os dispositivos de uma gravação: a vigia de 2 s, as trocas, o aviso do widget e o painel do botão 🎧."""
+    """Os dispositivos de uma gravação: a vigia de 2 s, as trocas, o aviso do widget e o painel do botão 🎧. F5.9 (item 7):
+    a vigia de eco depois de cada troca de microfone (`EchoWatch`, pelo desvio ao vivo do gravador)."""
 
     def __init__(self, platform: Platform, recorder: Recorder, *, panel_parent: QWidget | None = None,
                  on_mic_switched: Callable[[], object] | None = None, open_other_app: Callable[[], object] | None = None,
-                 monotonic: Callable[[], float] = time.monotonic, parent: QObject | None = None):
+                 rooms: RoomStore | None = None, monotonic: Callable[[], float] = time.monotonic, parent: QObject | None = None):
         super().__init__(parent)
         self.platform = platform
         self.recorder = recorder
         self.panel_parent = panel_parent
         self.on_mic_switched = on_mic_switched           # o controlador ignora a primeira leitura do poller do mudo (A-18)
         self.open_other_app = open_other_app             # o "Trocar fonte" de antes ("Outro app…")
+        self.rooms = rooms                               # F5.9: o "Marcar como sala" do aviso de eco
         self.monotonic = monotonic
+        self.echo = EchoWatch(clock=monotonic)
         self.reading: Endpoints | None = None
         self.start_ids: frozenset[str] = frozenset()     # A-19: "novo" é o que está fora deste conjunto
         self.panel: DevicesPanel | None = None
@@ -79,10 +90,12 @@ class RecordingDevices(QObject):
         self.reading = self._read()
         self.start_ids = self.reading.ids() if self.reading is not None else frozenset()
         self._last_sig = self.reading.signature if self.reading is not None else None
+        self.recorder.set_tap("echo", self.echo.tap)      # F5.9 (item 7): só acumula depois de `arm()`, na troca
         self._timer.start()
 
     def stop(self) -> None:
         self._timer.stop()
+        self.recorder.set_tap("echo", None)
         if self.panel is not None:
             panel, self.panel = self.panel, None
             panel.close()
@@ -101,6 +114,7 @@ class RecordingDevices(QObject):
         escolhido."""
         if self.recorder.stopped:
             return
+        self._check_echo()
         reading = self._read()
         if reading is None:
             return
@@ -113,6 +127,34 @@ class RecordingDevices(QObject):
             if self.panel is not None and self.panel.isVisible():
                 self._refresh_panel()
         self._check_missing(reading)
+
+    def _check_echo(self) -> None:
+        """F5.9 (item 7): o resultado da correlação depois da troca de microfone; acima do limiar (`capture.echo_corr_min`), o
+        aviso com "Marcar como sala" (pergunta 2) e o evento `echo_warning` (correlação e atraso, sem áudio)."""
+        res = self.echo.poll()
+        rec = self.recorder
+        if res is None or res.correlation < rec.cfg.echo_corr_min:
+            return
+        log.warning("reunião %s: o microfone novo ouve a reunião (correlação %.2f, atraso %.0f ms)", rec.meeting_id,
+                    res.correlation, res.offset_ms)
+        rec.sink.add_event(rec.meeting_id, round(rec.elapsed() * 1000), EventType.ECHO_WARNING,
+                           {"correlation": round(res.correlation, 3), "offset_ms": round(res.offset_ms)})
+        self._set_notice(Alert(ECHO_TEXT, ROOM_BUTTON, ACTION_ROOM, ECHO_TIP), NEW_NOTICE_S)
+
+    def mark_room(self) -> bool:
+        """Pergunta 2: com confirmação, liga "Sala de reunião" da reunião em curso para o pipeline final (o ao vivo segue como
+        começou); sem onde gravar, só o aviso."""
+        rec = self.recorder
+        if self.rooms is None:
+            return False
+        answer = QMessageBox.question(self.panel_parent, ROOM_BUTTON, "Marcar esta reunião como sala de reunião? A identificação "
+                                      "final passa a tratar o canal do microfone como a sala (várias vozes).")
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self._notice = None
+        done = self.rooms.set_in_room(rec.meeting_id, True)
+        log.info("reunião %s: marcada como sala de reunião pelo aviso de eco (%s)", rec.meeting_id, "gravado" if done else "não achou")
+        return done
 
     def _check_missing(self, reading: Endpoints) -> None:
         """R-04: o escolhido que sumiu e outro aparelho no lugar, a cada leitura (quem trocou pode ter sido a reabertura do
@@ -176,6 +218,7 @@ class RecordingDevices(QObject):
                 log.warning("reunião %s: o mudo não passou ao microfone novo: %s", rec.meeting_id, e)
             if self.on_mic_switched is not None:
                 self.on_mic_switched()
+            self.echo.arm()                              # F5.9 (item 7): o microfone novo ouve a reunião?
         return result
 
     def _open_device(self, endpoint_id: str) -> AudioDevice | None:
@@ -209,6 +252,8 @@ class RecordingDevices(QObject):
             self.open_panel(notice[2].container if notice is not None and notice[2] is not None else "")
         elif action == ACTION_DEVICES:
             self.open_panel()
+        elif action == ACTION_ROOM:                      # F5.9 (item 7, pergunta 2)
+            self.mark_room()
 
     # ---------------------------------------------------------------- aviso e alerta
     def _set_notice(self, alert: Alert, seconds: float, ep: Endpoint | None = None) -> None:
