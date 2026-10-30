@@ -270,6 +270,33 @@ def test_two_devices_with_a_common_prefix_never_match_each_other(monkeypatch, ca
     assert sum("nome repetido" in r.getMessage() for r in caplog.records) == 1 and "WH-1000XM4" not in caplog.text
 
 
+def test_the_default_loopback_matches_by_exact_name_before_substring_and_prefers_the_shortest():
+    """Revisão do L3: o padrão "Fone X" com "Fone X Hands-Free [Loopback]" antes na lista abria no irmão HFP (substring):
+    agora o nome igual primeiro; só sem ele, a substring (o PyAudio trunca nomes), e a mais curta."""
+    from types import SimpleNamespace
+
+    from listener.platform.win32 import system_loopback as sl
+
+    def pa_for(loopbacks: list[dict[str, object]], default_name: str) -> SimpleNamespace:
+        return SimpleNamespace(get_loopback_device_info_generator=lambda: iter(loopbacks),
+                               get_host_api_info_by_type=lambda _t: {"defaultOutputDevice": 10},
+                               get_device_info_by_index=lambda _i: {"name": default_name, "isLoopbackDevice": False})
+
+    pyaudio = SimpleNamespace(paWASAPI=13)
+    sibling_first: list[dict[str, object]] = [{"index": 20, "name": "Fone X Hands-Free [Loopback]"},
+                                              {"index": 21, "name": "Fone X [Loopback]"}]
+    assert sl._pick_loopback(pa_for(sibling_first, "Fone X"), pyaudio, "")["index"] == 21               # o "acompanha"
+    assert sl._pick_loopback(pa_for(sibling_first, "Fone X"), pyaudio, "Fone Y")["index"] == 21         # ausente: o padrão certo
+    truncated: list[dict[str, object]] = [{"index": 30, "name": "Fone X Hands-Free [Loopback]"},
+                                          {"index": 31, "name": "Fone X (2) [Loopback]"}]
+    assert sl._pick_loopback(pa_for(truncated, "Fone X"), pyaudio, "")["index"] == 31                  # sem o igual: a substring mais curta
+    pa = pa_for([], "Fone X")
+    pa.get_device_info_by_index = lambda _i: {"index": 40, "name": "Fone X [Loopback]", "isLoopbackDevice": True}
+    assert sl._pick_loopback(pa, pyaudio, "")["index"] == 40                                            # o padrão já é loopback
+    with pytest.raises(RuntimeError):
+        sl._pick_loopback(pa_for([{"index": 50, "name": "Outro [Loopback]"}], "Fone X"), pyaudio, "")
+
+
 # ---------------------------------------------------------------- F5.9 L1b: a prova de vida dos handles
 def test_the_stream_handle_answers_alive_only_between_start_and_stop():
     """F5.9 (item 1): `alive()` é None sem `alive_fn`, antes do `start()`, depois do nosso `stop()` ou do fim avisado, e quando

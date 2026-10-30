@@ -45,10 +45,21 @@ def _pick_loopback(pa: Any, pyaudio: Any, name: str) -> Mapping[str, Any]:
         if found:
             log.warning("a saída escolhida tem o nome repetido na lista de loopback (%d vezes); o loopback vai na saída padrão",
                         len(found))
+    return _default_loopback(pa, pyaudio, loopbacks)
+
+
+def _default_loopback(pa: Any, pyaudio: Any, loopbacks: list[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """O loopback da saída padrão do PyAudioWPatch, pelo nome igual (revisão do L3: a substring abria o irmão "Hands-Free"
+    que viesse antes na lista, e o "acompanha" é o caso mais comum); só sem o igual, por substring (o PyAudio trunca
+    nomes), o mais curto."""
     wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
     speakers = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-    dev = speakers if speakers.get("isLoopbackDevice") else next((lb for lb in loopbacks if speakers["name"] in lb["name"]),
-                                                                  None)
+    if speakers.get("isLoopbackDevice"):
+        return speakers
+    name = str(speakers["name"])
+    exact = [lb for lb in loopbacks if _names_match(_loopback_base(lb), name)]
+    partial = sorted((lb for lb in loopbacks if name in str(lb["name"])), key=lambda lb: len(str(lb["name"])))
+    dev = exact[0] if exact else (partial[0] if partial else None)
     if dev is None:
         raise RuntimeError("nenhum dispositivo de loopback WASAPI encontrado")
     return dev
