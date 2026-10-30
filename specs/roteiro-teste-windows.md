@@ -339,11 +339,11 @@ Nada aqui grava sozinho: o app só grava depois do seu clique em Gravar.
       - os outros avisos do app sobem acima dele.
 - [ ] Ligue o Narrador: o cartão é lido quando aparece, sem receber o foco.
 - [ ] A 150 % e no tema escuro, o cartão e o cartão das Configurações cabem na tela.
-- [ ] Teste a saída com a sonda presa:
+- [ ] A saída do app no meio de uma troca de dispositivo (o sensor pode estar preso no sistema de áudio):
       - troque o dock ou o fone e feche o app pelo Sair logo em seguida;
       - faça um logoff com o app aberto.
-      Nos dois casos, nenhum "parou de funcionar" do Windows, e o `listener.log` fecha com "app encerrado" ou com
-      "saída imediata".
+      Nos dois casos, o Windows não mostra nenhum "parou de funcionar". O `listener.log` traz "aviso de reunião sem
+      gravação: parado" e, se o sensor ficou preso, "saída imediata".
 - Devolva:
   - a saída da sonda;
   - quanto tempo o aviso levou para aparecer;
