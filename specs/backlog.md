@@ -3,6 +3,8 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (29/10/2026, Windows nativo; tudo commitado; push do dono)
+- **F5.8 aprovada** (30/10, `features/F5.8-executavel-windows.md`, D-068 e D-069): o `.exe` pelo PyInstaller em pasta,
+  em implementação.
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
   do roteiro, numa chamada de verdade.
 - **Próximo passo do dono:** testar a troca de aparelho pela Parte 18 (D-067) e a F5.7 pela Parte 17 (reinicie o app

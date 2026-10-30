@@ -79,7 +79,7 @@ Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enqua
 · sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy · faster-whisper ou WhisperX
 (CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 (vetores em numpy, D-048) ·
 google-genai, openai, anthropic · onnxruntime e tokenizers (busca local) · python-docx · pynput · empacotamento: venv
-e atalho; PyInstaller só se necessário. Versões medidas:
+e atalho, ou o `.exe` do PyInstaller em pasta (F5.8, D-069). Versões medidas:
 `memory/maquina.md`.
 
 ## Riscos de desenho
