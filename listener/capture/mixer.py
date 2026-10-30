@@ -23,6 +23,13 @@ class FrameMixer:
         self._pending = [np.zeros((0, channels), np.float32) for _ in range(max(0, sources - 1))]
         self._lock = threading.Lock()
 
+    def add_source(self) -> int:
+        """F5.9 (item 3): uma fonte a mais, somada aos próximos blocos da raiz (a chamada que entra depois do "Gravar" num
+        processo novo do app); devolve o índice dela para `feed`. Sob a trava: espera no máximo um callback."""
+        with self._lock:
+            self._pending.append(np.zeros((0, self.channels), np.float32))
+            return len(self._pending)
+
     def feed(self, source: int, block: np.ndarray, t: float) -> None:
         """Um bloco da fonte `source` (0 = a principal), começando em `t` (perf_counter)."""
         frames = np.asarray(block, dtype=np.float32).reshape(-1, self.channels)

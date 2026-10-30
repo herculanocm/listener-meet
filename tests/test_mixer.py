@@ -26,6 +26,22 @@ def test_the_main_source_paces_and_the_others_are_added_in_order():
     assert np.allclose(out[2][0][0], 0.25) and np.allclose(out[2][0][1], 0.0)
 
 
+def test_a_source_added_later_is_summed_from_the_next_root_block_on():
+    """F5.9 (item 3): `add_source` devolve o índice novo; o que a fonte nova entrega entra no próximo bloco da raiz, e o que
+    já estava guardado das outras não muda."""
+    out, cb = _collect()
+    mixer = FrameMixer(1, 10, 1, cb)                                  # só a raiz: o mixer existe mesmo com um alvo
+    mixer.feed(0, np.full(2, 0.5, np.float32), 1.0)
+    assert np.allclose(out[0][0][:, 0], 0.5)
+    assert mixer.add_source() == 1 and mixer.add_source() == 2
+    mixer.feed(2, np.full(3, 0.25, np.float32), 1.1)
+    mixer.feed(1, np.full(1, 0.1, np.float32), 1.1)
+    mixer.feed(0, np.full(2, 0.5, np.float32), 1.2)
+    assert np.allclose(out[1][0][:, 0], [0.85, 0.75])                 # 0,5 + 0,1 + 0,25; depois 0,5 + 0,25
+    mixer.feed(0, np.zeros(2, np.float32), 1.4)
+    assert np.allclose(out[2][0][:, 0], [0.25, 0.0])                  # o resto da fonte 2
+
+
 def test_mono_blocks_clip_and_a_runaway_source_keeps_only_the_recent_lag():
     out, cb = _collect()
     mixer = FrameMixer(3, 4, 1, cb, max_lag_s=1.0)                    # até 4 quadros guardados por fonte

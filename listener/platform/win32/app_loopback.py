@@ -1,12 +1,15 @@
-"""F5.9 (L1a): o loopback de um app pelo proc-tap, fora de `platform.py`. D-055: o loopback de processo do Windows pega o
-processo e os filhos diretos, não os netos, e o Teams novo toca a chamada num WebView2 neto da raiz: cada sessão de áudio
-do app mais funda que isso ganha uma captura própria, somada à da raiz (`capture/mixer.py`). Um mixin do `Win32Platform`:
-o snapshot de processos (`_processes`, com cache) e as sessões de saída (`_render_sessions`) são dele."""
+"""F5.9 (L1a e L2): o loopback de um app pelo proc-tap, fora de `platform.py`. D-055: o loopback de processo do Windows pega
+o processo e os filhos diretos, não os netos, e o Teams novo toca a chamada num WebView2 neto da raiz: cada sessão de
+áudio do app mais funda que isso ganha uma captura própria, somada à da raiz (`capture/mixer.py`). F5.9 (item 3): o mixer
+existe sempre, mesmo com um alvo, e uma vigia numa thread própria (`AppWatch`) relê a cada 2 s os processos e as sessões
+de saída para somar o processo novo (a chamada que entra depois do "Gravar") e parar o tap do que saiu. Um mixin do
+`Win32Platform`: o snapshot com cache (`_processes`) e as sessões de saída (`_render_sessions`) são dele."""
 from __future__ import annotations
 
 import functools
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import numpy as np
@@ -14,10 +17,25 @@ import numpy as np
 from ...capture.mixer import FrameMixer
 from ...log import get_logger
 from ..base import AudioCallback, ErrorCallback
-from . import processes, sessions
+from . import endpoints, processes, sessions
 from .stream import _StreamHandle
 
 log = get_logger("platform.win32.app_loopback")
+
+RESCAN_S = 2.0                 # F5.9 (item 3): a vigia do app relê processos e sessões a cada tanto
+WATCH_JOIN_S = 1.0             # o `stop()` espera a vigia sair até isto (uma releitura leva 15 a 30 ms, pico 278 ms)
+
+type Snapshot = Callable[[], dict[int, processes.ProcInfo]]
+type FlowFactory = Callable[[], sessions.FlowSessions]
+type OpenTap = Callable[[int, AudioCallback], _StreamHandle]
+
+
+def new_targets(current: Iterable[int], root: int, session_pids: Iterable[int], procs: dict[int, processes.ProcInfo]) -> list[int]:
+    """F5.9 (item 3), pura: os pids do app com sessão de áudio que ainda não têm tap e estão mais fundos que um alvo (o
+    filho direto de um alvo já vem no loopback dele, D-055). Os taps de hoje entram como alvos, para o filho novo de um
+    deles não ganhar um tap em dobro. Do mais raso ao mais fundo."""
+    known = set(current)
+    return [p for p in processes.loopback_targets(root, set(session_pids) | known, procs) if p not in known]
 
 
 class _ProcessLife:
@@ -43,11 +61,147 @@ class _ProcessLife:
             self.handle = None
 
 
+class AppTaps:
+    """F5.9 (item 3): os taps de um app somados num mixer: a raiz (índice 0) e um por processo mais fundo, no índice que
+    `add_source` deu. A vigia (thread própria) soma os novos e para o que saiu; a interface inicia e fecha; uma trava cobre
+    a lista. Fechado, nada mais entra."""
+
+    def __init__(self, root: int, main: _StreamHandle, mixer: FrameMixer, open_tap: OpenTap) -> None:
+        self.root = root
+        self.mixer = mixer
+        self._open_tap = open_tap
+        self.taps: dict[int, _StreamHandle] = {root: main}
+        self.lock = threading.Lock()
+        self.started = False
+        self.closed = False
+
+    def pids(self) -> list[int]:
+        with self.lock:
+            return list(self.taps)
+
+    def add(self, pid: int) -> bool:
+        """Um tap a mais, somado ao mixer (já iniciado, se os outros estão): o processo que saiu ou recusou, ou o formato
+        diferente, fica de fora (como a raiz com os seus na abertura)."""
+        with self.lock:
+            if self.closed or pid in self.taps:
+                return False
+            handle = self._open(pid, self.mixer.add_source())
+            if handle is None:
+                return False
+            self.taps[pid] = handle
+            return True
+
+    def _open(self, pid: int, index: int) -> _StreamHandle | None:
+        try:
+            handle = self._open_tap(pid, functools.partial(self.mixer.feed, index))
+        except Exception as e:                            # o processo saiu ou recusou: segue com o que há
+            log.warning("loopback do processo %s (do app %s) não abriu: %s", pid, self.root, e)
+            return None
+        if (handle.sample_rate, handle.channels) != (self.mixer.sample_rate, self.mixer.channels):
+            log.warning("loopback do processo %s em outro formato (%d Hz, %d canais): fica de fora", pid, handle.sample_rate,
+                        handle.channels)
+            handle.stop()
+            return None
+        if self.started:
+            try:
+                handle.start()
+            except Exception as e:
+                log.warning("loopback do processo %s (do app %s) não começou: %s", pid, self.root, e)
+                handle.stop()
+                return None
+        return handle
+
+    def stop_dead(self) -> list[int]:
+        """Os sub-alvos cujo processo saiu têm o tap parado (a thread do proc-tap gira a 1 ms à toa), sem sair do mixer."""
+        with self.lock:
+            dead = [pid for pid, h in self.taps.items() if pid != self.root and h.alive() is False]
+            for pid in dead:
+                self.taps[pid].stop()
+        return dead
+
+    def start(self) -> None:
+        with self.lock:
+            self.started = True
+            for h in self.taps.values():
+                h.start()
+
+    def close(self) -> None:
+        with self.lock:
+            self.closed = True
+            for h in self.taps.values():
+                h.stop()
+
+
+class AppWatch(threading.Thread):
+    """F5.9 (item 3): a vigia do loopback do app. A cada `every_s` tira o próprio snapshot de processos (Toolhelp32, nunca
+    o cache de 3 s do `_Poller`) e lê as sessões de saída com um `FlowSessions(keep=True)` criado, lido e fechado nesta
+    thread (o COM exige); o pid novo do app mais fundo que um alvo ganha um tap; o sub-alvo que saiu tem o tap parado.
+    Nunca na thread da interface (reler custa 15 a 30 ms, pico 278 ms)."""
+
+    def __init__(self, taps: AppTaps, snapshot: Snapshot, flow_factory: FlowFactory, every_s: float = RESCAN_S) -> None:
+        super().__init__(name=f"app-loopback-{taps.root}", daemon=True)
+        self._taps = taps
+        self._snapshot = snapshot
+        self._flow_factory = flow_factory
+        self._every = every_s
+        self._stopping = threading.Event()         # não `_stop`: o `Thread` usa esse nome por dentro
+        self.rescans = 0                                   # instrumentação
+        self.last_ms = 0.0
+
+    def run(self) -> None:
+        flow: sessions.FlowSessions | None = None
+        try:
+            flow = self._flow_factory()
+            while not self._stopping.wait(self._every):
+                self.rescan(flow)
+        except Exception as e:
+            log.warning("vigia do loopback do app %s parou: %s", self._taps.root, e)
+        finally:
+            if flow is not None:
+                flow.close()                               # na thread que leu
+
+    def rescan(self, flow: sessions.FlowSessions) -> list[int]:
+        """Uma releitura: para o tap de quem saiu e soma o processo novo; devolve os pids somados. A releitura que falha
+        (o Core Audio fora) fica para a próxima."""
+        t0 = time.perf_counter()
+        self.rescans += 1
+        root = self._taps.root
+        try:
+            procs = self._snapshot()
+            session_pids = {s.pid for group in flow.read().values() for s in group}
+        except Exception as e:
+            log.debug("vigia do loopback do app %s: releitura falhou: %s", root, e)
+            return []
+        for pid in self._taps.stop_dead():
+            log.info("loopback do app %s: o processo %s saiu; tap parado", root, pid)
+        added = [pid for pid in new_targets(self._taps.pids(), root, session_pids, procs) if self._taps.add(pid)]
+        if added:
+            log.info("loopback do app %s: processo(s) %s somado(s), %d tap(s)", root, ", ".join(map(str, added)),
+                     len(self._taps.pids()))
+        self.last_ms = (time.perf_counter() - t0) * 1000
+        return added
+
+    def close(self) -> None:
+        """Da thread da interface: acorda a vigia e espera até `WATCH_JOIN_S`; presa no COM, fica para trás como daemon."""
+        self._stopping.set()
+        if self.is_alive():
+            self.join(WATCH_JOIN_S)
+
+
 class Win32AppLoopback:
     """`Platform.open_app_loopback` no Windows (D-055), herdado pelo `Win32Platform` (o `platform.py` não cresce)."""
 
     _processes: Callable[[], tuple[dict[int, processes.ProcInfo], dict[int, str]]]   # do `Win32Platform`
     _render_sessions: sessions.FlowSessions                                          # do `Win32Platform`
+    watch_every_s: float = RESCAN_S                                                  # os testes encurtam
+
+    def _watch_snapshot(self) -> dict[int, processes.ProcInfo]:
+        """O snapshot da vigia: o próprio (11 a 20 ms), na thread dela; nunca o cache do `_Poller`."""
+        return processes.snapshot_processes()
+
+    def _watch_flow(self) -> sessions.FlowSessions:
+        """As sessões de saída da vigia, guardadas (`keep`); criadas, lidas e fechadas na thread dela."""
+        return sessions.FlowSessions(endpoints.FLOW_RENDER, keep=True)
 
     def _session_pids(self) -> set[int]:
         """Os processos com sessão de áudio agora (qualquer estado), para os alvos do loopback do app. F5.7: em todas as
@@ -61,38 +215,28 @@ class Win32AppLoopback:
 
     def open_app_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
         """O som do app de `pid` (a raiz que a lista de apps oferece, D-055): o loopback do Windows pega o processo e os
-        filhos diretos, então cada sessão do app mais funda que isso ganha uma captura própria, somada à da raiz."""
+        filhos diretos, então cada sessão do app mais funda que isso ganha uma captura própria, somada à da raiz. F5.9
+        (item 3): o mixer existe sempre e a vigia nasce no `start()` e morre no `stop()`."""
         procs, _titles = self._processes()
         targets = processes.loopback_targets(pid, self._session_pids(), procs) if procs else [pid]
-        if len(targets) == 1:
-            return self._open_process_loopback(pid, on_audio, on_error)
         holder: dict[str, FrameMixer] = {}                 # o formato vem da captura da raiz; os dados, só depois do start
         main = self._open_process_loopback(pid, lambda block, t: holder["mixer"].feed(0, block, t), on_error)
-        mixer = holder["mixer"] = FrameMixer(len(targets), main.sample_rate, main.channels, on_audio)
-        parts = [main]
-        for i, extra in enumerate(targets[1:], start=1):
-            try:
-                h = self._open_process_loopback(extra, functools.partial(mixer.feed, i), None)
-            except Exception as e:                        # o processo saiu ou recusou: segue com a raiz
-                log.warning("loopback do processo %s (do app %s) não abriu: %s", extra, pid, e)
-                continue
-            if (h.sample_rate, h.channels) != (main.sample_rate, main.channels):
-                log.warning("loopback do processo %s em outro formato (%d Hz, %d canais): fica de fora", extra, h.sample_rate,
-                            h.channels)
-                h.stop()
-                continue
-            parts.append(h)
-        log.info("loopback do app %s: %d processo(s) somados (%s)", pid, len(parts), ", ".join(str(t) for t in targets))
+        mixer = holder["mixer"] = FrameMixer(1, main.sample_rate, main.channels, on_audio)
+        taps = AppTaps(pid, main, mixer, self._open_process_loopback)
+        for extra in targets[1:]:
+            taps.add(extra)
+        log.info("loopback do app %s: %d processo(s) somados (%s)", pid, len(taps.pids()), ", ".join(map(str, taps.pids())))
+        watch = AppWatch(taps, self._watch_snapshot, self._watch_flow, self.watch_every_s)
 
         def start() -> None:
-            for h in parts:
-                h.start()
+            taps.start()
+            watch.start()
 
         def stop() -> None:
-            for h in parts:
-                h.stop()
+            watch.close()
+            taps.close()
 
-        # F5.9 (item 1): o composto responde pela raiz; um sub-alvo morto é caso do re-scan (L2), não do canal perdido
+        # F5.9 (item 1): o composto responde pela raiz; um sub-alvo morto é da vigia (o tap parado), não do canal perdido
         return _StreamHandle(start, stop, main.sample_rate, main.channels, on_error, alive_fn=main.alive)
 
     def _open_process_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
