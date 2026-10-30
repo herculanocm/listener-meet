@@ -45,8 +45,9 @@ class AudioDevice:
 
 
 def pick_device(devices: list[AudioDevice], device_id: str | None, name: str | None) -> AudioDevice | None:
-    """Acha o dispositivo salvo: pelo id estável, depois pelo nome (exato, depois por prefixo). Índices antigos
-    (só dígitos, F1) são ignorados. None = não está mais nesta máquina: quem chama avisa e cai no padrão."""
+    """Acha o dispositivo salvo: pelo id estável, depois pelo nome exato; prefixo nunca (F5.9, item 5: a lista é só WASAPI,
+    com o nome inteiro, e dois fones da mesma família só diferem no fim). Índices antigos (só dígitos, F1) são ignorados.
+    None = não está mais nesta máquina: quem chama avisa e cai no padrão."""
     if device_id and not device_id.isdigit():
         for d in devices:
             if d.id == device_id:
@@ -54,11 +55,6 @@ def pick_device(devices: list[AudioDevice], device_id: str | None, name: str | N
     if name:
         for d in devices:
             if d.name == name:
-                return d
-        low = name.lower()
-        for d in devices:
-            dn = d.name.lower()
-            if len(low) >= 20 and (dn.startswith(low[:24]) or low.startswith(dn[:24])):
                 return d
     return None
 

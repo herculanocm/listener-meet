@@ -31,7 +31,6 @@ from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, En
                     log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
 from . import activity, app_loopback, endpoints, mute, output, processes, sessions, system_loopback
-from .endpoints import names_match as _names_match
 from .hotkeys import Win32Hotkeys
 from .stream import _StreamHandle
 
@@ -306,7 +305,8 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
                 continue
             if "WASAPI" not in apis[d["hostapi"]]["name"]:   # MME/DirectSound/WDM-KS duplicam os mesmos microfones
                 continue
-            stable = ids.get(i) or next((dev_id for name, dev_id, _ in caps if _names_match(name, d["name"])), None)
+            found = endpoints.by_name(caps, d["name"], lambda c: str(c[0]))   # F5.9 (item 5): o nome igual, e um só
+            stable = ids.get(i) or (found[1] if found is not None else None)
             out.append(AudioDevice(id=stable or f"{NAME_ID_PREFIX}{d['name']}", name=d["name"], api="WASAPI",
                                    channels=int(d["max_input_channels"]), sample_rate=int(d["default_samplerate"]), index=i))
         self._devices_cache = (now, out)

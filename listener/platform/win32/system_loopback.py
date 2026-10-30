@@ -35,12 +35,16 @@ def _loopback_base(dev: Mapping[str, Any]) -> str:
 
 
 def _pick_loopback(pa: Any, pyaudio: Any, name: str) -> Mapping[str, Any]:
-    """O loopback da saída `name` na lista do PyAudioWPatch ("<nome> [Loopback]"); sem ela, o da saída padrão dele."""
+    """O loopback da saída `name` na lista do PyAudioWPatch ("<nome> [Loopback]"), pelo nome igual; sem ela, ou com o nome
+    repetido na lista (F5.9, item 5: ambíguo, como o AMBIGUOUS da R-02; no log só a contagem, A-22), o da saída padrão."""
     loopbacks = list(pa.get_loopback_device_info_generator())
     if name:
-        found = _by_name(loopbacks, name, _loopback_base)
-        if found is not None:
-            return found
+        found = [lb for lb in loopbacks if _names_match(_loopback_base(lb), name)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            log.warning("a saída escolhida tem o nome repetido na lista de loopback (%d vezes); o loopback vai na saída padrão",
+                        len(found))
     wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
     speakers = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
     dev = speakers if speakers.get("isLoopbackDevice") else next((lb for lb in loopbacks if speakers["name"] in lb["name"]),

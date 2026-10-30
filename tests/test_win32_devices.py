@@ -228,6 +228,48 @@ def test_a_name_id_is_summarized_in_the_messages_and_the_log(monkeypatch, caplog
     assert "Fulano" not in caplog.text and log_id(named.id) in caplog.text
 
 
+# ---------------------------------------------------------------- F5.9 L3: o casamento sem prefixo (Aceite 5)
+def test_two_devices_with_a_common_prefix_never_match_each_other(monkeypatch, caplog):
+    """Item 5: dois fones da mesma família só diferem no fim do nome. O salvo ausente não cai no irmão (`pick_device`
+    pelo id e pelo nome exato, `None` senão); `_resolve_input` estrito recusa; o loopback com o nome repetido na lista do
+    PyAudioWPatch vai na saída padrão com uma linha de log sem o nome do aparelho; o id estável do microfone pelo nome
+    só quando o nome é um só no Core Audio."""
+    import logging
+    from types import SimpleNamespace
+
+    from listener.platform.base import AudioDevice, pick_device
+    from listener.platform.win32 import endpoints, system_loopback as sl
+    from listener.platform.win32 import platform as wp
+
+    stereo = AudioDevice("ep-stereo", "Fone de Ouvido (WH-1000XM4)", "WASAPI", 1, 16000, index=4)
+    hands_free = AudioDevice("ep-hfp", "Fone de Ouvido (WH-1000XM4) Hands-Free", "WASAPI", 1, 16000, index=5)
+    assert pick_device([stereo, hands_free], "ep-sumiu", stereo.name) is stereo
+    assert pick_device([hands_free], "ep-sumiu", stereo.name) is None                   # o irmão não serve
+    assert pick_device([stereo], "ep-sumiu", hands_free.name) is None
+    plat = wp.Win32Platform()
+    monkeypatch.setattr(plat, "list_input_devices", lambda: [hands_free])
+    monkeypatch.setattr(plat, "default_input_device", lambda: hands_free)
+    with pytest.raises(LookupError, match="ep-stereo"):
+        plat._resolve_input(stereo, strict=True)
+    assert plat._resolve_input(stereo) == hands_free                                     # sem exigir: o padrão, não o irmão
+    assert endpoints.names_match("Fone de Ouvido (WH-1000XM4)", "fone de ouvido (wh-1000xm4) ")
+    assert not endpoints.names_match(stereo.name, hands_free.name)
+    twins = [("Microfone USB", "ep-1", None), ("Microfone USB", "ep-2", None), ("Webcam", "ep-3", None)]
+    assert endpoints.by_name(twins, "Webcam", lambda c: c[0]) == twins[2]
+    assert endpoints.by_name(twins, "Microfone USB", lambda c: c[0]) is None             # repetido: nenhum dos dois
+    loopbacks = [{"index": 13, "name": "Alto-falantes (Realtek(R) Audio) [Loopback]"},
+                 {"index": 14, "name": "Fone de Ouvido (WH-1000XM4) [Loopback]"},
+                 {"index": 15, "name": "Fone de Ouvido (WH-1000XM4) [Loopback]"}]
+    pa = SimpleNamespace(get_loopback_device_info_generator=lambda: iter(loopbacks),
+                         get_host_api_info_by_type=lambda _t: {"defaultOutputDevice": 10},
+                         get_device_info_by_index=lambda _i: {"name": "Alto-falantes (Realtek(R) Audio)", "isLoopbackDevice": False})
+    pyaudio = SimpleNamespace(paWASAPI=13)
+    with caplog.at_level(logging.WARNING, logger="listener"):
+        assert sl._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4)")["index"] == 13   # repetido: o padrão
+        assert sl._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4) Hands-Free")["index"] == 13   # ausente: o padrão, calado
+    assert sum("nome repetido" in r.getMessage() for r in caplog.records) == 1 and "WH-1000XM4" not in caplog.text
+
+
 # ---------------------------------------------------------------- F5.9 L1b: a prova de vida dos handles
 def test_the_stream_handle_answers_alive_only_between_start_and_stop():
     """F5.9 (item 1): `alive()` é None sem `alive_fn`, antes do `start()`, depois do nosso `stop()` ou do fim avisado, e quando

@@ -37,7 +37,7 @@ def test_bootstrap_pointer_roundtrip(tmp_path):
     assert p.exists() and bootstrap.read_db_dir(cfg) == tmp_path / "db"
 
 
-def test_pick_device_prefers_stable_id_then_name_and_ignores_old_indexes():
+def test_pick_device_prefers_stable_id_then_exact_name_and_ignores_old_indexes():
     from listener.platform.base import AudioDevice, pick_device
 
     intel = "Grupo de microfones (Tecnologia Intel Smart Sound)"
@@ -45,7 +45,8 @@ def test_pick_device_prefers_stable_id_then_name_and_ignores_old_indexes():
             AudioDevice(f"name:{intel}", intel, "WASAPI", 2, 48000, index=9)]
     assert pick_device(devs, "{0.0.1.00000000}.{aaa}", "outro nome") is devs[0]
     assert pick_device(devs, "9", "Headset USB") is devs[0]                 # índice antigo é ignorado; o nome resolve
-    assert pick_device(devs, None, "Grupo de microfones (Tecnologia Int") is devs[1]   # nome truncado
+    assert pick_device(devs, None, intel) is devs[1]
+    assert pick_device(devs, None, "Grupo de microfones (Tecnologia Int") is None   # F5.9 (item 5): o nome cortado da era F1 não casa
     assert pick_device(devs, "{0.0.1.00000000}.{zzz}", "Webcam") is None
 
 

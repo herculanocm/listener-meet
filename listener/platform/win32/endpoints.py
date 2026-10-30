@@ -131,16 +131,16 @@ def name_of(endpoint_id: str) -> str:
 
 
 def names_match(a: str, b: str) -> bool:
-    """O mesmo aparelho em duas listas: o nome igual, ou um começa pelo outro com 20 caracteres ou mais (o MME corta em 31)."""
-    a, b = a.strip().lower(), b.strip().lower()
-    return a == b or (len(a) >= 20 and b.startswith(a)) or (len(b) >= 20 and a.startswith(b))
+    """O mesmo aparelho em duas listas: só o nome igual (F5.9, item 5; as listas são só WASAPI, com o nome inteiro: o
+    prefixo casava dois fones da mesma família que só diferem no fim)."""
+    return a.strip().lower() == b.strip().lower()
 
 
 def by_name[T](items: list[T], name: str, key: Callable[[T], str]) -> T | None:
-    """O item com este nome: o igual primeiro, depois pelo prefixo longo (o fone Bluetooth tem saídas de nomes parecidos)."""
-    low = name.strip().lower()
-    exact = next((it for it in items if key(it).strip().lower() == low), None)
-    return exact if exact is not None else next((it for it in items if names_match(key(it), name)), None)
+    """O item com este nome, quando é um só; None sem ele ou com o nome repetido (ambíguo, como o AMBIGUOUS da R-02: o
+    primeiro de dois iguais seria o aparelho errado)."""
+    found = [it for it in items if names_match(key(it), name)]
+    return found[0] if len(found) == 1 else None
 
 
 def capture_endpoints() -> list[tuple[str, str, Any]]:
