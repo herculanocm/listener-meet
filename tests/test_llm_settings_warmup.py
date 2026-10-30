@@ -56,7 +56,7 @@ def test_request_glossary_with_fake_and_without_key(store, monkeypatch):
     assert r.error is None and set(r.terms) >= {"Comitê", "FIDC", "Alfa"} and dict(r.people) == {"Rodrigo": rodrigo}
     assert r.call_id and r.expected_people_json == json.dumps([rodrigo]) and r.cost_usd is not None
     call = store.llm_calls.get(r.call_id)
-    assert call["meeting_id"] is None and call["task"] == "glossary" and call["status"] == "ok" and call["prompt_version"] == "glossary/1.0"
+    assert call["meeting_id"] is None and call["task"] == "glossary" and call["status"] == "ok" and call["prompt_version"] == "glossary/2.0"
     store.set_setting("llm.glossary_enabled", False)
     r2 = glossary_task.request_glossary(store, "x", "Ana Souza")
     assert r2.terms == () and r2.error is None and dict(r2.people) == {"Ana Souza": ana}

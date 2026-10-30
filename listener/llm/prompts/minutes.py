@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import VOICE_LABELS, Line, MeetingCtx, Person, compose, header, ids_schema, own, system, system_text, text_block, user
 
-PROMPT_VERSION = "1.2"                  # U-041 (A-10): o cabeçalho lista os falantes; F5.5 (A-20): "Voz 2" sem tradução
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.2: o cabeçalho lista os falantes e "Voz 2" sem tradução
 
 
 def _item(extra: dict | None = None) -> dict:
@@ -33,16 +33,17 @@ SCHEMA: dict = {
         "next_steps": {"type": "array", "items": _item()},
     },
 }
-INSTRUCTIONS = "You write meeting minutes from a transcript. Report only what was actually said."
-CONTRACT = ("Every decision, action, highlight, open point and next step must cite the segment_ids that support it (the numbers "
-            "after '#'); use an empty list only when there is truly no supporting segment. Actions: owner_text is the name as "
-            "said in the meeting; owner_person_id only when the owner is one of the listed people; due_text is the deadline as "
-            "said; due_date is that deadline as an absolute YYYY-MM-DD computed from the meeting date, or null. Highlights: one "
-            "entry per user marker, describing what was being discussed around that time and taking the user's note into "
-            f"account. Context: two to four sentences on what the meeting was about. {VOICE_LABELS}")
-REDUCE_SYSTEM = ("You consolidate structured notes taken from consecutive blocks of one long meeting into the final minutes. Merge "
-                 "duplicates, keep the segment_ids from the notes, keep the chronological order and do not add anything that is not "
-                 f"in the notes. {VOICE_LABELS}")
+INSTRUCTIONS = "Escreva a ata de uma reunião a partir da transcrição. Relate só o que foi dito de fato."
+CONTRACT = ("Toda decisão, ação, destaque, pendência e próximo passo precisa citar os segment_ids que a sustentam (os "
+            "números depois de '#'); use uma lista vazia só quando não há mesmo segmento de apoio. Ações: owner_text é o "
+            "nome como foi dito na reunião; owner_person_id só quando o responsável é uma das pessoas listadas; due_text é "
+            "o prazo como foi dito; due_date é esse prazo como data absoluta AAAA-MM-DD, calculada a partir da data da "
+            "reunião, ou null. Destaques: uma entrada por marcador do usuário, descrevendo o que se discutia perto daquele "
+            "momento e levando em conta a nota do usuário. Contexto: duas a quatro frases sobre do que tratou a reunião. "
+            f"{VOICE_LABELS}")
+REDUCE_SYSTEM = ("Consolide na ata final as notas estruturadas tiradas de blocos consecutivos de uma reunião longa. Junte "
+                 "as repetições, mantenha os segment_ids das notas, mantenha a ordem cronológica e não acrescente nada que "
+                 f"não esteja nas notas. {VOICE_LABELS}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +55,13 @@ class MinutesCtx:
 
 
 def build(ctx: MinutesCtx, instructions: str | None = None) -> tuple[Message, ...]:
-    people = "; ".join(p.render() for p in ctx.people) or "(none)"
-    block = f"This is block {ctx.block[0] + 1} of {ctx.block[1]} of the meeting; write notes for this block only." if ctx.block else ""
+    people = "; ".join(p.render() for p in ctx.people) or "(nenhuma)"
+    block = (f"Este é o bloco {ctx.block[0] + 1} de {ctx.block[1]} da reunião; escreva as notas só deste bloco."
+             if ctx.block else "")
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
     return (system(text, ctx.meeting),
-            user(header(ctx.meeting), f"Known people (person_id) name — role, company: {people}", block,
-                 text_block("Transcript", ctx.lines)))
+            user(header(ctx.meeting), f"Pessoas conhecidas (person_id) nome — cargo, empresa: {people}", block,
+                 text_block("Transcrição", ctx.lines)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +73,8 @@ class ReduceCtx:
 
 def build_reduce(ctx: ReduceCtx, instructions: str | None = None) -> tuple[Message, ...]:
     """A consolidação das notas dos blocos: o contrato da redução; com instruções do usuário, elas vêm antes dele (A-24)."""
-    people = "; ".join(p.render() for p in ctx.people) or "(none)"
-    notes = "\n\n".join(f"Block {i + 1} notes:\n{n}" for i, n in enumerate(ctx.notes_json))
+    people = "; ".join(p.render() for p in ctx.people) or "(nenhuma)"
+    notes = "\n\n".join(f"Notas do bloco {i + 1}:\n{n}" for i, n in enumerate(ctx.notes_json))
     mine = own(INSTRUCTIONS, instructions, ctx.meeting.output_language)
     text = REDUCE_SYSTEM if mine == INSTRUCTIONS else compose(mine, REDUCE_SYSTEM)
-    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Known people: {people}", notes))
+    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Pessoas conhecidas: {people}", notes))

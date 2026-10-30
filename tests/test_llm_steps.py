@@ -103,7 +103,7 @@ def test_pipeline_enqueues_llm_job_and_runner_writes_everything_with_parent_job_
     # CP11: só vozes pendentes nos pedidos de identidade; o L do usuário e nenhum `auto`/`confirmado` aparecem
     ident = fake.calls(LlmTask.IDENTIFY)
     prompt = ident[0].messages[1].text
-    assert len(ident) == 1 and "Unresolved speakers: SPK_0, SPK_1" in prompt and "Eu (Gerente)" in prompt
+    assert len(ident) == 1 and "Falantes por resolver: SPK_0, SPK_1" in prompt and "Eu (Gerente)" in prompt
     clusters = {c["cluster"]: c for c in store.segments.list_clusters(mid, parent)}
     spk0 = clusters["SPK_0"]
     assert spk0["llm_person_id"] == ana and spk0["llm_name"] == "Ana" and spk0["llm_confidence"] == 0.8
@@ -112,7 +112,7 @@ def test_pipeline_enqueues_llm_job_and_runner_writes_everything_with_parent_job_
     assert clusters["SPK_1"]["llm_name"] is None and clusters["L"]["llm_name"] is None
     # ata, executivo, pré-resumo com o job_id do pai; ações com evidência e marca "sem evidência"
     minutes = store.summaries.current(mid, SummaryKind.MINUTES)
-    assert minutes["job_id"] == parent and minutes["provider"] == "gemini" and minutes["prompt_version"] == "minutes/1.2"
+    assert minutes["job_id"] == parent and minutes["provider"] == "gemini" and minutes["prompt_version"] == "minutes/2.0"
     assert minutes["call_id"] and minutes["language"] == "pt-BR" and minutes["text_llm"].startswith("## Contexto")
     assert "## Decisões" in minutes["text_llm"] and "[00:00]" in minutes["text_llm"] and "sem evidência" in minutes["text_llm"]
     assert "**ponto importante**" in minutes["text_llm"]                                              # destaque com a nota do marcador
@@ -486,7 +486,8 @@ def test_hierarchical_minutes_resumes_from_saved_block_notes(platform, store):
     runner, status, fake = _run_llm(store, FakeProvider(input_limit=600))
     assert runner.job_id == job_id and status == JobStatus.DONE, store.jobs.get(job_id)["error"]
     minutes = fake.calls(LlmTask.MINUTES)
-    assert len(minutes) == 1 and "Block 1 notes" in minutes[0].messages[-1].text and "NOTA-SALVA-DO-BLOCO" in minutes[0].messages[-1].text
+    sent = minutes[0].messages[-1].text
+    assert len(minutes) == 1 and "Notas do bloco 1" in sent and "NOTA-SALVA-DO-BLOCO" in sent
     assert store.summaries.current(mid, SummaryKind.MINUTES) is not None
     assert not store.jobs.artifact_indexes(job_id, JobStep.MINUTES)                                 # sucesso limpa
 

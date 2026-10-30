@@ -6,15 +6,15 @@ from ..types import Message
 from .common import VOICE_LABELS, header, system, system_text, user
 from .executive import SummaryCtx
 
-PROMPT_VERSION = "1.2"                  # U-041 (A-10): o cabeçalho lista os falantes; F5.5 (A-20): "Voz 2" sem tradução
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.2: o cabeçalho lista os falantes e "Voz 2" sem tradução
 MAX_CHARS = 600
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["text"],
                 "properties": {"text": {"type": "string", "maxLength": MAX_CHARS}}}
-INSTRUCTIONS = ("You write a very short summary of a meeting (two or three sentences) stating the subject and the main outcome, "
-                "using only the minutes given.")
-CONTRACT = f"Hard limit: {MAX_CHARS - 100} characters. Plain prose, no bullet points. {VOICE_LABELS}"
+INSTRUCTIONS = ("Escreva um resumo bem curto de uma reunião (duas ou três frases) dizendo o assunto e o resultado principal, "
+                "usando só a ata dada.")
+CONTRACT = f"Limite rígido: {MAX_CHARS - 100} caracteres. Prosa corrida, sem tópicos. {VOICE_LABELS}"
 
 
 def build(ctx: SummaryCtx, instructions: str | None = None) -> tuple[Message, ...]:
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
-    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Minutes (JSON):\n{ctx.minutes_json}"))
+    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Ata (JSON):\n{ctx.minutes_json}"))

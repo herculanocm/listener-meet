@@ -1,7 +1,7 @@
 """F5.3 L1, idioma (U-044, U-045, A-01 a A-04, A-07; Aceite 1 com os fakes): as conversões num lugar só; o "Idioma padrão"
 das Configurações gravado pelo código do combo, logo depois das chaves, e a adoção única do `llm.output_language = en`
 antigo na abertura; o warm-up com o idioma da reunião (o glossário pedido nele) e a reunião nascendo com ele; a reunião em
-inglês do warm-up até a ata, sem detecção, com toda saída da LLM em inglês (o pedido diz "English") e o snapshot antigo com
+inglês do warm-up até a ata, sem detecção, com toda saída da LLM em inglês (o pedido diz "inglês") e o snapshot antigo com
 `output_language` carregando; a legenda ao vivo e a transcrição pela LLM no idioma da reunião desde a primeira janela; a
 alta precisão em inglês sem desligar a opção (A-04); a ata, o .md e o .docx no idioma da ata (en-US)."""
 from __future__ import annotations
@@ -29,7 +29,7 @@ from tests.test_runner import CFG
 
 SCRIPT_EN = {"R": [(0.2, 1.4, "good morning Ana how are you"), (1.6, 2.9, "let us close the 2027 budget today")],
              "L": [(0.3, 1.2, "hi everyone"), (2.0, 2.8, "yes sure let us go")]}
-ENGLISH = "Write all free text in English"
+ENGLISH = "Escreva todo texto livre em inglês"
 
 
 @pytest.fixture
@@ -279,7 +279,7 @@ def test_the_chat_partial_and_glossary_of_an_english_meeting_speak_english(platf
     assert ENGLISH in greq[0]["text"]
     default = glossary_task.request_glossary(store, "Orçamento", "Ana")              # sem o combo: o padrão (pt-BR)
     dreq, _ = store.llm_calls.payloads(default.call_id)
-    assert "Brazilian Portuguese" in dreq[0]["text"]
+    assert "português do Brasil" in dreq[0]["text"]
 
 
 def test_the_global_chat_answers_in_the_default_language(platform, store, monkeypatch, no_summary_gate):
@@ -294,7 +294,7 @@ def test_the_global_chat_answers_in_the_default_language(platform, store, monkey
     monkeypatch.setenv("LISTENER_LLM", "fake")
     answer = chat_global.run_global_chat(store, None, "budget")
     req, _ = store.llm_calls.payloads(answer.call_id)
-    assert "Brazilian Portuguese" in req[0]["text"]                               # a reunião é em inglês; o padrão vale aqui
+    assert "português do Brasil" in req[0]["text"]                               # a reunião é em inglês; o padrão vale aqui
     store.set_setting("app.language", "en")
     again = chat_global.run_global_chat(store, answer.thread_id, "and the deadline?")
     req, _ = store.llm_calls.payloads(again.call_id)
@@ -330,7 +330,7 @@ def test_the_llm_transcription_gets_the_meeting_language(platform, store):
     store.jobs.enqueue(mid)
     _job, status = _run_heavy(store, deps)
     hints = [r.messages[1].text for r in fake.calls(LlmTask.TRANSCRIBE)]
-    assert status == JobStatus.DONE and hints and all(h.startswith("The language is en.") for h in hints)
+    assert status == JobStatus.DONE and hints and all(h.startswith("O idioma é en.") for h in hints)
     assert store.get_meeting(mid)["language"] == "en"                              # a resposta diz "pt": ignorada
 
 

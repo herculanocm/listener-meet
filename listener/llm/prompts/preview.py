@@ -14,7 +14,7 @@ from .rag_chat import MeetingBlock
 
 MARK = "{suas instruções}"
 ROLES = {Role.SYSTEM: "Sistema", Role.USER: "Usuário", Role.ASSISTANT: "Modelo"}
-MARKER_SHOWN = 'marker 0 at [00:00]: "{nota}"'      # o marcador da reunião de exemplo, trocado por um marcador só
+MARKER_SHOWN = 'marcador 0 em [00:00]: "{nota}"'    # o marcador da reunião de exemplo, trocado por um marcador só
 REDUCE_NOTE = "Ata longa, em blocos: cada bloco recebe o pedido acima; depois, a consolidação recebe:"
 
 

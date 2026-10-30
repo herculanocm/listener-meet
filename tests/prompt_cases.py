@@ -1,7 +1,6 @@
-"""Contextos representativos de cada prompt da LLM (F5.6 L2): a cópia congelada de `tests/data/prompts_4a51600.json` saiu
-destes casos rodados no código de `4a51600`, antes de separar instruções e contrato; `test_prompts_custom.py` monta os
-mesmos casos no código de hoje e compara byte a byte. As falas trazem chaves soltas e `{idioma}` de propósito: o dado da
-reunião nunca passa pelo substituidor."""
+"""Contextos representativos de cada prompt da LLM (F5.6 L2): a cópia congelada de `tests/data/prompts_ptbr.json` saiu
+destes casos rodados no código em pt-BR (D-071); `test_prompts_custom.py` monta os mesmos casos no código de hoje e compara
+byte a byte. As falas trazem chaves soltas e `{idioma}` de propósito: o dado da reunião nunca passa pelo substituidor."""
 from __future__ import annotations
 
 from collections.abc import Callable

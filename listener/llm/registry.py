@@ -37,8 +37,8 @@ ADAPTERS: dict[ProviderKind, tuple[str, str]] = {
 }
 RETRY_DELAYS: tuple[float, ...] = (1.0, 3.0, 9.0)
 RETRY_JITTER = 0.3
-FIX_PROMPT = ("Your previous answer did not match the required JSON schema: {error}. "
-              "Answer again with a single JSON object that follows the schema exactly, with no extra text.")
+FIX_PROMPT = ("A resposta anterior não seguiu o esquema JSON exigido: {error}. "
+              "Responda de novo com um único objeto JSON que siga o esquema à risca, sem nenhum texto a mais.")
 
 
 CLIENT_TIMEOUT_S = 600.0             # teto do cliente; cada chamada leva o seu (`Request.timeout_s`, F3.1 R3-03)

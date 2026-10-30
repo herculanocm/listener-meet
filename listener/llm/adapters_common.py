@@ -22,7 +22,7 @@ TOO_LARGE_HINTS = ("too large", "too long", "context_length", "context length", 
                    "tokens exceed", "input is too", "request entity too large", "maximum number of tokens", "prompt is too long")
 TEST_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False, "required": ["ok"],
                                "properties": {"ok": {"type": "boolean"}}}
-TEST_PROMPT = 'Reply with exactly this JSON and nothing else: {"ok": true}'
+TEST_PROMPT = 'Responda exatamente com este JSON e nada mais: {"ok": true}'
 TEST_TIMEOUT_S = 30.0
 TEST_MAX_TOKENS = 512            # D-055: modelo que sempre pensa (o Gemini 3.1 Pro) gastava os 64 de antes no pensamento
 # timeout por chamada (F3.1 R3-03): o cliente nasce com o teto (`NetworkConfig.timeout_s`, 600 s); geração e streaming levam o

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from ..types import Message, Role
 from .common import Person, language_instruction, system_text
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR
 SCHEMA: dict = {
     "type": "object", "additionalProperties": False, "required": ["terms", "people"],
     "properties": {"terms": {"type": "array", "maxItems": 40, "items": {"type": "string", "maxLength": 60}},
@@ -17,11 +17,12 @@ SCHEMA: dict = {
                                                          "properties": {"name": {"type": "string", "maxLength": 80},
                                                                         "person_id": {"type": ["integer", "null"]}}}}},
 }
-INSTRUCTIONS = ("Before a meeting is recorded, you prepare a short glossary for the speech recognizer: proper names, acronyms, "
-                "product and company names, technical terms likely to be said, derived from the title, the participants and the "
-                "user's own glossary.")
-CONTRACT = ("Up to 40 terms, most likely first, no duplicates, no common words. Also match each unresolved participant name to one "
-            "of the listed known people when it is clearly the same person (nickname, first name, typo); otherwise person_id null.")
+INSTRUCTIONS = ("Antes de uma reunião ser gravada, prepare um glossário curto para o reconhecedor de fala: nomes próprios, "
+                "siglas, nomes de produtos e de empresas, termos técnicos que provavelmente serão ditos, tirados do título, "
+                "dos participantes e do glossário do próprio usuário.")
+CONTRACT = ("Até 40 termos, os mais prováveis primeiro, sem repetir, sem palavras comuns. Também case cada nome de "
+            "participante não resolvido com uma das pessoas conhecidas listadas quando for claramente a mesma pessoa "
+            "(apelido, primeiro nome, erro de digitação); senão, person_id null.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +36,10 @@ class GlossaryCtx:
 
 
 def build(ctx: GlossaryCtx, instructions: str | None = None) -> tuple[Message, ...]:
-    known = "; ".join(p.render() for p in ctx.known) or "(none)"
-    body = "\n".join(x for x in (f"Title: {ctx.title or '(none)'}", f"Participants as typed: {ctx.participants_text or '(none)'}",
-                                 f"Unresolved participant names: {', '.join(ctx.unresolved) or '(none)'}", f"Known people: {known}",
-                                 f"User glossary: {ctx.fixed_glossary or '(none)'}"))
+    known = "; ".join(p.render() for p in ctx.known) or "(nenhuma)"
+    body = "\n".join(x for x in (f"Título: {ctx.title or '(nenhum)'}",
+                                 f"Participantes como digitados: {ctx.participants_text or '(nenhum)'}",
+                                 f"Nomes de participantes não resolvidos: {', '.join(ctx.unresolved) or '(nenhum)'}",
+                                 f"Pessoas conhecidas: {known}", f"Glossário do usuário: {ctx.fixed_glossary or '(nenhum)'}"))
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.output_language)
     return (Message(Role.SYSTEM, f"{text}\n{language_instruction(ctx.output_language)}"), Message(Role.USER, body))

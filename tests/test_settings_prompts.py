@@ -77,7 +77,8 @@ def test_core_tasks_warn_that_they_change_identification_and_transcription(qtbot
 def test_the_fixed_part_is_read_only_with_markers_contract_and_schema(qtbot, store, platform):
     dlg = _dialog(qtbot, store, platform)
     fixed = dlg.select_prompt(LlmTask.MINUTES).fixed.toPlainText()
-    assert fixed.startswith(f"[Sistema]\n{{suas instruções}} {prompts.minutes.CONTRACT}\nWrite all free text in {{idioma da reunião}}.")
+    assert fixed.startswith(f"[Sistema]\n{{suas instruções}} {prompts.minutes.CONTRACT}\n"
+                            "Escreva todo texto livre em {idioma da reunião}.")
     for mark in ("{transcrição}", "{falantes identificados}", "{pessoas cadastradas}", "{marcadores com a nota}", "{data}",
                  prompts.minutes.REDUCE_SYSTEM, "[Formato da resposta]", '"segment_ids"'):
         assert mark in fixed, mark
@@ -131,6 +132,24 @@ def test_the_changed_default_warns_until_the_text_is_saved_again(qtbot, store, p
     pane.edit.setPlainText("Resumo para o conselho, em três frases.")
     dlg._save()
     assert _dialog(qtbot, store, platform).select_prompt(LlmTask.EXECUTIVE).changed_bar is None
+
+
+def test_text_saved_over_the_english_default_sees_the_warning_and_restore_brings_pt_br(qtbot, store, platform):
+    """D-071: quem editou quando o padrão do app era em inglês vê o aviso de padrão mudado, e "Restaurar padrão" traz o
+    pt-BR; salvo de novo, o aviso some."""
+    from listener.ui.settings_prompts import CHANGED_WARNING
+
+    old_default = "You write meeting minutes from a transcript. Report only what was actually said."     # a ata até a 1.2
+    assert prompt_settings.save(store, "minutes", "You write minutes for the board.", old_default)
+    dlg = _dialog(qtbot, store, platform)
+    pane = dlg.select_prompt(LlmTask.MINUTES)
+    assert pane.changed_bar is not None and pane.changed_bar.label.text() == CHANGED_WARNING
+    pane.restore.click()
+    assert pane.edit.toPlainText() == prompts.minutes.INSTRUCTIONS
+    assert prompts.minutes.INSTRUCTIONS == "Escreva a ata de uma reunião a partir da transcrição. Relate só o que foi dito de fato."
+    dlg._save()
+    assert store.get_setting("prompt.minutes") == "" and store.get_setting("prompt.minutes.base") == ""
+    assert _dialog(qtbot, store, platform).select_prompt(LlmTask.MINUTES).changed_bar is None
 
 
 # ---------------------------------------------------------------- A-27, U-072: o Salvar barra

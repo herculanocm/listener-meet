@@ -1,8 +1,8 @@
 """F5.6 L2 (U-092; A-24 a A-29, A-46; Aceite 3): as instruções de cada tarefa da LLM separadas do contrato, sem tela.
 
-- O padrão sai igual, byte a byte, ao de `4a51600` (a cópia congelada de `tests/data/prompts_4a51600.json`, gerada de
-  `tests/prompt_cases.py` no código de antes), nos onze módulos e na redução da ata; só mudam o chat e o chat de todas as
-  reuniões, pelo "Be concise." que veio para as instruções (versões 1.3 e 1.2), e o título, em duas frases (1.3, R-07).
+- O padrão sai igual, byte a byte, à cópia congelada de `tests/data/prompts_ptbr.json` (gerada de `tests/prompt_cases.py`
+  no código em pt-BR, D-071), nos onze módulos e na redução da ata: mudar o texto de um prompt sem querer quebra aqui;
+  mudar de propósito pede gerar a cópia de novo e subir a versão do módulo.
 - As instruções do usuário chegam à chamada com o contrato, o esquema e os dados intactos; `{idioma}` vira o nome do
   idioma; chaves soltas não quebram nem injetam campos.
 - O Salvar barra texto vazio, `{nome}` desconhecido e mais de 4.000 caracteres; `{idioma}` é opcional.
@@ -32,10 +32,7 @@ from listener.pipeline.llm_requests import Species, State
 from tests import prompt_cases as pc
 from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
-FROZEN = json.loads((Path(__file__).parent / "data" / "prompts_4a51600.json").read_text(encoding="utf-8"))
-# A-24: o "Be concise." saiu do meio do contrato para o fim das instruções (as duas versões sobem)
-MOVED = {"chat": "transcript below.", "rag_chat": "grouped by meeting."}
-CUT = (", at most", ". At most")                     # revisão do L2 (R-07): o título 1.3 em duas frases
+FROZEN = json.loads((Path(__file__).parent / "data" / "prompts_ptbr.json").read_text(encoding="utf-8"))
 MINE = "Escreva em {idioma}, em tópicos curtos. Chaves soltas: {x} } { {0} {title} {{a}}"
 MARKER_TEXT = "PALAVRA-MARCADA-DO-PROMPT-91"          # o texto que o log nunca pode levar
 
@@ -47,51 +44,36 @@ def platform(tmp_path, clock):
     return FakePlatform(tmp_path, clock=clock, r_format=(16000, 1), system_format=(16000, 1))
 
 
-def _expected(name: str) -> list[list[object]]:
-    """A cópia de `4a51600` com as diferenças conhecidas, uma por versão que subiu: no chat e no chat de todas as reuniões,
-    o "Be concise." movido (A-24); no título, as instruções e o contrato em duas frases (R-07). O JSON fica como está."""
-    out = json.loads(json.dumps(FROZEN["cases"][name]))
-    family, text = name.split("/", maxsplit=1)[0], str(out[0][1])
-    anchor = MOVED.get(family)
-    if anchor is not None:
-        assert text.count(" Be concise.") == 1
-        out[0][1] = text.replace(" Be concise.", "", 1).replace(anchor, f"{anchor} Be concise.", 1)
-    if family == "title":
-        assert text.count(CUT[0]) == 1
-        out[0][1] = text.replace(*CUT)
-    return out
-
-
 def _language(name: str) -> str:
     """O nome do idioma que `{idioma}` vira no caso (a transcrição pelo áudio usa o idioma dela, ou nenhum)."""
     module, _fn, ctx = pc.CASES[name]
     if module is prompts.transcribe:
-        return "Portuguese" if ctx.language == "pt" else ORIGINAL_LANGUAGE
+        return "português" if ctx.language == "pt" else ORIGINAL_LANGUAGE
     code = ctx.output_language if module in (prompts.rag_chat, prompts.glossary) else ctx.meeting.output_language
-    return {"pt-BR": "Brazilian Portuguese", "en": "English"}[code]
+    return {"pt-BR": "português do Brasil", "en": "inglês"}[code]
 
 
 # ---------------------------------------------------------------- o padrão, byte a byte (desvio consciente do A-26)
 def test_the_frozen_copy_covers_every_editable_module_and_the_reduce():
-    assert FROZEN["head"] == "4a51600"
+    assert FROZEN["language"] == "pt-BR"
     covered = {pc.CASES[name][0].__name__.rsplit(".", 1)[-1] for name in pc.CASES}
     assert covered == {str(t) for t in prompts.EDITABLE} and set(FROZEN["cases"]) == set(pc.CASES)
     assert {pc.CASES[name][1] for name in pc.CASES if name.startswith("minutes/")} == {"build", "build_reduce"}
 
 
 @pytest.mark.parametrize("name", sorted(pc.CASES))
-def test_the_default_prompt_is_byte_identical_to_4a51600(name):
+def test_the_default_prompt_is_byte_identical_to_the_frozen_copy(name):
     module, fn, ctx = pc.CASES[name]
-    assert pc.render(name) == _expected(name)
+    assert pc.render(name) == FROZEN["cases"][name]
     assert pc.render(name, None) == pc.render(name, "   ") == pc.render(name, module.INSTRUCTIONS) == pc.render(name)
     assert getattr(module, fn)(ctx) == getattr(module, fn)(ctx, None)
 
 
-def test_the_versions_only_move_where_the_text_moved():
+def test_every_version_is_the_pt_br_major():
+    """D-071: o idioma mudou em todos os módulos e cada um subiu a versão major (as chamadas gravadas antes ficam em 1.x)."""
     versions = {str(t): prompts.prompt_version(t) for t in prompts.EDITABLE}
-    assert versions == {"identify": "identify/1.1", "revise": "revise/1.1", "title": "title/1.3", "pre_summary": "pre_summary/1.2",
-                        "minutes": "minutes/1.2", "executive": "executive/1.2", "partial": "partial/1.0", "chat": "chat/1.3",
-                        "rag_chat": "rag_chat/1.2", "glossary": "glossary/1.0", "transcribe": "transcribe/1.0"}
+    assert versions == {t: f"{t}/2.0" for t in prompt_settings.TASKS}
+    assert prompts.prompt_version(LlmTask.TEST) == "test/2.0"
     assert tuple(str(t) for t in prompts.EDITABLE) == prompt_settings.TASKS and LlmTask.TEST not in prompts.EDITABLE
 
 
@@ -127,8 +109,8 @@ def test_multiline_instructions_end_in_a_line_break_and_the_contract_keeps_the_l
 
 
 def test_idioma_is_the_only_variable_and_braces_never_break():
-    assert own("padrão", "Escreva em {idioma}.", "pt-BR") == "Escreva em Brazilian Portuguese."
-    assert own("padrão", "{idioma}/{idioma}", "en") == "English/English"
+    assert own("padrão", "Escreva em {idioma}.", "pt-BR") == "Escreva em português do Brasil."
+    assert own("padrão", "{idioma}/{idioma}", "en") == "inglês/inglês"
     assert own("padrão", "Em {idioma}.", None) == f"Em {ORIGINAL_LANGUAGE}."
     assert own("padrão", "{Idioma} {0} {title} {} }{ {meeting.title}", "pt-BR") == "{Idioma} {0} {title} {} }{ {meeting.title}"
     assert own("padrão", None, "pt-BR") == own("padrão", "", "en") == own("padrão", " \n\t", "pt-BR") == "padrão"
@@ -169,8 +151,8 @@ def test_the_job_config_reads_the_custom_prompts_and_survives_the_json(store):
     cfg = LlmJobConfig.from_store(store)
     assert cfg.prompts == {"minutes": MINE} and cfg.prompt(LlmTask.CHAT) is None
     assert LlmJobConfig.from_json(cfg.to_json()) == cfg
-    assert cfg.version(LlmTask.MINUTES) == f"minutes/1.2+u{hashlib.sha256(MINE.encode()).hexdigest()[:6]}"
-    assert cfg.version(LlmTask.CHAT) == "chat/1.3"
+    assert cfg.version(LlmTask.MINUTES) == f"minutes/2.0+u{hashlib.sha256(MINE.encode()).hexdigest()[:6]}"
+    assert cfg.version(LlmTask.CHAT) == "chat/2.0"
     junk = LlmJobConfig.from_json(json.dumps({"prompts": {"minutes": 3, "bogus": "x", "chat": "Meu chat."}}))
     assert junk.prompts == {"chat": "Meu chat."} and LlmJobConfig.from_json('{"prompts": "x"}').prompts == {}
     assert LlmJobConfig.from_json(json.dumps({"provider_id": "gemini"})).prompts == {}       # job de antes do L2
@@ -190,7 +172,7 @@ def test_the_job_freezes_only_its_own_text_on_the_first_run_and_marks_llm_calls(
     tarefas dele (a ata, nunca as do chat) e as usa até o fim: trocadas depois nas Configurações, a nova tentativa segue com
     o texto congelado. A chamada e a ata levam `+u<hash>` dele."""
     mid = _ready_for_minutes(platform, store)
-    assert {c["prompt_version"] for c in store.llm_calls.list_for_meeting(mid)} <= {"identify/1.1", "title/1.3", "revise/1.1"}
+    assert {c["prompt_version"] for c in store.llm_calls.list_for_meeting(mid)} <= {"identify/2.0", "title/2.0", "revise/2.0"}
     first = f"Ata do comitê em {{idioma}}. {MARKER_TEXT}"
     store.set_setting("prompt.minutes", first)
     store.set_setting("prompt.chat", "Meu chat.")
@@ -206,8 +188,8 @@ def test_the_job_freezes_only_its_own_text_on_the_first_run_and_marks_llm_calls(
     runner, status, again = _run_llm(store)
     assert runner.job_id == int(job["id"]) and status == JobStatus.DONE
     sent = again.calls(LlmTask.MINUTES)[0].messages[0].text
-    assert sent.startswith(f"Ata do comitê em Brazilian Portuguese. {MARKER_TEXT} {prompts.minutes.CONTRACT}") and "Outro texto" not in sent
-    version = f"minutes/1.2+u{hashlib.sha256(first.encode()).hexdigest()[:6]}"
+    assert sent.startswith(f"Ata do comitê em português do Brasil. {MARKER_TEXT} {prompts.minutes.CONTRACT}") and "Outro texto" not in sent
+    version = f"minutes/2.0+u{hashlib.sha256(first.encode()).hexdigest()[:6]}"
     calls = [c for c in store.llm_calls.list_for_meeting(mid) if c["task"] == "minutes"]
     assert [c["prompt_version"] for c in calls] == [version, version]                         # a falha e a que deu certo
     assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == version
@@ -252,8 +234,8 @@ def test_index_jobs_and_the_claim_snapshot_carry_no_instructions(platform, store
 
 def test_the_version_hashes_the_stripped_text():
     mark = prompt_settings.text_hash("Ata objetiva.")
-    assert prompts.prompt_version(LlmTask.MINUTES, "  Ata objetiva.\n\t") == f"minutes/1.2+u{mark}"
-    assert LlmJobConfig(prompts={"minutes": "\nAta objetiva.  "}).version(LlmTask.MINUTES) == f"minutes/1.2+u{mark}"
+    assert prompts.prompt_version(LlmTask.MINUTES, "  Ata objetiva.\n\t") == f"minutes/2.0+u{mark}"
+    assert LlmJobConfig(prompts={"minutes": "\nAta objetiva.  "}).version(LlmTask.MINUTES) == f"minutes/2.0+u{mark}"
 
 
 @pytest.mark.usefixtures("no_summary_gate")
@@ -281,11 +263,11 @@ def test_chat_and_glossary_calls_carry_the_mark(platform, store, monkeypatch):
     store.set_setting("prompt.glossary", "Só siglas.")
     answer = chat_task.run_chat(store, mid, "Quem falou?")
     req, _resp = store.llm_calls.payloads(answer.call_id)
-    assert req[0]["text"].startswith(f"Responda em tópicos, em Brazilian Portuguese. {prompts.chat.CONTRACT}")
+    assert req[0]["text"].startswith(f"Responda em tópicos, em português do Brasil. {prompts.chat.CONTRACT}")
     mark = prompt_settings.text_hash("Responda em tópicos, em {idioma}.")
-    assert store.llm_calls.get(answer.call_id)["prompt_version"] == f"chat/1.3+u{mark}"
+    assert store.llm_calls.get(answer.call_id)["prompt_version"] == f"chat/2.0+u{mark}"
     glossary = glossary_task.request_glossary(store, "Comitê", "Ana")
-    assert store.llm_calls.get(glossary.call_id)["prompt_version"] == f"glossary/1.0+u{prompt_settings.text_hash('Só siglas.')}"
+    assert store.llm_calls.get(glossary.call_id)["prompt_version"] == f"glossary/2.0+u{prompt_settings.text_hash('Só siglas.')}"
     sent, _resp = store.llm_calls.payloads(glossary.call_id)
     assert sent[0]["text"].startswith(f"Só siglas. {prompts.glossary.CONTRACT}")                # o texto vai junto da marca
 

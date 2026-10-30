@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import Line, MeetingCtx, Person, header, system, system_text, text_block, user
 
-PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.1: o cabeçalho lista os falantes identificados
 SCHEMA: dict = {
     "type": "object", "additionalProperties": False, "required": ["speakers"],
     "properties": {"speakers": {"type": "array", "items": {
@@ -24,12 +24,12 @@ SCHEMA: dict = {
                 "type": "object", "additionalProperties": False, "required": ["segment_id", "quote"],
                 "properties": {"segment_id": {"type": "integer"}, "quote": {"type": "string", "maxLength": 200}}}}}}}},
 }
-INSTRUCTIONS = ("You identify who the unnamed speakers of a meeting transcript are, using only textual clues: people addressing "
-                "each other by name, self-introductions, roles mentioned, who answers to whom.")
-CONTRACT = ("Speakers labelled SPK_n are unresolved; the others are already known. For each unresolved speaker return either the "
-            "person_id of a listed candidate or a new_name (never both), a confidence between 0 and 1, and up to 5 pieces of "
-            "evidence, each with the segment_id and a short quote copied verbatim from that segment. If there is no clue, return "
-            "person_id null, new_name null and confidence 0. Never invent names.")
+INSTRUCTIONS = ("Identifique quem são os falantes sem nome na transcrição de uma reunião, usando só pistas do texto: pessoas "
+                "que se chamam pelo nome, apresentações, cargos mencionados, quem responde a quem.")
+CONTRACT = ("Os falantes rotulados SPK_n estão por resolver; os outros já são conhecidos. Para cada falante por resolver, "
+            "devolva ou o person_id de um candidato listado ou um new_name (nunca os dois), uma confidence entre 0 e 1 e até "
+            "5 evidências, cada uma com o segment_id e uma citação curta copiada literalmente daquele segmento. Sem pista, "
+            "devolva person_id null, new_name null e confidence 0. Nunca invente nomes.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,10 +41,10 @@ class IdentifyCtx:
 
 
 def build(ctx: IdentifyCtx, instructions: str | None = None) -> tuple[Message, ...]:
-    cands = "; ".join(p.render() for p in ctx.candidates) or "(none)"
+    cands = "; ".join(p.render() for p in ctx.candidates) or "(nenhum)"
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
     return (system(text, ctx.meeting),
-            user(header(ctx.meeting), f"Unresolved speakers: {', '.join(ctx.pending)}",
-                 f"Candidates (person_id) name — role, company: {cands}", text_block("Transcript", ctx.lines),
-                 'Example of one speaker entry: {"cluster": "SPK_2", "person_id": 7, "new_name": null, "confidence": 0.8, '
+            user(header(ctx.meeting), f"Falantes por resolver: {', '.join(ctx.pending)}",
+                 f"Candidatos (person_id) nome — cargo, empresa: {cands}", text_block("Transcrição", ctx.lines),
+                 'Exemplo de uma entrada de falante: {"cluster": "SPK_2", "person_id": 7, "new_name": null, "confidence": 0.8, '
                  '"evidence": [{"segment_id": 143, "quote": "valeu, Rodrigo"}]}'))

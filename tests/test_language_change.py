@@ -162,7 +162,7 @@ def test_the_manual_core_after_the_change_skips_nothing_and_comes_out_in_english
     assert status == JobStatus.DONE and timings["skipped"] == {}                     # a revisada sai (pedido manual)
     assert {r.task for r in fake.requests} == {"identify", "title", "revise"}       # F5.6: nada de ata sem pedido
     assert store.summaries.current(mid, SummaryKind.MINUTES) is None and fake.calls(LlmTask.REVISE)
-    assert "English" in fake.calls(LlmTask.TITLE)[0].messages[0].text                # o título no idioma novo
+    assert "em inglês." in fake.calls(LlmTask.TITLE)[0].messages[0].text                # o título no idioma novo
 
 
 # ---------------------------------------------------------------- a reunião aberta (U-046)

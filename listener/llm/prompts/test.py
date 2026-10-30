@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..adapters_common import TEST_PROMPT, TEST_SCHEMA
 from ..types import Message, Role
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"                  # D-071: o canário em pt-BR
 SCHEMA: dict = TEST_SCHEMA
 
 

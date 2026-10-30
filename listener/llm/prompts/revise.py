@@ -10,18 +10,19 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import Line, MeetingCtx, header, render_lines, system, system_text, user
 
-PROMPT_VERSION = "1.1"                  # U-041 (A-10): o cabeçalho lista os falantes identificados
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.1: o cabeçalho lista os falantes identificados
 SCHEMA: dict = {
     "type": "object", "additionalProperties": False, "required": ["revisions"],
     "properties": {"revisions": {"type": "array", "items": {
         "type": "object", "additionalProperties": False, "required": ["segment_id", "text"],
         "properties": {"segment_id": {"type": "integer"}, "text": {"type": "string", "maxLength": 2000}}}}},
 }
-INSTRUCTIONS = ("You lightly edit an automatic speech transcript: fix punctuation, capitalization, obvious recognition errors, "
-                "proper names, acronyms and glossary terms, and remove fillers (hum, né, tipo) when they add nothing.")
-CONTRACT = ("Keep the speaker's words, meaning, numbers, dates and language; do not summarize, do not translate, do not merge or "
-            "split segments. Return one entry per segment to edit, with the same segment_id; segments that need no change may be "
-            "omitted. Context segments are marked as such and must not be returned.")
+INSTRUCTIONS = ("Revise de leve uma transcrição automática de fala: corrija pontuação, capitalização, erros evidentes de "
+                "reconhecimento, nomes próprios, siglas e termos do glossário, e tire os cacoetes (hum, né, tipo) quando não "
+                "acrescentam nada.")
+CONTRACT = ("Mantenha as palavras, o sentido, os números, as datas e o idioma de quem fala; não resuma, não traduza, não "
+            "junte nem divida segmentos. Devolva uma entrada por segmento a editar, com o mesmo segment_id; os segmentos sem "
+            "mudança podem ficar de fora. Os segmentos de contexto estão marcados como tal e não entram na resposta.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +36,9 @@ class ReviseCtx:
 def build(ctx: ReviseCtx, instructions: str | None = None) -> tuple[Message, ...]:
     parts = [header(ctx.meeting)]
     if ctx.before:
-        parts.append(f"Context before (do not return):\n{render_lines(ctx.before)}")
-    parts.append(f"Segments to edit (#segment_id [mm:ss] speaker: text):\n{render_lines(ctx.block)}")
+        parts.append(f"Contexto antes (não devolver):\n{render_lines(ctx.before)}")
+    parts.append(f"Segmentos a editar (#segment_id [mm:ss] falante: texto):\n{render_lines(ctx.block)}")
     if ctx.after:
-        parts.append(f"Context after (do not return):\n{render_lines(ctx.after)}")
+        parts.append(f"Contexto depois (não devolver):\n{render_lines(ctx.after)}")
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
     return (system(text, ctx.meeting), user(*parts))

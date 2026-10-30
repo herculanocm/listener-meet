@@ -98,7 +98,8 @@ def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platf
     second = chat_task.run_chat(store, mid, "E o prazo?")
     assert second.error is None and len(store.chat.list_for_meeting(mid)) == 4
     req, _ = store.llm_calls.payloads(second.call_id)
-    assert req[1]["text"].startswith("Meeting date") and "O que ficou decidido?" in "".join(m["text"] for m in req)   # prefixo + histórico
+    assert req[1]["text"].startswith("Data da reunião")                                                  # o prefixo
+    assert "O que ficou decidido?" in "".join(m["text"] for m in req)                                    # e o histórico
     assert "Você:" in chat_task.history_html(store, mid, chat_task.transcript_lines(store, mid))
     # painel: pergunta em streaming, status com citações e custo, clique toca pelo player (F5: do começo da fala até parar)
     outputs = FakeOutputs()

@@ -1,8 +1,8 @@
 """Título (até 80 caracteres) a partir do pré-resumo (ou do contexto da ata) ou, sem nenhum dos dois, das falas de abertura
 (F5.6 A-07: o núcleo automático roda antes de qualquer ata): uma chamada de 200 tokens no modelo rápido. F5.6 L2 (A-24): as
 instruções (o que o título diz) são do usuário; o tamanho, sem aspas nem ponto final, e o exemplo ficam no contrato. Versão
-1.3 (revisão do L2, R-07): as instruções terminam a frase com ponto e o contrato começa com "At most", para quem edita ler
-duas frases inteiras (antes, ", at most" no meio da mesma frase)."""
+1.3 (revisão do L2, R-07): as instruções terminam a frase com ponto e o contrato começa com "No máximo", para quem edita ler
+duas frases inteiras. Versão 2.0 (D-071): o prompt inteiro em pt-BR."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -12,17 +12,17 @@ from ..costs import estimate_tokens
 from ..types import Message
 from .common import Line, MeetingCtx, header, system, system_text, user
 
-PROMPT_VERSION = "1.3"                  # F5.6 L2 (R-07): instruções e contrato em frases separadas; 1.2: das falas de abertura
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.3 (R-07): instruções e contrato em frases separadas
 MAX_CHARS = 80
 OPENING_TOKENS = 1500                   # F5.6 (A-07): a abertura da reunião que o título lê sem resumo
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["title"],
                 "properties": {"title": {"type": "string", "maxLength": MAX_CHARS}}}
-INSTRUCTIONS = ("You propose a short, specific title for a meeting from its summary or, when there is none, from the opening of "
-                "its transcript: subject plus the main outcome when there is one.")
-CONTRACT = (f"At most {MAX_CHARS - 20} characters, no quotes, no trailing period. Example in Brazilian Portuguese: "
+INSTRUCTIONS = ("Proponha um título curto e específico para uma reunião a partir do resumo dela ou, sem resumo, das falas "
+                "de abertura da transcrição: o assunto mais o resultado principal, quando houver.")
+CONTRACT = (f"No máximo {MAX_CHARS - 20} caracteres, sem aspas, sem ponto final. Exemplo em português do Brasil: "
             '"Orçamento 2027: corte de 8% aprovado".')
-SUMMARY_LABEL = "Summary:"
-OPENING_LABEL = "Opening of the transcript:"
+SUMMARY_LABEL = "Resumo:"
+OPENING_LABEL = "Abertura da transcrição:"
 
 
 @dataclass(frozen=True, slots=True)

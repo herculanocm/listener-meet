@@ -226,8 +226,8 @@ def test_the_title_reads_the_opening_lines_cut_at_a_speaker_change(store):
     assert 1200 < sum(estimate_tokens(ln.render()) + 1 for ln in cut) <= 1500 * 1.15
     meeting = MeetingCtx("x", "2026-10-29", None, (), (), "pt-BR")
     user = prompts.title.build(prompts.title.TitleCtx(meeting, "falas", True))[1].text
-    assert "Opening of the transcript:\nfalas" in user and "Summary:" not in user and "from its summary:" not in prompts.title.INSTRUCTIONS
-    assert prompts.prompt_version(LlmTask.TITLE) == "title/1.3"
+    assert "Abertura da transcrição:\nfalas" in user and "Resumo:" not in user and "do resumo dela:" not in prompts.title.INSTRUCTIONS
+    assert prompts.prompt_version(LlmTask.TITLE) == "title/2.0"
     ana, bia = store.people.create_person("Ana"), store.people.create_person("Bia")
     mid = store.create_meeting("Longa", None, None, None)
     store.finish_meeting(mid, 60_000)
@@ -237,7 +237,7 @@ def test_the_title_reads_the_opening_lines_cut_at_a_speaker_change(store):
     _provider_ready(store)
     assert llm_steps.enqueue_llm_job(store, mid, ["title"], job) is not None
     _runner, status, fake = _run_llm(store)
-    sent = fake.calls(LlmTask.TITLE)[0].messages[1].text.split("Opening of the transcript:\n", 1)[1]
+    sent = fake.calls(LlmTask.TITLE)[0].messages[1].text.split("Abertura da transcrição:\n", 1)[1]
     assert status == JobStatus.DONE and len(sent.splitlines()) == len(cut) and "fala0 " in sent and f"fala{len(cut)} " not in sent
 
 

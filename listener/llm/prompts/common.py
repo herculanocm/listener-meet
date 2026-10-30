@@ -1,8 +1,9 @@
 """O que os prompts compartilham (contrato "Prompts"): contexto da reunião, linhas `#<segment_id> [mm:ss] <rótulo>: <texto>`,
-instrução de idioma (`output_language` injetado; glossário, nomes e siglas nunca traduzidos). Instruções em inglês com
-exemplos em pt-BR [exp: melhor obediência entre modelos]. Nenhum SDK aqui. F5.6 L2 (A-24 a A-26): cada tarefa separa as
-`INSTRUCTIONS` (o papel e o estilo, que o usuário pode trocar nas Configurações) do `CONTRACT` (formato, esquema, citações,
-rótulos de voz: fixo, CP2); `system_text` junta os dois, e o padrão sai igual, byte a byte, ao texto de antes."""
+instrução de idioma (`output_language` injetado; glossário, nomes e siglas nunca traduzidos). Instruções e contrato em
+pt-BR, o idioma padrão do app (D-071; antes, em inglês por experimento); `{idioma}` vira o nome do idioma em português.
+Nenhum SDK aqui. F5.6 L2 (A-24 a A-26): cada tarefa separa as `INSTRUCTIONS` (o papel e o estilo, que o usuário pode
+trocar nas Configurações) do `CONTRACT` (formato, esquema, citações, rótulos de voz: fixo, CP2); `system_text` junta os
+dois, e o padrão sai igual, byte a byte, à cópia congelada de `tests/data/prompts_ptbr.json`."""
 from __future__ import annotations
 
 import re
@@ -12,10 +13,10 @@ from dataclasses import dataclass
 from ...config.prompts import VARIABLE
 from ..types import Message, Role
 
-LANGUAGE_NAMES = {"pt-br": "Brazilian Portuguese", "pt": "Portuguese", "en": "English", "es": "Spanish", "fr": "French", "de": "German",
-                  "it": "Italian"}
-VOICE_LABELS = "Speaker labels such as 'Voz 2' are names: copy them exactly, never translate them."   # F5.5 (A-20, P-03)
-ORIGINAL_LANGUAGE = "the original language"   # `{idioma}` sem idioma conhecido (a transcrição pelo áudio sem dica)
+LANGUAGE_NAMES = {"pt-br": "português do Brasil", "pt": "português", "en": "inglês", "es": "espanhol", "fr": "francês",
+                  "de": "alemão", "it": "italiano"}
+VOICE_LABELS = "Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza."   # F5.5 (A-20, P-03)
+ORIGINAL_LANGUAGE = "o idioma original"   # `{idioma}` sem idioma conhecido (a transcrição pelo áudio sem dica)
 LINE_RE = re.compile(r"^#(?P<id>\d+) \[(?P<mm>\d+):(?P<ss>\d{2})\] (?P<speaker>[^:]+): (?P<text>.*)$")
 
 
@@ -76,8 +77,8 @@ def language_name(code: str) -> str:
 
 
 def language_instruction(output_language: str) -> str:
-    return (f"Write all free text in {language_name(output_language)}. Never translate proper names, acronyms, product names "
-            "or glossary terms; keep them exactly as they appear in the transcript.")
+    return (f"Escreva todo texto livre em {language_name(output_language)}. Nunca traduza nomes próprios, siglas, nomes de "
+            "produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.")
 
 
 def render_lines(lines: Iterable[Line]) -> str:
@@ -95,21 +96,22 @@ def parse_lines(text: str) -> list[Line]:
 
 
 def header(ctx: MeetingCtx) -> str:
-    parts = [f"Meeting date: {ctx.date}"]
+    parts = [f"Data da reunião: {ctx.date}"]
     if ctx.title:
-        parts.append(f"Title: {ctx.title}")
+        parts.append(f"Título: {ctx.title}")
     if ctx.participants_text:
-        parts.append(f"Expected participants (as typed by the user): {ctx.participants_text}")
+        parts.append(f"Participantes esperados (como o usuário digitou): {ctx.participants_text}")
     if ctx.expected:
-        parts.append("Expected participants with a profile: " + "; ".join(p.render() for p in ctx.expected))
+        parts.append("Participantes esperados com cadastro: " + "; ".join(p.render() for p in ctx.expected))
     if ctx.speakers:
-        parts.append("Identified speakers in this meeting (person_id, name — role, company): "
+        parts.append("Falantes identificados nesta reunião (person_id, nome — cargo, empresa): "
                      + "; ".join(p.render() for p in ctx.speakers))
     if ctx.glossary:
-        parts.append(f"Glossary (keep spelling): {ctx.glossary}")
+        parts.append(f"Glossário (mantenha a grafia): {ctx.glossary}")
     if ctx.markers:
-        parts.append("Markers set by the user during the meeting: " + "; ".join(f"marker {m.id} at [{stamp(m.t_ms)}]"
-                                                                               + (f': "{m.note}"' if m.note else "") for m in ctx.markers))
+        parts.append("Marcadores que o usuário pôs durante a reunião: "
+                     + "; ".join(f"marcador {m.id} em [{stamp(m.t_ms)}]" + (f': "{m.note}"' if m.note else "")
+                                 for m in ctx.markers))
     return "\n".join(parts)
 
 
@@ -128,8 +130,8 @@ def own(default: str, custom: str | None, language: str | None) -> str:
 
 
 def compose(instructions: str, contract: str) -> str:
-    """Instruções e contrato numa mensagem: separados por um espaço (o padrão sai como o texto de antes da F5.6 L2) ou por
-    uma quebra de linha quando as instruções têm mais de uma linha."""
+    """Instruções e contrato numa mensagem: separados por um espaço ou por uma quebra de linha quando as instruções têm
+    mais de uma linha."""
     sep = "\n" if "\n" in instructions else " "
     return f"{instructions}{sep}{contract}"
 
@@ -149,4 +151,4 @@ def ids_schema() -> dict:
 
 
 def text_block(name: str, lines: Sequence[Line]) -> str:
-    return f"{name} (format: #segment_id [mm:ss] speaker: text):\n{render_lines(lines)}"
+    return f"{name} (formato: #segment_id [mm:ss] falante: texto):\n{render_lines(lines)}"

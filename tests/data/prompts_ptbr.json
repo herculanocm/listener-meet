@@ -1,0 +1,418 @@
+{
+ "language": "pt-BR",
+ "generated": "2026-10-30 (D-071)",
+ "cases": {
+  "chat/first-en": [
+   [
+    "system",
+    "Responda perguntas sobre uma reunião usando só a transcrição dela, abaixo. Seja conciso. Cite o momento em que se apoia como [mm:ss], tirado das linhas da transcrição (por exemplo: 'o prazo foi fechado para sexta [12:03]'). Se a transcrição não responde à pergunta, diga isso. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nTranscrição (#segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.",
+    []
+   ],
+   [
+    "assistant",
+    "Entendido. Vou responder perguntas sobre esta reunião citando [mm:ss] da transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Who opened?",
+    []
+   ]
+  ],
+  "chat/history": [
+   [
+    "system",
+    "Responda perguntas sobre uma reunião usando só a transcrição dela, abaixo. Seja conciso. Cite o momento em que se apoia como [mm:ss], tirado das linhas da transcrição (por exemplo: 'o prazo foi fechado para sexta [12:03]'). Se a transcrição não responde à pergunta, diga isso. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nTranscrição (#segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ],
+   [
+    "assistant",
+    "Entendido. Vou responder perguntas sobre esta reunião citando [mm:ss] da transcrição.",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 3 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 4 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 5 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 6 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 7 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 8 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 9 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 10 {x}",
+    []
+   ],
+   [
+    "user",
+    "Qual o prazo {x}?",
+    []
+   ]
+  ],
+  "executive/en": [
+   [
+    "system",
+    "Escreva o resumo executivo de uma reunião para quem não estava nela: do que tratou, o que foi decidido, o que ficou pendente e os próximos passos principais, em um ou dois parágrafos curtos de prosa corrida (sem tópicos, sem títulos). Use só a ata dada. Limite rígido: 1300 caracteres. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nAta (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "executive/full": [
+   [
+    "system",
+    "Escreva o resumo executivo de uma reunião para quem não estava nela: do que tratou, o que foi decidido, o que ficou pendente e os próximos passos principais, em um ou dois parágrafos curtos de prosa corrida (sem tópicos, sem títulos). Use só a ata dada. Limite rígido: 1300 caracteres. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nAta (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "glossary/bare-en": [
+   [
+    "system",
+    "Antes de uma reunião ser gravada, prepare um glossário curto para o reconhecedor de fala: nomes próprios, siglas, nomes de produtos e de empresas, termos técnicos que provavelmente serão ditos, tirados do título, dos participantes e do glossário do próprio usuário. Até 40 termos, os mais prováveis primeiro, sem repetir, sem palavras comuns. Também case cada nome de participante não resolvido com uma das pessoas conhecidas listadas quando for claramente a mesma pessoa (apelido, primeiro nome, erro de digitação); senão, person_id null.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Título: (nenhum)\nParticipantes como digitados: (nenhum)\nNomes de participantes não resolvidos: (nenhum)\nPessoas conhecidas: (nenhuma)\nGlossário do usuário: (nenhum)",
+    []
+   ]
+  ],
+  "glossary/full": [
+   [
+    "system",
+    "Antes de uma reunião ser gravada, prepare um glossário curto para o reconhecedor de fala: nomes próprios, siglas, nomes de produtos e de empresas, termos técnicos que provavelmente serão ditos, tirados do título, dos participantes e do glossário do próprio usuário. Até 40 termos, os mais prováveis primeiro, sem repetir, sem palavras comuns. Também case cada nome de participante não resolvido com uma das pessoas conhecidas listadas quando for claramente a mesma pessoa (apelido, primeiro nome, erro de digitação); senão, person_id null.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Título: Orçamento {2027}\nParticipantes como digitados: Ana, {Bia}\nNomes de participantes não resolvidos: Bia\nPessoas conhecidas: (7) Ana Souza — CFO, ACME\nGlossário do usuário: OKR",
+    []
+   ]
+  ],
+  "identify/bare-en": [
+   [
+    "system",
+    "Identifique quem são os falantes sem nome na transcrição de uma reunião, usando só pistas do texto: pessoas que se chamam pelo nome, apresentações, cargos mencionados, quem responde a quem. Os falantes rotulados SPK_n estão por resolver; os outros já são conhecidos. Para cada falante por resolver, devolva ou o person_id de um candidato listado ou um new_name (nunca os dois), uma confidence entre 0 e 1 e até 5 evidências, cada uma com o segment_id e uma citação curta copiada literalmente daquele segmento. Sem pista, devolva person_id null, new_name null e confidence 0. Nunca invente nomes.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nFalantes por resolver: SPK_2, SPK_3\n\nCandidatos (person_id) nome — cargo, empresa: (nenhum)\n\nTranscrição (formato: #segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n\nExemplo de uma entrada de falante: {\"cluster\": \"SPK_2\", \"person_id\": 7, \"new_name\": null, \"confidence\": 0.8, \"evidence\": [{\"segment_id\": 143, \"quote\": \"valeu, Rodrigo\"}]}",
+    []
+   ]
+  ],
+  "identify/full": [
+   [
+    "system",
+    "Identifique quem são os falantes sem nome na transcrição de uma reunião, usando só pistas do texto: pessoas que se chamam pelo nome, apresentações, cargos mencionados, quem responde a quem. Os falantes rotulados SPK_n estão por resolver; os outros já são conhecidos. Para cada falante por resolver, devolva ou o person_id de um candidato listado ou um new_name (nunca os dois), uma confidence entre 0 e 1 e até 5 evidências, cada uma com o segment_id e uma citação curta copiada literalmente daquele segmento. Sem pista, devolva person_id null, new_name null e confidence 0. Nunca invente nomes.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nFalantes por resolver: SPK_2\n\nCandidatos (person_id) nome — cargo, empresa: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\n\nTranscrição (formato: #segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.\n\nExemplo de uma entrada de falante: {\"cluster\": \"SPK_2\", \"person_id\": 7, \"new_name\": null, \"confidence\": 0.8, \"evidence\": [{\"segment_id\": 143, \"quote\": \"valeu, Rodrigo\"}]}",
+    []
+   ]
+  ],
+  "minutes/block-en": [
+   [
+    "system",
+    "Escreva a ata de uma reunião a partir da transcrição. Relate só o que foi dito de fato. Toda decisão, ação, destaque, pendência e próximo passo precisa citar os segment_ids que a sustentam (os números depois de '#'); use uma lista vazia só quando não há mesmo segmento de apoio. Ações: owner_text é o nome como foi dito na reunião; owner_person_id só quando o responsável é uma das pessoas listadas; due_text é o prazo como foi dito; due_date é esse prazo como data absoluta AAAA-MM-DD, calculada a partir da data da reunião, ou null. Destaques: uma entrada por marcador do usuário, descrevendo o que se discutia perto daquele momento e levando em conta a nota do usuário. Contexto: duas a quatro frases sobre do que tratou a reunião. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nPessoas conhecidas (person_id) nome — cargo, empresa: (nenhuma)\n\nEste é o bloco 2 de 3 da reunião; escreva as notas só deste bloco.\n\nTranscrição (formato: #segment_id [mm:ss] falante: texto):\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "minutes/direct": [
+   [
+    "system",
+    "Escreva a ata de uma reunião a partir da transcrição. Relate só o que foi dito de fato. Toda decisão, ação, destaque, pendência e próximo passo precisa citar os segment_ids que a sustentam (os números depois de '#'); use uma lista vazia só quando não há mesmo segmento de apoio. Ações: owner_text é o nome como foi dito na reunião; owner_person_id só quando o responsável é uma das pessoas listadas; due_text é o prazo como foi dito; due_date é esse prazo como data absoluta AAAA-MM-DD, calculada a partir da data da reunião, ou null. Destaques: uma entrada por marcador do usuário, descrevendo o que se discutia perto daquele momento e levando em conta a nota do usuário. Contexto: duas a quatro frases sobre do que tratou a reunião. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nPessoas conhecidas (person_id) nome — cargo, empresa: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\n\nTranscrição (formato: #segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "minutes/reduce": [
+   [
+    "system",
+    "Consolide na ata final as notas estruturadas tiradas de blocos consecutivos de uma reunião longa. Junte as repetições, mantenha os segment_ids das notas, mantenha a ordem cronológica e não acrescente nada que não esteja nas notas. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nPessoas conhecidas: (7) Ana Souza — CFO, ACME\n\nNotas do bloco 1:\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}\n\nNotas do bloco 2:\n{}",
+    []
+   ]
+  ],
+  "minutes/reduce-en": [
+   [
+    "system",
+    "Consolide na ata final as notas estruturadas tiradas de blocos consecutivos de uma reunião longa. Junte as repetições, mantenha os segment_ids das notas, mantenha a ordem cronológica e não acrescente nada que não esteja nas notas. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nPessoas conhecidas: (nenhuma)\n\nNotas do bloco 1:\n{}",
+    []
+   ]
+  ],
+  "partial/first": [
+   [
+    "system",
+    "Mantenha o resumo parcial de uma reunião que ainda está acontecendo, escrito a partir das legendas ao vivo. As legendas são automáticas: podem ter erros de reconhecimento, e o rótulo do falante pode estar errado ou ser só 'Participante'. O pedido traz o resumo parcial anterior (JSON) e as legendas desde então. Devolva o resumo atualizado da reunião inteira até aqui, não só da parte nova: 'summary' em prosa corrida, com no máximo 1000 caracteres; 'decisions' são as possíveis decisões tomadas até aqui; 'actions' são as possíveis ações até aqui, com 'owner' como foi dito na reunião ou null. Mantenha os itens do resumo anterior, com o caption_id deles, a menos que as legendas novas os contradigam; nunca repita um item; no máximo 15 itens por lista, os mais relevantes. Todo item cita em 'caption_id' a legenda que o sustenta (o número depois de '#'); null só quando nenhuma legenda o sustenta. Relate só o que foi dito; são possíveis decisões e ações, não definitivas. Exemplo de item, em português do Brasil: {\"text\": \"Cortar 8% do orçamento de marketing\", \"caption_id\": 41}.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nResumo parcial anterior (JSON):\n(nenhum: este é o primeiro resumo parcial da reunião)\n\nLegendas novas (formato: #caption_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?",
+    []
+   ]
+  ],
+  "partial/next-en": [
+   [
+    "system",
+    "Mantenha o resumo parcial de uma reunião que ainda está acontecendo, escrito a partir das legendas ao vivo. As legendas são automáticas: podem ter erros de reconhecimento, e o rótulo do falante pode estar errado ou ser só 'Participante'. O pedido traz o resumo parcial anterior (JSON) e as legendas desde então. Devolva o resumo atualizado da reunião inteira até aqui, não só da parte nova: 'summary' em prosa corrida, com no máximo 1000 caracteres; 'decisions' são as possíveis decisões tomadas até aqui; 'actions' são as possíveis ações até aqui, com 'owner' como foi dito na reunião ou null. Mantenha os itens do resumo anterior, com o caption_id deles, a menos que as legendas novas os contradigam; nunca repita um item; no máximo 15 itens por lista, os mais relevantes. Todo item cita em 'caption_id' a legenda que o sustenta (o número depois de '#'); null só quando nenhuma legenda o sustenta. Relate só o que foi dito; são possíveis decisões e ações, não definitivas. Exemplo de item, em português do Brasil: {\"text\": \"Cortar 8% do orçamento de marketing\", \"caption_id\": 41}.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nResumo parcial anterior (JSON):\n{\"summary\": \"Orçamento\", \"decisions\": [], \"actions\": [{\"text\": \"Enviar {planilha}\", \"caption_id\": 3, \"owner\": null}]}\n\nLegendas novas (formato: #caption_id [mm:ss] falante: texto):\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "pre_summary/bare-en": [
+   [
+    "system",
+    "Escreva um resumo bem curto de uma reunião (duas ou três frases) dizendo o assunto e o resultado principal, usando só a ata dada. Limite rígido: 500 caracteres. Prosa corrida, sem tópicos. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nAta (JSON):\n{}",
+    []
+   ]
+  ],
+  "pre_summary/full": [
+   [
+    "system",
+    "Escreva um resumo bem curto de uma reunião (duas ou três frases) dizendo o assunto e o resultado principal, usando só a ata dada. Limite rígido: 500 caracteres. Prosa corrida, sem tópicos. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nAta (JSON):\n{\"context\": \"Orçamento {2027}\", \"decisions\": [{\"text\": \"Corte de 8%\", \"segment_ids\": [102]}]}",
+    []
+   ]
+  ],
+  "rag_chat/blocks": [
+   [
+    "system",
+    "Responda perguntas sobre as reuniões passadas do usuário usando só os trechos abaixo, agrupados por reunião. Seja conciso. Cada reunião tem um apelido como [R1], válido só para a pergunta atual. Cite toda afirmação como [R<n> mm:ss], tirando o apelido e o tempo das linhas dos trechos em que se apoia (por exemplo: 'o prazo foi fechado para sexta [R1 12:03]'); ponha várias citações num colchete só, separadas por ';' ([R1 12:03; R2 05:10]), e cite [R<n>] sozinho quando a linha não tem tempo. Nunca invente apelidos, tempos nem fatos. Se os trechos não respondem à pergunta, diga claramente que não encontrou isso nas reuniões. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Trechos das reuniões do usuário (os apelidos valem só para esta pergunta; as linhas da transcrição são #segment_id [mm:ss] falante: texto):\n\n[R1] Orçamento {2027} — 2026-10-20 — Ana Souza — CFO\n#102 [01:05] Voz 2: O corte de 8% fica?\ndecisão: Corte de 8% aprovado\nação [02:05]: Enviar a planilha\n\n[R2] (sem título) — ? — (participantes não identificados)\n#11 [00:05] Ana Souza — CFO: Abertura {idioma}",
+    []
+   ],
+   [
+    "assistant",
+    "Entendido. Vou responder só a partir destes trechos, citando [R<n> mm:ss].",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 3 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 4 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 5 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 6 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 7 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 8 {x}",
+    []
+   ],
+   [
+    "assistant",
+    "mensagem 9 {x}",
+    []
+   ],
+   [
+    "user",
+    "mensagem 10 {x}",
+    []
+   ],
+   [
+    "user",
+    "O que decidimos {x}?",
+    []
+   ]
+  ],
+  "rag_chat/empty-en": [
+   [
+    "system",
+    "Responda perguntas sobre as reuniões passadas do usuário usando só os trechos abaixo, agrupados por reunião. Seja conciso. Cada reunião tem um apelido como [R1], válido só para a pergunta atual. Cite toda afirmação como [R<n> mm:ss], tirando o apelido e o tempo das linhas dos trechos em que se apoia (por exemplo: 'o prazo foi fechado para sexta [R1 12:03]'); ponha várias citações num colchete só, separadas por ';' ([R1 12:03; R2 05:10]), e cite [R<n>] sozinho quando a linha não tem tempo. Nunca invente apelidos, tempos nem fatos. Se os trechos não respondem à pergunta, diga claramente que não encontrou isso nas reuniões. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Trechos das reuniões do usuário (os apelidos valem só para esta pergunta; as linhas da transcrição são #segment_id [mm:ss] falante: texto):\n\n(nenhum trecho foi encontrado para esta pergunta)",
+    []
+   ],
+   [
+    "assistant",
+    "Entendido. Vou responder só a partir destes trechos, citando [R<n> mm:ss].",
+    []
+   ],
+   [
+    "user",
+    "Anything?",
+    []
+   ]
+  ],
+  "revise/bare-en": [
+   [
+    "system",
+    "Revise de leve uma transcrição automática de fala: corrija pontuação, capitalização, erros evidentes de reconhecimento, nomes próprios, siglas e termos do glossário, e tire os cacoetes (hum, né, tipo) quando não acrescentam nada. Mantenha as palavras, o sentido, os números, as datas e o idioma de quem fala; não resuma, não traduza, não junte nem divida segmentos. Devolva uma entrada por segmento a editar, com o mesmo segment_id; os segmentos sem mudança podem ficar de fora. Os segmentos de contexto estão marcados como tal e não entram na resposta.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nSegmentos a editar (#segment_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "revise/context": [
+   [
+    "system",
+    "Revise de leve uma transcrição automática de fala: corrija pontuação, capitalização, erros evidentes de reconhecimento, nomes próprios, siglas e termos do glossário, e tire os cacoetes (hum, né, tipo) quando não acrescentam nada. Mantenha as palavras, o sentido, os números, as datas e o idioma de quem fala; não resuma, não traduza, não junte nem divida segmentos. Devolva uma entrada por segmento a editar, com o mesmo segment_id; os segmentos sem mudança podem ficar de fora. Os segmentos de contexto estão marcados como tal e não entram na resposta.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nContexto antes (não devolver):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n\nSegmentos a editar (#segment_id [mm:ss] falante: texto):\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n\nContexto depois (não devolver):\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "title/opening-en": [
+   [
+    "system",
+    "Proponha um título curto e específico para uma reunião a partir do resumo dela ou, sem resumo, das falas de abertura da transcrição: o assunto mais o resultado principal, quando houver. No máximo 60 caracteres, sem aspas, sem ponto final. Exemplo em português do Brasil: \"Orçamento 2027: corte de 8% aprovado\".\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nAbertura da transcrição:\n#101 [00:00] Ana: Bom dia",
+    []
+   ]
+  ],
+  "title/summary": [
+   [
+    "system",
+    "Proponha um título curto e específico para uma reunião a partir do resumo dela ou, sem resumo, das falas de abertura da transcrição: o assunto mais o resultado principal, quando houver. No máximo 60 caracteres, sem aspas, sem ponto final. Exemplo em português do Brasil: \"Orçamento 2027: corte de 8% aprovado\".\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nResumo:\nCorte de 8% aprovado {ok}",
+    []
+   ]
+  ],
+  "transcribe/bare": [
+   [
+    "system",
+    "Transcreva literalmente o áudio de reunião anexado, no idioma original dele. Divida em falas nas trocas de falante e nas pausas naturais (cada uma com uns 15 segundos no máximo), com start_s e end_s em segundos relativos ao começo do áudio. Mantenha os números em algarismos, mantenha nomes e siglas como foram ditos, sem comentários, sem tradução. Devolva language como código de duas letras.",
+    []
+   ],
+   [
+    "user",
+    "Transcreva o áudio.",
+    [
+     "janela 1 {idioma}"
+    ]
+   ]
+  ],
+  "transcribe/hints": [
+   [
+    "system",
+    "Transcreva literalmente o áudio de reunião anexado, no idioma original dele. Divida em falas nas trocas de falante e nas pausas naturais (cada uma com uns 15 segundos no máximo), com start_s e end_s em segundos relativos ao começo do áudio. Mantenha os números em algarismos, mantenha nomes e siglas como foram ditos, sem comentários, sem tradução. Devolva language como código de duas letras.",
+    []
+   ],
+   [
+    "user",
+    "O idioma é pt. Nomes e termos prováveis: ACME, {idioma}, OKR",
+    [
+     "janela 1 {idioma}"
+    ]
+   ]
+  ]
+ }
+}

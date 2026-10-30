@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import VOICE_LABELS, MeetingCtx, header, system, system_text, user
 
-PROMPT_VERSION = "1.2"                  # U-041 (A-10): o cabeçalho lista os falantes; F5.5 (A-20): "Voz 2" sem tradução
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR; 1.2: o cabeçalho lista os falantes e "Voz 2" sem tradução
 MAX_CHARS = 1500
 SCHEMA: dict = {"type": "object", "additionalProperties": False, "required": ["text"],
                 "properties": {"text": {"type": "string", "maxLength": MAX_CHARS}}}
-INSTRUCTIONS = ("You write the executive summary of a meeting for someone who was not there: what it was about, what was "
-                "decided, what is pending and the key next steps, in one or two short paragraphs of plain prose (no bullet points, "
-                "no headings).")
-CONTRACT = f"Use only the minutes given. Hard limit: {MAX_CHARS - 200} characters. {VOICE_LABELS}"
+INSTRUCTIONS = ("Escreva o resumo executivo de uma reunião para quem não estava nela: do que tratou, o que foi decidido, o "
+                "que ficou pendente e os próximos passos principais, em um ou dois parágrafos curtos de prosa corrida (sem "
+                "tópicos, sem títulos).")
+CONTRACT = f"Use só a ata dada. Limite rígido: {MAX_CHARS - 200} caracteres. {VOICE_LABELS}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,4 +25,4 @@ class SummaryCtx:
 
 def build(ctx: SummaryCtx, instructions: str | None = None) -> tuple[Message, ...]:
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
-    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Minutes (JSON):\n{ctx.minutes_json}"))
+    return (system(text, ctx.meeting), user(header(ctx.meeting), f"Ata (JSON):\n{ctx.minutes_json}"))

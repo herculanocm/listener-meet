@@ -131,10 +131,10 @@ def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platfor
         assert status == status2 == JobStatus.DONE
         sync_text(store, mid)
     minutes = fake.calls(LlmTask.MINUTES)[0].messages[1].text
-    assert "Identified speakers in this meeting" in minutes and "(" + str(ana) + ") Ana — CFO, Empresa X" in minutes
+    assert "Falantes identificados nesta reunião" in minutes and "(" + str(ana) + ") Ana — CFO, Empresa X" in minutes
     blobs = store._q("SELECT request_blob, response_blob FROM llm_calls")
     assert blobs and all(CANARY not in json.dumps(unpack_blob(b), ensure_ascii=False) for row in blobs for b in row if b)
     assert store._q("SELECT COUNT(*) FROM rag_chunks WHERE text LIKE ? OR speakers LIKE ?", (f"%{CANARY}%",) * 2)[0][0] == 0
     assert store._q("SELECT COUNT(*) FROM rag_fts WHERE rag_fts MATCH ?", ('"canario"',))[0][0] == 0
     assert CANARY not in caplog.text
-    assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == "minutes/1.2"
+    assert store.summaries.current(mid, SummaryKind.MINUTES)["prompt_version"] == "minutes/2.0"

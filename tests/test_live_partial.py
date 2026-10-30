@@ -36,7 +36,7 @@ def _caption(store: Any, mid: int, t0: int, text: str, label: str | None = "Ana 
 
 def test_partial_prompt_is_strict_fast_and_versioned():
     assert check_strict(prompts.partial.SCHEMA) == [] and TASK_CLASS[LlmTask.PARTIAL] == ModelClass.FAST
-    assert prompts.prompt_version(LlmTask.PARTIAL) == "partial/1.0"
+    assert prompts.prompt_version(LlmTask.PARTIAL) == "partial/2.0"
     rows: list[Any] = [{"id": i + 1, "t_start_ms": i * 1000, "text": "x" * 500} for i in range(10)]
     used, left = select_captions(rows, max_chars=1200)
     assert len(used) == 2 and left == 8 and select_captions(rows[:1], max_chars=10) == (rows[:1], 0)   # ao menos uma
@@ -67,7 +67,7 @@ def test_run_partial_accumulates_supersedes_and_records_the_call(store, monkeypa
     assert data["actions"][0]["owner"] == "Eu" and data["actions"][0]["t_ms"] == 6000 and data["last_caption_id"] == r.last_caption_id
     assert "## Possíveis decisões" in row["text_llm"] and "[00:01]" in row["text_llm"]
     call = store.llm_calls.get(r.call_id)
-    assert call["task"] == "partial" and call["meeting_id"] == mid and call["status"] == "ok" and call["prompt_version"] == "partial/1.0"
+    assert call["task"] == "partial" and call["meeting_id"] == mid and call["status"] == "ok" and call["prompt_version"] == "partial/2.0"
     req, _resp = store.llm_calls.payloads(r.call_id)
     assert f"#{c1} [00:01] Ana — CFO: vamos cortar" in req[-1]["text"] and "Eu: eu mando" in req[-1]["text"]
     assert run_partial(store, mid).outcome == Outcome.NOTHING                                       # nada novo: sem chamada

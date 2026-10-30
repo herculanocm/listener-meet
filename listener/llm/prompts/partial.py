@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from ..types import Message
 from .common import Line, MeetingCtx, header, render_lines, system, system_text, user
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"                  # D-071: em pt-BR
 MAX_SUMMARY = 1200
 MAX_ITEMS = 15
 
@@ -29,15 +29,16 @@ SCHEMA: dict = {
         "actions": {"type": "array", "maxItems": MAX_ITEMS, "items": _item({"owner": {"type": ["string", "null"], "maxLength": 80}})},
     },
 }
-INSTRUCTIONS = "You keep a running summary of a meeting that is still happening, written from live captions."
-CONTRACT = ("Captions are automatic: they may have recognition errors, and the speaker label may be wrong or just 'Participante'. "
-            "You receive the previous running summary (JSON) and the captions since then. Return the updated summary of the whole "
-            f"meeting so far, not only of the new part: 'summary' in plain prose, at most {MAX_SUMMARY - 200} characters; "
-            "'decisions' are possible decisions taken so far; 'actions' are possible action items so far, with 'owner' as said in "
-            "the meeting or null. Keep the items of the previous summary, with their caption_id, unless the new captions "
-            f"contradict them; never repeat an item; at most {MAX_ITEMS} items per list, the most relevant ones. Every item cites "
-            "in 'caption_id' the caption that supports it (the number after '#'); null only when no caption supports it. Report "
-            "only what was said; these are possible decisions and actions, not final ones. Example item in Brazilian Portuguese: "
+INSTRUCTIONS = "Mantenha o resumo parcial de uma reunião que ainda está acontecendo, escrito a partir das legendas ao vivo."
+CONTRACT = ("As legendas são automáticas: podem ter erros de reconhecimento, e o rótulo do falante pode estar errado ou ser "
+            "só 'Participante'. O pedido traz o resumo parcial anterior (JSON) e as legendas desde então. Devolva o resumo "
+            "atualizado da reunião inteira até aqui, não só da parte nova: 'summary' em prosa corrida, com no máximo "
+            f"{MAX_SUMMARY - 200} caracteres; 'decisions' são as possíveis decisões tomadas até aqui; 'actions' são as "
+            "possíveis ações até aqui, com 'owner' como foi dito na reunião ou null. Mantenha os itens do resumo anterior, "
+            "com o caption_id deles, a menos que as legendas novas os contradigam; nunca repita um item; no máximo "
+            f"{MAX_ITEMS} itens por lista, os mais relevantes. Todo item cita em 'caption_id' a legenda que o sustenta (o "
+            "número depois de '#'); null só quando nenhuma legenda o sustenta. Relate só o que foi dito; são possíveis "
+            "decisões e ações, não definitivas. Exemplo de item, em português do Brasil: "
             '{"text": "Cortar 8% do orçamento de marketing", "caption_id": 41}.')
 
 
@@ -49,8 +50,8 @@ class PartialCtx:
 
 
 def build(ctx: PartialCtx, instructions: str | None = None) -> tuple[Message, ...]:
-    previous = ctx.previous_json or "(none: this is the first running summary of the meeting)"
+    previous = ctx.previous_json or "(nenhum: este é o primeiro resumo parcial da reunião)"
     text = system_text(INSTRUCTIONS, CONTRACT, instructions, ctx.meeting.output_language)
     return (system(text, ctx.meeting),
-            user(header(ctx.meeting), f"Previous running summary (JSON):\n{previous}",
-                 f"New captions (format: #caption_id [mm:ss] speaker: text):\n{render_lines(ctx.lines)}"))
+            user(header(ctx.meeting), f"Resumo parcial anterior (JSON):\n{previous}",
+                 f"Legendas novas (formato: #caption_id [mm:ss] falante: texto):\n{render_lines(ctx.lines)}"))

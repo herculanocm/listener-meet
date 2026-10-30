@@ -45,7 +45,7 @@ def _mine(task: str) -> str:
 
 
 def _sent(task: str) -> str:
-    return f"MINHAS-{task} em Brazilian Portuguese. "
+    return f"MINHAS-{task} em português do Brasil. "
 
 
 @pytest.mark.usefixtures("no_summary_gate")
@@ -97,8 +97,8 @@ def test_hierarchical_minutes_carry_the_custom_instructions_to_the_reduce(platfo
     runner, status, _ = _run_llm(store, small)
     assert status == JobStatus.DONE, store.jobs.get(runner.job_id)["error"]
     systems = [r.messages[0].text for r in small.calls(LlmTask.MINUTES)]
-    assert len(systems) >= 2 and all(s.startswith("Foque nos valores, em Brazilian Portuguese. ") for s in systems)
-    assert systems[-1].startswith(f"Foque nos valores, em Brazilian Portuguese. {prompts.minutes.REDUCE_SYSTEM}")
+    assert len(systems) >= 2 and all(s.startswith("Foque nos valores, em português do Brasil. ") for s in systems)
+    assert systems[-1].startswith(f"Foque nos valores, em português do Brasil. {prompts.minutes.REDUCE_SYSTEM}")
 
 
 def _window() -> AudioWindow:
@@ -110,8 +110,8 @@ def test_the_audio_transcriber_sends_the_custom_instructions_and_exposes_the_mar
     fake = FakeProvider()
     t = llm_audio.LLMAudioTranscriber(lambda: fake, ProviderKind.GEMINI, "fake-fast", "gemini", " Transcreva em {idioma}. ")
     t.transcribe(_window(), language="pt", initial_prompt="")
-    assert fake.requests[0].messages[0].text == f"Transcreva em Portuguese. {prompts.transcribe.CONTRACT}"
-    assert t.prompt_version == f"transcribe/1.0+u{prompt_settings.text_hash('Transcreva em {idioma}.')}"
+    assert fake.requests[0].messages[0].text == f"Transcreva em português. {prompts.transcribe.CONTRACT}"
+    assert t.prompt_version == f"transcribe/2.0+u{prompt_settings.text_hash('Transcreva em {idioma}.')}"
     assert t.name == "llm:gemini:fake-fast"                                    # o nome segue a chave da velocidade medida
     plain = llm_audio.LLMAudioTranscriber(lambda: fake, ProviderKind.GEMINI, "fake-fast", "gemini")
     assert plain.prompt_version == "" and plain.name == t.name
@@ -131,7 +131,7 @@ def test_the_meeting_job_records_the_transcription_mark_in_its_timings(platform,
     store.jobs.enqueue(mid)
     job_id, status = _run_heavy(store, deps)
     timings = json.loads(store.jobs.get(job_id)["timings_json"])
-    mark = f"transcribe/1.0+u{prompt_settings.text_hash('Sem cortes.')}"
+    mark = f"transcribe/2.0+u{prompt_settings.text_hash('Sem cortes.')}"
     assert status == JobStatus.DONE and fake.calls(LlmTask.TRANSCRIBE)
     assert timings["transcribe_r"]["prompt"] == mark and timings["transcribe_r"]["model"] == "llm:gemini:fake-fast"
     assert "prompt" not in timings["diarize"]
@@ -153,7 +153,7 @@ def test_the_live_partial_sends_the_custom_instructions_it_stamps(store, monkeyp
     assert r.outcome == Outcome.DONE
     req, _resp = store.llm_calls.payloads(r.call_id)
     assert req[0]["text"].startswith(f"{_sent('partial')}{prompts.partial.CONTRACT}")
-    assert store.llm_calls.get(r.call_id)["prompt_version"] == f"partial/1.0+u{prompt_settings.text_hash(_mine('partial'))}"
+    assert store.llm_calls.get(r.call_id)["prompt_version"] == f"partial/2.0+u{prompt_settings.text_hash(_mine('partial'))}"
 
 
 @pytest.mark.usefixtures("fresh_search")
@@ -168,4 +168,4 @@ def test_the_global_chat_sends_the_custom_instructions_it_stamps(store, monkeypa
     assert ans.error is None and ans.call_id is not None
     req, _resp = store.llm_calls.payloads(ans.call_id)
     assert req[0]["text"].startswith(f"{_sent('rag_chat')}{prompts.rag_chat.CONTRACT}")
-    assert store.llm_calls.get(ans.call_id)["prompt_version"] == f"rag_chat/1.2+u{prompt_settings.text_hash(_mine('rag_chat'))}"
+    assert store.llm_calls.get(ans.call_id)["prompt_version"] == f"rag_chat/2.0+u{prompt_settings.text_hash(_mine('rag_chat'))}"

@@ -15,7 +15,7 @@ from .prompts.common import Line, parse_lines
 from .types import LlmTask, Request, Role
 
 CANDIDATE_RE = re.compile(r"\((\d+)\) ([^;—\n]+?)(?: —[^;\n]*)?(?:;|$)", re.MULTILINE)
-MARKER_RE = re.compile(r"marker (\d+) at \[(\d+):(\d{2})\]")
+MARKER_RE = re.compile(r"marcador (\d+) em \[(\d+):(\d{2})\]")
 
 
 def _user_text(req: Request) -> str:
@@ -33,8 +33,8 @@ def _lines(req: Request) -> list[Line]:
 
 def identify(req: Request) -> dict[str, Any]:
     text = _user_text(req)
-    pending = [p.strip() for p in _after(text, "Unresolved speakers:").split("\n", 1)[0].split(",") if p.strip()]
-    cands_block = _after(text, "Candidates (person_id) name").split("\n", 1)[0]
+    pending = [p.strip() for p in _after(text, "Falantes por resolver:").split("\n", 1)[0].split(",") if p.strip()]
+    cands_block = _after(text, "Candidatos (person_id) nome").split("\n", 1)[0]
     candidates = [(int(i), n.strip()) for i, n in CANDIDATE_RE.findall(cands_block + ";")]
     lines = _lines(req)
     used: set[int] = set()
@@ -61,9 +61,9 @@ def identify(req: Request) -> dict[str, Any]:
 def minutes(req: Request) -> dict[str, Any]:
     text = _user_text(req)
     lines = _lines(req)
-    if "Block " in text and "notes:" in text:                      # redução: junta as notas dos blocos
+    if "Notas do bloco " in text:                                  # redução: junta as notas dos blocos
         merged: dict[str, Any] = {"context": "", "decisions": [], "actions": [], "highlights": [], "open_points": [], "next_steps": []}
-        for raw in re.findall(r"notes:\n(\{.*?\})(?=\n\nBlock |\Z)", text, re.DOTALL):
+        for raw in re.findall(r"Notas do bloco \d+:\n(\{.*?\})(?=\n\nNotas do bloco |\Z)", text, re.DOTALL):
             try:
                 note = json.loads(raw)
             except ValueError:
@@ -72,7 +72,7 @@ def minutes(req: Request) -> dict[str, Any]:
             for key in ("decisions", "actions", "highlights", "open_points", "next_steps"):
                 merged[key] += list(note.get(key) or [])
         return merged
-    title = _after(text, "Title: ").split("\n", 1)[0].strip() or "a reunião"
+    title = _after(text, "Título: ").split("\n", 1)[0].strip() or "a reunião"
     first = lines[0] if lines else None
     last = lines[-1] if lines else None
     from ..pipeline.voices import VOICE_PREFIX
@@ -102,7 +102,7 @@ def summary_text(prefix: str, limit: int) -> Callable[[Request], dict[str, Any]]
         text = _user_text(req)
         ctx = ""
         try:
-            data = json.loads(_after(text, "Minutes (JSON):\n").strip() or "{}")
+            data = json.loads(_after(text, "Ata (JSON):\n").strip() or "{}")
             ctx = str(data.get("context") or "")
         except ValueError:
             ctx = ""
@@ -111,14 +111,14 @@ def summary_text(prefix: str, limit: int) -> Callable[[Request], dict[str, Any]]
 
 
 def title(req: Request) -> dict[str, Any]:
-    text = (_after(_user_text(req), "Summary:\n") or _after(_user_text(req), "Opening of the transcript:\n")).strip()
+    text = (_after(_user_text(req), "Resumo:\n") or _after(_user_text(req), "Abertura da transcrição:\n")).strip()
     words = re.findall(r"\w+", text)[:5]
     return {"title": (" ".join(words) or "Reunião").capitalize()[:80]}
 
 
 def revise(req: Request) -> dict[str, Any]:
     text = _user_text(req)
-    block = _after(text, "Segments to edit (#segment_id [mm:ss] speaker: text):\n").split("\n\nContext after", 1)[0]
+    block = _after(text, "Segmentos a editar (#segment_id [mm:ss] falante: texto):\n").split("\n\nContexto depois", 1)[0]
     out = []
     for ln in parse_lines(block):
         new = ln.text[:1].upper() + ln.text[1:]
@@ -130,9 +130,9 @@ def revise(req: Request) -> dict[str, Any]:
 
 def glossary(req: Request) -> dict[str, Any]:
     text = _user_text(req)
-    title_text = _after(text, "Title: ").split("\n", 1)[0]
-    raw_names = _after(text, "Unresolved participant names:").split("\n", 1)[0].split(",")
-    unresolved = [n.strip() for n in raw_names if n.strip() and n.strip() != "(none)"]
+    title_text = _after(text, "Título: ").split("\n", 1)[0]
+    raw_names = _after(text, "Nomes de participantes não resolvidos:").split("\n", 1)[0].split(",")
+    unresolved = [n.strip() for n in raw_names if n.strip() and n.strip() != "(nenhum)"]
     terms = [w for w in re.findall(r"[A-ZÀ-Ú][\wÀ-ú-]+", title_text) if len(w) > 2][:40]
     return {"terms": terms, "people": [{"name": n, "person_id": None} for n in unresolved]}
 
@@ -145,9 +145,9 @@ def transcribe(req: Request) -> dict[str, Any]:
 
 def partial(req: Request) -> dict[str, Any]:
     text = _user_text(req)
-    lines = parse_lines(_after(text, "New captions (format: #caption_id [mm:ss] speaker: text):\n"))
+    lines = parse_lines(_after(text, "Legendas novas (formato: #caption_id [mm:ss] falante: texto):\n"))
     try:
-        previous = json.loads(_after(text, "Previous running summary (JSON):\n").split("\n\nNew captions", 1)[0])
+        previous = json.loads(_after(text, "Resumo parcial anterior (JSON):\n").split("\n\nLegendas novas", 1)[0])
     except ValueError:
         previous = {}
     previous = previous if isinstance(previous, dict) else {}
@@ -173,7 +173,7 @@ BLOCK_RE = re.compile(r"^\[(R\d+)\] ", re.MULTILINE)
 def rag_chat(req: Request) -> str:
     """F5: cita a primeira fala de R1 (e de R2 no mesmo colchete, quando há), R1 sem tempo e um apelido que não existe; sem
     trechos, diz que não achou."""
-    excerpts = next((m.text for m in req.messages if m.role == Role.USER and m.text.startswith("Excerpts")), "")
+    excerpts = next((m.text for m in req.messages if m.role == Role.USER and m.text.startswith("Trechos")), "")
     heads = list(BLOCK_RE.finditer(excerpts))
     if not heads:
         return "Não encontrei isso nas reuniões."

@@ -99,7 +99,7 @@ class AnthropicProvider:
             kw["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET[req.reasoning]}
             kw["max_tokens"] = max(req.max_output_tokens, THINKING_BUDGET[req.reasoning] + 1024)
         if req.json_schema is not None:
-            kw["tools"] = [{"name": TOOL_NAME, "description": "Return the structured result for this task.",
+            kw["tools"] = [{"name": TOOL_NAME, "description": "Devolve o resultado estruturado desta tarefa.",
                             "input_schema": provider_schema(req.json_schema, frozenset())}]
             kw["tool_choice"] = {"type": "tool", "name": TOOL_NAME, "disable_parallel_tool_use": True}
         if "service_tier" in self.params:
