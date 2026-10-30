@@ -3,10 +3,11 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
-- **F5.9 rascunhada** (30/10, `features/F5.9-canais-l-r-dispositivos.md`, a pedido do dono: revisão completa dos
+- **F5.9 em revisão** (30/10, `features/F5.9-canais-l-r-dispositivos.md`, a pedido do dono: revisão completa dos
   canais L e R, da captura ao player). Três defeitos (o R não percebe a própria morte; o canal que não abre no começo
   nunca é tentado de novo; os processos do app são fixados na abertura), três fragilidades e quatro melhorias, em
-  quatro lotes. Falta a revisão de arquitetura (D-040, passo 2), as quatro perguntas da spec e a aprovação do dono.
+  quatro lotes. A revisão de arquitetura está aplicada (D-070) e o briefing do programador pronto. Faltam a aprovação
+  do dono e as quatro perguntas da spec (padrão: sim).
 - **F5.8 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono gerar e usar o `.exe` numa
   reunião de verdade, pela Parte 19 do roteiro. A telemetria do pyannote foi desligada depois (`5b6496a`, pergunta 16).
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
