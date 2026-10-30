@@ -216,7 +216,7 @@ def measure(root: str | None, rounds: int) -> dict[str, Any]:
     mid = store.create_meeting("Comitê de investimentos", "sistema", None, None)
     store.finish_meeting(mid, 1000)
     fake = FakePlatform(tmp)
-    player = Player(store)
+    player = Player(store, devices=fake)                             # D-067: o player como no app
     makers: dict[str, tuple[Callable[[], Any], Callable[[Any], None] | None]] = {
         "warmup": (lambda: WarmupDialog(fake, store), None),
         "configuracoes": (lambda: SettingsDialog(store, fake, {}), None),

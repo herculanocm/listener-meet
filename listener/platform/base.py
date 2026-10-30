@@ -5,7 +5,7 @@ import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -147,6 +147,27 @@ type AudioCallback = Callable[[np.ndarray, float], None]
 type ErrorCallback = Callable[[str], None]
 
 
+class OutputUnknownError(Exception):
+    """D-067 (R-11): a plataforma não tem como saber qual dispositivo da biblioteca é este endpoint (sem a host API certa,
+    sem o mapa de ids e sem o nome): o player fica onde está, sem aviso e sem reler a lista à toa."""
+
+
+class OutputStream(Protocol):
+    """O fluxo de saída do player, mono float32 (o `sounddevice.OutputStream`; a falsa dos testes imita isto). D-067:
+    `endpoint_id` é o endpoint aberto ("" quando não se sabe), que o player compara com o padrão de agora."""
+    endpoint_id: str
+
+    @property
+    def samplerate(self) -> float: ...
+    @property
+    def latency(self) -> float: ...                   # segundos (num fluxo só de saída o `sounddevice` dá um número)
+    def start(self) -> None: ...
+    def write(self, data: np.ndarray, /) -> Any: ...  # bloqueante
+    def stop(self) -> None: ...                       # espera o buffer tocar
+    def abort(self) -> None: ...                      # descarta o buffer
+    def close(self) -> None: ...
+
+
 class CaptureHandle(Protocol):
     """Stream devolvida parada: quem chama registra o formato e só então chama `start()` (F1.2 M-06). `device_id` é o
     endpoint realmente aberto (F5.3, A-16: o pedido pode ter caído no padrão); vazio quando não se sabe ou no loopback de
@@ -238,6 +259,29 @@ class Platform(Protocol):
     # microfone aberto); nomes em cache por id, relidos com `refresh_names`. None quando o sistema não responde (aí a
     # lista é a da biblioteca, sem "novo"). Na thread da interface
     def audio_endpoints(self, refresh_names: bool = False) -> Endpoints | None: ...
+
+    # D-067: o aparelho padrão de agora (console/multimídia, não o de comunicação), que a biblioteca de áudio só relê ao
+    # reiniciar. `default_output_id` e `default_input_id` são a leitura barata que o player e o medidor repetem, em qualquer
+    # thread (nada do sistema fica guardado); None quando o sistema não diz (aí nada acompanha). `open_output(None)` abre
+    # o fluxo do player no padrão de agora (fora da lista da biblioteca, no padrão dela); com um id, exatamente ele, ou
+    # `LookupError` (fora da lista ou ambíguo: o player segue onde está e avisa) ou `OutputUnknownError` (sem como saber: segue
+    # calado). `play_sound` toca o teste do warm-up na saída pedida ou, sem ela ou fora da lista, no padrão, sem esperar
+    def default_output_id(self) -> str | None:
+        return None
+
+    def default_input_id(self) -> str | None:
+        return None
+
+    def open_output(self, endpoint_id: str | None = None) -> OutputStream:
+        from .common import output
+
+        return output.open_default(endpoint_id)
+
+    def play_sound(self, samples: np.ndarray, sample_rate: int, endpoint_id: str | None = None) -> None:
+        from .common import output
+
+        del endpoint_id                                    # sem escolha por endpoint aqui: o padrão da biblioteca
+        output.play(samples, sample_rate)
 
     # captura (o callback roda em thread de áudio: só copiar e enfileirar); a stream volta parada. F5.3 (A-16): com
     # `strict`, o microfone pedido que não está na lista é erro, não o padrão; `output_id` (A-21) é a saída cujo som o

@@ -1,7 +1,8 @@
 """PortAudio do sounddevice (U-043, F5.2): a biblioteca lê os dispositivos uma vez, ao iniciar, e um fone conectado com o
 app aberto só aparece reiniciando-a, o que fecha todo stream aberto. Aqui ficam o registro dos streams que o app abre e o
 reinício, que só acontece sem nenhum aberto e na thread da interface (onde o PortAudio nasce: o WASAPI dele usa COM).
-Quem abre um stream do sounddevice segura `LOCK` durante a abertura e o registra com `track`."""
+Quem abre um stream do sounddevice segura `LOCK` durante a abertura e o registra com `track`. D-067: `generation` conta as
+leituras (cada reinício que deu certo): quem não achou um aparelho numa leitura sabe quando vale tentar de novo."""
 from __future__ import annotations
 
 import threading
@@ -14,6 +15,7 @@ log = get_logger("platform.portaudio")
 
 LOCK = threading.RLock()
 _streams: weakref.WeakSet[Any] = weakref.WeakSet()
+_generation = [0]                                  # D-067: as leituras (num objeto, sem `global`)
 
 
 def track[T](stream: T) -> T:
@@ -28,6 +30,11 @@ def open_streams() -> int:
     with LOCK:
         count = sum(1 for s in list(_streams) if not getattr(s, "closed", True))
     return count + (1 if _play_active() else 0)
+
+
+def generation() -> int:
+    """D-067: quantas vezes o PortAudio releu os dispositivos neste processo (sem lock: um inteiro, lido de qualquer thread)."""
+    return _generation[0]
 
 
 def restart() -> bool:
@@ -58,6 +65,7 @@ def restart() -> bool:
             except Exception:
                 log.exception("PortAudio não reiniciou (o áudio volta reabrindo o app)")
                 return False
+        _generation[0] += 1
     return True
 
 

@@ -251,7 +251,7 @@ def test_the_player_lets_go_of_the_output_before_the_mic_switch_rereads(qtbot, q
     c = _controller(qapp, platform, store, monkeypatch)
     outs: list[RealtimeOutput] = []
 
-    def factory() -> RealtimeOutput:
+    def factory(_endpoint: str | None = None) -> RealtimeOutput:
         outs.append(RealtimeOutput())
         return outs[-1]
 

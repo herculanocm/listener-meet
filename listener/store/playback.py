@@ -1,5 +1,6 @@
 """Reprodução a partir do banco: decodifica os pedaços de um intervalo posicionando cada um pelo seu instante
-(F1.1 A17: buracos entre pedaços viram silêncio em vez de deslocar o áudio) e toca (sounddevice, portável)."""
+(F1.1 A17: buracos entre pedaços viram silêncio em vez de deslocar o áudio). Tocar é da plataforma (D-067: o teste do
+warm-up vai para a saída padrão de agora, `Platform.play_sound`)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -30,17 +31,3 @@ def decode_range(store: Store, meeting_id: int, channel: str, t0_ms: int, t1_ms:
             out[a_out:a_out + length] = samples[a_in:a_in + length]
     return out, sr
 
-
-def play(samples: np.ndarray, sample_rate: int) -> None:
-    import sounddevice as sd
-
-    from ..platform.common import portaudio
-
-    with portaudio.LOCK:                                   # U-043: o reinício do PortAudio espera o `sd.play` tocar
-        sd.play(samples, sample_rate)
-
-
-def stop() -> None:
-    import sounddevice as sd
-
-    sd.stop()

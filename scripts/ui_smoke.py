@@ -59,7 +59,7 @@ print("settings ok")
 mid = store.create_meeting("t", "sistema", None, None); store.finish_meeting(mid, 1000)
 su = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": []}); su.show(); app.processEvents(); su.close()
 print("summary ok")
-player = Player(store)
+player = Player(store, devices=p)                 # D-067: o player como no app
 mw = MeetingWindow(store, mid, player=player); mw.show(); app.processEvents(); mw.show_tab("marcadores"); app.processEvents(); mw.close()
 print("reunião ok")
 hw = HistoryWindow(store); hw.show(); app.processEvents()

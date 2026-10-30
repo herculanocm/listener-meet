@@ -2,12 +2,17 @@
 aberto durante a gravação. Cada leitura enumera só os ids ativos e os padrões de console e de comunicação de cada fluxo (a
 assinatura da U-043, ~19 ms); nome e ContainerId saem do property store por chave (dois `GetValue`, nunca o
 `CreateDevice` do pycaw, que lê todas as propriedades), só para id novo, quando a assinatura muda, ou para todos quando
-quem pede quer os nomes de novo (o painel abrindo), em cache por id. COM na thread de quem chama: a da interface."""
+quem pede quer os nomes de novo (o painel abrindo), em cache por id. COM na thread de quem chama: a da interface.
+D-067: `default_id` é a escolha única do "aparelho padrão de agora" (papel console, ~2,5 ms, em qualquer thread, nenhum
+objeto COM guardado), `device` e `name_of` acham um endpoint pelo id, e `names_match` e `by_name` casam nomes entre listas.
+R-08: o COM é iniciado uma vez por thread (`com_init`) e nunca desfeito; os objetos nascem e são soltos em cada chamada."""
 from __future__ import annotations
 
 import ctypes
 import functools
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,13 +33,20 @@ CONTAINER_ID = ("{8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c}", 2)      # PKEY_Device_
 LOCAL_CONTAINER = "{00000000-0000-0000-FFFF-FFFFFFFFFFFF}"
 
 
+_com = threading.local()                               # R-08: as threads em que o COM já foi iniciado
+
+
 def com_init() -> None:
+    """O COM desta thread, uma vez (nunca desfeito: os objetos de cada leitura são soltos antes de ela acabar)."""
+    if getattr(_com, "ready", False):
+        return
     try:
         import comtypes
 
         comtypes.CoInitialize()
-    except Exception as e:
+    except Exception as e:  # já iniciado em outro modo (o do PortAudio, por exemplo): segue valendo
         log.debug("CoInitialize: %s", e)
+    _com.ready = True
 
 
 @dataclass(slots=True)
@@ -62,7 +74,7 @@ def scan() -> Scan | None:
         defaults: list[str] = []
         for flow in (FLOW_CAPTURE, FLOW_RENDER):
             flows[flow] = active(enumerator, flow)
-            defaults += [_default_id(enumerator, flow, role) for role in (ROLE_CONSOLE, ROLE_COMMUNICATIONS)]
+            defaults += [default_id(flow, role, enumerator) for role in (ROLE_CONSOLE, ROLE_COMMUNICATIONS)]
         return Scan(flows[FLOW_CAPTURE], flows[FLOW_RENDER], (defaults[0], defaults[1], defaults[2], defaults[3]))
     except Exception as e:
         log.debug("endpoints de áudio: %s", e)
@@ -81,11 +93,54 @@ def signature() -> tuple[object, ...] | None:
     return s.signature if s is not None else None
 
 
-def _default_id(enumerator: Any, flow: int, role: int) -> str:
+def default_id(flow: int, role: int = ROLE_CONSOLE, enumerator: Any = None) -> str:
+    """D-067: o endpoint padrão de agora de um fluxo e papel ("" quando não há). A escolha única do "aparelho padrão" do
+    app: o player, o teste do warm-up, o microfone e o loopback que acompanham. Sem `enumerator`, um novo, na thread de
+    quem chama, solto na volta (~2,5 ms, quase tudo no `GetDefaultAudioEndpoint`, 29/10); levanta quando o Core Audio
+    não responde."""
+    if enumerator is None:
+        com_init()
+        from pycaw.pycaw import AudioUtilities
+
+        enumerator = AudioUtilities.GetDeviceEnumerator()
     try:
         return str(enumerator.GetDefaultAudioEndpoint(flow, role).GetId())
     except Exception:  # nenhum dispositivo desse fluxo conectado: sem padrão
         return ""
+
+
+def device(endpoint_id: str) -> Any:
+    """D-067: o IMMDevice de um id, na thread de quem chama (solto quando quem chama o larga); None sem ele."""
+    if not endpoint_id:
+        return None
+    com_init()
+    try:
+        from pycaw.pycaw import AudioUtilities
+
+        return AudioUtilities.GetDeviceEnumerator().GetDevice(endpoint_id)
+    except Exception as e:
+        log.debug("endpoint ausente: %s", e)
+        return None
+
+
+def name_of(endpoint_id: str) -> str:
+    """D-067: o nome amigável de um endpoint pelo id (o property store, por chave); vazio quando ele não responde. Só para
+    casar com a lista da biblioteca de áudio: nunca vai ao log (A-22)."""
+    dev = device(endpoint_id)
+    return read_props(dev)[0] if dev is not None else ""
+
+
+def names_match(a: str, b: str) -> bool:
+    """O mesmo aparelho em duas listas: o nome igual, ou um começa pelo outro com 20 caracteres ou mais (o MME corta em 31)."""
+    a, b = a.strip().lower(), b.strip().lower()
+    return a == b or (len(a) >= 20 and b.startswith(a)) or (len(b) >= 20 and a.startswith(b))
+
+
+def by_name[T](items: list[T], name: str, key: Callable[[T], str]) -> T | None:
+    """O item com este nome: o igual primeiro, depois pelo prefixo longo (o fone Bluetooth tem saídas de nomes parecidos)."""
+    low = name.strip().lower()
+    exact = next((it for it in items if key(it).strip().lower() == low), None)
+    return exact if exact is not None else next((it for it in items if names_match(key(it), name)), None)
 
 
 @functools.cache

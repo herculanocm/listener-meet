@@ -131,8 +131,9 @@ def _meeting_shots(store: Any, mid: int, shot: Callable[..., None], tabs_of: Cal
     from listener.model import SummaryKind
     from listener.ui.meeting import MeetingWindow
     from listener.ui.player import Player
+    from tests.fake_platform import FakePlatform
 
-    player = Player(store)
+    player = Player(store, devices=FakePlatform(store.base_dir))   # D-067: o player como no app, sem som
     mw = MeetingWindow(store, mid, player=player)
     shot(mw, "reuniao")
     tabs_of(mw, "reuniao")

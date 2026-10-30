@@ -22,7 +22,12 @@ sistema inteiro: o som do player entraria no canal R) e pausa o som com um aviso
 e avisos em texto puro na barra (R7-07). F5.3 (A-17): `release_output` solta o fluxo de saída e espera a escritora
 confirmar, para a troca de microfone que relê o PortAudio (que só reinicia sem stream aberto); fecha também o fluxo que a
 pausa do R8-01 deixa aberto a gravação inteira com o sistema inteiro. As funções puras e os pedaços decodificados moram em
-`player_source.py` (este módulo reexporta os nomes)."""
+`player_source.py` (este módulo reexporta os nomes).
+
+D-067: com a plataforma (`devices`), o fluxo abre no padrão de saída de agora, e a escritora o acompanha tocando
+(`player_route.Follow`: ~2,5 ms por leitura, fora da thread da interface; nada lido parado nem pausado); o aparelho que
+caiu no meio reabre uma vez no padrão de agora (R-03); o fim espera o buffer esvaziar antes do `stop` (R-01); o buraco é o
+buffer vazio antes da escrita (R-07); o padrão fora da lista do PortAudio é a `player_route.Reroute`."""
 from __future__ import annotations
 
 import importlib
@@ -31,7 +36,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -39,7 +44,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from ..capture.audio import StreamResampler
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
-from ..platform.common import portaudio
+from ..platform.base import OutputStream
+from .player_route import ROUTE_CHECK_S, ROUTE_STUCK, Follow, OutputDevices, Reroute, drain, ran_dry
 from .player_source import EMPTY as _EMPTY
 from .player_source import (Chunks, audio_ms, audio_path_missing, meeting_ms, mix, next_pause, pause_intervals, position_ms, seek_target,
                             skip_paused)
@@ -63,32 +69,25 @@ STATE_TEXT = {STOPPED: "parado", PLAYING: "tocando", PAUSED: "pausado", ERROR: "
 NO_DEVICE = "sem dispositivo de saída de áudio"
 
 
-class OutputStream(Protocol):
-    """O que o player usa de um `sounddevice.OutputStream` mono float32 (a falsa dos testes imita isto)."""
-    @property
-    def samplerate(self) -> float: ...
-    @property
-    def latency(self) -> float: ...                   # segundos (num fluxo só de saída o `sounddevice` dá um número)
-    def start(self) -> None: ...
-    def write(self, data: np.ndarray, /) -> Any: ...  # bloqueante
-    def stop(self) -> None: ...                       # espera o buffer tocar
-    def abort(self) -> None: ...                      # descarta o buffer
-    def close(self) -> None: ...
+type OutputFactory = Callable[[str | None], OutputStream]   # D-067: None = o padrão de agora; um id = exatamente ele
 
 
-type OutputFactory = Callable[[], OutputStream]
+def sounddevice_output(endpoint_id: str | None = None) -> OutputStream:
+    """O dispositivo de saída padrão da biblioteca (portável), mono float32 na taxa padrão dele; o app abre pela plataforma
+    (D-067). Sem PortAudio a importação levanta `OSError`, que vira "sem dispositivo de saída"."""
+    from ..platform.common import output
+
+    return output.open_default(endpoint_id)
 
 
-def sounddevice_output() -> OutputStream:
-    """O dispositivo de saída padrão do sistema, na taxa padrão dele, mono float32. O `sounddevice` só é importado aqui
-    (sem PortAudio a importação levanta `OSError`, que vira "sem dispositivo de saída")."""
-    import sounddevice as sd
-
-    with portaudio.LOCK:                                   # U-043: a escritora abre aqui; o reinício não cruza a abertura
-        info = sd.query_devices(kind="output")
-        rate = round(float(info["default_samplerate"]))
-        stream: OutputStream = portaudio.track(sd.OutputStream(samplerate=rate, channels=1, dtype="float32"))
-    return stream
+def _stream_format(stream: OutputStream) -> tuple[int, int, str]:
+    """(taxa, latência em quadros, endpoint aberto) de um fluxo."""
+    rate = round(float(stream.samplerate))
+    try:
+        latency = round(float(stream.latency) * rate)
+    except (TypeError, ValueError):
+        latency = 0
+    return rate, latency, str(getattr(stream, "endpoint_id", "") or "")
 
 
 def prewarm_audio() -> threading.Thread:
@@ -133,6 +132,7 @@ class PlayerState(NamedTuple):
     duration_ms: int | None
     title: str = ""
     message: str = ""
+    note: str = ""               # D-067: a saída não acompanhou o padrão do Windows (tocando ou pausado)
 
     @property
     def active(self) -> bool:
@@ -158,6 +158,9 @@ class _Session:
     written: int = 0             # quadros escritos no som inteiro (o log ao parar)
     underflows: int = 0          # `write` que voltou com `underflowed`: o dispositivo ficou sem som (R7-02)
     starved: int = 0             # vezes em que a fila esvaziou com o som correndo (a alimentadora atrasou)
+    endpoint: str = ""           # D-067: o endpoint do fluxo ("" = não se sabe)
+    resume: bool = False         # D-067: solto tocando para a releitura do PortAudio: o `reattach` volta do mesmo ponto
+    retried: bool = False        # R-03: o aparelho caiu e já foi reaberto uma vez desde a última escrita boa
 
     @property
     def block(self) -> int:
@@ -200,9 +203,11 @@ class _Cursor:
 class PlaybackEngine:
     """O lado sem Qt do player: comandos da interface numa fila, a escritora, a alimentadora e o estado lido sob um lock."""
 
-    def __init__(self, store: Store, factory: OutputFactory, *, decode_s: float = DECODE_S, queue_s: float = QUEUE_S):
+    def __init__(self, store: Store, factory: OutputFactory, *, decode_s: float = DECODE_S, queue_s: float = QUEUE_S,
+                 probe: Callable[[], str | None] | None = None, clock: Callable[[], float] = time.monotonic):
         self.store = store
         self.factory = factory
+        self.route = Follow(self, probe, clock)     # D-067: o padrão de saída de agora (probe None = não acompanha)
         self.decode_ms = max(1, int(decode_s * 1000))
         self.queue_s = max(BLOCK_S, float(queue_s))
         self._cv = threading.Condition()
@@ -276,6 +281,33 @@ class PlaybackEngine:
         self._send("pause", _Pause(message, done, release=True))
         return done.wait(timeout_s)
 
+    def detach_and_wait(self, timeout_s: float) -> bool:
+        """D-067: a releitura do PortAudio (só sem stream aberto) vai acontecer: a escritora fecha o fluxo e guarda o ponto;
+        tocando, o som volta dali no `reattach` sem passar por pausado. True sem fluxo aberto no prazo."""
+        if not self.alive:
+            return True
+        done = threading.Event()
+        self._send("detach", done)
+        return done.wait(timeout_s)
+
+    def reattach(self) -> None:
+        """D-067: depois da releitura, o som solto pelo `detach` volta no padrão de agora; o que não abriu tenta de novo."""
+        with self._cv:
+            self.route.stuck = self.route.reread = None
+        self._send("reattach", start=False)
+
+    def stuck_id(self) -> tuple[str, int] | None:   # D-067: o padrão fora da lista que reler pode resolver, ou None
+        with self._cv:
+            return self.route.reread
+
+    @property
+    def has_stream(self) -> bool:               # D-067: a escritora tem um fluxo aberto (um bool: lido sem o lock)
+        return self.route.has_stream
+
+    def kick(self) -> None:                     # acorda a escritora pausada (os testes, depois de andar o relógio manual)
+        with self._cv:
+            self._cv.notify_all()
+
     def clear_notice(self) -> None:
         """Tira o aviso da pausa (a gravação que o pediu não começou ou acabou); o som segue pausado (R8-01)."""
         with self._cv:
@@ -319,7 +351,8 @@ class PlaybackEngine:
         with self._cv:
             req = self._req
             t = self._position_locked() if self._state == PLAYING else self._paused_at
-            return PlayerState(self._state, req.meeting_id if req else None, t, self._duration, req.title if req else "", self._message)
+            return PlayerState(self._state, req.meeting_id if req else None, t, self._duration, req.title if req else "", self._message,
+                               self.route.note if self._state in (PLAYING, PAUSED) else "")
 
     @property
     def alive(self) -> bool:
@@ -367,14 +400,14 @@ class PlaybackEngine:
                             quit_feed.set()           # ainda sob o lock: esta alimentadora não pega o trecho de outra
                             self._cv.notify_all()
                             return
-                        self._cv.wait()               # pausado: espera um comando
+                        self._cv.wait()               # pausado: espera um comando (R-09: sem ler o padrão)
                     cmd = self._cmds.popleft() if self._cmds else None
                 if cmd is not None:
                     sess = self._handle(sess, cmd)
                     if cmd[0] == "quit":
                         return
                 elif sess is not None:
-                    sess = self._step(sess)
+                    sess = self.route.follow(sess) if self.route.due(sess) else self._step(sess)
         except Exception as e:  # o player nunca derruba o app: o motivo vai para a barra
             log.exception("player falhou")
             self._error(f"o player falhou: {e}")
@@ -394,6 +427,8 @@ class PlaybackEngine:
                     self._thread = None
 
     def _handle(self, sess: _Session | None, cmd: tuple[str, Any]) -> _Session | None:
+        if cmd[0] in ("play", "resume", "seek", "reattach"):
+            self.route.next_check = 0.0               # D-067: o padrão é lido logo depois, antes do primeiro bloco
         match cmd:
             case ("play", PlayRequest() as req):
                 return self._open(sess, req)
@@ -403,6 +438,13 @@ class PlaybackEngine:
                 return self._on_resume(sess)
             case ("seek", int() as delta):
                 return self._on_seek(sess, delta)
+            case ("detach", threading.Event() as done):
+                return self.route.detach(sess, done)
+            case ("reattach", _):
+                if sess is not None and sess.resume:     # D-067: solto tocando pela releitura: volta do mesmo ponto
+                    sess.resume = False
+                    return self._open(None, replace(sess.req, t_ms=sess.pos))
+                return sess
             case _:                                   # "stop" e "quit"
                 self._close(sess)
                 return None
@@ -417,6 +459,8 @@ class PlaybackEngine:
                     if self._feed is not None and self._feed.sess is sess:
                         self._feed = None         # o que estava pronto sai (R7-02)
                     self._paused_at, self._state, self._message = sess.pos, PAUSED, pause.message
+            if sess is not None:
+                sess.resume = False                   # D-067: pausado durante a releitura não volta a tocar sozinho
             if pause.release and sess is not None and not sess.playing:
                 self._release(sess)               # U-043: o fluxo sai; a sessão guarda o ponto para a retomada
         finally:
@@ -464,18 +508,16 @@ class PlaybackEngine:
             stream = sess.stream
         else:
             try:
-                stream = self.factory()
+                stream = self.factory(None)               # D-067: o padrão de agora
                 self.opened += 1
             except Exception as e:  # sem PortAudio, sem dispositivo, taxa recusada
                 log.warning("player: %s: %s", NO_DEVICE, e)
                 self._error(f"{NO_DEVICE} ({e})")
                 return None
-        rate = round(float(stream.samplerate))
-        try:
-            latency = round(float(stream.latency) * rate)
-        except (TypeError, ValueError):
-            latency = 0
-        new = _Session(req, stream, rate, latency, *info)
+        rate, latency, endpoint = _stream_format(stream)
+        new = _Session(req, stream, rate, latency, *info, endpoint=endpoint)
+        with self._cv:
+            self.route.has_stream = True
         start = int(req.t_ms)
         if start >= new.end_t:
             start = max(0, new.end_t - 1)
@@ -534,23 +576,28 @@ class PlaybackEngine:
         if not len(block):
             self._finish(sess, error)
             return None
-        if not sess.started:
-            try:
-                sess.stream.start()
-            except Exception as e:  # o dispositivo recusou começar (sumiu entre abrir e tocar): o fluxo fecha e a barra avisa
-                log.warning("player: %s: %s", NO_DEVICE, e)
-                self._close(sess)
-                self._error(f"{NO_DEVICE} ({e})")
-                return None
-            sess.started = True
+        return self._write(sess, block)
+
+    def _write(self, sess: _Session, block: np.ndarray) -> _Session | None:
+        """Começa o fluxo no primeiro bloco do trecho e escreve (bloqueante). R-07: o buraco é o buffer vazio antes da
+        escrita (o `underflowed` do PortAudio não vem). R-03: o aparelho que cai reabre uma vez no padrão de agora."""
+        starting = not sess.started
         try:
+            if starting:
+                sess.stream.start()
+                sess.started = True
+            dry = not starting and ran_dry(sess.stream, sess.latency)
+            starting = False
             underflowed = sess.stream.write(block)
-        except Exception as e:  # o dispositivo sumiu no meio (fone desconectado): aviso na barra, o som para
-            log.warning("player: a saída de áudio falhou: %s", e)
+        except Exception as e:  # o fone saiu no meio, ou o aparelho sumiu entre abrir e começar
+            if self.route.recover(sess, e):
+                return sess
+            log.warning("player: %s: %s", NO_DEVICE if starting else "a saída de áudio falhou", e)
             self._close(sess)
-            self._error(f"a saída de áudio parou ({e})")
+            self._error(f"{NO_DEVICE} ({e})" if starting else f"a saída de áudio parou ({e})")
             return None
-        if underflowed:
+        sess.retried = False
+        if dry or underflowed:
             sess.underflows += 1                     # o dispositivo ficou sem som antes deste bloco (R7-02)
         sess.written += len(block)
         with self._cv:
@@ -582,6 +629,7 @@ class PlaybackEngine:
             self._error(error)
             return
         if sess.started:
+            drain(sess.stream, sess.latency, sess.rate, self._commanded)    # R-01: o `stop` do WASAPI não espera
             try:
                 sess.stream.stop()                    # o que já está no dispositivo termina de tocar
             except Exception as e:  # o fluxo pode ter caído: parar assim mesmo
@@ -589,6 +637,10 @@ class PlaybackEngine:
         with self._cv:
             self._paused_at, self._state, self._message = sess.end_t, STOPPED, ""
         self._close(sess, abort=False)
+
+    def _commanded(self) -> bool:
+        with self._cv:
+            return bool(self._cmds)
 
     # ---------------------------------------------------------------- alimentadora (R7-02)
     def _feed_loop(self, quit_: threading.Event) -> None:
@@ -691,6 +743,8 @@ class PlaybackEngine:
         if sess.closed:
             return
         sess.closed = True
+        with self._cv:
+            self.route.has_stream = False
         try:
             sess.stream.close()
         except Exception as e:
@@ -711,6 +765,7 @@ class PlaybackEngine:
             sess.playing = False
             self._report(sess)
         with self._cv:
+            self.route.reset()
             if self._feed is not None and self._feed.sess is sess:
                 self._feed = None                     # a alimentadora para; o que estava pronto sai
             if self._state in (PLAYING, PAUSED):
@@ -737,9 +792,13 @@ class Player(QObject):
     position_changed = Signal(object)           # PlayerState
     _kicked = Signal()                          # refaz a leitura na thread da interface (pedido vindo de outra thread)
 
-    def __init__(self, store: Store, output_factory: OutputFactory | None = None, parent: QObject | None = None):
+    def __init__(self, store: Store, output_factory: OutputFactory | None = None, parent: QObject | None = None, *,
+                 devices: OutputDevices | None = None, clock: Callable[[], float] = time.monotonic):
         super().__init__(parent)
-        self.engine = PlaybackEngine(store, output_factory or sounddevice_output)
+        factory = output_factory or (devices.open_output if devices is not None else sounddevice_output)
+        self.engine = PlaybackEngine(store, factory, probe=devices.default_output_id if devices is not None else None, clock=clock)
+        self.reroute = (Reroute(self.engine, devices.refresh_audio_devices, devices.audio_devices_changed, clock)   # D-067
+                        if devices is not None else None)
         self.guard: Callable[[PlayRequest], bool] | None = None
         self.before_play: Callable[[], object] | None = None   # U-043: o controlador relê os dispositivos (saída nova)
         self.requests: deque[PlayRequest] = deque(maxlen=REQUESTS_KEPT)   # instrumentação dos testes
@@ -860,15 +919,18 @@ class Player(QObject):
         st = self.state()
         last = self._last
         self._last = st
-        if last is None or (st.state, st.meeting_id, st.title, st.message, st.duration_ms) != (
-                last.state, last.meeting_id, last.title, last.message, last.duration_ms):
+        if last is None or (st.state, st.meeting_id, st.title, st.message, st.duration_ms, st.note) != (
+                last.state, last.meeting_id, last.title, last.message, last.duration_ms, last.note):
             self.state_changed.emit(st)
         if last is None or st.t_ms != last.t_ms or st.meeting_id != last.meeting_id:
             self.position_changed.emit(st)
+        if self.reroute is not None and st.active:
+            self.reroute.tick()                         # D-067: o padrão novo fora da lista do PortAudio
         if st.state not in (PLAYING, PAUSED) and not self.engine.alive:
             self._timer.stop()
 
 
-__all__ = ["ERROR", "PAUSED", "PLAYING", "STOPPED", "OutputStream", "PlayRequest", "PlaybackEngine", "Player", "PlayerState", "audio_ms",
+__all__ = ["ERROR", "PAUSED", "PLAYING", "ROUTE_CHECK_S", "ROUTE_STUCK", "STOPPED", "OutputDevices", "OutputStream", "PlayRequest",
+           "PlaybackEngine", "Player", "PlayerState", "audio_ms",
            "audio_path_missing", "meeting_ms", "mix", "next_pause", "pause_intervals", "position_ms", "prewarm_audio", "seek_target",
            "skip_paused", "sounddevice_output"]

@@ -524,7 +524,7 @@ def cmd_tempos_child(args) -> None:
 def cmd_first(args) -> None:
     """(processo novo) Tempo do play até a posição andar, a frio ou com o pré-aquecimento do app antes."""
     from listener.store import Store
-    from listener.ui.player import PlaybackEngine, PlayRequest, prewarm_audio, sounddevice_output
+    from listener.ui.player import PlaybackEngine, PlayRequest, prewarm_audio; from listener.platform import get_platform
 
     store = Store(Path(tempfile.mkdtemp(prefix="listener-first-")))
     mid = silent_meeting(store, 60)
@@ -533,7 +533,7 @@ def cmd_first(args) -> None:
         t0 = time.perf_counter()
         prewarm_audio().join(30)
         prewarm_s = round(time.perf_counter() - t0, 3)
-    eng = PlaybackEngine(store, sounddevice_output)
+    plat = get_platform(); eng = PlaybackEngine(store, plat.open_output, probe=plat.default_output_id)   # D-067: o caminho do app
     t_play = time.perf_counter()
     eng.play(PlayRequest(mid, 0, title="Silêncio"))
     first = None
@@ -553,7 +553,7 @@ def cmd_player(args) -> None:
 
     from listener.log import setup
     from listener.store import Store
-    from listener.ui.player import PlaybackEngine, PlayRequest, sounddevice_output
+    from listener.ui.player import PlaybackEngine, PlayRequest; from listener.platform import get_platform
 
     for prewarm in (False, True):
         argv = [sys.executable, str(Path(__file__).resolve()), "_first", *(["--prewarm"] if prewarm else [])]
@@ -577,7 +577,7 @@ def cmd_player(args) -> None:
     mid = silent_meeting(store, 180)
 
     def run(label: str, start_ms: int) -> None:
-        eng = PlaybackEngine(store, sounddevice_output)
+        plat = get_platform(); eng = PlaybackEngine(store, plat.open_output, probe=plat.default_output_id)   # D-067
         holes.lines.clear()
         eng.play(PlayRequest(mid, start_ms, title="Silêncio"))
         time.sleep(args.seconds)

@@ -418,7 +418,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         if self._testing:
             return                                         # o teste de 3 s lê o medidor: fica para o próximo ciclo
         result = refresh_mics(self.platform, self.mic_combo, self._devices, meter_open=self._mic_handle is not None,
-                              close_meter=self._close_mic, follow=True)
+                              close_meter=self._close_mic, follow=True, meter=self._mic_handle)
         if result is None:
             return
         self._devices = result.devices
@@ -474,13 +474,11 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         if not self._test_buffer:
             self.mic_status.setText("nada gravado no teste")
             return
-        from ..store.playback import play
-
         audio = np.concatenate(self._test_buffer)
         self._check_echo(audio, r_rate)
         self.mic_status.setText(f"tocando o teste ({len(audio) / 16000:.1f} s)…".replace(".", ","))
         try:
-            play(audio, 16000)
+            self.platform.play_sound(audio, 16000, self.sources.selected_spec().output_id or None)   # D-067 (R-04)
         except Exception as e:
             self.mic_status.setText(f"não consegui tocar: {e}")
 

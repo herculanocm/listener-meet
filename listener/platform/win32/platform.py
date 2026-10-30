@@ -29,8 +29,10 @@ from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, MicMute, Platform,
                     PlayingApp, log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
-from . import activity, endpoints, processes, sessions
+from . import activity, endpoints, output, processes, sessions
+from .endpoints import by_name as _by_name
 from .endpoints import com_init as _com_init
+from .endpoints import names_match as _names_match
 from .hotkeys import Win32Hotkeys
 
 log = get_logger("platform.win32")
@@ -136,11 +138,6 @@ def _display_affinity() -> Any:
     return fn
 
 
-def _names_match(a: str, b: str) -> bool:
-    a, b = a.strip().lower(), b.strip().lower()
-    return a == b or (len(a) >= 20 and b.startswith(a)) or (len(b) >= 20 and a.startswith(b))
-
-
 def _loopback_target(reading: Endpoints | None, output_id: str | None) -> tuple[str, str]:
     """F5.3 (A-21): (id, nome) da saída cujo som o loopback grava: a escolhida, se está ativa, senão a padrão de console;
     vazios sem o Core Audio (aí vale a padrão do PyAudioWPatch)."""
@@ -155,13 +152,6 @@ def _loopback_target(reading: Endpoints | None, output_id: str | None) -> tuple[
 
 def _loopback_base(dev: Mapping[str, Any]) -> str:
     return str(dev["name"]).removesuffix(" [Loopback]")
-
-
-def _by_name[T](items: list[T], name: str, key: Callable[[T], str]) -> T | None:
-    """O item com este nome: o igual primeiro, depois pelo prefixo longo (o fone Bluetooth tem saídas de nomes parecidos)."""
-    low = name.strip().lower()
-    exact = next((it for it in items if key(it).strip().lower() == low), None)
-    return exact if exact is not None else next((it for it in items if _names_match(key(it), name)), None)
 
 
 def _pick_loopback(pa: Any, pyaudio: Any, name: str) -> Mapping[str, Any]:
@@ -370,10 +360,9 @@ class _Win32MicMute(MicMute):
         return None
 
     def _default(self) -> Any:
-        _com_init()
-        from pycaw.pycaw import AudioUtilities
-
-        mic = AudioUtilities.GetMicrophone()
+        """D-067: o microfone padrão de agora pela escolha central (papel console, como o gravador; o `GetMicrophone` do
+        pycaw é o multimídia)."""
+        mic = endpoints.device(endpoints.default_id(endpoints.FLOW_CAPTURE))
         return _endpoint_volume(mic) if mic is not None else None
 
     def _endpoint(self) -> Any:
@@ -410,7 +399,7 @@ class _Win32MicMute(MicMute):
                 return True
 
 
-class Win32Platform(activity.Win32Activity, Platform):
+class Win32Platform(activity.Win32Activity, output.Win32Output, Platform):
     name = "win32"
 
     def __init__(self) -> None:
@@ -532,13 +521,14 @@ class Win32Platform(activity.Win32Activity, Platform):
             apis = sd.query_hostapis()
             devices = sd.query_devices()
         endpoints = _capture_endpoints()
+        ids = self.wasapi_ids_now() or {}                  # R-02: o id exato desta leitura; sem ele, pelo nome
         out: list[AudioDevice] = []
         for i, d in enumerate(devices):
             if d["max_input_channels"] <= 0:
                 continue
             if "WASAPI" not in apis[d["hostapi"]]["name"]:   # MME/DirectSound/WDM-KS duplicam os mesmos microfones
                 continue
-            stable = next((dev_id for name, dev_id, _ in endpoints if _names_match(name, d["name"])), None)
+            stable = ids.get(i) or next((dev_id for name, dev_id, _ in endpoints if _names_match(name, d["name"])), None)
             out.append(AudioDevice(id=stable or f"{NAME_ID_PREFIX}{d['name']}", name=d["name"], api="WASAPI",
                                    channels=int(d["max_input_channels"]), sample_rate=int(d["default_samplerate"]), index=i))
         self._devices_cache = (now, out)
@@ -566,6 +556,7 @@ class Win32Platform(activity.Win32Activity, Platform):
                 release()
             if not portaudio.restart():
                 return False
+            self.remember_wasapi_ids()                     # R-02: na thread em que o PortAudio reiniciou
         first = self._audio_signature is None
         self._audio_signature = sig
         self._invalidate_devices()
@@ -587,24 +578,6 @@ class Win32Platform(activity.Win32Activity, Platform):
             log.debug("leitura dos endpoints pedida fora da thread da interface: ignorada")
             return None
         return self._endpoints.read(refresh_names)
-
-    @override
-    def default_input_device(self) -> AudioDevice | None:
-        import sounddevice as sd
-
-        devs = self.list_input_devices()
-        if not devs:
-            return None
-        try:
-            for api in sd.query_hostapis():
-                if "WASAPI" in api["name"]:
-                    idx = int(api["default_input_device"])
-                    for d in devs:
-                        if d.index == idx:
-                            return d
-        except Exception as e:
-            log.debug("dispositivo padrão WASAPI: %s", e)
-        return devs[0]
 
     def _resolve_index(self, device: AudioDevice | None) -> int | None:
         dev = self._resolve_input(device)

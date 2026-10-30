@@ -70,7 +70,7 @@ def _realtime_player(controller: Any) -> list[RealtimeOutput]:
     e confirma a pausa sem depender do prazo de um fake que prende o `write` (revisão R8)."""
     outs: list[RealtimeOutput] = []
 
-    def factory() -> RealtimeOutput:
+    def factory(_endpoint: str | None = None) -> RealtimeOutput:
         outs.append(RealtimeOutput())
         return outs[-1]
 

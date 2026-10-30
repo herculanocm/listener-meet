@@ -205,7 +205,7 @@ def test_errors_without_device_without_audio_file_and_without_audio(store):
             return super().write(data)
 
     dying = Unplugged()
-    eng = PlaybackEngine(store, lambda: dying)
+    eng = PlaybackEngine(store, lambda _endpoint: dying)
     eng.play(PlayRequest(mid, 0))
     _wait(lambda: not eng.alive)
     assert eng.snapshot().message == "a saída de áudio parou (dispositivo removido)" and dying.calls[-1] == "close"
@@ -215,7 +215,7 @@ def test_errors_without_device_without_audio_file_and_without_audio(store):
             raise OSError("Invalid device")
 
     refused = Refuses()
-    eng = PlaybackEngine(store, lambda: refused)
+    eng = PlaybackEngine(store, lambda _endpoint: refused)
     eng.play(PlayRequest(mid, 0))
     _wait(lambda: not eng.alive)
     assert eng.snapshot().message == "sem dispositivo de saída de áudio (Invalid device)" and refused.calls[-1] == "close"
@@ -280,7 +280,7 @@ def test_slow_decoding_never_starves_a_small_realtime_device_and_underflows_are_
 
     monkeypatch.setattr(PlaybackEngine, "_decode", slow)
     out = RealtimeOutput(rate=SR, buffer_s=0.18)
-    eng = PlaybackEngine(store, lambda: out, decode_s=0.5)
+    eng = PlaybackEngine(store, lambda _endpoint: out, decode_s=0.5)
     with caplog.at_level(logging.INFO, logger="listener.ui.player"):
         eng.play(PlayRequest(mid, 0))
         _wait(lambda: not eng.alive, timeout=10.0)
@@ -295,7 +295,7 @@ def test_slow_decoding_never_starves_a_small_realtime_device_and_underflows_are_
                 return len(self.chunks) % 2 == 0
 
         holes = Holes()
-        counted = PlaybackEngine(store, lambda: holes)
+        counted = PlaybackEngine(store, lambda _endpoint: holes)
         counted.play(PlayRequest(mid, 0))
         _wait(lambda: not counted.alive)
     assert len(holes.chunks) == 8 and counted.underflows == 4 and "4 buraco(s) na saída (underflow)" in caplog.text
@@ -425,7 +425,7 @@ def test_release_output_closes_the_stream_and_waits_for_the_writer(qtbot, store)
     mid = _meeting(store, seconds=30, pause=None)
     outs: list[RealtimeOutput] = []
 
-    def factory() -> RealtimeOutput:
+    def factory(_endpoint: str | None = None) -> RealtimeOutput:
         outs.append(RealtimeOutput(rate=SR))
         return outs[-1]
 

@@ -6,6 +6,9 @@ F5.3 L4: `endpoints` é o que o Core Audio vê agora (`next_endpoints` entra na 
 PortAudio leu da última vez (só muda no reinício, com o padrão dessa leitura); `open_mic(strict=True)` recusa o pedido
 fora da lista; o loopback do sistema abre na saída pedida, resolvida contra a lista do primeiro aberto enquanto algum
 segue aberto (um `PyAudio()` vivo mantém a lista antiga, A-15), e `loopbacks_at_open` conta os abertos em cada abertura.
+D-067: o padrão de agora é o do Core Audio (`endpoints`): `default_output_id` e `default_input_id` o leem (contados em
+`default_reads`), `default_input_device` prefere o microfone padrão de agora quando ele está na lista, `open_output` abre um
+fluxo falso no padrão de saída e `play_sound` anota onde o teste do warm-up tocou (`played`).
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from listener.capture.clock import ManualClock
 from listener.platform.base import (AudioActivity, AudioCallback, AudioDevice, ChildProcess, Endpoint, Endpoints,
                                     ErrorCallback, Platform, PlayingApp, WatchedApp)
 from tests.fake_activity import FAKE_WATCHED, FakeMicWatch
+from tests.fake_player import FakeOutput
 
 MIC = AudioDevice("fake-mic-0", "Mic Fake", "fake", 1, 16000, index=0)
 SPEAKERS = Endpoint("fake-out-0", "Alto-falantes Fake")
@@ -251,6 +255,8 @@ class FakePlatform(Platform):
         self.activity_closed = 0
         self.mic_user_ids: frozenset[str] | None = frozenset()
         self.watch: FakeMicWatch | None = FakeMicWatch()
+        self.default_reads = 0                                # D-067: leituras do padrão de agora
+        self.played: list[tuple[str, int, int]] = []          # D-067: (endpoint, amostras, taxa) de cada `play_sound`
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -336,7 +342,30 @@ class FakePlatform(Platform):
     @override
     def default_input_device(self) -> AudioDevice | None:
         devices = self.list_input_devices()
-        return next((d for d in devices if d.id == self._pa_default), devices[0] if devices else None)
+        now = self.endpoints.capture_default if self.endpoints is not None else ""      # D-067: o padrão de agora, pelo id
+        found = next((d for d in devices if now and d.id == now), None)
+        return found or next((d for d in devices if d.id == self._pa_default), devices[0] if devices else None)
+
+    @override
+    def default_output_id(self) -> str | None:
+        self.default_reads += 1
+        return (self.endpoints.render_default or None) if self.endpoints is not None else None
+
+    @override
+    def default_input_id(self) -> str | None:
+        self.default_reads += 1
+        return (self.endpoints.capture_default or None) if self.endpoints is not None else None
+
+    @override
+    def open_output(self, endpoint_id: str | None = None) -> FakeOutput:
+        out = FakeOutput()
+        out.endpoint_id = out.device = endpoint_id or (self.endpoints.render_default if self.endpoints is not None else "")
+        return out
+
+    @override
+    def play_sound(self, samples: np.ndarray, sample_rate: int, endpoint_id: str | None = None) -> None:
+        view, wanted = self.endpoints, endpoint_id or ""     # a saída pedida que está na lista, senão a padrão (R-04)
+        self.played.append((wanted if view and view.output(wanted) else (view.render_default if view else ""), len(samples), sample_rate))
 
     @override
     def list_playing_apps(self) -> list[PlayingApp]:

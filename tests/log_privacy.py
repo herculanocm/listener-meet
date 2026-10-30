@@ -13,6 +13,10 @@ L2_MODULES = (ROOT / "listener/ui/call_rules.py",)
 L3_MODULES = (*(ROOT / "listener/ui" / f for f in ("call_answers.py", "call_config.py", "call_prompt.py", "call_sensor.py",
                                                     "call_watch.py", "settings_detect.py", "tray.py", "warmup_source.py")),
               ROOT / "scripts/probe_f57.py", ROOT / "tests/call_exit_scenario.py")
+# D-067: a saída que acompanha o padrão do Windows (o player, a releitura, a escolha do aparelho padrão de agora)
+D067_MODULES = tuple(ROOT / p for p in ("listener/ui/player.py", "listener/ui/player_route.py", "listener/ui/player_source.py",
+                                         "listener/ui/devices.py", "listener/platform/common/output.py",
+                                         "listener/platform/win32/output.py", "listener/platform/win32/endpoints.py"))
 # o título (e o mapa pid -> título), o caminho, o nome da entrada do registro e o nome do aparelho
 FORBIDDEN = frozenset({"title", "titles", "by_pid", "path", "paths", "name", "names", "device_name", "friendly"})
 LOGGERS = frozenset({"log", "logger", "logging"})

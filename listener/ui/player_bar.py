@@ -135,8 +135,10 @@ class PlayerBar(QWidget):
             self.what.setText(f"{prefix}{STATE_TEXT[st.state]} · {st.title}" if st.title else f"{prefix}{STATE_TEXT[st.state]}")
         else:
             self.what.setText("")
-        # o motivo do erro e o aviso da pausa pela gravação (R7-01) na barra da reunião que tocava
-        self.note.setText(st.message if st.state in (ERROR, PAUSED) and (mine or st.meeting_id is None) else "")
+        # o motivo do erro e o aviso da pausa pela gravação (R7-01) na barra da reunião que tocava; D-067: a saída que não
+        # acompanhou o padrão do Windows, tocando ou pausado
+        text = st.message if st.state in (ERROR, PAUSED) and (mine or st.meeting_id is None) else ""
+        self.note.setText(text or (st.note if mine and st.active else ""))
 
 
 __all__ = ["EMPTY_TIME", "PlayerBar", "tabular"]

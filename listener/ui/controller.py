@@ -263,7 +263,7 @@ class Controller(QObject):
         self._sweeps: set[Task] = set()
         self._sweep_stop = threading.Event()                 # a saída interrompe a varredura entre reuniões (R5-02)
         # F5 L4: player único, reuniões abertas, Histórico e a reunião da última notificação (Q6)
-        self.player = Player(store, parent=self)
+        self.player = Player(store, parent=self, devices=platform)          # D-067: a saída acompanha o padrão do Windows
         self.player.guard = self._confirm_play
         self.player.before_play = platform.refresh_audio_devices          # U-043: o "Tocar" vai para o fone que chegou
         self._meetings: dict[int, MeetingWindow] = {}
