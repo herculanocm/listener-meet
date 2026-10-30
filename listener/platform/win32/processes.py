@@ -16,6 +16,8 @@ from typing import Any
 
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+SYNCHRONIZE = 0x00100000                         # F5.9 (item 1): o acesso mínimo para esperar um processo
+WAIT_OBJECT_0, WAIT_TIMEOUT = 0x00000000, 0x00000102
 HOSTED = frozenset({"msedgewebview2.exe"})       # roda dentro de outro app (Teams novo, WhatsApp, Outlook novo)
 SHELL = frozenset({"explorer.exe", "svchost.exe", "sihost.exe", "services.exe", "wininit.exe", "winlogon.exe",
                    "runtimebroker.exe", "applicationframehost.exe"})
@@ -48,6 +50,37 @@ if sys.platform == "win32":
     _k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
     _k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
     _k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    _k32.OpenProcess.restype = ctypes.c_void_p
+    _k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _k32.WaitForSingleObject.restype = wintypes.DWORD
+    _k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+
+
+def open_process_handle(pid: int) -> int | None:
+    """F5.9 (item 1, D-070): um handle do processo só para esperar por ele (`SYNCHRONIZE`), que `has_exited` consulta e
+    `close_handle` solta; None quando o Windows recusa (o processo já saiu ou é protegido). É a prova de vida certa: o pid
+    pode ser reaproveitado e o snapshot tem 3 s de cache."""
+    if sys.platform != "win32":
+        raise OSError("open_process_handle só existe no Windows")
+    handle = _k32.OpenProcess(SYNCHRONIZE, False, int(pid))
+    return int(handle) if handle else None
+
+
+def has_exited(handle: int) -> bool | None:
+    """True quando o processo do handle saiu (o objeto está sinalizado), False quando segue vivo, None quando a espera
+    falhou. Nunca bloqueia (tempo-limite zero): a thread da interface pergunta a cada segundo."""
+    if sys.platform != "win32":
+        raise OSError("has_exited só existe no Windows")
+    result = int(_k32.WaitForSingleObject(handle, 0))
+    if result == WAIT_OBJECT_0:
+        return True
+    return False if result == WAIT_TIMEOUT else None
+
+
+def close_handle(handle: int) -> None:
+    if sys.platform != "win32":
+        raise OSError("close_handle só existe no Windows")
+    _k32.CloseHandle(handle)
 
 
 def snapshot_processes() -> dict[int, ProcInfo]:

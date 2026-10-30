@@ -472,7 +472,10 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
             stream.stop()
             stream.close()
 
-        handle = _StreamHandle(start, stop, sample_rate, 1, on_error, close_fn=stream.close, device_id=dev_id)
+        def active() -> bool:
+            return bool(stream.active)                    # F5.9 (item 1): o guarda "iniciada e não parada por nós" é do handle
+
+        handle = _StreamHandle(start, stop, sample_rate, 1, on_error, close_fn=stream.close, device_id=dev_id, alive_fn=active)
         return handle
 
     @override

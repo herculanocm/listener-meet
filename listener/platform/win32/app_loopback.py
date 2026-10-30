@@ -69,7 +69,8 @@ class Win32AppLoopback:
             for h in parts:
                 h.stop()
 
-        return _StreamHandle(start, stop, main.sample_rate, main.channels, on_error)
+        # F5.9 (item 1): o composto responde pela raiz; um sub-alvo morto é caso do re-scan (L2), não do canal perdido
+        return _StreamHandle(start, stop, main.sample_rate, main.channels, on_error, alive_fn=main.alive)
 
     def _open_process_loopback(self, pid: int, on_audio: AudioCallback, on_error: ErrorCallback | None = None) -> _StreamHandle:
         from proctap import ProcessAudioCapture
@@ -103,6 +104,15 @@ class Win32AppLoopback:
             on_audio(block, time.perf_counter() - n / sr)
 
         handler = on_data
+        proc = processes.open_process_handle(pid)         # F5.9 (item 1, D-070): a prova de vida é o handle do processo
+        if proc is None:
+            log.debug("processo %s: sem handle para a prova de vida; vale só a thread do tap", pid)
+
+        def alive() -> bool | None:
+            if proc is None:                              # a thread do tap nunca cai sozinha (o laço engole erros): só o
+                return False if not tap.is_running else None   # fim dela é certo
+            exited = processes.has_exited(proc)
+            return None if exited is None else not exited
 
         def start() -> None:
             tap.start()
@@ -112,6 +122,10 @@ class Win32AppLoopback:
             try:
                 tap.stop()
             finally:
-                tap.close()
+                try:
+                    tap.close()
+                finally:
+                    if proc is not None:                  # o handle vive o que a captura vive
+                        processes.close_handle(proc)
 
-        return _StreamHandle(start, stop, sr, ch, on_error)
+        return _StreamHandle(start, stop, sr, ch, on_error, alive_fn=alive)

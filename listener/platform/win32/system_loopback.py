@@ -90,7 +90,14 @@ def open_system_loopback(reading: Endpoints | None, on_audio: AudioCallback, on_
         finally:
             pa.terminate()
 
-    return _StreamHandle(start, stop, sr, ch, on_error, device_id=opened_id)
+    def close() -> None:
+        """F5.9 (item 1): a stream que morreu só fecha: o `stop_stream` numa stream já parada levanta e pulava o `close`."""
+        try:
+            stream.close()
+        finally:
+            pa.terminate()
+
+    return _StreamHandle(start, stop, sr, ch, on_error, close_fn=close, device_id=opened_id, alive_fn=stream.is_active)
 
 
 def _loopback_stream(pa: Any, pyaudio: Any, dev: Mapping[str, Any], sr: int, ch: int, on_audio: AudioCallback) -> Any:

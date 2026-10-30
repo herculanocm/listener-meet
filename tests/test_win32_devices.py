@@ -226,3 +226,205 @@ def test_a_name_id_is_summarized_in_the_messages_and_the_log(monkeypatch, caplog
     with caplog.at_level(logging.DEBUG, logger="listener"):
         assert plat._resolve_input(named) == present
     assert "Fulano" not in caplog.text and log_id(named.id) in caplog.text
+
+
+# ---------------------------------------------------------------- F5.9 L1b: a prova de vida dos handles
+def test_the_stream_handle_answers_alive_only_between_start_and_stop():
+    """F5.9 (item 1): `alive()` é None sem `alive_fn`, antes do `start()`, depois do nosso `stop()` ou do fim avisado, e quando
+    a pergunta falha; False é definitivo: o `stop()` seguinte só fecha (`close_fn`) e um `finished` tardio não avisa."""
+    from listener.platform.win32.stream import _StreamHandle
+
+    answer: list[bool | None] = [True]
+    calls: list[str] = []
+    errors: list[str] = []
+    h = _StreamHandle(lambda: None, lambda: calls.append("stop"), 16000, 1, errors.append,
+                      close_fn=lambda: calls.append("close"), alive_fn=lambda: answer[0])
+    assert h.alive() is None                                                      # antes do start
+    h.start()
+    assert h.alive() is True
+    answer[0] = None
+    assert h.alive() is None
+    answer[0] = False
+    assert h.alive() is False and h.alive() is None                               # definitivo: depois, não se sabe
+    h.finished()
+    h.stop()
+    assert errors == [] and calls == ["close"]                                    # só fecha, como a encerrada pela biblioteca
+    assert _StreamHandle(lambda: None, lambda: None, 16000, 1).alive() is None    # sem `alive_fn`
+    ours = _StreamHandle(lambda: None, lambda: None, 16000, 1, alive_fn=lambda: True)
+    ours.start()
+    ours.stop()
+    assert ours.alive() is None
+    def boom() -> bool | None:
+        raise RuntimeError("a biblioteca não respondeu")
+
+    broken = _StreamHandle(lambda: None, lambda: None, 16000, 1, alive_fn=boom)
+    broken.start()
+    assert broken.alive() is None                                                 # a pergunta que falha não derruba a vigia
+
+
+@pytest.mark.lento                                                                # subprocesso
+def test_the_process_handle_says_when_the_process_left():
+    """F5.9 (item 1, D-070): `OpenProcess(SYNCHRONIZE)` e `WaitForSingleObject(h, 0)`: vivo (False), saiu (True); sem
+    processo, sem handle."""
+    import os
+    import subprocess
+
+    from listener.platform.win32.processes import close_handle, has_exited, open_process_handle
+
+    own = open_process_handle(os.getpid())
+    assert own is not None and has_exited(own) is False
+    close_handle(own)
+    child = subprocess.Popen([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    handle = open_process_handle(child.pid)
+    assert handle is not None
+    child.wait(30)
+    assert has_exited(handle) is True
+    close_handle(handle)
+    assert open_process_handle(0) is None
+
+
+def test_the_system_loopback_handle_reads_is_active_and_a_dead_stream_only_closes(monkeypatch):
+    """F5.9 (item 1): `alive()` pelo `is_active()` do PyAudioWPatch; a stream morta só fecha e termina o PyAudio no `stop()`
+    (o `stop_stream` numa stream já parada levantava e pulava o `close`)."""
+    from types import SimpleNamespace
+
+    from listener.platform.base import Endpoint, Endpoints
+    from listener.platform.win32 import system_loopback as sl
+
+    calls: list[str] = []
+    state = {"active": True}
+    stream = SimpleNamespace(start_stream=lambda: calls.append("start"), stop_stream=lambda: calls.append("stop_stream"),
+                             close=lambda: calls.append("close"), is_active=lambda: state["active"])
+    loopbacks = [{"index": 13, "name": "Alto-falantes [Loopback]", "defaultSampleRate": 48000.0, "maxInputChannels": 2}]
+    pa = SimpleNamespace(get_loopback_device_info_generator=lambda: iter(loopbacks),
+                         get_host_api_info_by_type=lambda _t: {"defaultOutputDevice": 10},
+                         get_device_info_by_index=lambda _i: {"name": "Alto-falantes", "isLoopbackDevice": False},
+                         open=lambda **_kw: stream, terminate=lambda: calls.append("terminate"))
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", SimpleNamespace(paWASAPI=13, paFloat32=1, paContinue=0, PyAudio=lambda: pa))
+    reading = Endpoints(render=(Endpoint("a", "Alto-falantes"),), render_default="a")
+    h = sl.open_system_loopback(reading, lambda block, t: None)
+    assert h.device_id == "a" and (h.sample_rate, h.channels) == (48000, 2) and h.alive() is None
+    h.start()
+    assert h.alive() is True and calls == ["start"]
+    state["active"] = False                                                       # o endpoint foi invalidado: o driver parou
+    assert h.alive() is False
+    h.stop()
+    assert calls == ["start", "close", "terminate"]                               # sem o `stop_stream`
+    live = sl.open_system_loopback(reading, lambda block, t: None)
+    live.start()
+    live.stop()
+    assert calls[3:] == ["start", "stop_stream", "close", "terminate"]
+
+
+def test_the_app_loopback_handle_follows_the_process_handle_and_the_composite_answers_for_the_root(monkeypatch):
+    """F5.9 (item 1, D-070): a prova de vida do loopback do app é o handle do processo, aberto na abertura e fechado no
+    `stop()`; sem handle, só o fim da thread do tap conta; o handle composto responde pela raiz (o sub-alvo morto é do L2)."""
+    from types import SimpleNamespace
+
+    from listener.platform.win32 import app_loopback, processes
+    from listener.platform.win32.processes import ProcInfo
+
+    class Tap:
+        def __init__(self, pid: int, on_data: object) -> None:
+            self.pid, self.running = pid, False
+            taps.append(self)
+
+        def get_format(self) -> dict[str, object]:
+            return {"sample_rate": 48000, "channels": 2, "sample_format": "float32"}
+
+        def start(self) -> None:
+            self.running = True
+
+        def stop(self) -> None:
+            self.running = False
+
+        def close(self) -> None:
+            pass
+
+        @property
+        def is_running(self) -> bool:
+            return self.running
+
+    taps: list[Tap] = []
+    monkeypatch.setitem(sys.modules, "proctap", SimpleNamespace(ProcessAudioCapture=Tap))
+    exited: dict[int, bool | None] = {}
+    closed: list[int] = []
+    monkeypatch.setattr(processes, "open_process_handle", lambda pid: None if pid == 7 else 100 + pid)
+    monkeypatch.setattr(processes, "has_exited", exited.get)
+    monkeypatch.setattr(processes, "close_handle", closed.append)
+    plat = app_loopback.Win32AppLoopback()
+    monkeypatch.setattr(plat, "_processes", lambda: ({}, {}), raising=False)
+    h = plat.open_app_loopback(5, lambda block, t: None)
+    h.start()
+    assert h.alive() is None                                                      # a espera falhou: não se sabe
+    exited[105] = False
+    assert h.alive() is True
+    exited[105] = True
+    assert h.alive() is False                                                     # o processo saiu
+    h.stop()
+    assert closed == [105]
+    none = plat.open_app_loopback(7, lambda block, t: None)                      # o Windows recusou o handle
+    none.start()
+    assert none.alive() is None
+    taps[-1].running = False                                                      # a thread do tap acabou
+    assert none.alive() is False
+    none.stop()
+    assert closed == [105]
+    tree = {p.pid: p for p in [ProcInfo(1, "explorer.exe", 0), ProcInfo(20, "ms-teams.exe", 1), ProcInfo(21, "ms-teams.exe", 20),
+                               ProcInfo(22, "msedgewebview2.exe", 21)]}
+    monkeypatch.setattr(plat, "_processes", lambda: (tree, {}))
+    monkeypatch.setattr(plat, "_session_pids", lambda: {21, 22})
+    both = plat.open_app_loopback(20, lambda block, t: None)
+    both.start()
+    exited[120], exited[122] = False, True                                        # o sub-alvo morreu: o canal segue vivo
+    assert both.alive() is True
+    exited[120] = True
+    assert both.alive() is False
+    both.stop()
+    assert closed == [105, 120, 122]
+
+
+def test_the_microphone_handle_reads_active_from_sounddevice(monkeypatch):
+    """F5.9 (item 1): `alive()` do microfone é o `active` do sounddevice, com o guarda do handle (a stream fechada também
+    diz False: só vale iniciada e não parada por nós)."""
+    import types
+
+    from listener.platform.base import AudioDevice
+    from listener.platform.win32 import platform as wp
+
+    class Stream:
+        def __init__(self, **kw: object) -> None:
+            self.kw, self.active = kw, False
+            self.calls: list[str] = []
+
+        def start(self) -> None:
+            self.active = True
+            self.calls.append("start")
+
+        def stop(self) -> None:
+            self.active = False
+            self.calls.append("stop")
+
+        def close(self) -> None:
+            self.active = False
+            self.calls.append("close")
+
+    streams: list[Stream] = []
+
+    def input_stream(**kw: object) -> Stream:
+        streams.append(Stream(**kw))
+        return streams[-1]
+
+    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(InputStream=input_stream, WasapiSettings=lambda **kw: kw))
+    plat = wp.Win32Platform()
+    present = AudioDevice("ep-a", "Fone", "WASAPI", 1, 16000, index=7)
+    monkeypatch.setattr(plat, "_resolve_input", lambda device, strict=False: present)
+    h = plat.open_mic(present, 16000, lambda block, t: None)
+    assert h.device_id == "ep-a" and h.alive() is None
+    h.start()
+    assert h.alive() is True
+    streams[-1].active = False                                                    # o driver parou sem o `finished_callback`
+    assert h.alive() is False
+    h.stop()
+    assert streams[-1].calls == ["start", "close"]                                # só fecha (A-05)

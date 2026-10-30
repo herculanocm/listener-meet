@@ -32,6 +32,7 @@ class FakeStream:
         self.stop_calls = 0                          # U-043: quem fechou a stream (a morta também precisa ser fechada)
         self.device_id = ""                          # F5.3 (A-16): o endpoint aberto
         self.fail_start = False                      # o driver recusa o `start()` (revisão do L4, R-02 e R-03)
+        self.dead = False                            # F5.9 (item 1): morreu calada (sem `on_error`); só `alive()` conta
         self.t_next: float | None = None             # início (sessão) do próximo bloco a entregar
         self.phase = 0
         self.delivered = 0
@@ -46,15 +47,24 @@ class FakeStream:
         self.stopped = True
         self.stop_calls += 1
 
+    def alive(self) -> bool | None:
+        """F5.9 (item 1): None por padrão (o driver não diz nada); False depois de `die()`."""
+        return False if self.dead else None
+
     def fail(self, reason: str = "dispositivo removido") -> None:
         """Simula o driver encerrando a stream sozinho (headset desplugado)."""
         self.stopped = True
         if self.on_error is not None:
             self.on_error(reason)
 
+    def die(self) -> None:
+        """F5.9 (Aceite 1): o app saiu ou o endpoint foi invalidado sem o driver avisar: nada mais é entregue, `alive()` passa
+        a False e a stream segue "aberta" até alguém a fechar (como no PortAudio)."""
+        self.dead = True
+
     def pump(self, until_rel: float) -> None:
         """Entrega todos os blocos cujo fim é anterior a `until_rel` (tempo da sessão)."""
-        if not self.started or self.stopped or self.t_next is None:
+        if not self.started or self.stopped or self.dead or self.t_next is None:
             return
         while self.t_next + self.period <= until_rel + 1e-9:
             t0 = self.t_next

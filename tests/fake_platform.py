@@ -98,6 +98,13 @@ class FakePlatform(Platform):
     def live_streams(self) -> list[FakeStream]:
         return [s for s in self.streams if s.started and not s.stopped]
 
+    def kill_r(self) -> FakeStream:
+        """F5.9 (Aceite 1): a stream viva do canal R (o loopback do app ou do sistema) morre calada: sem `on_error`,
+        `alive()` passa a False e o `pump` não entrega mais nada dela. Devolve a stream."""
+        stream = next(s for s in reversed(self.streams) if s.started and not s.stopped and s not in self.mic_streams)
+        stream.die()
+        return stream
+
     def settle(self) -> None:
         """F5.3: o PortAudio leu agora (o app abriu assim): a lista e o padrão dele são os do Core Audio de agora."""
         if self.endpoints is not None:

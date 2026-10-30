@@ -47,11 +47,20 @@ class _StreamHandle:
                 log.debug("parar stream: %s", e)
 
     def alive(self) -> bool | None:
-        """F5.9 (item 1): a stream segue viva? None = não se sabe: sem `alive_fn`, antes do `start()`, depois do nosso
-        `stop()` ou do fim que a biblioteca já avisou (`finished`)."""
+        """F5.9 (item 1): a stream segue viva, pelo `alive_fn` de quem abriu? None = não se sabe: sem `alive_fn`, antes do
+        `start()`, depois do nosso `stop()`, do fim que a biblioteca já avisou (`finished`) ou quando a pergunta falha. False
+        é definitivo: a stream morreu sem aviso, o `stop()` seguinte só fecha (`close_fn`, como a encerrada pela biblioteca)
+        e um `finished` tardio não avisa de novo. Na thread da interface, sem bloquear."""
         if not self._started or self._stopped or self._ended or self._alive_fn is None:
             return None
-        return None                                        # L1b: a resposta do `alive_fn`
+        try:
+            answer = self._alive_fn()
+        except Exception as e:
+            log.debug("prova de vida da stream: %s", e)
+            return None
+        if answer is False:
+            self._ended = True
+        return answer
 
     def finished(self) -> None:
         """Chamado pela biblioteca quando a stream termina: só é erro se não fomos nós que paramos."""

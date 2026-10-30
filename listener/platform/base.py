@@ -171,13 +171,15 @@ class OutputStream(Protocol):
 class CaptureHandle(Protocol):
     """Stream devolvida parada: quem chama registra o formato e só então chama `start()` (F1.2 M-06). `device_id` é o
     endpoint realmente aberto (F5.3, A-16: o pedido pode ter caído no padrão); vazio quando não se sabe ou no loopback de
-    um app."""
+    um app. F5.9 (item 1): `alive()` diz se a stream segue viva, para a vigia do gravador que o driver não avisa (o app que
+    saiu, o endpoint invalidado): None = não se sabe; nunca bloqueia (lido na thread da interface a cada segundo)."""
     sample_rate: int
     channels: int
     device_id: str
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
+    def alive(self) -> bool | None: ...
 
 
 class MicMute(Protocol):

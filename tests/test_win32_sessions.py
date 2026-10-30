@@ -209,7 +209,7 @@ def _loopback_platform(monkeypatch: pytest.MonkeyPatch, outputs: Outputs) -> tup
 
     def open_one(pid: int, on_audio: Any, on_error: Any = None) -> Any:
         opened.append(pid)
-        return SimpleNamespace(sample_rate=48000, channels=2, start=lambda: None, stop=lambda: None)
+        return SimpleNamespace(sample_rate=48000, channels=2, start=lambda: None, stop=lambda: None, alive=lambda: None)
 
     monkeypatch.setattr(plat, "_open_process_loopback", open_one)
     return plat, opened
