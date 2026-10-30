@@ -42,12 +42,14 @@ class EchoWatch:
         self._have: dict[str, int] = {"L": 0, "R": 0}
         self._result: EchoResult | None = None
         self._thread: threading.Thread | None = None
-        self.rounds = 0                                    # instrumentação: correlações rodadas
+        self._round = 0                                    # a troca de agora: a thread de uma troca anterior não grava
+        self.rounds = 0                                    # instrumentação: correlações rodadas (contada por último)
 
     def arm(self) -> None:
-        """Depois de um `device_change` no L: uma rodada nova (a anterior, se ainda acumulava, é descartada)."""
+        """Depois de um `device_change` no L: uma rodada nova (a anterior, acumulando ou já na thread, é descartada)."""
         with self._lock:
             self._reset()
+            self._round += 1
             self._armed, self._since, self._result = True, self._clock(), None
 
     @property
@@ -73,21 +75,30 @@ class EchoWatch:
             if self._have["L"] < need or self._have["R"] < need:
                 return
             self._armed = False
-            args = (self._blocks, dict(self._first), rate, need)
+            args = (self._blocks, dict(self._first), rate, need, self._round)
             self._reset()
         self._thread = threading.Thread(target=self._run, args=args, name="echo-watch", daemon=True)
         self._thread.start()
 
-    def _run(self, blocks: dict[str, list[np.ndarray]], first: dict[str, int | None], rate: int, need: int) -> None:
-        l, r = _aligned(blocks, first, need)
-        res = estimate_offset(l, r, rate)
-        self.rounds += 1
-        if res is None:
-            log.info("eco depois da troca de microfone: sinal insuficiente para correlacionar")
-            return
+    def _run(self, blocks: dict[str, list[np.ndarray]], first: dict[str, int | None], rate: int, need: int, round_no: int) -> None:
+        try:
+            res = estimate_offset(*_aligned(blocks, first, need), rate)
+            if res is None:
+                log.info("eco depois da troca de microfone: sinal insuficiente para correlacionar")
+            else:
+                self._store(round_no, float(res["correlation"]), float(res["offset_ms"]))
+        except Exception as e:  # a rodada acaba sem resultado, com o motivo no log, e a vigia segue para a próxima troca
+            log.warning("eco depois da troca de microfone: a correlação falhou: %s", e)
+        finally:
+            self.rounds += 1                               # por último: quem espera a rodada já acha o resultado
+
+    def _store(self, round_no: int, correlation: float, offset_ms: float) -> None:
         with self._lock:
-            self._result = EchoResult(float(res["correlation"]), float(res["offset_ms"]))
-        log.info("eco depois da troca de microfone: correlação %.3f, atraso %.0f ms", res["correlation"], res["offset_ms"])
+            if round_no != self._round:                    # outra troca no meio: o resultado é do microfone antigo
+                log.info("eco depois da troca de microfone: o resultado é da troca anterior; descartado")
+                return
+            self._result = EchoResult(correlation, offset_ms)
+        log.info("eco depois da troca de microfone: correlação %.3f, atraso %.0f ms", correlation, offset_ms)
 
     def poll(self) -> EchoResult | None:
         """Na thread da interface: o resultado da rodada, uma vez; a rodada sem 5 s de áudio em `give_up_s` desiste calada."""

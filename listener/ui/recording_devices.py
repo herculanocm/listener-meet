@@ -73,6 +73,7 @@ class RecordingDevices(QObject):
         self.rooms = rooms                               # F5.9: o "Marcar como sala" do aviso de eco
         self.monotonic = monotonic
         self.echo = EchoWatch(clock=monotonic)
+        self._last_mic_id = ""                           # o endpoint do L da última leitura: mudou, a vigia de eco arma
         self.reading: Endpoints | None = None
         self.start_ids: frozenset[str] = frozenset()     # A-19: "novo" é o que está fora deste conjunto
         self.panel: DevicesPanel | None = None
@@ -90,6 +91,7 @@ class RecordingDevices(QObject):
         self.reading = self._read()
         self.start_ids = self.reading.ids() if self.reading is not None else frozenset()
         self._last_sig = self.reading.signature if self.reading is not None else None
+        self._last_mic_id = self.recorder.mic_open_id
         self.recorder.set_tap("echo", self.echo.tap)      # F5.9 (item 7): só acumula depois de `arm()`, na troca
         self._timer.start()
 
@@ -114,6 +116,7 @@ class RecordingDevices(QObject):
         escolhido."""
         if self.recorder.stopped:
             return
+        self._arm_on_mic_change()
         self._check_echo()
         reading = self._read()
         if reading is None:
@@ -128,12 +131,22 @@ class RecordingDevices(QObject):
                 self._refresh_panel()
         self._check_missing(reading)
 
+    def _arm_on_mic_change(self) -> None:
+        """F5.9 (item 7), "depois de cada `device_change` no L": também o que o próprio gravador reabriu em outro aparelho
+        (o fone que morreu e voltou no padrão, a webcam com alto-falante): o endpoint aberto mudou desde a última leitura."""
+        opened = self.recorder.mic_open_id
+        if opened and opened != self._last_mic_id:
+            self._last_mic_id = opened
+            self.echo.arm()
+
     def _check_echo(self) -> None:
-        """F5.9 (item 7): o resultado da correlação depois da troca de microfone; acima do limiar (`capture.echo_corr_min`), o
-        aviso com "Marcar como sala" (pergunta 2) e o evento `echo_warning` (correlação e atraso, sem áudio)."""
+        """F5.9 (item 7): o resultado da correlação depois da troca de microfone; acima do limiar (`capture.echo_corr_min`;
+        zero desliga, como no ao vivo), o aviso com "Marcar como sala" (pergunta 2) e o evento `echo_warning` (correlação
+        e atraso, sem áudio)."""
         res = self.echo.poll()
         rec = self.recorder
-        if res is None or res.correlation < rec.cfg.echo_corr_min:
+        threshold = rec.cfg.echo_corr_min
+        if res is None or threshold <= 0 or res.correlation < threshold:
             return
         log.warning("reunião %s: o microfone novo ouve a reunião (correlação %.2f, atraso %.0f ms)", rec.meeting_id,
                     res.correlation, res.offset_ms)
@@ -218,7 +231,8 @@ class RecordingDevices(QObject):
                 log.warning("reunião %s: o mudo não passou ao microfone novo: %s", rec.meeting_id, e)
             if self.on_mic_switched is not None:
                 self.on_mic_switched()
-            self.echo.arm()                              # F5.9 (item 7): o microfone novo ouve a reunião?
+            self._last_mic_id = result.endpoint_id       # F5.9 (item 7): o microfone novo ouve a reunião? (uma rodada só)
+            self.echo.arm()
         return result
 
     def _open_device(self, endpoint_id: str) -> AudioDevice | None:

@@ -920,8 +920,8 @@ class Player(QObject):
         st = self.state()
         last = self._last
         self._last = st
-        if last is None or (st.state, st.meeting_id, st.title, st.message, st.duration_ms, st.note) != (
-                last.state, last.meeting_id, last.title, last.message, last.duration_ms, last.note):
+        if last is None or (st.state, st.meeting_id, st.title, st.message, st.duration_ms, st.note, st.endpoint) != (
+                last.state, last.meeting_id, last.title, last.message, last.duration_ms, last.note, last.endpoint):
             self.state_changed.emit(st)
         if last is None or st.t_ms != last.t_ms or st.meeting_id != last.meeting_id:
             self.position_changed.emit(st)

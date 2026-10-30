@@ -76,6 +76,74 @@ def test_silenced_blocks_restart_the_window_and_the_round_gives_up_quietly_after
     assert watch.rounds == 1                                            # desistiu calada
 
 
+def test_a_switch_during_the_round_discards_its_result_and_a_failing_correlation_is_logged(monkeypatch, caplog):
+    """Revisão do L4: `arm()` no meio de uma rodada: a thread da troca anterior não grava o resultado (seria o do microfone
+    antigo); a correlação que levanta acaba a rodada com um aviso no log, sem matar a thread com traceback."""
+    import logging
+    import threading
+
+    from listener.capture import echo_watch
+
+    rng = np.random.default_rng(5)
+    r = rng.standard_normal(SR * 5).astype(np.float32) * 0.3
+    gate = threading.Event()
+    monkeypatch.setattr(echo_watch, "estimate_offset", lambda l, r, sr: gate.wait(5) and {"correlation": 0.9, "offset_ms": 60.0})
+    watch = EchoWatch()
+    watch.arm()
+    _feed(watch, r, r)                                                  # a rodada 1 está na thread, presa na correlação
+    watch.arm()                                                         # outra troca no meio
+    gate.set()
+    _wait_round(watch)
+    assert watch.poll() is None and watch.armed                         # o resultado da troca anterior foi descartado
+    monkeypatch.setattr(echo_watch, "estimate_offset", lambda l, r, sr: 1 // 0)
+    with caplog.at_level(logging.WARNING, logger="listener"):
+        _feed(watch, r, r)
+        _wait_round(watch, 2)
+    assert watch.poll() is None and not watch.armed and "a correlação falhou" in caplog.text
+
+
+@pytest.mark.lento
+def test_the_watch_arms_when_the_recorder_reopens_the_mic_elsewhere_and_zero_turns_the_warning_off(qapp, tmp_path, store):
+    """Revisão do L4: "depois de cada `device_change` no L" vale também para a reabertura do próprio gravador (o fone que
+    morreu volta no padrão); e `capture.echo_corr_min = 0` desliga o aviso, como no ao vivo."""
+    from listener.capture.recorder import Recorder
+    from listener.model import Health
+    from listener.platform.base import AudioDevice
+    from listener.ui.recording_alerts import ECHO_TEXT
+    from listener.ui.recording_devices import RecordingDevices
+    from tests.conftest import make_config
+
+    bt = AudioDevice("bt-1", "Fone BT", "fake", 1, 16000, index=1)
+    platform = FakePlatform(tmp_path)
+    platform.devices = [MIC, bt]
+    platform.mic_echo_of_r_ms = 60
+    mid = store.create_meeting("t", "meeting", None, None)
+    rec = Recorder(platform, store, mid, make_config(mic_device=bt), clock=platform.clock, inline_worker=True)
+    rec.start()
+    watch = RecordingDevices(platform, rec, rooms=store.meetings)
+    watch.start()
+    platform.pump(0.5)
+    watch.poll()
+    assert rec.mic_open_id == bt.id and not watch.echo.armed              # o microfone do começo não arma
+    next(s for s in platform.mic_streams if s.started and not s.stopped).die()
+    platform.fail_ids = {bt.id}                                            # o fone não volta: o gravador reabre no padrão
+    platform.pump(1.1)
+    rec.check_devices()
+    assert rec.mic_open_id == MIC.id and rec.health()["L"] != Health.LOST
+    watch.poll()
+    assert watch.echo.armed                                                # a reabertura em outro aparelho arma a vigia
+    watch.poll()
+    assert watch.echo.armed and watch.echo.rounds == 0                    # a mesma leitura não rearma
+    rec.cfg.echo_corr_min = 0.0
+    platform.pump(6.0)
+    _wait_round(watch.echo)
+    watch.poll()
+    notice = watch.notice()                                                # o da R-04 ("escolhido saiu") pode estar lá
+    assert (notice is None or notice.text != ECHO_TEXT) and not [e for e in store.list_events(mid) if e["type"] == EventType.ECHO_WARNING]
+    watch.stop()
+    rec.stop()
+
+
 @pytest.mark.lento                                                      # a thread da correlação (tempo real curto)
 def test_the_echo_warning_comes_within_eight_seconds_of_the_mic_switch_and_offers_the_room(qapp, tmp_path, store, monkeypatch):
     from PySide6.QtWidgets import QMessageBox

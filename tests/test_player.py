@@ -270,6 +270,42 @@ def test_the_state_carries_the_output_endpoint_and_the_bar_names_it_in_the_toolt
     assert player.shutdown() is True
 
 
+def test_a_redirect_while_playing_updates_the_tooltip(qtbot, store):
+    """Revisão do L4: o padrão do Windows troca tocando (`Follow.move`, D-067): `state_changed` sai porque o endpoint mudou e a
+    dica da barra segue a saída nova, com uma leitura por id."""
+    from types import SimpleNamespace
+
+    from listener.capture.clock import ManualClock
+    from listener.platform.base import Endpoint, Endpoints
+    from listener.ui.player import Player
+    from listener.ui.player_bar import PlayerBar
+    from listener.ui.player_route import OutputName
+
+    mid = _meeting(store, seconds=4, pause=None)
+    permits = threading.Semaphore(0)
+    outs = FakeOutputs(rate=SR, latency=0.05, permits=permits, system="ep-a")
+    clock = ManualClock()
+    devices = SimpleNamespace(default_output_id=outs.probe, open_output=outs, refresh_audio_devices=lambda *a, **k: False,
+                              audio_devices_changed=lambda: False)
+    player = Player(store, devices=devices, clock=clock.rel)
+    reading = Endpoints(render=(Endpoint("ep-a", "A"), Endpoint("ep-b", "B")), render_default="ep-a")
+    player.names = OutputName(SimpleNamespace(audio_endpoints=lambda refresh_names=False: reading))
+    bar = PlayerBar(player, mid)
+    qtbot.addWidget(bar)
+    assert player.play_from(mid, 0)
+    permits.release(4)
+    qtbot.waitUntil(lambda: bar.what.toolTip() == "saída: A", timeout=3000)
+    outs.system = "ep-b"                                                   # o dono troca o padrão no Windows
+    clock.advance(pl.ROUTE_CHECK_S)
+    permits.release(4)
+    qtbot.waitUntil(lambda: bar.what.toolTip() == "saída: B", timeout=3000)
+    assert player.state().endpoint == "ep-b" and player.names.reads == 2 and len(outs.opened) == 2
+    permits.release(1000)
+    player.stop(meeting_id=mid)
+    qtbot.waitUntil(lambda: player.state().state == STOPPED and not player.engine.alive, timeout=3000)
+    assert bar.what.toolTip() == "" and player.shutdown() is True
+
+
 def test_player_signals_guard_and_bar(qtbot, store):
     from listener.ui.player import Player
     from listener.ui.player_bar import PlayerBar                  # F5.4 L4: a barra saiu do `ui/player.py`
