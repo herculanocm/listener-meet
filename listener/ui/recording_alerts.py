@@ -10,13 +10,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..capture.recorder import Recorder, SourceSpec
-from ..model import DeviceReason, Health, SourceKind
+from ..model import DeviceReason, Health, LostReason, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints
 
 ACTION_USE, ACTION_DEVICES, ACTION_OUTPUTS = "use", "devices", "outputs"
 DEVICES_BUTTON = "Dispositivos…"
 GONE_TEXT = {"L": "microfone escolhido saiu: gravando no padrão do Windows", "R": "saída escolhida saiu: gravando a saída padrão"}
 BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
+LOST_TEXT = {"L": "microfone desconectado; tentando reabrir…", "R": "saída desconectada; tentando reabrir…"}
+NEVER_OPENED_TEXT = {"L": "microfone não iniciou; tentando de novo…", "R": "saída não iniciou; tentando de novo…"}   # F5.9 (item 2)
+APP_LEFT_TEXT = "saída desconectada (o app saiu); tentando reabrir…"                                                 # F5.9 (item 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,14 +82,20 @@ def comm_hint(reading: Endpoints | None, source: SourceSpec, open_id: str) -> En
     return reading.output(comm)
 
 
+def lost_text(channel: str, reason: str) -> str:
+    """F5.9: o alerta do canal perdido pelo motivo (`LostReason`): o que nunca abriu "não iniciou"; o app que saiu diz isso."""
+    if reason == LostReason.NEVER_OPENED:
+        return NEVER_OPENED_TEXT[channel]
+    return APP_LEFT_TEXT if reason == LostReason.PROCESS_EXIT else LOST_TEXT[channel]
+
+
 def alert_line(rec: Recorder, health: Mapping[str, str], notice: Alert | None, comm: Endpoint | None) -> Alert | None:
     """A linha de alerta por prioridade (A-21): a saúde dos canais, o banco parado, o aviso dos dispositivos, o banco
     lento."""
     snap = rec.snapshot
-    if health.get("L") == Health.LOST:
-        return Alert("microfone desconectado; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES, kind="error")
-    if health.get("R") == Health.LOST:
-        return Alert("saída desconectada; tentando reabrir…", DEVICES_BUTTON, ACTION_DEVICES, kind="error")
+    for st in (rec.L, rec.R):
+        if health.get(st.name) == Health.LOST:
+            return Alert(lost_text(st.name, st.lost_reason), DEVICES_BUTTON, ACTION_DEVICES, kind="error")
     if health.get("R") == Health.ALERT:
         text = (f"saída sem sinal: a chamada pode estar em {comm.name} (comunicação)" if comm is not None
                 else "saída sem sinal: a reunião está tocando em outro app?")

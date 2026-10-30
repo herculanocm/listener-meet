@@ -20,6 +20,29 @@ from .stream import _StreamHandle
 log = get_logger("platform.win32.app_loopback")
 
 
+class _ProcessLife:
+    """F5.9 (item 1, D-070): a prova de vida de um tap pelo handle do seu processo (`OpenProcess(SYNCHRONIZE)`), aberto na
+    abertura e solto no `close`; sem handle (o Windows recusou), só o fim da thread do tap conta como morte, porque ela
+    nunca cai sozinha (o laço engole erros)."""
+
+    def __init__(self, pid: int, tap: Any) -> None:
+        self.tap = tap
+        self.handle = processes.open_process_handle(pid)
+        if self.handle is None:
+            log.debug("processo %s: sem handle para a prova de vida; vale só a thread do tap", pid)
+
+    def alive(self) -> bool | None:
+        if self.handle is None:
+            return False if not self.tap.is_running else None
+        exited = processes.has_exited(self.handle)
+        return None if exited is None else not exited
+
+    def close(self) -> None:
+        if self.handle is not None:
+            processes.close_handle(self.handle)
+            self.handle = None
+
+
 class Win32AppLoopback:
     """`Platform.open_app_loopback` no Windows (D-055), herdado pelo `Win32Platform` (o `platform.py` não cresce)."""
 
@@ -104,15 +127,7 @@ class Win32AppLoopback:
             on_audio(block, time.perf_counter() - n / sr)
 
         handler = on_data
-        proc = processes.open_process_handle(pid)         # F5.9 (item 1, D-070): a prova de vida é o handle do processo
-        if proc is None:
-            log.debug("processo %s: sem handle para a prova de vida; vale só a thread do tap", pid)
-
-        def alive() -> bool | None:
-            if proc is None:                              # a thread do tap nunca cai sozinha (o laço engole erros): só o
-                return False if not tap.is_running else None   # fim dela é certo
-            exited = processes.has_exited(proc)
-            return None if exited is None else not exited
+        life = _ProcessLife(pid, tap)                     # F5.9 (item 1): a prova de vida é o handle do processo
 
         def start() -> None:
             tap.start()
@@ -125,7 +140,6 @@ class Win32AppLoopback:
                 try:
                     tap.close()
                 finally:
-                    if proc is not None:                  # o handle vive o que a captura vive
-                        processes.close_handle(proc)
+                    life.close()                          # o handle vive o que a captura vive
 
-        return _StreamHandle(start, stop, sr, ch, on_error, alive_fn=alive)
+        return _StreamHandle(start, stop, sr, ch, on_error, alive_fn=life.alive)

@@ -71,6 +71,13 @@ class DeviceReason(StrEnum):
     BACK = "back"          # o escolhido voltou (pergunta 10)
 
 
+class LostReason(StrEnum):
+    """F5.9 (itens 1 e 2): por que um canal está perdido (o motivo do evento `device_lost` e do alerta do widget)."""
+    PROCESS_EXIT = "process_exit"        # o app gravado saiu (o handle do processo sinalizou)
+    STREAM_STOPPED = "stream_stopped"    # a stream parou: o driver avisou (`on_error`) ou a prova de vida disse
+    NEVER_OPENED = "never_opened"        # não abriu no começo da gravação; tentado de novo a cada 5 s
+
+
 class SettingScope(StrEnum):
     NOW = "now"
     NEXT_RECORDING = "next_recording"

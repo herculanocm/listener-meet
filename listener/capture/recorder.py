@@ -39,7 +39,7 @@ import numpy as np
 
 from ..config.defaults import SPECS, SettingSpec
 from ..log import get_logger
-from ..model import DeviceReason, EventType, Health, MeetingStatus, SourceKind
+from ..model import DeviceReason, EventType, Health, LostReason, MeetingStatus, SourceKind
 from ..platform.base import AudioDevice, CaptureHandle, ErrorCallback, Platform, log_id
 from . import audio
 from .chunker import ChannelChunker, RawChunk, Tap
@@ -145,6 +145,7 @@ class ChannelState:
     detail: str = ""
     lost_since: float | None = None    # instante (sessão) em que o dispositivo sumiu (M-09)
     last_reopen: float = -1e9
+    lost_reason: str = ""              # F5.9: por que está perdido (`LostReason`); vazio quando não está
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,9 +337,11 @@ class Recorder(ReopenMixin):
         err = self._try_open_mic(self.mic_device, strict=False)
         if err is not None:
             self._warn(f"microfone não iniciou: {err}")
+            self._mark_lost("L", err, LostReason.NEVER_OPENED)  # F5.9 (item 2): perdido, e tentado de novo a cada 5 s
         elif self.mic_device is not None and self.mic_open_id != self.mic_device.id:
             self._device_event("L", DeviceReason.MISSING)       # o escolhido não está: o padrão no lugar (A-16)
-        self._open_source(self.source)
+        if not self._open_source(self.source) and self.source.kind != SourceKind.NONE:
+            self._output_lost(f"{self.source.log_text()} não abriu", LostReason.NEVER_OPENED)
 
     def _new_source_id(self) -> int:
         self._next_source += 1
@@ -691,10 +694,10 @@ class Recorder(ReopenMixin):
         snap = self._snap
         out: dict[str, Health] = {}
         for st, alert_s in ((self.L, self.cfg.l_alert_seconds), (self.R, self.cfg.r_alert_seconds)):
-            if not st.active:
-                out[st.name] = Health.OFF
-            elif st.name in snap.lost:
+            if st.name in snap.lost:                    # F5.9 (item 2): perdido antes de desligado (o que nunca abriu)
                 out[st.name] = Health.LOST
+            elif not st.active:
+                out[st.name] = Health.OFF
             elif self.paused:
                 out[st.name] = Health.PAUSED
             elif st.name == "L" and self.muted:
@@ -788,7 +791,7 @@ class Recorder(ReopenMixin):
             self._publish(lost=self._snap.lost - {msg.channel})
 
     def _on_lost(self, msg: _Lost) -> None:
-        if self._sources.get(msg.channel) != msg.source:
+        if self._sources.get(msg.channel, 0) != msg.source:   # F5.9 (item 2): a fonte 0 é o canal que nunca abriu
             return
         log.warning("canal %s: stream encerrada pelo sistema (%s)", msg.channel, msg.reason)
         self._publish(lost=self._snap.lost | {msg.channel})
@@ -894,10 +897,10 @@ class Recorder(ReopenMixin):
     def _ms(self) -> int:
         return round(self.clock.rel() * 1000)
 
-    def _warn(self, msg: str, type_: EventType = EventType.WARNING) -> None:
+    def _warn(self, msg: str, type_: EventType = EventType.WARNING, **data: Any) -> None:
         self.warnings.append(msg)
         log.warning("reunião %s: %s", self.meeting_id, msg)
         try:
-            self.sink.add_event(self.meeting_id, self._ms(), type_, {"message": msg})
+            self.sink.add_event(self.meeting_id, self._ms(), type_, {"message": msg, **data})
         except Exception as e:
             log.debug("evento de aviso não gravado: %s", e)

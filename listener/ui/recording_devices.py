@@ -152,12 +152,13 @@ class RecordingDevices(QObject):
     def _follow(self, reading: Endpoints) -> None:
         rec = self.recorder
         retry = False
-        mic = mic_action(reading, rec.mic_device, rec.mic_open_id)
+        lost = rec.snapshot.lost                         # F5.9 (item 2): o canal perdido (Health.LOST) é da reabertura de 5 s
+        mic = mic_action(reading, rec.mic_device, rec.mic_open_id) if "L" not in lost else None
         if mic is not None:
             reason, strict = mic
             result = self.switch_mic(rec.mic_device, reason, strict=strict)
             retry = not result.ok and result.message == REREAD_REFUSED      # nada fechou: tentar de novo não abre buraco
-        out = output_action(reading, rec.source, rec.output_open_id)
+        out = output_action(reading, rec.source, rec.output_open_id) if "R" not in lost else None
         if out is not None:
             retry = not rec.reopen_output(out) or retry
         self._retry_at = self.monotonic() + RETRY_S if retry else None

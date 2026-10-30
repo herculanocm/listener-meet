@@ -11,11 +11,11 @@ import logging
 import pytest
 
 from listener.capture.chunker import TapFlag
-from listener.capture.recorder import REREAD_REFUSED, STOPPED_TEXT, SourceSpec
+from listener.capture.recorder import REREAD_REFUSED, STOPPED_TEXT, DeviceSwitch, Recorder, SourceSpec
 from listener.model import DeviceReason, EventType, Health
 from listener.platform.base import AudioDevice, Endpoint, Endpoints
 from tests.conftest import make_config
-from tests.fake_platform import BASE_ENDPOINTS, MIC, SPEAKERS
+from tests.fake_platform import BASE_ENDPOINTS, MIC, SPEAKERS, FakePlatform
 
 pytest.importorskip("PySide6")
 
@@ -341,6 +341,46 @@ def test_an_output_switch_that_fails_brings_back_the_previous_source_or_stays_lo
     assert system.reopen_output(DeviceReason.DEFAULT) is False             # sem exceção: a vigia segue viva
     assert not system.output_open and "R" in system.snapshot.lost
     system.stop()
+
+
+def test_the_watch_leaves_a_lost_channel_to_the_reopening(qapp, tmp_path, store, monkeypatch):
+    """F5.9 (item 2): o canal perdido pertence à reabertura de 5 s: a vigia de 2 s não troca o microfone de um canal em
+    `Health.LOST` (com o L nunca aberto, `mic_action` mandaria ao padrão em paralelo) e segue cuidando do outro canal; o
+    widget diz "não iniciou"."""
+    from listener.ui.recording_alerts import alert_line
+    from listener.ui.recording_devices import RecordingDevices
+
+    platform = FakePlatform(tmp_path, mic_fail=True)
+    rec = Recorder(platform, store, store.create_meeting("t", "meeting", None, None), make_config(source=SYSTEM),
+                   clock=platform.clock, inline_worker=True)
+    rec.start()
+    health = rec.health()
+    assert health["L"] == Health.LOST and health["R"] == Health.OK
+    assert alert_line(rec, health, None, None).text == "microfone não iniciou; tentando de novo…"
+    watch = RecordingDevices(platform, rec)
+    calls: list[str] = []
+
+    def switch_mic(*_a: object, **_k: object) -> DeviceSwitch:
+        calls.append("mic")
+        return DeviceSwitch(True, MIC.id)
+
+    def reopen_output(*_a: object, **_k: object) -> bool:
+        calls.append("out")
+        return True
+
+    monkeypatch.setattr(rec, "switch_mic", switch_mic)
+    monkeypatch.setattr(rec, "reopen_output", reopen_output)
+    watch._follow(with_bt(mic=BT.id, out=BT_OUT.id))                      # o padrão mudou nos dois canais
+    assert calls == ["out"]                                                # o L perdido fica com a reabertura
+    platform.mic_fail = False
+    platform.pump(5.1)
+    rec.check_devices()
+    platform.pump(0.5)
+    assert rec.health()["L"] == Health.OK
+    watch._follow(with_bt(mic=BT.id, out=BT_OUT.id))
+    assert calls == ["out", "mic", "out"]
+    watch.stop()
+    rec.stop()
 
 
 def test_a_name_id_never_reaches_the_events_or_the_log(platform, store, recorder_factory, caplog):
