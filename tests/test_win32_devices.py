@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Win32Platform s
 
 
 def test_stream_handle_closes_a_stream_the_library_ended():
-    from listener.platform.win32.platform import _StreamHandle
+    from listener.platform.win32.stream import _StreamHandle
 
     calls: list[str] = []
     errors: list[str] = []
@@ -123,25 +123,25 @@ def test_the_loopback_opens_on_the_chosen_output_matched_by_name():
     from types import SimpleNamespace
 
     from listener.platform.base import Endpoint, Endpoints
-    from listener.platform.win32 import platform as wp
+    from listener.platform.win32 import system_loopback as sl
 
     reading = Endpoints(render=(Endpoint("a", "Alto-falantes (Realtek(R) Audio)"), Endpoint("b", "Fone de Ouvido (WH-1000XM4)")),
                         render_default="a", render_comm="b")
-    assert wp._loopback_target(reading, "b") == ("b", "Fone de Ouvido (WH-1000XM4)")
-    assert wp._loopback_target(reading, "sumiu") == ("a", "Alto-falantes (Realtek(R) Audio)")
-    assert wp._loopback_target(reading, None) == ("a", "Alto-falantes (Realtek(R) Audio)") and wp._loopback_target(None, "b") == ("", "")
+    assert sl._loopback_target(reading, "b") == ("b", "Fone de Ouvido (WH-1000XM4)")
+    assert sl._loopback_target(reading, "sumiu") == ("a", "Alto-falantes (Realtek(R) Audio)")
+    assert sl._loopback_target(reading, None) == ("a", "Alto-falantes (Realtek(R) Audio)") and sl._loopback_target(None, "b") == ("", "")
     loopbacks = [{"index": 13, "name": "Alto-falantes (Realtek(R) Audio) [Loopback]"},
                  {"index": 14, "name": "Fone de Ouvido (WH-1000XM4) [Loopback]"}]
     pa = SimpleNamespace(get_loopback_device_info_generator=lambda: iter(loopbacks),
                          get_host_api_info_by_type=lambda _t: {"defaultOutputDevice": 10},
                          get_device_info_by_index=lambda _i: {"name": "Alto-falantes (Realtek(R) Audio)", "isLoopbackDevice": False})
     pyaudio = SimpleNamespace(paWASAPI=13)
-    assert wp._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4)")["index"] == 14
-    assert wp._pick_loopback(pa, pyaudio, "")["index"] == 13 and wp._pick_loopback(pa, pyaudio, "outra")["index"] == 13
-    assert wp._render_id(reading, "Fone de Ouvido (WH-1000XM4)") == "b" and wp._render_id(None, "x") == ""
+    assert sl._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4)")["index"] == 14
+    assert sl._pick_loopback(pa, pyaudio, "")["index"] == 13 and sl._pick_loopback(pa, pyaudio, "outra")["index"] == 13
+    assert sl._render_id(reading, "Fone de Ouvido (WH-1000XM4)") == "b" and sl._render_id(None, "x") == ""
     similar = [{"index": 20, "name": "Fone de Ouvido (WH-1000XM4) Hands-Free [Loopback]"}, *loopbacks]   # o igual primeiro
     pa.get_loopback_device_info_generator = lambda: iter(similar)
-    assert wp._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4)")["index"] == 14
+    assert sl._pick_loopback(pa, pyaudio, "Fone de Ouvido (WH-1000XM4)")["index"] == 14
 
 
 def test_strict_refuses_a_microphone_that_is_not_in_the_list(monkeypatch):
@@ -177,7 +177,7 @@ def test_the_mute_moves_to_the_new_endpoint_at_once_under_the_lock(monkeypatch):
     """A-18: com a gravação muda, a troca tira o mudo do antigo e põe no novo dentro da trava que `get` também usa (o poller
     lê em outra thread); `resolved` é o id do endpoint, nunca o nome (A-22)."""
     from listener.platform.base import AudioDevice
-    from listener.platform.win32 import platform as wp
+    from listener.platform.win32 import endpoints, mute as wm
 
     class Volume:
         def __init__(self) -> None:
@@ -190,9 +190,9 @@ def test_the_mute_moves_to_the_new_endpoint_at_once_under_the_lock(monkeypatch):
             return self.muted
 
     volumes = {"ep-a": Volume(), "ep-b": Volume()}
-    monkeypatch.setattr(wp, "_capture_endpoints", lambda: [("Fone de Fulano", "ep-a", "ep-a"), ("Mic", "ep-b", "ep-b")])
-    monkeypatch.setattr(wp, "_endpoint_volume", lambda dev: volumes[dev])
-    mute = wp._Win32MicMute()
+    monkeypatch.setattr(endpoints, "capture_endpoints", lambda: [("Fone de Fulano", "ep-a", "ep-a"), ("Mic", "ep-b", "ep-b")])
+    monkeypatch.setattr(wm, "_endpoint_volume", lambda dev: volumes[dev])
+    mute = wm._Win32MicMute()
     assert mute.set_device(AudioDevice("ep-a", "Fone de Fulano", "WASAPI", 1, 16000)) and mute.set(True)
     assert volumes["ep-a"].muted == 1 and mute.resolved == "ep-a"
     assert mute.set_device(AudioDevice("ep-b", "Mic", "WASAPI", 1, 16000), muted=True)

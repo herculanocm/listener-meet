@@ -143,6 +143,43 @@ def by_name[T](items: list[T], name: str, key: Callable[[T], str]) -> T | None:
     return exact if exact is not None else next((it for it in items if names_match(key(it), name)), None)
 
 
+def capture_endpoints() -> list[tuple[str, str, Any]]:
+    """[(nome amigável, id estável do endpoint, dispositivo do pycaw)] dos endpoints de captura ativos. Vazio sem pycaw.
+    Enumera só `eCapture` ativos (M-07); se a API filtrada falhar, cai em `GetAllDevices()` filtrando o estado. F5.9 (L1a):
+    de `platform.py`, para a lista de microfones e o mudo (`mute.py`)."""
+    com_init()
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except Exception as e:
+        log.debug("pycaw indisponível: %s", e)
+        return []
+    out: list[tuple[str, str, Any]] = []
+    devices: list[Any] = []
+    try:
+        from pycaw.constants import DEVICE_STATE, EDataFlow
+
+        enumerator = AudioUtilities.GetDeviceEnumerator()
+        collection = enumerator.EnumAudioEndpoints(EDataFlow.eCapture.value, DEVICE_STATE.ACTIVE.value)
+        devices = [AudioUtilities.CreateDevice(collection.Item(i)) for i in range(collection.GetCount())]
+    except Exception as e:
+        log.debug("enumeração filtrada de endpoints falhou (%s); usando GetAllDevices", e)
+        try:
+            devices = list(AudioUtilities.GetAllDevices())
+        except Exception as e2:
+            log.warning("não consegui enumerar os endpoints de áudio: %s", e2)
+            return []
+    for dev in devices:
+        try:
+            name, dev_id = str(dev.FriendlyName or ""), str(dev.id or "")
+            state = getattr(dev, "state", None)
+            active = state is None or str(getattr(state, "name", state)).lower() in ("active", "1")
+            if name and dev_id and active:
+                out.append((name, dev_id, dev))
+        except Exception as e:
+            log.debug("endpoint ilegível: %s", e)
+    return out
+
+
 @functools.cache
 def _key(fmtid: str, pid: int) -> Any:
     from comtypes import GUID

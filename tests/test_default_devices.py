@@ -236,10 +236,10 @@ def test_the_id_map_is_kept_only_on_the_ui_thread_for_this_reading(win, monkeypa
 @win32
 def test_the_mic_list_takes_the_id_from_the_map_and_the_mute_follows_the_central_default(win, monkeypatch):
     from listener.platform.common import portaudio
-    from listener.platform.win32 import platform as wp
+    from listener.platform.win32 import mute as wm
 
     monkeypatch.setattr(win.plat, "refresh_audio_devices", lambda *a, **k: False)
-    monkeypatch.setattr(wp, "_capture_endpoints", list)               # o Core Audio sem nome: só o mapa sabe
+    monkeypatch.setattr(win.flows, "capture_endpoints", list)         # o Core Audio sem nome: só o mapa sabe
     win.plat._wasapi_map = (portaudio.generation(), {3: "ep-mic"})
     assert [d.id for d in win.plat.list_input_devices()] == ["ep-mic"]
     asked: list[str] = []
@@ -249,9 +249,9 @@ def test_the_mic_list_takes_the_id_from_the_map_and_the_mute_follows_the_central
         return f"dev:{eid}"
 
     monkeypatch.setattr(win.flows, "device", device)
-    monkeypatch.setattr(wp, "_endpoint_volume", lambda dev: ("volume", dev))
+    monkeypatch.setattr(wm, "_endpoint_volume", lambda dev: ("volume", dev))
     win.now[win.flows.FLOW_CAPTURE] = "ep-outro"
-    assert wp._Win32MicMute()._default() == ("volume", "dev:ep-outro") and asked == ["ep-outro"]
+    assert wm._Win32MicMute()._default() == ("volume", "dev:ep-outro") and asked == ["ep-outro"]
     assert set(win.roles) == {win.flows.ROLE_CONSOLE}                  # o console, como o gravador (não o multimídia)
 
 

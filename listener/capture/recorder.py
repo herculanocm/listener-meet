@@ -21,7 +21,8 @@ anterior antes de abrir (A-15: um `PyAudio()` vivo mantém a lista antiga). `dev
 `source_change` para outro tipo de fonte; eventos e log com o id do endpoint, nunca o nome do aparelho (A-22; o id
 `name:<nome>` vai resumido, `log_id`). Revisão do L4: a troca que falha devolve o aparelho que GRAVAVA, não o pedido
 (R-01); a abertura cujo `start()` falha e a fonte que não volta depois de uma troca deixam o canal perdido, e a reabertura
-de 5 em 5 s (M-09) segue tentando (R-02, R-03).
+de 5 em 5 s (M-09) segue tentando (R-02, R-03). F5.9 (L1a): a marca de canal perdido e a reabertura moram em `reopen.py`
+(`ReopenMixin`, herdado aqui).
 """
 from __future__ import annotations
 
@@ -43,13 +44,13 @@ from ..platform.base import AudioDevice, CaptureHandle, ErrorCallback, Platform,
 from . import audio
 from .chunker import ChannelChunker, RawChunk, Tap
 from .clock import Clock, SessionClock
+from .reopen import ReopenMixin, _Lost
 from .sinks import ChunkSink, EncodedChunk, RecorderSink
 
 log = get_logger("capture")
 
 CH_INDEX = {"L": 0, "R": 1}
 GAP_TOLERANCE_S = 0.25
-REOPEN_EVERY_S = 5.0
 DB_ALERT_AFTER_S = 30.0
 QUEUE_WARN_BLOCKS = 50          # ~5 s de blocos de 100 ms à espera da thread de trabalho: "banco lento"
 REREAD_REFUSED = "o sistema de áudio não releu os dispositivos (outro som aberto no app?)"
@@ -186,13 +187,6 @@ class _Flags:
 
 
 @dataclass(frozen=True, slots=True)
-class _Lost:
-    channel: str
-    source: int
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
 class _Stop:
     end_rel: float
     cancel: bool
@@ -280,7 +274,7 @@ class _Pipeline:
         self.chunker.close(end_rel)
 
 
-class Recorder:
+class Recorder(ReopenMixin):
     def __init__(self, platform: Platform, sink: RecorderSink, meeting_id: int, cfg: RecordConfig,
                  clock: Clock | None = None, *, inline_worker: bool = False, extra_sinks: Sequence[ChunkSink] = (),
                  before_system_loopback: Callable[[], object] | None = None,
@@ -378,14 +372,6 @@ class Recorder:
         self.mic_open_id = ""                             # R-01: nada aberto até a próxima abertura dar certo
         if old is not None:
             old.stop()                                    # um callback tardio do antigo é ignorado pelo id da fonte
-
-    def _mark_lost(self, channel: str, reason: str) -> None:
-        """R-02 e R-03: o canal ficou sem stream; a thread de trabalho o marca perdido e o `check_devices` (M-09) reabre de 5
-        em 5 s. Pela fonte que ela conhece (a do último `_Open`), uma vez por fonte."""
-        sid = self._l_sid if channel == "L" else self._r_sid
-        if self._lost_sid.get(channel) != sid:
-            self._lost_sid[channel] = sid
-            self._post(_Lost(channel, sid, reason))
 
     def _try_open_mic(self, device: AudioDevice | None, strict: bool) -> str | None:
         """Abre `device` (None = o padrão) no canal L: None quando abriu; senão o motivo. O formato vai para a thread de
@@ -531,13 +517,6 @@ class Recorder:
         """O canal R tem um loopback aberto agora (a tela diz se a troca que falhou deixou a fonte anterior)."""
         return self._r_handle is not None
 
-    def _output_lost(self, reason: str) -> None:
-        """R-03: nem a fonte pedida nem a anterior abriram: o canal fica perdido (à vista como desconectado) e a reabertura
-        de 5 em 5 s tenta a anterior."""
-        self.R.active = True
-        self._warn(f"saída sem loopback; tentando de novo a cada {REOPEN_EVERY_S:.0f} s: {reason}")
-        self._mark_lost("R", reason)
-
     def _before_system(self) -> None:
         """R8-01: o loopback do sistema inteiro vai abrir; quem criou o gravador cala antes o que o app toca."""
         self._call_hook(self.before_system_loopback, "o aviso antes do loopback do sistema")
@@ -593,64 +572,6 @@ class Recorder:
         self.sink.add_event(self.meeting_id, self._ms(), EventType.DEVICE_CHANGE, data)
         log.info("reunião %s: canal %s no endpoint %s em %d ms (%s%s)", self.meeting_id, channel, data["endpoint_id"],
                  self._ms(), data["reason"], ", acompanha o padrão" if follows else "")
-
-    def check_devices(self) -> None:
-        """Chamada periódica da interface (M-09): registra `device_lost` e tenta reabrir a cada 5 s pelo id estável. F5.3:
-        o anterior fecha antes de cada reabertura (A-15); o escolhido que não está abre o padrão, com `device_change`
-        (A-16); eventos e log com o id do endpoint (A-22)."""
-        if self._stopped:
-            return
-        now = self.clock.rel()
-        lost = self._snap.lost
-        for st in (self.L, self.R):
-            if st.name not in lost:
-                continue
-            if st.lost_since is None:
-                st.lost_since = now
-                self._warn(f"dispositivo do canal {st.name} parou de responder ({st.detail})", EventType.DEVICE_LOST)
-            if now - st.last_reopen < REOPEN_EVERY_S:
-                continue
-            st.last_reopen = now
-            self._reopen_lost(st)
-
-    def _reopen_lost(self, st: ChannelState) -> None:
-        with self._lock:
-            if self._stopped:
-                return
-            before = self.mic_open_id if st.name == "L" else self.output_open_id
-            ok = self._reopen_mic() if st.name == "L" else self._reopen_source()
-            after = self.mic_open_id if st.name == "L" else self.output_open_id
-        if not ok:
-            return
-        st.lost_since = None
-        log.info("canal %s voltou (%s)", st.name, st.detail)
-        self.sink.add_event(self.meeting_id, self._ms(), EventType.DEVICE_BACK,
-                            {"channel": st.name, "detail": st.detail, "endpoint_id": log_id(after)})
-        if after != before:                               # outro aparelho: o escolhido de volta ou o padrão
-            wanted = (self.mic_device.id if self.mic_device else "") if st.name == "L" else self.source.output_id
-            self._device_event(st.name, DeviceReason.BACK if wanted and after == wanted else DeviceReason.DEFAULT)
-
-    def _reopen_mic(self) -> bool:
-        """O L perdido (M-09): o pedido, sem exigir (ausente, o padrão: A-16); o escolhido que está mas não abre também cai no
-        padrão (R-01: a reabertura não insiste só nele). Nada abriu: segue perdido."""
-        self._drop_mic()                                  # U-043: a stream morta segurava o PortAudio (lista não relida)
-        self._reread()                                    # A-01: o fone que voltou só entra relendo a lista
-        err = self._try_open_mic(self.mic_device, strict=False)
-        if err is not None and self.mic_device is not None:
-            err = self._try_open_mic(None, strict=False)
-        if err is not None:
-            self._warn(f"microfone não iniciou: {err}")
-            self._mark_lost("L", err)
-        return err is None
-
-    def _reopen_source(self) -> bool:
-        """O R perdido (M-09): a fonte de agora de novo; nada abriu, segue perdido (R-03), à vista como desconectado."""
-        self._drop_source()
-        if self._open_source(self.source):
-            return True
-        self.R.active = True
-        self._mark_lost("R", "a saída não reabriu")
-        return False
 
     def pause(self) -> None:
         if not self.paused:
