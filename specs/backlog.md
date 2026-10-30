@@ -3,21 +3,19 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
-- **F5.9 aprovada e em implementação** (30/10, `features/F5.9-canais-l-r-dispositivos.md`, a pedido do dono: revisão
-  completa dos canais L e R, da captura ao player). Três defeitos (o R não percebe a própria morte; o canal que não
-  abre no começo nunca é tentado de novo; os processos do app são fixados na abertura), três fragilidades e quatro
-  melhorias, em quatro lotes. A revisão de arquitetura está aplicada (D-070); o dono aprovou pelo chat com as quatro
-  perguntas no padrão (sim). **L1 e L2 implementados e revisados** (L1: `65e790b`, `f66bf3f`, `dbe99c3`, `a96568b`;
-  L2: `052e107`, `e821b4d`, `882a730`; 1.159 testes). O L3 está com o programador; o L4 por último. Três itens que as
-  revisões deixaram, fora do lote: `tests/test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info`
-  é instável na suíte inteira (3 falhas em 7, 9/9 isolado; tempo ou ordem); o `pyproject` não liga o `C901` (o limite
-  de complexidade 10 é só convenção); e o nativo do proctap cai no sistema inteiro calado em caminhos de falha
-  (`is_process_specific()` diz quando), o que somaria o sistema inteiro no canal do app sem aviso.
+- **F5.9 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 20
+  do roteiro, numa reunião de verdade. Quatro itens que as revisões deixaram, fora do lote:
+  `tests/test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info` é instável na suíte
+  inteira (3 falhas em 7, 9/9 isolado; tempo ou ordem); o `pyproject` não liga o `C901` (o limite de complexidade 10
+  é só convenção); o nativo do proctap cai no sistema inteiro calado em caminhos de falha (`is_process_specific()`
+  diz quando), o que somaria o sistema inteiro no canal do app sem aviso; e o pedido de saída ambíguo (nome repetido
+  no loopback) não fica registrado no handle, então a vigia pode pedir `back` de novo a cada mudança de assinatura.
 - **F5.8 implementada** (30/10; o detalhe está no item do Concluído). Falta o dono gerar e usar o `.exe` numa
   reunião de verdade, pela Parte 19 do roteiro. A telemetria do pyannote foi desligada depois (`5b6496a`, pergunta 16).
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
   do roteiro, numa chamada de verdade.
-- **Próximo passo do dono:** testar a troca de aparelho pela Parte 18 (D-067), o `.exe` pela Parte 19 (F5.8) e a
+- **Próximo passo do dono:** testar os canais que se recuperam pela Parte 20 (F5.9), a troca de aparelho pela Parte
+  18 (D-067), o `.exe` pela Parte 19 (F5.8) e a
   F5.7 pela Parte 17 (reinicie o app
   antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
   Parte 14, a F5.5 pela Parte 13 e a F5.4 pela Parte 12 do roteiro (claro, escuro, contraste alto, notebook, teclado), a F5.3 pela Parte 11 (idioma, fila,
@@ -104,6 +102,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
         - A correção: `e7a93d0`.
 
         Revisão do diff por um agente novo. São 1.105 testes. Falta o dono trocar o aparelho de verdade (Parte 18).
+  - [x] **F5.9 implementada** (30/10, `features/F5.9-canais-l-r-dispositivos.md`, D-070): a revisão completa dos
+        canais L e R, a pedido do dono. O R percebe a própria morte (handle do processo, `is_active`) e o canal que
+        não abriu no começo é tentado de novo; a fonte de app acompanha os processos novos e volta sozinha depois do
+        fallback; nenhum aparelho casa por prefixo de nome; o downmix de 6 e 8 canais; o aviso de eco depois da troca
+        de microfone, com "Marcar como sala"; "agora X" no combo; onde a chamada toca na tabela; a saída na dica do
+        player. Quatro lotes, 13 commits (de `65e790b` a `15e257c`), cada um revisado por um agente novo; 1.173
+        testes. Falta o dono usar numa reunião de verdade (Parte 20).
   - [x] **F5.8 implementada** (30/10, `features/F5.8-executavel-windows.md`, U-095, D-068 e D-069): o app abre por um
         `listener-meet.exe` em pasta, gerado com `scripts/build_exe.py` em ~7 min. Ele tem o desempenho do venv e o
         ícone da marca.

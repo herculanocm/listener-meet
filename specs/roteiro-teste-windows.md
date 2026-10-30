@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 19 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 20 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -405,6 +405,29 @@ o app do venv juntos: os dois usam o mesmo banco (pergunta 3 da F5.8).
   - qualquer caixa de erro (print);
   - as linhas de erro do `listener.log` e do `listener-worker.log`;
   - a saída do `Get-MpThreatDetection`.
+
+## Parte 20 — F5.9: os canais L e R que se recuperam sozinhos (40 min, numa reunião de verdade)
+Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). O log em DEBUG ajuda (`listener.log`).
+- [ ] App que fecha no meio (Aceite 2): gravando o app da reunião com o ao vivo ligado, feche o app da reunião, reabra
+      e volte à chamada. Em até 2 s o widget diz "saída desconectada (o app saiu); tentando reabrir…"; em até 10 s
+      depois de o som voltar, o R grava o app de novo e o painel de dispositivos volta a marcá-lo. No log:
+      `device_lost` com `process_exit`, depois `device_back`; se enquanto isso ele caiu no "sistema inteiro", um
+      `source_change` com `fallback` e outro com `back`.
+- [ ] Chamada que entra depois (Aceite 3): "Antes de gravar" com o app da reunião aberto só no chat, "Gravar", e só
+      então entre na chamada: o medidor do R sobe em até 5 s, sem buraco no que já gravava.
+- [ ] Microfone que não abriu no começo: com o fone Bluetooth ainda conectando, "Gravar". O widget diz "microfone não
+      iniciou; tentando de novo…" e o canal L fica verde sozinho quando o fone fica pronto (em até 5 s).
+- [ ] "Agora X" (Aceite 9): no "Antes de gravar", o combo do microfone diz "Padrão do Windows (acompanha): agora
+      <aparelho>"; troque o padrão nas configurações de som com a tela aberta: o nome muda em até 3 s.
+- [ ] Onde a chamada toca (Aceite 10): com a chamada no fone de comunicação e o alto-falante como padrão, a tabela de
+      fontes mostra nível na linha do fone e "toca em: <fone>" na linha do app. No player, a dica do título diz a saída.
+- [ ] Eco depois da troca (Aceite 8): gravando, troque o microfone no painel para um que ouve os alto-falantes
+      (webcam, notebook aberto) com a reunião tocando neles: em até 8 s o aviso "o microfone novo ouve a reunião: use
+      fone ou marque a sala", com o botão "Marcar como sala"; clique, confirme, e a ata sai com a reunião como sala.
+      Com fone, nenhum aviso.
+- Devolva: as linhas `device_lost`, `device_back` e `source_change` do log com os horários; o tempo entre fechar o app
+  e o aviso, e entre o som voltar e o R gravar de novo; prints do "agora X", da tabela de fontes e do aviso de eco;
+  qualquer caixa de erro.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
