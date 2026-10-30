@@ -68,6 +68,7 @@ class SourceSpec:
     exe: str = ""
     label: str = ""                      # o que a tela mostra: o app e o título da janela
     output_id: str = ""                  # F5.3 (A-21): a saída gravada no sistema inteiro; vazio = acompanha a padrão
+    fallback_exe: str = ""               # F5.9 (item 4): o app que não abriu e caiu no sistema inteiro; a volta o procura
 
     @property
     def follows(self) -> bool:
@@ -340,8 +341,11 @@ class Recorder(ReopenMixin):
             self._mark_lost("L", err, LostReason.NEVER_OPENED)  # F5.9 (item 2): perdido, e tentado de novo a cada 5 s
         elif self.mic_device is not None and self.mic_open_id != self.mic_device.id:
             self._device_event("L", DeviceReason.MISSING)       # o escolhido não está: o padrão no lugar (A-16)
-        if not self._open_source(self.source) and self.source.kind != SourceKind.NONE:
-            self._output_lost(f"{self.source.log_text()} não abriu", LostReason.NEVER_OPENED)
+        wanted = self.source
+        if not self._open_source(wanted) and wanted.kind != SourceKind.NONE:
+            self._output_lost(f"{wanted.log_text()} não abriu", LostReason.NEVER_OPENED)
+        elif self.source.kind != wanted.kind:
+            self._source_event(DeviceReason.FALLBACK)     # F5.9 (item 4): o app sem loopback: gravando o sistema inteiro
 
     def _new_source_id(self) -> int:
         self._next_source += 1
@@ -491,7 +495,8 @@ class Recorder(ReopenMixin):
                 self._before_system()                     # a troca automática também capta o sistema inteiro (R8-01)
                 handle = self.platform.open_system_loopback(cb, err)
                 self.R.detail = "sistema inteiro (fallback)"
-                spec = SourceSpec(SourceKind.SYSTEM)
+                self._fallback_pid = spec.pid             # F5.9 (item 4): a raiz que falhou não é tentada de novo
+                spec = SourceSpec(SourceKind.SYSTEM, fallback_exe=spec.exe)
             except Exception as e2:
                 self._warn(f"loopback do sistema não iniciou: {e2}")
                 self._r_handle = None
@@ -538,7 +543,8 @@ class Recorder(ReopenMixin):
         """Troca a fonte do canal R sem parar; o buraco entre uma e outra é preenchido com silêncio. F5.3: o anterior fecha
         antes (A-15); entre saídas do sistema inteiro o evento é `device_change` (outro aparelho, A-21), entre tipos de
         fonte, `source_change`. A nova que não abre devolve a anterior, de qualquer tipo; sem nenhuma, o canal fica perdido e
-        a reabertura de 5 em 5 s tenta a anterior (R-03)."""
+        a reabertura de 5 em 5 s tenta a anterior (R-03). F5.9 (item 4): a troca manual monta um `SourceSpec` sem
+        `fallback_exe`, o que encerra a volta ao app (D-067); o app pedido que cai no sistema sai como `fallback`."""
         with self._lock:
             if self._stopped:
                 return False
@@ -553,12 +559,18 @@ class Recorder(ReopenMixin):
         if ok and device_only:
             self._device_event("R", reason)
         elif ok:
-            self.sink.add_event(self.meeting_id, self._ms(), EventType.SOURCE_CHANGE,
-                                {"kind": str(self.source.kind), "exe": self.source.exe, "pid": self.source.pid,
-                                 "output_id": self.source.output_id, "follows": self.source.follows})
+            self._source_event(DeviceReason.FALLBACK if self.source.kind != spec.kind else reason)
         log.info("reunião %s: fonte do canal R trocada para %s em %d ms (%s)", self.meeting_id, spec.log_text(), self._ms(),
                  "aberta" if ok else "não abriu")
         return ok
+
+    def _source_event(self, reason: str) -> None:
+        """`source_change` (A-21): o tipo da fonte do R; F5.9 (item 4): com o motivo (`user`, `fallback`, `back`) e, gravando o
+        sistema no lugar do app que não abriu, o `fallback_exe` que a volta procura. Nunca o título da janela."""
+        src = self.source
+        self.sink.add_event(self.meeting_id, self._ms(), EventType.SOURCE_CHANGE,
+                            {"kind": str(src.kind), "exe": src.exe, "pid": src.pid, "output_id": src.output_id,
+                             "follows": src.follows, "reason": str(reason), "fallback_exe": src.fallback_exe})
 
     def reopen_output(self, reason: str) -> bool:
         """F5.3 (A-20, A-16): reabre o sistema inteiro na saída pedida (o padrão mudou, a escolhida sumiu ou voltou)."""

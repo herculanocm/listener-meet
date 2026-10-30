@@ -84,6 +84,7 @@ class FakePlatform(Platform):
         self.watch: FakeMicWatch | None = FakeMicWatch()
         self.default_reads = 0                                # D-067: leituras do padrão de agora
         self.played: list[tuple[str, int, int]] = []          # D-067: (endpoint, amostras, taxa) de cada `play_sound`
+        self.root_pids: dict[str, int | None] = {"meeting.exe": 4242}   # F5.9 (item 4): a raiz de cada app (o teste muda)
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -288,7 +289,7 @@ class FakePlatform(Platform):
 
     @override
     def root_pid(self, exe: str) -> int | None:
-        return 4242 if exe == "meeting.exe" else None
+        return self.root_pids.get(exe)
 
     @override
     def spawn_detached(self, argv: list[str], env: Mapping[str, str] | None = None) -> int:

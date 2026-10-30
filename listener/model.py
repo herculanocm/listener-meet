@@ -64,11 +64,13 @@ class SourceKind(StrEnum):
 
 
 class DeviceReason(StrEnum):
-    """F5.3 L4: por que o aparelho de um canal mudou (o motivo do evento `device_change`)."""
+    """F5.3 L4: por que o aparelho de um canal mudou (o motivo do evento `device_change`); F5.9 (item 4): também o do
+    `source_change` (`user`, `fallback`, `back`)."""
     USER = "user"          # o usuário escolheu no painel ou no "Usar"
     DEFAULT = "default"    # acompanha o padrão do Windows, que mudou (A-20)
     MISSING = "missing"    # o escolhido não está: o padrão no lugar (A-16)
-    BACK = "back"          # o escolhido voltou (pergunta 10)
+    BACK = "back"          # o escolhido voltou (pergunta 10); F5.9: a fonte de volta ao app depois do fallback
+    FALLBACK = "fallback"  # F5.9 (item 4): o app sem loopback: gravando o sistema inteiro no lugar dele
 
 
 class LostReason(StrEnum):

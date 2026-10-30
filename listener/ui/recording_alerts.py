@@ -20,6 +20,7 @@ BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
 LOST_TEXT = {"L": "microfone desconectado; tentando reabrir…", "R": "saída desconectada; tentando reabrir…"}
 NEVER_OPENED_TEXT = {"L": "microfone não iniciou; tentando de novo…", "R": "saída não iniciou; tentando de novo…"}   # F5.9 (item 2)
 APP_LEFT_TEXT = "saída desconectada (o app saiu); tentando reabrir…"                                                 # F5.9 (item 1)
+FALLBACK_TEXT = "app sem loopback: gravando o sistema inteiro"                                                       # F5.9 (item 4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +107,8 @@ def alert_line(rec: Recorder, health: Mapping[str, str], notice: Alert | None, c
     if db == Health.ALERT:
         since = int(rec.elapsed() - (snap.pending_since or rec.elapsed()))
         return Alert(f"banco não responde há {since}s; {snap.pending} pedaço(s) retido(s) em memória", kind="error")
+    if rec.source.fallback_exe:                           # F5.9 (item 4): abaixo da saúde, acima do aviso dos dispositivos
+        return Alert(FALLBACK_TEXT, DEVICES_BUTTON, ACTION_DEVICES)
     if notice is not None:
         return notice
     if db == Health.WARN:

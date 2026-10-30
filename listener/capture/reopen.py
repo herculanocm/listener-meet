@@ -8,12 +8,12 @@ nomes privados dele); o que vem do gravador está declarado abaixo, como em `ui/
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
 from ..model import DeviceReason, EventType, LostReason, SourceKind
-from ..platform.base import AudioDevice, CaptureHandle, log_id
+from ..platform.base import AudioDevice, CaptureHandle, Platform, log_id
 from .clock import Clock
 from .sinks import RecorderSink
 
@@ -39,6 +39,7 @@ class ReopenMixin:
 
     L: ChannelState
     R: ChannelState
+    platform: Platform
     clock: Clock
     sink: RecorderSink
     meeting_id: int
@@ -55,8 +56,16 @@ class ReopenMixin:
     _stopped: bool
     _snap: CaptureSnapshot
     _alive_at: float = -1e9                           # a última prova de vida (tempo da sessão)
+    _fallback_at: float = -1e9                        # F5.9 (item 4): a última procura da raiz nova do app
+    _fallback_pid: int | None = None                  # a raiz do app que falhou (não é tentada de novo)
 
     def _post(self, msg: _Msg) -> None:
+        raise NotImplementedError
+
+    def switch_source(self, spec: SourceSpec, reason: str = DeviceReason.USER) -> bool:
+        raise NotImplementedError
+
+    def _source_event(self, reason: str) -> None:
         raise NotImplementedError
 
     def _warn(self, msg: str, type_: EventType = EventType.WARNING, **data: Any) -> None:
@@ -135,8 +144,8 @@ class ReopenMixin:
     # ---------------------------------------------------------------- a reabertura (thread da interface)
     def check_devices(self) -> None:
         """Chamada periódica da interface (M-09): a prova de vida (F5.9), o `device_lost` e a reabertura a cada 5 s pelo id
-        estável. F5.3: o anterior fecha antes de cada reabertura (A-15); o escolhido que não está abre o padrão, com
-        `device_change` (A-16); eventos e log com o id do endpoint (A-22)."""
+        estável, e a volta ao app depois do fallback (item 4). F5.3: o anterior fecha antes de cada reabertura (A-15); o
+        escolhido que não está abre o padrão, com `device_change` (A-16); eventos e log com o id do endpoint (A-22)."""
         if self._stopped:
             return
         now = self.clock.rel()
@@ -152,6 +161,32 @@ class ReopenMixin:
                 continue
             st.last_reopen = now
             self._reopen_lost(st)
+        self._check_fallback(now)
+
+    def _fallback_app(self) -> SourceSpec | None:
+        """F5.9 (item 4): a fonte de app a tentar de volta: só gravando o sistema no lugar dele (`fallback_exe`) e com a raiz
+        nova lá (`root_pid`); a raiz que já falhou não é tentada de novo, porque cada tentativa fecha o sistema inteiro
+        antes (A-15) e seria um buraco a cada 5 s."""
+        exe = self.source.fallback_exe
+        if not exe:
+            return None
+        pid = self.platform.root_pid(exe)
+        if pid is None or pid == self._fallback_pid:
+            return None
+        self._fallback_pid = pid
+        return replace(self.source, kind=SourceKind.APP, pid=pid, exe=exe, label=exe.removesuffix(".exe"), output_id="",
+                       fallback_exe="")
+
+    def _check_fallback(self, now: float) -> None:
+        """F5.9 (item 4, pergunta 1): a cada 5 s procura a raiz nova do app; achou, volta ao app com `source_change{back}`
+        (`switch_source` fecha o sistema inteiro antes, A-15, fora desta trava). Com o R perdido é a reabertura que tenta o
+        app. A troca manual apaga `fallback_exe` e encerra a volta (D-067)."""
+        if not self.source.fallback_exe or "R" in self._snap.lost or now - self._fallback_at < REOPEN_EVERY_S:
+            return
+        self._fallback_at = now
+        app = self._fallback_app()
+        if app is not None and self.switch_source(app, DeviceReason.BACK):
+            log.info("reunião %s: o app %s voltou (pid %s): a fonte do R de volta a ele", self.meeting_id, app.exe, app.pid)
 
     def _reopen_lost(self, st: ChannelState) -> None:
         with self._lock:
@@ -166,8 +201,8 @@ class ReopenMixin:
         log.info("canal %s voltou (%s)", st.name, st.detail)
         self.sink.add_event(self.meeting_id, self._ms(), EventType.DEVICE_BACK,
                             {"channel": st.name, "detail": st.detail, "endpoint_id": log_id(after)})
-        if before and after != before:                    # outro aparelho: o escolhido de volta ou o padrão (o que nunca
-            # abriu e abre agora não é troca: o `start()` normal também não emite)
+        if before and after and after != before:          # outro aparelho: o escolhido de volta ou o padrão (o que nunca
+            # abriu e abre agora não é troca, e o app de volta no lugar do sistema não tem endpoint: `source_change`)
             wanted = (self.mic_device.id if self.mic_device else "") if st.name == "L" else self.source.output_id
             self._device_event(st.name, DeviceReason.BACK if wanted and after == wanted else DeviceReason.DEFAULT)
 
@@ -185,8 +220,14 @@ class ReopenMixin:
         return err is None
 
     def _reopen_source(self) -> bool:
-        """O R perdido (M-09): a fonte de agora de novo; nada abriu, segue perdido (R-03), à vista como desconectado."""
+        """O R perdido (M-09): a fonte de agora de novo; F5.9 (item 4): gravando o sistema no lugar do app, o app primeiro,
+        se a raiz nova dele está lá. Nada abriu, segue perdido (R-03), à vista como desconectado."""
         self._drop_source()
+        app = self._fallback_app()
+        if app is not None and self._open_source(app):
+            if self.source.kind == SourceKind.APP:        # o app mesmo, e não o sistema de novo por dentro
+                self._source_event(DeviceReason.BACK)
+            return True
         if self._open_source(self.source):
             return True
         self.R.active = True
