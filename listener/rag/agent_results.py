@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..llm.prompts import rag_sql
 from ..llm.schema import validate
-from .citations import SentLine
+from ..store.meetings import effective_title
+from .citations import SentLine, Target
 from .sandbox import CELL_CHARS
 from .semantic import now_row
 
@@ -276,6 +277,22 @@ def rounds_text(rounds: Sequence[Round]) -> str:
     return "\n\n".join(r.text() for r in rounds)
 
 
+def citable(store: Store, lines: Mapping[int, Collection[SentLine]]) -> dict[str, Target]:
+    """As reuniões citáveis (`R<reuniao_id>`) que ainda existem, com as linhas que vieram com momento (da consulta e da busca)."""
+    out: dict[str, Target] = {}
+    for mid, sent in sorted(lines.items()):
+        m = store.get_meeting(mid)
+        if m is not None:
+            ordered = tuple(sorted(sent, key=lambda ln: (ln.t_ms, ln.segment_id or 0)))
+            out[f"R{mid}"] = Target(mid, effective_title(m) or "", str(m.get("started_at") or "")[:10], ordered)
+    return out
+
+
+def legend(targets: Mapping[str, Target]) -> str:
+    """"R12 = Orçamento — 2026-10-03", uma reunião citável por linha (o pedido da resposta)."""
+    return "\n".join(f"{alias} = {t.title or '(sem título)'} — {t.date}" for alias, t in targets.items())
+
+
 @dataclass(slots=True)
 class Seen:
     """O que já veio nesta pergunta: as consultas com o resultado no contexto (chave -> ref), as tabelas e as linhas de busca."""
@@ -305,9 +322,11 @@ __all__ = [
     "Search",
     "Seen",
     "cell",
+    "citable",
     "decision",
     "describe",
     "fmt_count",
+    "legend",
     "now_text",
     "query_item",
     "rounds_text",

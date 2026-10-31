@@ -3,7 +3,8 @@ com as consultas na sandbox, a busca por sentido (`R<reuniao_id>`), as citaçõe
 `llm_calls` e os passos em `trace_json`; a consulta repetida não roda de novo; três rodadas sem novidade pedem a resposta; as
 guardas de tempo, custo (inativa sem preço) e rodadas com relógio e custo falsos; o contexto cheio resume as rodadas antigas
 (e a consulta delas roda de novo); o orçamento da rodada; cancelar entre rodadas e com a rede presa; erro do provedor e
-pedido grande demais; os filtros no começo da resposta. Sem o roteiro, o provedor falso responde na 1ª rodada."""
+pedido grande demais; os filtros no começo da resposta. Sem o roteiro, o provedor falso responde na 1ª rodada. Revisão do
+diff (D-075): o modelo e o preço de cada pedido; a rodada grande demais vai à resposta sem resumir nada."""
 from __future__ import annotations
 
 import json
@@ -263,6 +264,62 @@ def test_provider_error_too_large_request_and_the_filters_prefix(store, monkeypa
     assert only.text == "Considerando os filtros: reunião Marketing.\n\nUma reunião." == "".join(pieces)
     assert only.trace["filtros"]["reunioes"] == [b] and only.trace["rodadas"][0]["itens"][0]["linhas"] == 1
     assert agent.describe(SearchFilters(person_ids=(3,), date_from="2026-10-01")) == "pessoa 3 · desde 2026-10-01"
+
+
+def test_each_request_is_priced_and_recorded_by_its_own_model(store, monkeypatch):
+    """C4 (D-075): com `rag.sql_strong`, as rodadas vão no forte e custam pelo preço dele; a resposta vai no rápido e custa pelo
+    preço do rápido (antes, pelo do forte); a resposta que falha fica gravada com o modelo rápido (antes, com o forte)."""
+    _two_meetings(store)
+    store.providers.set_price("gemini", "fake-strong", 100.0, 100.0, 0.0)
+    store.providers.set_price("gemini", "fake-fast", 1.0, 1.0, 0.0)
+    strong = Guards(max_cost_usd=100.0, strong=True)
+    _provider(monkeypatch, Script([consult(ANA)]))
+    ans = _ask(store, guards=strong)
+    rows = [tuple(r) for r in store._q("SELECT task, model, input_tokens - cached_tokens + output_tokens, cost_usd FROM llm_calls "
+                                       "WHERE task IN ('rag_sql', 'rag_answer') ORDER BY id")]
+    assert [r[:2] for r in rows] == [("rag_sql", "fake-strong"), ("rag_sql", "fake-strong"), ("rag_answer", "fake-fast")]
+    assert [r[3] for r in rows] == [round(n * (100.0 if m == "fake-strong" else 1.0) / 1e6, 6) for _t, m, n, _c in rows]
+    assert ans.cost_usd == pytest.approx(sum(r[3] for r in rows)) and ans.trace["modelo"] == "fake-strong"
+    fake = _provider(monkeypatch, Script([]))
+    fake.fail_next(AuthError("recusada"), LlmTask.RAG_ANSWER)
+    failed = _ask(store, guards=strong)
+    last = [tuple(r) for r in store._q("SELECT task, model, status FROM llm_calls ORDER BY id DESC LIMIT 2")]
+    assert failed.error is not None and last == [("rag_answer", "fake-fast", "erro"), ("rag_sql", "fake-strong", "ok")]
+
+
+def test_a_too_large_round_answers_with_the_results_as_they_are_and_the_answer_compacts_oldest_first(store, monkeypatch):
+    """C5 (D-075): a rodada grande demais não resume nada; a resposta leva os resultados como estão (o pedido dela não tem o
+    dicionário). Só o pedido da resposta que não cabe em 60 % da janela do modelo rápido resume rodadas, das mais antigas para
+    as mais novas, até caber."""
+    _two_meetings(store)
+    fake = _provider(monkeypatch, Script([consult(ANA)]))
+    real, sql_calls = fake.complete, {"n": 0}
+
+    async def second_too_large(req: Request) -> Any:
+        if req.task == LlmTask.RAG_SQL:
+            sql_calls["n"] += 1
+            if sql_calls["n"] == 2:
+                raise RequestTooLargeError("request too large")
+        return await real(req)
+
+    monkeypatch.setattr(fake, "complete", second_too_large)
+    big = _ask(store)
+    told = fake.calls(LlmTask.RAG_ANSWER)[0].messages[-1].text
+    assert big.trace["parou"] == "janela" and "resumida" not in told and "#1.1 as falas da Ana" in told
+    assert "Ana\tBom dia, vamos falar do orçamento de 2027." in told
+    wide = (("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 3000) SELECT x, printf('%.80c', 'a') AS t FROM n "
+             "WHERE x > CAST(? AS INTEGER)"), ("0",), "larga")
+    rounds = Script([consult(wide), consult(("SELECT count(*) AS n FROM reunioes", (), "quantas"))])
+    fake = _provider(monkeypatch, rounds)
+    _ask(store, guards=Guards(strong=True))
+    full = sum(len(m.text) for m in fake.calls(LlmTask.RAG_ANSWER)[0].messages)
+    window = int((full - 4000) / 3.5 / agent.WINDOW_SHARE)                   # com a larga (8 mil) não cabe; resumida, cabe
+    monkeypatch.setattr(agent, "model_info", lambda _k, m: ModelInfo(m, m, window if m == "fake-fast" else 10**6, 8192, frozenset()))
+    fake = _provider(monkeypatch, Script([consult(wide), consult(("SELECT count(*) AS n FROM reunioes", (), "quantas"))]))
+    ans = _ask(store, guards=Guards(strong=True))
+    told = fake.calls(LlmTask.RAG_ANSWER)[0].messages[-1].text
+    assert _items(ans) == [["ok"], ["ok"]] and "Rodada 1, resumida: #1.1 larga" in told and "Rodada 2:" in told
+    assert "Rodada 2, resumida" not in told and ans.trace["parou"] == "resposta"
 
 
 def test_validation_like_the_global_chat(store, monkeypatch):

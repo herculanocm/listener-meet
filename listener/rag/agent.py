@@ -34,7 +34,6 @@ from ..llm.types import LlmTask, Reasoning, Request
 from ..log import get_logger
 from ..model import ChatRole, LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
-from ..store.meetings import effective_title
 from ..store.rag import SearchFilters
 from . import agent_results as ar
 from . import citations, dictionary, semantic, trace
@@ -66,9 +65,10 @@ class _Run:
         self.store, self.cfg, self.guards, self.question, self.filters = store, cfg, guards, question, filters
         self.label, self.history, self.progress, self.clock, self.memory_rss = label, history, progress, clock, memory_rss
         self.stopped = cancelled or (lambda: False)
-        self.model = cfg.strong_model if guards.strong and cfg.strong_model else cfg.fast_model
+        self.model = cfg.strong_model if guards.strong and cfg.strong_model else cfg.fast_model      # o das rodadas
         self.window = model_info(cfg.provider_kind, self.model).input_limit
-        self.price = price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, self.model)
+        self.answer_window = model_info(cfg.provider_kind, cfg.fast_model).input_limit           # a resposta roda no rápido
+        self.prices = store.providers.list_prices(cfg.provider_kind or None)                       # o preço vai pelo modelo do pedido
         self.language, self.now, self.dictionary = default_language(store), datetime.now().astimezone(), dictionary.render()
         self.rounds: list[ar.Round] = []
         self.seen = ar.Seen()
@@ -166,7 +166,7 @@ class _Run:
         t1 = time.perf_counter()
         comp, err = self._call(req, None)
         if comp is None:
-            self._failed(LlmTask.RAG_SQL, err, t1)
+            self._failed(LlmTask.RAG_SQL, err, t1, req.model)
             return None
         self._record(LlmTask.RAG_SQL, req, comp, t1)
         try:
@@ -183,15 +183,14 @@ class _Run:
             return None, classify_exception(e)
         return comp, err
 
-    def _failed(self, task: LlmTask, err: LlmError | None, t1: float) -> None:
-        """A chamada que não voltou: cancelada (a rede presa), grande demais (compacta e pede a resposta) ou com erro."""
+    def _failed(self, task: LlmTask, err: LlmError | None, t1: float, model: str) -> None:
+        """A chamada que não voltou, gravada com o modelo do pedido: cancelada (a rede presa), grande demais (a rodada vai à
+        resposta com os resultados como estão; o pedido da resposta não leva o dicionário) ou com erro."""
         message = chat_task.CANCELLED if err is None else redact.GLOBAL.redact(str(err))
-        self._insert(task, None, None, t1, message)
+        self._insert(task, model, None, None, t1, message)
         if err is None:
             self.stop = "cancelada"
         elif err.too_large and task == LlmTask.RAG_SQL:
-            while self._compact():
-                pass
             self.stop = "janela"
         else:
             self.stop, self.error = "erro", message
@@ -261,18 +260,22 @@ class _Run:
 
     # ---------------------------------------------------------------- chamadas gravadas
     def _record(self, task: LlmTask, req: Request, comp: Completion, t1: float, strategy: str = "direct") -> int:
-        cost = cost_usd(comp.usage, self.price)
+        """A chamada que voltou, com o custo pelo preço do modelo que ela usou (o forte nas rodadas, por opção; o rápido na
+        resposta)."""
+        model = comp.model or req.model
+        cost = cost_usd(comp.usage, price_for(self.prices, self.cfg.provider_kind, model))
         if cost is None:
             self.unpriced = True
         else:
             self.spent += cost
         payload = [{"role": str(m.role), "text": m.text} for m in req.messages] if self.cfg.store_payloads else None
-        return self._insert(task, comp, cost, t1, None, strategy, payload, {"text": comp.text} if self.cfg.store_payloads else None)
+        response = {"text": comp.text} if self.cfg.store_payloads else None
+        return self._insert(task, model, comp, cost, t1, None, strategy, payload, response)
 
-    def _insert(self, task: LlmTask, comp: Completion | None, cost: float | None, t1: float, error: str | None,
+    def _insert(self, task: LlmTask, model: str, comp: Completion | None, cost: float | None, t1: float, error: str | None,
                 strategy: str = "direct", request: Any = None, response: Any = None) -> int:
         u = comp.usage if comp is not None else None
-        row = LlmCallInsert(None, None, str(task), self.cfg.provider_id, comp.model if comp else self.model, self.cfg.version(task),
+        row = LlmCallInsert(None, None, str(task), self.cfg.provider_id, model, self.cfg.version(task),
                             schema_hash(rag_sql.SCHEMA) if task == LlmTask.RAG_SQL else None, u.input_tokens if u else 0,
                             u.output_tokens if u else 0, u.cached_tokens if u else 0, 0, cost,
                             comp.latency_ms if comp else int((time.perf_counter() - t1) * 1000),
@@ -280,24 +283,19 @@ class _Run:
         return self.store.llm_calls.insert(row, store_payloads=self.cfg.store_payloads and error is None)
 
     # ---------------------------------------------------------------- a resposta
-    def citable(self) -> dict[str, Target]:
-        """As reuniões citáveis (`R<reuniao_id>`), com as linhas que vieram com momento (da consulta e da busca)."""
-        out: dict[str, Target] = {}
-        for mid, lines in sorted(self.targets.items()):
-            m = self.store.get_meeting(mid)
-            if m is not None:
-                ordered = tuple(sorted(lines, key=lambda ln: (ln.t_ms, ln.segment_id or 0)))
-                out[f"R{mid}"] = Target(mid, effective_title(m) or "", str(m.get("started_at") or "")[:10], ordered)
-        return out
-
     def _answer_request(self, targets: dict[str, Target]) -> Request:
-        legend = "\n".join(f"{alias} = {t.title or '(sem título)'} — {t.date}" for alias, t in targets.items())
+        """O pedido da resposta com os resultados como estão; só quando ele não cabe em 60 % da janela do modelo da resposta,
+        as rodadas viram uma linha, das mais antigas para as mais novas."""
         note = trace.STOPS.get(self.stop or "", "")
         stop = note if self.stop == "resposta" else f"pararam por {note}: diga isso na resposta e o que faltou"
-        ctx = RagAnswerCtx(self.history, now_text(self.now), self.label, self.question, legend, ar.rounds_text(self.rounds), stop,
-                           self.language)
-        return Request(LlmTask.RAG_ANSWER, self.cfg.fast_model, self.cfg.build(LlmTask.RAG_ANSWER, ctx), None,
-                       max_output_tokens=ANSWER_OUTPUT_TOKENS, reasoning=Reasoning.NONE, timeout_s=120.0)
+        while True:
+            ctx = RagAnswerCtx(self.history, now_text(self.now), self.label, self.question, ar.legend(targets), ar.rounds_text(self.rounds),
+                               stop, self.language)
+            req = Request(LlmTask.RAG_ANSWER, self.cfg.fast_model, self.cfg.build(LlmTask.RAG_ANSWER, ctx), None,
+                          max_output_tokens=ANSWER_OUTPUT_TOKENS, reasoning=Reasoning.NONE, timeout_s=120.0)
+            fits = estimate_tokens(sum(len(m.text) for m in req.messages)) <= WINDOW_SHARE * self.answer_window
+            if fits or not self._compact():
+                return req
 
     def steps(self) -> dict[str, Any]:
         return trace.build(self.rounds, self.stop or "erro", (time.perf_counter() - self.started) * 1000,
@@ -308,7 +306,7 @@ class _Run:
         if self.stop in ("cancelada", "erro"):
             return self._summary(AgentAnswer("", "", (), None, thread_id, None, question_id, None, self.error,
                                              self.stop == "cancelada", self.steps()))
-        targets = self.citable()
+        targets = ar.citable(self.store, self.targets)
         req = self._answer_request(targets)
         prefix = f"Considerando os filtros: {self.label}.\n\n" if self.label else ""
         self.report(True)
@@ -317,17 +315,17 @@ class _Run:
         t1 = time.perf_counter()
         comp, err = self._call(req, emit)
         if comp is None and (err is not None or not self.partial):     # erro, ou cancelada antes do primeiro pedaço
-            self._failed(LlmTask.RAG_ANSWER, err, t1)
+            self._failed(LlmTask.RAG_ANSWER, err, t1, req.model)
             return self._summary(AgentAnswer("", "", (), None, thread_id, None, question_id, None, self.error, err is None,
                                              self.steps()))
         text = prefix + (self.partial or (comp.text if comp is not None else ""))
         if comp is not None:
             call_id = self._record(LlmTask.RAG_ANSWER, req, comp, t1, "stream" if emit else "direct")
         else:                                                          # cancelada no meio: a parte que chegou fica
-            call_id = self._insert(LlmTask.RAG_ANSWER, None, None, t1, None, "stream")
+            call_id = self._insert(LlmTask.RAG_ANSWER, req.model, None, None, t1, None, "stream")
         rendered, cites = citations.rewrite(text, targets)
         steps = self.steps()
-        message_id = self.store.chat.add(None, ChatRole.ASSISTANT, text, self.cfg.provider_id, comp.model if comp else self.model, cites,
+        message_id = self.store.chat.add(None, ChatRole.ASSISTANT, text, self.cfg.provider_id, comp.model if comp else req.model, cites,
                                          steps["custo_usd"], thread_id=thread_id, trace=steps)
         return self._summary(AgentAnswer(text, rendered, tuple(cites), steps["custo_usd"], thread_id, message_id, question_id, call_id,
                                          None, comp is None, steps))
