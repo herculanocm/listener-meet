@@ -4,6 +4,7 @@ thread própria, `checkpoint()` (heartbeat, cancelamento cooperativo e pausa), `
 respeita a lease da gravação (`respects_lease`) e o que acontece ao concluir, cancelar e falhar."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -152,21 +153,38 @@ class BaseJobRunner:
 
     def checkpoint(self) -> None:
         """Entre janelas ou tarefas (nunca no meio de uma): heartbeat, cancelamento e pausa (lease da gravação ou manual)."""
+        self._beat()
+        waited = False
+        while self._paused():
+            waited = self._waiting(waited)
+            self.sleep(self.wait_poll_s)
+            self._beat()
+        if waited:
+            self.store.jobs.set_status(self.job_id, JobStatus.RUNNING, self._step)
+
+    async def acheckpoint(self) -> None:
+        """O `checkpoint` de quem roda num laço asyncio (o job `llm`): a espera da pausa vai para uma thread e o laço segue
+        girando. Com o `sleep` no laço, a pausa manual da fila por 120 s parecia chamada presa ao vigia da D-058, que
+        derrubava o worker leve e gastava uma tentativa do job (D-072)."""
+        self._beat()
+        waited = False
+        while self._paused():
+            waited = self._waiting(waited)
+            await asyncio.to_thread(self.sleep, self.wait_poll_s)
+            self._beat()
+        if waited:
+            self.store.jobs.set_status(self.job_id, JobStatus.RUNNING, self._step)
+
+    def _beat(self) -> None:
         self.store.jobs.heartbeat(self.job_id)
         if self.store.jobs.cancel_requested(self.job_id):
             raise JobCancelledError
-        waited = False
-        while self._paused():
-            if not waited:
-                self.store.jobs.set_status(self.job_id, JobStatus.PAUSED, JobStep.WAITING)
-                log.info("job %s aguardando (gravação em curso ou pausa manual)", self.job_id)
-                waited = True
-            self.sleep(self.wait_poll_s)
-            self.store.jobs.heartbeat(self.job_id)
-            if self.store.jobs.cancel_requested(self.job_id):
-                raise JobCancelledError
-        if waited:
-            self.store.jobs.set_status(self.job_id, JobStatus.RUNNING, self._step)
+
+    def _waiting(self, waited: bool) -> bool:
+        if not waited:
+            self.store.jobs.set_status(self.job_id, JobStatus.PAUSED, JobStep.WAITING)
+            log.info("job %s aguardando (gravação em curso ou pausa manual)", self.job_id)
+        return True
 
     def _paused(self) -> bool:
         if self.store.get(SPECS["pipeline.paused_manual"]):

@@ -529,7 +529,7 @@ class LlmJobRunner(BaseJobRunner):
                     await self._run_step(step)
             group = [s for s in PARALLEL if s in self.tasks]
             if group:
-                self.checkpoint()
+                await self.acheckpoint()
                 async with asyncio.TaskGroup() as tg:
                     for s in group:
                         tg.create_task(self._run_step(s, check=False))
@@ -541,7 +541,7 @@ class LlmJobRunner(BaseJobRunner):
 
     async def _run_step(self, step: JobStep, check: bool = True) -> None:
         if check:
-            self.checkpoint()
+            await self.acheckpoint()
         if str(step) in self._skipped:
             self.outcomes[step] = TaskOutcome(step, True, skipped=self._skipped[str(step)])
             self._advance(step)
@@ -789,7 +789,7 @@ class LlmJobRunner(BaseJobRunner):
             if saved is not None:
                 notes.append(saved.decode("utf-8"))
                 continue
-            self.checkpoint()
+            await self.acheckpoint()
             msgs = self.config.build(LlmTask.MINUTES, prompts.minutes.MinutesCtx(ctx.meeting_ctx, block, people, (i, len(blocks))))
             comp, _ = await self._call(LlmTask.MINUTES, msgs, prompts.minutes.SCHEMA, strategy=strategy)
             text = json.dumps(comp.data, ensure_ascii=False)

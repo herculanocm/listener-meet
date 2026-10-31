@@ -66,6 +66,34 @@ def test_the_local_embedder_computing_in_the_loop_is_not_a_stall(store, tmp_path
     assert time.monotonic() - t0 > 0.5 and result.missing == 0 and result.written == 5 and stalls == []
 
 
+def test_the_manual_pause_of_an_llm_job_is_not_a_stall(store, stalls):
+    """D-072: a pausa manual da fila esperava com o `sleep` dentro do laço do job `llm`; aos 120 s o vigia derrubava o worker
+    leve, com um falso "chamada presa" no log e uma tentativa do job a menos. A espera agora roda fora do laço."""
+    from listener.llm.fake import FakeProvider
+    from listener.model import JobStatus
+    from listener.pipeline import llm_steps
+    from listener.pipeline.llm_steps import LlmJobRunner
+
+    store.upsert_me("Eu")
+    mid = store.create_meeting("t", None, None, None)
+    store.finish_meeting(mid, 1000)
+    store.providers.update_provider("gemini", api_key="AIzaSy-chave-de-teste-ABCDEFGH12345678", fast_model="fake-fast",
+                                    strong_model="fake-strong")
+    llm_steps.enqueue_test_job(store, mid)
+    job = store.jobs.claim(pid=2, config_json=llm_steps.llm_config_snapshot(store), kinds=("llm",))
+    store.set_setting("pipeline.paused_manual", True)
+    waits: list[float] = []
+
+    def wait(seconds: float) -> None:                    # 0,6 s de pausa (o vigia do teste dispara aos 0,4 s), depois solta
+        time.sleep(seconds)
+        waits.append(seconds)
+        if len(waits) == 12:
+            store.set_setting("pipeline.paused_manual", False)
+
+    status = LlmJobRunner(store, job, provider=FakeProvider(), heartbeat_thread=False, sleep=wait, wait_poll_s=0.05).run()
+    assert stalls == [] and status == JobStatus.DONE and len(waits) == 12
+
+
 def test_the_worker_logs_dumps_the_threads_and_exits(monkeypatch, caplog):
     from listener.pipeline import worker
 
