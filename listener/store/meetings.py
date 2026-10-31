@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, TypedDict, cast
 
 from ..config.language import whisper_code
@@ -68,6 +68,12 @@ class MarkerRow(TypedDict, total=False):
     t_ms: int
     note: str | None
     created_at: str
+
+
+def effective_title(meeting: Mapping[str, Any]) -> str | None:
+    """F5.10: o título que a reunião mostra, o do usuário e, sem ele, o sugerido pela LLM; None sem nenhum. As cópias de
+    `title or title_llm` espalhadas pelo app ficam como estão (dívida à parte, fora da F5.10)."""
+    return str(meeting.get("title") or meeting.get("title_llm") or "") or None
 
 
 class MeetingsRepo:

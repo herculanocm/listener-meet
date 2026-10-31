@@ -140,11 +140,12 @@ class SegmentsRepo:
 
     def speakers(self, meeting_id: int, job_id: int | None) -> list[dict[str, Any]]:
         """Quem fala na reunião, sem ler as falas: (pessoa, cluster, cargo do dia, canal) distintos na ordem da primeira fala
-        (o canal é da assinatura dos falantes, F5.5 A-13)."""
+        (o canal é da assinatura dos falantes, F5.5 A-13). F5.10: com quantas falas (`n`) e os ms falados (`ms`) de cada um,
+        para a participação da camada semântica."""
         job, params = (" AND job_id = ?", (job_id,)) if job_id is not None else ("", ())
-        rows = self.core.q("SELECT person_id, cluster_id, cluster, role_at_time, channel, MIN(t_start_ms) AS first "  # noqa: S608
-                           f"FROM segments WHERE meeting_id = ?{job} GROUP BY person_id, cluster_id, cluster, role_at_time, channel "
-                           "ORDER BY first", (meeting_id, *params))
+        rows = self.core.q("SELECT person_id, cluster_id, cluster, role_at_time, channel, MIN(t_start_ms) AS first, COUNT(*) AS n, "  # noqa: S608
+                           f"SUM(t_end_ms - t_start_ms) AS ms FROM segments WHERE meeting_id = ?{job} "
+                           "GROUP BY person_id, cluster_id, cluster, role_at_time, channel ORDER BY first", (meeting_id, *params))
         return [dict(r) for r in rows]
 
     def count_segments(self, meeting_id: int, job_id: int | None = None, *, with_text: bool = False) -> int:
