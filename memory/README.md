@@ -9,3 +9,4 @@ Memória superada é apagada depois de incorporada (D-031; o git guarda o histó
 | --- | --- |
 | `dono.md` | como o Herculano quer trabalhar |
 | `maquina.md` | o que foi medido nesta máquina Windows e no WSL, e as pegadinhas do ambiente |
+| `revisao-codigo.md` | achados de revisão já decididos (corrigidos, que não são defeito, aceitos): ler antes de revisar código; não reapontar sem fato novo |
