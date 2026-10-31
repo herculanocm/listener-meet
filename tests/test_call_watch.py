@@ -364,6 +364,9 @@ def test_the_exit_stops_the_sensor_before_the_emergency_stop_closes_the_store(qt
         aboutToQuit = Signal()                                                           # noqa: N815 (o nome do Qt)
         commitDataRequest = Signal(object)                                               # noqa: N815
 
+        def quit(self) -> None:                                                          # D-072: o logoff sai depois
+            pass
+
     monkeypatch.setattr(ctl, "prewarm_audio", lambda: None)
     c = ctl.Controller(qapp, platform, store)
     c.tray = None
@@ -383,6 +386,63 @@ def test_the_exit_stops_the_sensor_before_the_emergency_stop_closes_the_store(qt
     assert c.on_start == calls.start_from_hotkey and calls.parent() is c
     getattr(app, signal).emit(*(() if signal == "aboutToQuit" else (None,)))
     assert seen == [(True, True, 1)]                                                     # parado antes do fechamento do banco
+
+
+def test_a_logoff_quits_the_app_after_the_stops(qtbot):
+    """D-072: depois do `commitDataRequest` a parada de emergência já fechou o banco; se o Windows desistisse do logoff (um
+    app segurou e o usuário cancelou), o processo seguia vivo sem banco, sem atalhos e sem aviso. Agora o app sai."""
+    from PySide6.QtCore import QObject, Signal
+
+    from listener.ui.app import connect_exit
+
+    order: list[str] = []
+
+    class App(QObject):
+        aboutToQuit = Signal()                                                           # noqa: N815 (o nome do Qt)
+        commitDataRequest = Signal(object)                                               # noqa: N815
+
+        def quit(self) -> None:
+            order.append("quit")
+
+    app = App()
+    connect_exit(app, lambda: order.append("sensor"), lambda: order.append("emergência"))
+    app.aboutToQuit.emit()
+    qtbot.wait(20)
+    assert order == ["sensor", "emergência"]                                             # a saída normal já está saindo
+    order.clear()
+    app.commitDataRequest.emit(None)
+    qtbot.waitUntil(lambda: "quit" in order, timeout=1000)
+    assert order == ["sensor", "emergência", "quit"]
+
+
+def test_a_mute_poller_stuck_in_the_audio_system_counts_at_exit(qtbot, qapp, platform, store, monkeypatch):
+    """D-072 (dívida vista no L3 da F5.7): o `_MutePoller` preso no COM na saída caía no 0xC0000409 que o R-01 corrigiu no
+    sensor. Parado, ele entra na conta do `leave_if_stuck` enquanto segue rodando."""
+    from listener.ui import call_sensor
+    from listener.ui import controller as ctl
+
+    inside, free = threading.Event(), threading.Event()
+
+    class StuckMute:
+        def get(self) -> bool:
+            inside.set()
+            free.wait(10)
+            return False
+
+    monkeypatch.setattr(ctl, "prewarm_audio", lambda: None)
+    monkeypatch.setattr(platform, "mic_mute", StuckMute)
+    c = ctl.Controller(qapp, platform, store)
+    c.tray = None
+    c._start_mute_poller()
+    poller = c._mute_poller
+    try:
+        assert inside.wait(2)
+        c._stop_mute_poller()
+        assert poller in call_sensor.ABANDONED and call_sensor.stuck_threads() >= 1
+    finally:
+        free.set()                                                                       # R-11: solta a thread mesmo com falha
+    assert poller.wait(3000)
+    call_sensor.ABANDONED.remove(poller)
 
 
 def test_a_stuck_thread_is_left_behind_after_one_second(qtbot, platform, store, monkeypatch, caplog):

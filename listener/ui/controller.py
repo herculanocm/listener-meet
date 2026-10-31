@@ -85,6 +85,7 @@ from ..store.jobs import HELD
 from ..pipeline import llm_requests, review
 from ..platform.base import log_id
 from ..platform.common import process
+from .call_sensor import abandon
 from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, item_key, item_note
@@ -956,6 +957,7 @@ class Controller(QObject):
             poller, self._mute_poller = self._mute_poller, None
             poller.changed.disconnect(self._on_os_mute)
             poller.interrupt()
+            abandon(poller)                               # D-072: preso no COM na saída, entra na conta do `leave_if_stuck`
 
     def _on_os_mute(self, os_muted: object) -> None:
         if self._mute_skip:

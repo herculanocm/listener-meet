@@ -42,14 +42,25 @@ def _ignore_manager(stop: Callable[[], None], _manager: object) -> None:
     stop()
 
 
+def _quit_after_stops(app: Any, _manager: object) -> None:
+    """Depois das paradas do logoff o banco está fechado: o app sai. Se o Windows desistir (um app segurou o desligamento e
+    o usuário cancelou), o processo não fica vivo sem banco, sem atalhos e sem aviso, com a próxima gravação falhando calada
+    (D-072). Fora do sinal, como o Qt pede para o `commitDataRequest`."""
+    from PySide6.QtCore import QTimer
+
+    QTimer.singleShot(0, app.quit)
+
+
 def connect_exit(app: Any, *stops: Callable[[], None]) -> None:
     """`aboutToQuit` e `commitDataRequest` (logoff, desligamento: sem diálogo, M-05) chamam as paradas na ordem dada: a ordem da
-    ligação é a da chamada (F5.7: o sensor de chamada antes da parada de emergência, que fecha o banco)."""
+    ligação é a da chamada (F5.7: o sensor de chamada antes da parada de emergência, que fecha o banco). No logoff, o app sai
+    depois delas (D-072)."""
     from PySide6.QtCore import Qt
 
     for stop in stops:
         app.aboutToQuit.connect(stop)
         app.commitDataRequest.connect(functools.partial(_ignore_manager, stop), Qt.ConnectionType.DirectConnection)
+    app.commitDataRequest.connect(functools.partial(_quit_after_stops, app), Qt.ConnectionType.DirectConnection)
 
 
 def attach_calls(app: Any, controller: Any, platform: Platform, store: Store) -> Any:
@@ -87,14 +98,14 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
 
 
 def leave_if_stuck(code: int) -> None:
-    """F5.7 (R-01): com a thread do sensor de chamada presa no sistema de áudio (uma troca de dock), a derrubada do PySide a
-    destruiria rodando (o `atexit` dele apaga todo QObject do Python, e o Qt aborta: 0xC0000409). O app já salvou e fechou o
-    banco: o processo sai já, com o código do laço e o log escrito."""
+    """F5.7 (R-01): com a thread do sensor de chamada ou a do mudo (D-072) presa no sistema de áudio (uma troca de dock), a
+    derrubada do PySide a destruiria rodando (o `atexit` dele apaga todo QObject do Python, e o Qt aborta: 0xC0000409). O app
+    já salvou e fechou o banco: o processo sai já, com o código do laço e o log escrito."""
     from .call_sensor import stuck_threads
 
     if not stuck_threads():
         return
-    log.warning("saída imediata: a thread do sensor de chamada segue presa no sistema de áudio")
+    log.warning("saída imediata: uma thread (sensor de chamada ou mudo) segue presa no sistema de áudio")
     logging.shutdown()
     for stream in (sys.stdout, sys.stderr):
         if stream is not None:
