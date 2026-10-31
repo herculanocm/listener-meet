@@ -7,7 +7,8 @@ v4 = fila de processamento, clusters, artefatos de job e colunas dos perfis (F2)
 v7 = ao vivo (F4): colunas em `captions` (canal, confiança, rótulo, modelo, atraso) e em `presets` (caixas do warm-up),
 índice das legendas por reunião e tempo; v8 = base consultável (F5): `rag_chunks` e `rag_vectors` recriadas (as da v1, se
 tiverem linhas, viram `*_v1`, CP3), `rag_models`, `rag_fts` (FTS5 com conteúdo externo e gatilhos; requisito), `chat_threads`
-e `chat_messages` reconstruída com `meeting_id` nulo (chat global), `thread_id` e `rating`.
+e `chat_messages` reconstruída com `meeting_id` nulo (chat global), `thread_id` e `rating`; v9 = `chat_messages.trace_json`
+(F5.10: os passos de "Perguntar à base"), a primeira com volta (`store/downgrade.py`).
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -194,6 +195,10 @@ CHAT_V8_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_chat_thread ON chat_messages(thread_id, id)",
 )
 
+# F5.10 (v9): os passos de "Perguntar à base" (consultas, linhas, tempo e a categoria do erro; nunca os dados), por
+# `_add_columns` em `core.py`; sem índice na coluna. A volta é `MAIN_DOWNS[9]` em `store/downgrade.py`.
+MAIN_V9_COLUMNS: tuple[tuple[str, str, str], ...] = (("chat_messages", "trace_json", "TEXT"),)
+
 FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
                 "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
 
@@ -249,6 +254,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (6, MAIN_V6),     # F3: llm_calls, chat_messages, llm_prices; colunas, índices, sementes e provedores em Python
     (7, None),        # F4: colunas de `captions` e `presets` e o índice das legendas (MAIN_V7_COLUMNS, MAIN_V7_INDEXES)
     (8, None),        # F5: base consultável (MAIN_V8_RAG, CHAT_V8_*), com a guarda da CP3 e o FTS5 como requisito
+    (9, None),        # F5.10: `chat_messages.trace_json` (MAIN_V9_COLUMNS); a volta em `store/downgrade.py`
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

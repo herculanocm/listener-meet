@@ -14,6 +14,8 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
                                                     stdout (LISTENER_LIVE=fake nos testes)
   --live --prepare [--what live|rag] [--db DIR]     baixa os modelos do ao vivo (small e base, `live`, o padrão) ou o e5-small
                                                     da busca local (`rag`, F5.1), progresso em linhas JSON
+  --downgrade DIR VERSAO                            volta o banco principal até a versão dada (F5.10: só a v9 tem volta),
+                                                    com o app fechado; imprime as versões desfeitas numa linha JSON
 """
 from __future__ import annotations
 
@@ -169,6 +171,22 @@ def check(args: argparse.Namespace) -> int:
     return 0
 
 
+def downgrade(args: argparse.Namespace) -> int:
+    """`--downgrade DIR VERSAO` (F5.10): a volta do banco principal, com o app fechado (`store/downgrade.py`)."""
+    import sqlite3
+
+    from .store.downgrade import downgrade as run
+
+    folder, target = args.downgrade
+    try:
+        done = run(folder, int(target))
+    except (ValueError, FileNotFoundError, sqlite3.Error) as e:
+        print(json.dumps({"downgrade": "erro", "motivo": str(e)}, ensure_ascii=False), flush=True)
+        return 1
+    print(json.dumps({"downgrade": "ok", "desfeitas": done}, ensure_ascii=False), flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Despacha o papel do processo (app, worker, ao vivo, diagnóstico). Na saída, de qualquer papel, a fila do log esvazia
     e o arquivo fecha: a thread do listener é daemon, e as últimas linhas ("app encerrado", "job N concluído") se perdiam
@@ -209,11 +227,14 @@ def _dispatch(argv: list[str] | None) -> int:
     ap.add_argument("--db")
     ap.add_argument("--check", metavar="DIR")
     ap.add_argument("--meeting", type=int)
+    ap.add_argument("--downgrade", nargs=2, metavar=("DIR", "VERSAO"))
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest(args)
     if args.check:
         return check(args)
+    if args.downgrade:
+        return downgrade(args)
     from .ui.app import run
 
     return run()

@@ -609,7 +609,7 @@ def test_v8_rebuilds_chat_creates_rag_index_and_rolls_back_in_the_middle(tmp_pat
     assert raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
     raw.close()
     with Store(tmp_path) as s:
-        assert s.schema_version() == LATEST == 8
+        assert s.schema_version() == LATEST >= 8                                  # F5.10: a v9 vem junto
         with s.connection() as c:
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}

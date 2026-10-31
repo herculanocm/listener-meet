@@ -1,7 +1,9 @@
 """Histórico do chat (`chat_messages`). F3 item 10: o chat sobre uma reunião, pergunta e resposta com provedor, modelo,
 citações `[{"t_ms", "segment_id"}]` reescritas pelo projeto e custo. F5 (v8): o chat sobre todas as reuniões guarda as
 mensagens com `meeting_id` nulo numa conversa (`chat_threads`, "nova conversa", Q3), citações `[{alias, meeting_id, t_ms,
-segment_id}]` e a avaliação "citação certa?" (`rating`: 1, 0 ou nulo, U-027). Apagar, só pelo usuário (CP3)."""
+segment_id}]` e a avaliação "citação certa?" (`rating`: 1, 0 ou nulo, U-027). F5.10 (v9): a resposta de "Perguntar à
+base" guarda os passos em `trace_json` (consultas, linhas, tempo e a categoria do erro; nunca os dados). Apagar, só pelo
+usuário (CP3)."""
 from __future__ import annotations
 
 import json
@@ -22,6 +24,7 @@ class ChatRow(TypedDict, total=False):
     citations_json: str | None
     cost_usd: float | None
     rating: int | None               # U-027: 1 citação certa, 0 errada, nulo sem avaliação
+    trace_json: str | None           # F5.10 (v9): os passos de "Perguntar à base"
     created_at: str
 
 
@@ -38,11 +41,13 @@ class ChatRepo:
         self.core = core
 
     def add(self, meeting_id: int | None, role: ChatRole, text: str, provider: str | None = None, model: str | None = None,
-            citations: list[dict[str, Any]] | None = None, cost_usd: float | None = None, *, thread_id: int | None = None) -> int:
+            citations: list[dict[str, Any]] | None = None, cost_usd: float | None = None, *, thread_id: int | None = None,
+            trace: dict[str, Any] | None = None) -> int:
         payload = json.dumps(citations, ensure_ascii=False, default=json_default) if citations is not None else None
+        steps = json.dumps(trace, ensure_ascii=False, default=json_default) if trace is not None else None
         return self.core.insert("INSERT INTO chat_messages(meeting_id, thread_id, role, text, provider, model, citations_json, cost_usd, "
-                                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                (meeting_id, thread_id, str(role), text, provider, model, payload, cost_usd, _now()))
+                                "trace_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (meeting_id, thread_id, str(role), text, provider, model, payload, cost_usd, steps, _now()))
 
     def get(self, message_id: int) -> ChatRow | None:
         rows = self.core.q("SELECT * FROM chat_messages WHERE id = ?", (message_id,))

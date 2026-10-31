@@ -219,7 +219,7 @@ def test_check_reports_the_g5_rag_blocks_readonly(tmp_path, capsys, monkeypatch)
     assert ra["active_model"] == MODEL and ra["last_index"]["status"] == "concluído" and ra["last_index"]["reason"] == "pipeline"
     assert rb["missing_active"] == n_b and rb["vectors"] == {} and rb["last_index"]["note"].startswith("4 trechos sem vetor: sem rede")
     overall = out[-1]["rag"]
-    assert overall["schema"] == 8 and overall["embedder"]["ready"] and overall["meetings"] == {"processed": 2, "indexed": 2, "pct": 100.0}
+    assert overall["schema"] == 9 and overall["embedder"]["ready"] and overall["meetings"] == {"processed": 2, "indexed": 2, "pct": 100.0}
     assert overall["fts"] == {"docsize": total, "chunks": total, "ok": True} and overall["vectors"]["active"] == 5
     assert overall["vectors"]["missing_active"] == n_b and overall["vectors"]["by_model"] == {MODEL: 5}
     assert [p["query"] for p in overall["fts_probes"]] == ["reunião", "orçamento", "prazo", "decisão", "próximos passos"]
@@ -239,7 +239,7 @@ def test_check_on_a_v7_database_says_the_schema_is_before_f5(tmp_path, capsys):
         mid = store.create_meeting("antiga", None, None, None)
         store.finish_meeting(mid, 1000)
         with store.transaction() as c:
-            c.execute("DELETE FROM schema_migrations WHERE version = 8")
+            c.execute("DELETE FROM schema_migrations WHERE version >= 8")             # F5.10: e a v9
             c.execute("PRAGMA user_version = 7")
     assert main(["--check", str(db)]) == 0
     out = _reports(capsys.readouterr().out)
