@@ -245,7 +245,8 @@ def test_every_main_table_is_classified_and_no_dependency_touches_the_deny_list(
     assert [(v, t, c) for v, pairs in deps.items() for t, c in pairs if never(t, c)] == []
     assert {"providers", "settings", "chat_messages", "revisions", "events", "presets", "processing_jobs", "clusters",
             "rag_vectors", "job_artifacts", "voice_profiles", "voice_embeddings"} <= set(dictionary.DENIED)
-    assert ("people", "email") not in deps["pessoas"] and ("people", "name") in deps["pessoas"]
+    assert deps["pessoas"] == frozenset() and "people" in dictionary.DENIED                   # D-075: nenhuma visão lê people
+    assert all(t != "people" for pairs in deps.values() for t, _c in pairs)
 
 
 @pytest.mark.parametrize("secret", ["api_key FROM providers", "value FROM settings", "email FROM people", "notes FROM people",

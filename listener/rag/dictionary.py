@@ -114,7 +114,7 @@ VIEWS: tuple[View, ...] = (
 # (pergunta, SQL, params): o teste roda todos na sandbox
 EXAMPLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Quantas reuniões tive com a Ana em outubro?",
-     ("SELECT count(DISTINCT p.reuniao_id) AS reunioes FROM participacao p JOIN reunioes r USING (reuniao_id) "
+     ("SELECT count(DISTINCT p.reuniao_id) AS reunioes FROM participacao p JOIN reunioes r ON r.reuniao_id = p.reuniao_id "
      "WHERE p.falante LIKE ? AND r.mes = ?"), ("Ana%", "2026-10")),
     ("Ações atrasadas por dono",
      ("SELECT coalesce(a.dono, '(sem dono)') AS dono, count(*) AS atrasadas FROM acoes a, agora g WHERE a.estado = 'aberta' "
@@ -134,6 +134,7 @@ EXAMPLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 # tabelas do arquivo que nenhuma visão lê, e por quê (o teste confere que toda tabela está aqui, numa visão ou no FTS)
 DENIED: dict[str, str] = {
     "settings": "configurações", "presets": "presets de gravação", "providers": "chaves de API (CP10)",
+    "people": "lida pelo app para montar pessoas, sem e-mail nem notas",
     "meetings": "lida pelo app para montar reunioes, sem as notas", "events": "eventos do gravador e da fila",
     "revisions": "histórico de edições", "captions": "legendas ao vivo (a transcrição final está em falas)",
     "voice_profiles": "perfis de voz", "voice_embeddings": "vetores de voz", "rag_vectors": "vetores da busca por sentido",
@@ -143,8 +144,8 @@ DENIED: dict[str, str] = {
     "sqlite_sequence": "interna do SQLite",
 }
 FTS_INTERNAL = frozenset({"rag_fts_data", "rag_fts_idx", "rag_fts_docsize", "rag_fts_config"})
-HEADER = ("Visões da base do usuário, só leitura (as únicas tabelas que existem). Datas em AAAA-MM-DD e horas locais; tempos "
-          "dentro da reunião em mm:ss e ms; nulo = sem o dado.")
+HEADER = ("Visões da base do usuário, só leitura (as únicas tabelas que existem). Junte as visões com JOIN … ON (USING e "
+          "NATURAL não são aceitos). Datas em AAAA-MM-DD e horas locais; tempos dentro da reunião em mm:ss e ms; nulo = sem o dado.")
 
 
 def view(name: str) -> View:

@@ -8,13 +8,22 @@ O autorizador é uma lista de permissão: SELECT, READ, FUNCTION (só as de `FUN
 sem argumento (o FTS5 o roda por dentro); tudo o mais é negado (escrita, ATTACH, PRAGMA, transação). Ler o `main` só no
 contexto de uma visão da sandbox e só o par (tabela, coluna) que a visão lê: decidir só pelo 5º argumento vazava, porque uma
 CTE com o nome de uma visão (`WITH reunioes AS (SELECT api_key FROM providers)`) chega com o nome dela ali [exp]. Fora disso,
-o FTS: as tabelas `rag_fts*` e `rag_chunks(id, title, speakers, text)`, que o FTS5 lê sem contexto. A leitura sem coluna
+o FTS: as tabelas `rag_fts*` e `rag_chunks(id, title, speakers, text)`, que o FTS5 lê sem contexto. Os nomes valem sem
+diferenciar caixa (`count(*) FROM PROVIDERS` é `providers`). A leitura sem coluna
 (`count(*)`, `EXISTS`, `SELECT 1 FROM t`) chega com a coluna vazia, sem contexto e com o banco como foi escrito, nulo quando
 não foi [exp, 30/10]: é ela o "banco nulo" das CTEs de D2, e por ela `SELECT count(*) FROM providers` passaria. Por isso vale
 pelo nome: tabela do arquivo só se alguma visão a lê (ou é do FTS); TEMP só as da sandbox; nome que não é tabela do arquivo
 (uma CTE, `json_each`) passa, porque só conta linhas do que a própria consulta montou. Nunca legíveis, nem por uma visão
 (`never`): `providers`, `settings`, e-mail e notas das pessoas, notas das reuniões, o conteúdo e o erro das chamadas de LLM, as
 conversas, revisões, eventos, presets, a fila, as vozes, os vetores e o catálogo do SQLite.
+
+Revisão do diff (D-075): a coluna de uma junção com USING ou NATURAL nasce fora do `lookupName`, e o SQLite não chama o
+autorizador para ela: `x FULL JOIN providers USING (api_key)` devolvia a chave [exp]. Por isso mais duas camadas: `run` recusa
+as palavras USING e NATURAL fora de literais, identificadores entre aspas e comentários (`join_words`); e, sem depender do
+parser, compila `EXPLAIN ` mais a instrução (com os mesmos `params`: nenhum valor entra no texto) e recusa o programa que abre
+para escrita ou que lê no `main` uma página-raiz fora das tabelas que as visões leem, dos índices delas e das sombras do FTS5,
+guardadas na abertura (`_roots`). Nenhuma visão lê `people` (a camada semântica a materializa); `llm_calls`, que a de custos
+lê, fica com o autorizador e a recusa das palavras.
 
 `run` recusa o que não começa por SELECT ou WITH, roda uma instrução só (o `execute` do Python recusa duas), com os valores em
 `params` (sempre texto, D3), percorre o cursor dentro do prazo para contar as linhas, guarda as primeiras `max_rows` e fecha
@@ -23,7 +32,6 @@ para o `trace_json`; a mensagem do SQLite volta só à LLM, porque traz nomes e 
 from __future__ import annotations
 
 import math
-import re
 import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -34,6 +42,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from ..log import get_logger
+from .sql_text import READ_ONLY_WORDS, first_word, join_words
 
 log = get_logger("rag.sandbox")
 
@@ -44,9 +53,11 @@ LIMITS: tuple[tuple[int, int], ...] = (
 PROGRESS_STEPS = 10_000          # o prazo é conferido a cada tantas instruções da máquina virtual do SQLite
 FETCH = 500                      # linhas por `fetchmany` ao percorrer o cursor
 BUSY_TIMEOUT_S = 5.0
-FIRST_WORD_RE = re.compile(r"\A(?:\s+|--[^\n]*(?:\n|\Z)|/\*.*?\*/)*(\w+)", re.DOTALL)
-READ_ONLY_WORDS = frozenset({"select", "with"})
 ONLY_READS = "só consultas de leitura: comece por SELECT ou WITH (uma instrução por consulta)"
+NO_JOIN_WORDS = "use JOIN … ON: USING e NATURAL não são aceitos"
+OUTSIDE_VIEWS = "a consulta lê uma tabela fora das visões do dicionário: use só as visões"
+READ_OPS = frozenset({"OpenRead", "ReopenIdx"})
+P2_IN_REGISTER = 0x10            # OPFLAG_P2ISREG (0x02 é OPFLAG_SEEKEQ, que a busca por igualdade num índice usa) [exp]
 FTS_PREFIX = "rag_fts"
 FTS_CONTENT = ("rag_chunks", frozenset({"id", "title", "speakers", "text"}))   # o que o FTS5 lê da tabela de conteúdo
 NEVER_TABLES = frozenset({"providers", "settings", "revisions", "events", "presets", "processing_jobs", "clusters", "rag_vectors",
@@ -90,14 +101,9 @@ def category(e: BaseException) -> Category:
 
 
 def never(table: str, column: str = "") -> bool:
-    """Tabela ou coluna que nenhuma consulta lê, nem por uma visão (D2)."""
+    """Tabela ou coluna que nenhuma consulta lê, nem por uma visão (D2); sem diferenciar caixa."""
+    table, column = table.lower(), column.lower()
     return table in NEVER_TABLES or table.startswith(NEVER_PREFIXES) or (table, column) in NEVER_COLUMNS
-
-
-def first_word(sql: str) -> str:
-    """A primeira palavra do SQL, depois de espaços e comentários, em minúsculas ("" sem palavra)."""
-    m = FIRST_WORD_RE.match(sql or "")
-    return m.group(1).lower() if m else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,25 +124,27 @@ class Policy:
     """O autorizador (D2): uma lista de permissão com as dependências de cada visão, gravadas antes de ligar."""
 
     def __init__(self, deps: Mapping[str, frozenset[tuple[str, str]]], temp_names: frozenset[str], main_tables: frozenset[str]):
-        self.deps = dict(deps)
-        self.temp_names = temp_names
-        self.main_tables = main_tables
+        self.deps = {v.lower(): frozenset((t.lower(), c.lower()) for t, c in pairs) for v, pairs in deps.items()}
+        self.temp_names = frozenset(n.lower() for n in temp_names)
+        self.main_tables = frozenset(n.lower() for n in main_tables)
         self.dep_tables = frozenset(t for pairs in self.deps.values() for t, _c in pairs if not never(t))
 
     def __call__(self, action: int, arg1: str | None, arg2: str | None, db: str | None, source: str | None) -> int:
         if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE):
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_READ:
-            allowed = self.can_read(arg1 or "", arg2 or "", db, source)
+            allowed = self.can_read((arg1 or "").lower(), (arg2 or "").lower(), db.lower() if db is not None else None,
+                                    source.lower() if source is not None else None)
         elif action == sqlite3.SQLITE_FUNCTION:
             allowed = (arg2 or "").lower() in FUNCTIONS
         elif action == sqlite3.SQLITE_PRAGMA:
-            allowed = arg1 == "data_version" and arg2 is None
+            allowed = (arg1 or "").lower() == "data_version" and arg2 is None
         else:
             allowed = False
         return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
 
     def can_read(self, table: str, column: str, db: str | None, source: str | None) -> bool:
+        """Os nomes já em minúsculas (`__call__`)."""
         if never(table, column):
             return False
         if column == "":                                   # leitura sem coluna: o banco vem como foi escrito [exp]
@@ -187,13 +195,36 @@ def _record(conn: sqlite3.Connection, views: Sequence[str]) -> dict[str, frozens
     return {v: frozenset(pairs) for v, pairs in seen.items()}
 
 
+def _roots(conn: sqlite3.Connection, deps: Mapping[str, frozenset[tuple[str, str]]]) -> frozenset[int]:
+    """As páginas-raiz que uma consulta pode abrir no `main`: as tabelas que as visões leem, os índices delas e as sombras do
+    FTS5 (`rag_fts_*`), lidas antes do autorizador."""
+    tables = {t.lower() for pairs in deps.values() for t, _c in pairs if not never(t)}
+    rows = conn.execute("SELECT tbl_name, rootpage FROM main.sqlite_master WHERE type IN ('table', 'index')").fetchall()
+    return frozenset(int(root) for tbl, root in rows
+                     if root and (str(tbl).lower() in tables or str(tbl).lower().startswith(f"{FTS_PREFIX}_")))
+
+
+def _allowed_op(row: Sequence[Any], roots: frozenset[int]) -> bool:
+    """Uma instrução do programa compilado (`EXPLAIN`): nada aberto para escrita; leitura só na TEMP (P3 = 1) ou no `main`
+    (P3 = 0) numa página-raiz de `roots`, nunca com a raiz vinda de um registrador."""
+    op, p2, p3, p5 = str(row[1]), row[3], row[4], int(row[6] or 0)
+    if op == "OpenWrite":
+        return False
+    if op not in READ_OPS:
+        return True
+    if p5 & P2_IN_REGISTER or p3 not in (0, 1):
+        return False
+    return p3 == 1 or p2 in roots
+
+
 class Sandbox:
     """Uma conexão só de leitura com as TEMP de quem abriu e o autorizador ligado; `run` roda uma consulta."""
 
-    def __init__(self, conn: sqlite3.Connection, policy: Policy, views: tuple[str, ...]):
+    def __init__(self, conn: sqlite3.Connection, policy: Policy, views: tuple[str, ...], roots: frozenset[int] = frozenset()):
         self.conn = conn
         self.policy = policy
         self.views = views
+        self.roots = roots
         self._deadline = math.inf
         self._stop: Callable[[], bool] | None = None
         conn.set_authorizer(policy)
@@ -211,11 +242,13 @@ class Sandbox:
             names = conn.execute("SELECT name, type FROM temp.sqlite_master WHERE type IN ('table', 'view')").fetchall()
             main = frozenset(str(r[0]) for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type IN ('table', 'view')"))
             views = tuple(str(n) for n, kind in names if kind == "view")
-            policy = Policy(_record(conn, views), frozenset(str(n) for n, _kind in names), main)
+            deps = _record(conn, views)
+            policy = Policy(deps, frozenset(str(n) for n, _kind in names), main)
+            roots = _roots(conn, deps)
         except BaseException:
             conn.close()
             raise
-        return cls(conn, policy, views)
+        return cls(conn, policy, views, roots)
 
     def _tick(self) -> int:
         return 1 if time.monotonic() > self._deadline or (self._stop is not None and self._stop()) else 0
@@ -227,11 +260,16 @@ class Sandbox:
         t0 = time.perf_counter()
         if first_word(sql) not in READ_ONLY_WORDS:
             return QueryResult((), (), 0, _ms(t0), Category.DENIED, ONLY_READS)
+        if join_words(sql):
+            return QueryResult((), (), 0, _ms(t0), Category.DENIED, NO_JOIN_WORDS)
+        args = tuple(str(p) for p in params)
         self._deadline = time.monotonic() + max(0.05, float(timeout_s))
         self._stop = should_stop
         cur: sqlite3.Cursor | None = None
         try:
-            cur = self.conn.execute(sql, tuple(str(p) for p in params))
+            if not self._reads_only_views(sql, args):
+                return QueryResult((), (), 0, _ms(t0), Category.DENIED, OUTSIDE_VIEWS)
+            cur = self.conn.execute(sql, args)
             columns = tuple(str(d[0]) for d in cur.description or ())
             kept: list[tuple[Any, ...]] = []
             total = 0
@@ -247,6 +285,16 @@ class Sandbox:
             if cur is not None:
                 cur.close()
 
+    def _reads_only_views(self, sql: str, args: tuple[str, ...]) -> bool:
+        """A camada que não depende do parser: o programa compilado só abre o que as visões leem. O prefixo fixo `EXPLAIN ` é
+        a única composição de texto SQL da sandbox; os valores seguem em `params`."""
+        cur = self.conn.execute("EXPLAIN " + sql, args)
+        try:
+            program = cur.fetchall()
+        finally:
+            cur.close()
+        return all(_allowed_op(row, self.roots) for row in program)
+
     def close(self) -> None:
         self.conn.close()
 
@@ -261,5 +309,5 @@ def _ms(t0: float) -> float:
     return round((time.perf_counter() - t0) * 1000, 1)
 
 
-__all__ = ["FUNCTIONS", "LIMITS", "NEVER_COLUMNS", "NEVER_PREFIXES", "NEVER_TABLES", "ONLY_READS", "Category", "Policy", "QueryResult",
-           "Sandbox", "category", "first_word", "never"]
+__all__ = ["FUNCTIONS", "LIMITS", "NEVER_COLUMNS", "NEVER_PREFIXES", "NEVER_TABLES", "NO_JOIN_WORDS", "ONLY_READS", "OUTSIDE_VIEWS",
+           "Category", "Policy", "QueryResult", "Sandbox", "category", "first_word", "join_words", "never"]

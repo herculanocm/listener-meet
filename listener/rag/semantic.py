@@ -2,7 +2,8 @@
 existem e entra na sandbox como tabela TEMP tipada: a reunião com o job vigente (`current_job_id`), o dia local
 (`started_at[:10]`: o `date()` do SQLite converteria o fuso para UTC) e o título efetivo (`effective_title`); quem fala, pela
 regra da F5.5 (`segments.speakers()`, `number_voices` e `speaker_of`, um falante por grupo de `speakers()`) e a participação
-somada dele (calculada na hora custaria ~1 s em 1.000 reuniões, D4). Por cima, as visões TEMP em PT-BR (`VIEWS`); as que leem
+somada dele (calculada na hora custaria ~1 s em 1.000 reuniões, D4); as pessoas, sem e-mail nem notas (revisão do diff,
+D-075: nenhuma visão lê `main.people`, que tem colunas negadas). Por cima, as visões TEMP em PT-BR (`VIEWS`); as que leem
 o arquivo (falas, marcadores, ações, itens da ata, resumos, trechos, custos) leem ao vivo, com o job e as reuniões visíveis
 vindos das TEMP. Os filtros da aba Reuniões valem aqui (D-074): só as reuniões filtradas entram na sandbox.
 
@@ -52,19 +53,20 @@ TABLES: tuple[str, ...] = (
     ("CREATE TEMP TABLE _falantes(reuniao_id INTEGER, person_id INTEGER, cluster_id INTEGER, cluster TEXT, role_at_time TEXT, "
      "channel TEXT, falante TEXT, pessoa_id INTEGER, cargo TEXT)"),
     "CREATE INDEX temp.idx_falantes ON _falantes(reuniao_id, cluster_id)",
+    "CREATE TEMP TABLE _pessoas(pessoa_id INTEGER PRIMARY KEY, nome TEXT, cargo TEXT, empresa TEXT, eu INTEGER)",
     ("CREATE TEMP TABLE _participacao(reuniao_id INTEGER, pessoa_id INTEGER, falante TEXT, cargo TEXT, canal TEXT, falas INTEGER, "
      "fala_min REAL, primeira_fala TEXT)"),
 )
 INSERTS: tuple[tuple[str, str], ...] = (("meetings", "INSERT INTO temp._reunioes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
                                         ("speakers", "INSERT INTO temp._falantes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"),
-                                        ("participation", "INSERT INTO temp._participacao VALUES (?, ?, ?, ?, ?, ?, ?, ?)"))
+                                        ("participation", "INSERT INTO temp._participacao VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+                                        ("people", "INSERT INTO temp._pessoas VALUES (?, ?, ?, ?, ?)"))
 # os valores fixos do app nas visões (estado da ata, espécie, ação superada) são as constantes de `model.py`, escritas aqui
 VIEWS: dict[str, str] = {
     "agora": "SELECT hoje, hora, dia_semana, fuso FROM temp._agora",
     "reunioes": ("SELECT reuniao_id, titulo, dia, hora, mes, dia_semana, duracao_min, estado, plataforma, presencial, idioma, "
                  "participantes_previstos, tem_falas, tem_ata FROM temp._reunioes"),
-    "pessoas": ("SELECT id AS pessoa_id, name AS nome, NULLIF(role, '') AS cargo, NULLIF(company, '') AS empresa, is_me AS eu "
-                "FROM main.people"),
+    "pessoas": "SELECT pessoa_id, nome, cargo, empresa, eu FROM temp._pessoas",
     "participacao": "SELECT reuniao_id, pessoa_id, falante, cargo, canal, falas, fala_min, primeira_fala FROM temp._participacao",
     "falas": (f"SELECT s.id AS fala_id, s.meeting_id AS reuniao_id, {_stamp('s.t_start_ms')} AS inicio, s.t_start_ms AS inicio_ms, "  # noqa: S608
               "s.t_end_ms AS fim_ms, f.falante AS falante, f.pessoa_id AS pessoa_id, f.cargo AS cargo, s.channel AS canal, "
@@ -74,11 +76,11 @@ VIEWS: dict[str, str] = {
               "AND f.cluster IS s.cluster AND f.role_at_time IS s.role_at_time AND f.channel IS s.channel"),
     "marcadores": (f"SELECT k.id AS marcador_id, k.meeting_id AS reuniao_id, {_stamp('k.t_ms')} AS inicio, k.t_ms AS inicio_ms, "  # noqa: S608
                    "NULLIF(k.note, '') AS nota FROM temp._reunioes r JOIN main.markers k ON k.meeting_id = r.reuniao_id"),
-    "acoes": ("SELECT a.id AS acao_id, a.meeting_id AS reuniao_id, a.text AS texto, COALESCE(p.name, NULLIF(a.owner_text, '')) AS dono, "  # noqa: S608
+    "acoes": ("SELECT a.id AS acao_id, a.meeting_id AS reuniao_id, a.text AS texto, COALESCE(p.nome, NULLIF(a.owner_text, '')) AS dono, "  # noqa: S608
               f"a.owner_person_id AS dono_pessoa_id, NULLIF(a.due, '') AS prazo, a.status AS estado, {_stamp('a.t_ms')} AS inicio, "
               "a.t_ms AS inicio_ms, a.segment_id AS fala_id FROM temp._reunioes r JOIN main.action_items a ON a.meeting_id = r.reuniao_id "
               "JOIN main.summaries s ON s.id = a.summary_id AND s.status = 'atual' AND s.kind = 'minutes' "
-              "LEFT JOIN main.people p ON p.id = a.owner_person_id WHERE a.status IS NOT 'superada'"),
+              "LEFT JOIN temp._pessoas p ON p.pessoa_id = a.owner_person_id WHERE a.status IS NOT 'superada'"),
     "ata_itens": (f"SELECT c.meeting_id AS reuniao_id, c.kind AS tipo, c.text AS texto, {_stamp('c.t_start_ms')} AS inicio, "  # noqa: S608
                   "c.t_start_ms AS inicio_ms FROM temp._reunioes r JOIN main.rag_chunks c ON c.meeting_id = r.reuniao_id "
                   "WHERE c.kind IN ('ata', 'decisao', 'destaque', 'pendencia', 'proximo_passo')"),
@@ -109,6 +111,7 @@ class Layer:
     meetings: tuple[tuple[Any, ...], ...]          # `_reunioes`, com o job vigente
     speakers: tuple[tuple[Any, ...], ...]          # `_falantes`: um por grupo de `speakers()`
     participation: tuple[tuple[Any, ...], ...]     # `_participacao`
+    people: tuple[tuple[Any, ...], ...]            # `_pessoas`: todas (os filtros são de reunião)
     built_ms: float
 
     def visible(self, filters: SearchFilters | None) -> frozenset[int]:
@@ -218,7 +221,13 @@ def build(store: Store, should_stop: Callable[[], bool] | None = None, fp: tuple
         participation += _participation(rows)
     took = round((time.perf_counter() - t0) * 1000, 1)
     log.info("camada semântica montada: %d reunião(ões), %d falante(s), em %.1f ms", len(meetings), len(speakers), took)
-    return Layer(fp, tuple(meetings), tuple(speakers), tuple(participation), took)
+    return Layer(fp, tuple(meetings), tuple(speakers), tuple(participation), _people_rows(people.values()), took)
+
+
+def _people_rows(people: Iterable[Mapping[str, Any]]) -> tuple[tuple[Any, ...], ...]:
+    """`_pessoas`: o id, o nome, o cargo e a empresa da ficha (nulo quando vazios) e se é o usuário; nunca o e-mail nem as notas."""
+    return tuple((int(p["id"]), str(p["name"]), p.get("role") or None, p.get("company") or None, int(bool(p.get("is_me"))))
+                 for p in people)
 
 
 class _Cache:
@@ -261,7 +270,7 @@ def now_row(now: datetime, filtered: bool) -> tuple[Any, ...]:
 def fill(layer: Layer, visible: frozenset[int], now: datetime, filtered: bool) -> Callable[[sqlite3.Connection], None]:
     """O que a sandbox roda na transação de abertura: as TEMP só com as reuniões visíveis e as visões por cima."""
     rows = {"meetings": [m for m in layer.meetings if m[0] in visible], "speakers": [s for s in layer.speakers if s[0] in visible],
-            "participation": [p for p in layer.participation if p[0] in visible]}
+            "participation": [p for p in layer.participation if p[0] in visible], "people": list(layer.people)}
 
     def run(conn: sqlite3.Connection) -> None:
         for sql in TABLES:

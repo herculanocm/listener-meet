@@ -20,7 +20,8 @@ D067_MODULES = tuple(ROOT / p for p in ("listener/ui/player.py", "listener/ui/pl
                                          "listener/ui/devices.py", "listener/platform/common/output.py",
                                          "listener/platform/win32/output.py", "listener/platform/win32/endpoints.py"))
 # F5.10 (D8): a sandbox, a camada semântica, o dicionário, o laço, os passos, os prompts, a volta da v9 e as telas
-F510_MODULES = tuple(ROOT / p for p in ("listener/rag/sandbox.py", "listener/rag/semantic.py", "listener/rag/dictionary.py",
+F510_MODULES = tuple(ROOT / p for p in ("listener/rag/sandbox.py", "listener/rag/sql_text.py", "listener/rag/semantic.py",
+                                         "listener/rag/dictionary.py",
                                          "listener/rag/agent.py", "listener/rag/agent_results.py", "listener/rag/trace.py",
                                          "listener/llm/prompts/rag_sql.py", "listener/llm/prompts/rag_answer.py",
                                          "listener/store/downgrade.py", "listener/ui/history_ask.py", "listener/ui/ask_data.py"))
