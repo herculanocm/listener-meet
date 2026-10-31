@@ -26,9 +26,13 @@ guardadas na abertura (`_roots`). Nenhuma visão lê `people` (a camada semânti
 lê, fica com o autorizador e a recusa das palavras.
 
 `run` recusa o que não começa por SELECT ou WITH, roda uma instrução só (o `execute` do Python recusa duas), com os valores em
-`params` (sempre texto, D3), percorre o cursor dentro do prazo para contar as linhas, guarda as primeiras `max_rows` e fecha
-o cursor sempre (um cursor aberto seguraria a leitura e o WAL cresceria). Do erro, a categoria (`Category`) vai para o log e
-para o `trace_json`; a mensagem do SQLite volta só à LLM, porque traz nomes e valores."""
+`params` (sempre texto, D3), percorre o cursor linha a linha dentro do prazo para contar as linhas, guarda as primeiras
+`max_rows` já cortadas (cada texto até `CELL_CHARS`, com o resto só contado) e fecha o cursor sempre (um cursor aberto
+seguraria a leitura e o WAL cresceria). Revisão do diff (D-075): o progress handler roda a cada 1.000 instruções (o prazo e
+o Cancelar atrasavam ~5 s) e confere também quanto a memória do processo cresceu desde o começo da consulta, pela
+`memory_rss` da plataforma (injetada; sem ela, só o prazo vale): acima de `MEMORY_LIMIT`, interrompe com a categoria limite.
+Nada de `hard_heap_limit`: ele vale para o processo inteiro, e no app o gravador grava o áudio. Do erro, a categoria
+(`Category`) vai para o log e para o `trace_json`; a mensagem do SQLite volta só à LLM, porque traz nomes e valores."""
 from __future__ import annotations
 
 import math
@@ -49,9 +53,12 @@ log = get_logger("rag.sandbox")
 LIMITS: tuple[tuple[int, int], ...] = (
     (sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000), (sqlite3.SQLITE_LIMIT_SQL_LENGTH, 20_000), (sqlite3.SQLITE_LIMIT_ATTACHED, 0),
     (sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 50), (sqlite3.SQLITE_LIMIT_COMPOUND_SELECT, 20), (sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 200),
-    (sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 200))
-PROGRESS_STEPS = 10_000          # o prazo é conferido a cada tantas instruções da máquina virtual do SQLite
-FETCH = 500                      # linhas por `fetchmany` ao percorrer o cursor
+    (sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 200), (sqlite3.SQLITE_LIMIT_COLUMN, 64))
+PROGRESS_STEPS = 1_000           # o prazo, o Cancelar e a memória são conferidos a cada tantas instruções do SQLite
+CELL_CHARS = 300                 # o que uma célula guarda e mostra; o resto só é contado (`Cut.rest`)
+MEMORY_LIMIT = 512 * 1024 * 1024  # [chute] o quanto a memória do processo pode crescer durante uma consulta
+MEMORY_POLL_S = 0.02             # a memória é lida no máximo a cada 20 ms (ler a cada 1.000 instruções pesaria)
+OUT_OF_MEMORY = "a consulta passou do limite de memória: filtre ou agregue"
 BUSY_TIMEOUT_S = 5.0
 ONLY_READS = "só consultas de leitura: comece por SELECT ou WITH (uma instrução por consulta)"
 NO_JOIN_WORDS = "use JOIN … ON: USING e NATURAL não são aceitos"
@@ -104,6 +111,25 @@ def never(table: str, column: str = "") -> bool:
     """Tabela ou coluna que nenhuma consulta lê, nem por uma visão (D2); sem diferenciar caixa."""
     table, column = table.lower(), column.lower()
     return table in NEVER_TABLES or table.startswith(NEVER_PREFIXES) or (table, column) in NEVER_COLUMNS
+
+
+class Cut(str):
+    """Uma célula de texto cortada na coleta: os primeiros `CELL_CHARS` caracteres; `rest` é quantos ficaram de fora."""
+    rest: int = 0
+
+
+def clip(value: Any) -> Any:
+    """O que a sandbox guarda de uma célula: o texto até `CELL_CHARS` (com o resto contado) e o blob só pelo tamanho."""
+    if isinstance(value, bytes | bytearray | memoryview):
+        return f"<{len(value)} bytes>"
+    if isinstance(value, str) and len(value) > CELL_CHARS:
+        cut = Cut(value[:CELL_CHARS])
+        cut.rest = len(value) - CELL_CHARS
+        return cut
+    return value
+
+
+type MemoryRss = Callable[[], int | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,18 +246,23 @@ def _allowed_op(row: Sequence[Any], roots: frozenset[int]) -> bool:
 class Sandbox:
     """Uma conexão só de leitura com as TEMP de quem abriu e o autorizador ligado; `run` roda uma consulta."""
 
-    def __init__(self, conn: sqlite3.Connection, policy: Policy, views: tuple[str, ...], roots: frozenset[int] = frozenset()):
+    def __init__(self, conn: sqlite3.Connection, policy: Policy, views: tuple[str, ...], roots: frozenset[int] = frozenset(),
+                 memory_rss: MemoryRss | None = None):
         self.conn = conn
         self.policy = policy
         self.views = views
         self.roots = roots
+        self.memory_rss = memory_rss
         self._deadline = math.inf
         self._stop: Callable[[], bool] | None = None
+        self._base: int | None = None                     # a memória do processo no começo da consulta
+        self._next_memory = 0.0
+        self._over = False
         conn.set_authorizer(policy)
         conn.set_progress_handler(self._tick, PROGRESS_STEPS)
 
     @classmethod
-    def open(cls, main_path: Path, fill: Fill) -> Self:
+    def open(cls, main_path: Path, fill: Fill, memory_rss: MemoryRss | None = None) -> Self:
         """A conexão na ordem de D1: limites, TEMP na memória, `fill` numa transação, `query_only`, dependências, política."""
         conn = _connect(main_path)
         try:
@@ -248,10 +279,18 @@ class Sandbox:
         except BaseException:
             conn.close()
             raise
-        return cls(conn, policy, views, roots)
+        return cls(conn, policy, views, roots, memory_rss)
 
     def _tick(self) -> int:
-        return 1 if time.monotonic() > self._deadline or (self._stop is not None and self._stop()) else 0
+        now = time.monotonic()
+        if now > self._deadline or (self._stop is not None and self._stop()):
+            return 1
+        if self._base is not None and self.memory_rss is not None and now >= self._next_memory:
+            self._next_memory = now + MEMORY_POLL_S
+            rss = self.memory_rss()
+            self._over = rss is not None and rss - self._base > MEMORY_LIMIT
+            return int(self._over)
+        return 0
 
     def run(self, sql: str, params: Sequence[object] = (), *, max_rows: int, timeout_s: float,
             should_stop: Callable[[], bool] | None = None) -> QueryResult:
@@ -264,7 +303,8 @@ class Sandbox:
             return QueryResult((), (), 0, _ms(t0), Category.DENIED, NO_JOIN_WORDS)
         args = tuple(str(p) for p in params)
         self._deadline = time.monotonic() + max(0.05, float(timeout_s))
-        self._stop = should_stop
+        self._stop, self._over, self._next_memory = should_stop, False, 0.0
+        self._base = self.memory_rss() if self.memory_rss is not None else None
         cur: sqlite3.Cursor | None = None
         try:
             if not self._reads_only_views(sql, args):
@@ -273,15 +313,17 @@ class Sandbox:
             columns = tuple(str(d[0]) for d in cur.description or ())
             kept: list[tuple[Any, ...]] = []
             total = 0
-            while batch := cur.fetchmany(FETCH):
-                total += len(batch)
+            for row in cur:                                        # linha a linha: só o que se mostra fica na memória
+                total += 1
                 if len(kept) < max_rows:
-                    kept += batch[:max_rows - len(kept)]
-            return QueryResult(columns, tuple(tuple(r) for r in kept), total, _ms(t0))
+                    kept.append(tuple(clip(v) for v in row))
+            return QueryResult(columns, tuple(kept), total, _ms(t0))
         except (sqlite3.Error, sqlite3.Warning) as e:
+            if self._over:
+                return QueryResult((), (), 0, _ms(t0), Category.LIMIT, OUT_OF_MEMORY)
             return QueryResult((), (), 0, _ms(t0), category(e), str(e))
         finally:
-            self._deadline, self._stop = math.inf, None
+            self._deadline, self._stop, self._base = math.inf, None, None
             if cur is not None:
                 cur.close()
 
@@ -309,5 +351,6 @@ def _ms(t0: float) -> float:
     return round((time.perf_counter() - t0) * 1000, 1)
 
 
-__all__ = ["FUNCTIONS", "LIMITS", "NEVER_COLUMNS", "NEVER_PREFIXES", "NEVER_TABLES", "NO_JOIN_WORDS", "ONLY_READS", "OUTSIDE_VIEWS",
-           "Category", "Policy", "QueryResult", "Sandbox", "category", "first_word", "join_words", "never"]
+__all__ = ["CELL_CHARS", "FUNCTIONS", "LIMITS", "MEMORY_LIMIT", "NEVER_COLUMNS", "NEVER_PREFIXES", "NEVER_TABLES", "NO_JOIN_WORDS",
+           "ONLY_READS", "OUTSIDE_VIEWS", "OUT_OF_MEMORY", "Category", "Cut", "Policy", "QueryResult", "Sandbox", "category", "clip",
+           "first_word", "join_words", "never"]

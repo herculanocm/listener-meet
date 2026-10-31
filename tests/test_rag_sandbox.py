@@ -174,3 +174,50 @@ def test_categories_first_word_and_never():
     assert sb.first_word("  -- a\n/* b */ select 1") == "select" and sb.first_word("/* só comentário */") == ""
     assert sb.never("providers") and sb.never("chat_threads") and sb.never("people", "email") and sb.never("sqlite_sequence")
     assert not sb.never("people", "name") and not sb.never("rag_chunks", "text")
+
+
+# ---------------------------------------------------------------- revisão do diff (D-075): memória, prazo e células
+ENDLESS = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) SELECT count(*) FROM n"
+MB = 1024 * 1024
+
+
+class _Memory:
+    """Um leitor de memória falso: a base na primeira leitura (o começo da consulta) e `later` nas seguintes."""
+
+    def __init__(self, base: int, later: int | None):
+        self.base, self.later, self.calls = base, later, 0
+
+    def __call__(self) -> int | None:
+        self.calls += 1
+        return self.base if self.calls == 1 else self.later
+
+
+def test_memory_growth_stops_the_query_with_the_limit_category(store):
+    mid = _data(store)
+    grows = _Memory(100 * MB, 100 * MB + sb.MEMORY_LIMIT + 1)
+    with Sandbox.open(store.main_path, _fill(mid), memory_rss=grows) as box:
+        t0 = time.monotonic()
+        res = box.run(ENDLESS, (), max_rows=5, timeout_s=10)
+        assert res.error == Category.LIMIT and res.message == sb.OUT_OF_MEMORY and time.monotonic() - t0 < 2 and grows.calls >= 2
+        box.memory_rss = _Memory(100 * MB, 100 * MB + sb.MEMORY_LIMIT - 1)              # abaixo do teto: só o prazo corta
+        assert box.run(ENDLESS, (), max_rows=5, timeout_s=0.3).error == Category.TIMEOUT
+        box.memory_rss = _Memory(100 * MB, None)                                          # a plataforma não leu: só o prazo
+        assert box.run(ENDLESS, (), max_rows=5, timeout_s=0.3).error == Category.TIMEOUT
+        assert box.run("SELECT count(*) FROM pessoas", (), max_rows=5, timeout_s=1).rows == ((1,),)
+
+
+def test_cancel_is_seen_within_a_few_instructions_and_the_column_limit(box):
+    assert sb.PROGRESS_STEPS == 1000
+    t0 = time.monotonic()
+    res = box.run(ENDLESS, (), max_rows=5, timeout_s=10, should_stop=lambda: time.monotonic() > t0 + 0.2)
+    assert res.error == Category.TIMEOUT and time.monotonic() - t0 < 1.0                      # o Cancelar não espera o prazo
+    assert _run(box, "SELECT " + ", ".join(str(i) for i in range(70))).error == Category.LIMIT    # SQLITE_LIMIT_COLUMN 64
+
+
+def test_cells_are_cut_while_collecting_and_blobs_keep_only_their_size(box):
+    from listener.rag import agent_results as ar
+
+    res = _run(box, "SELECT printf('%.1000c', 'a') AS t, x'00ff' AS b, 'curto' AS c")
+    text, blob, short = res.rows[0]
+    assert isinstance(text, sb.Cut) and len(text) == sb.CELL_CHARS and text.rest == 700 and blob == "<2 bytes>" and short == "curto"
+    assert ar.cell(text) == "a" * 300 + "[+700]" and ar.cell(short) == "curto"

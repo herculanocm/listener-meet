@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from ..llm.jobconfig import LlmJobConfig
     from ..llm.types import Completion
     from ..store import Store
-    from .sandbox import Sandbox
+    from .sandbox import MemoryRss, Sandbox
 
 log = get_logger("rag.agent")
 
@@ -62,9 +62,9 @@ class _Run:
 
     def __init__(self, store: Store, cfg: LlmJobConfig, guards: Guards, question: str, filters: SearchFilters | None, label: str,
                  history: list[tuple[str, str]], cancelled: Callable[[], bool] | None, progress: Progress | None,
-                 clock: Callable[[], float]):
+                 clock: Callable[[], float], memory_rss: MemoryRss | None = None):
         self.store, self.cfg, self.guards, self.question, self.filters = store, cfg, guards, question, filters
-        self.label, self.history, self.progress, self.clock = label, history, progress, clock
+        self.label, self.history, self.progress, self.clock, self.memory_rss = label, history, progress, clock, memory_rss
         self.stopped = cancelled or (lambda: False)
         self.model = cfg.strong_model if guards.strong and cfg.strong_model else cfg.fast_model
         self.window = model_info(cfg.provider_kind, self.model).input_limit
@@ -95,7 +95,8 @@ class _Run:
     def _sandbox(self) -> Sandbox | None:
         if self.box is None:
             try:
-                self.box = semantic.open_sandbox(self.store, self.filters, layer=self.layer.result(), now=self.now)
+                self.box = semantic.open_sandbox(self.store, self.filters, layer=self.layer.result(), now=self.now,
+                                                 memory_rss=self.memory_rss)
             except Exception as e:  # cancelada no meio da montagem, banco ocupado: a consulta não roda e a LLM sabe
                 log.warning("perguntar à base: a sandbox não abriu (%s)", type(e).__name__)
                 return None
@@ -354,7 +355,8 @@ def _check(store: Store, thread_id: int | None, question: str) -> str:
 
 def run_agent(store: Store, thread_id: int | None, question: str, filters: SearchFilters | None = None, label: str = "",
               emit: Emit | None = None, cancelled: Callable[[], bool] | None = None, progress: Progress | None = None, *,
-              guards: Guards | None = None, clock: Callable[[], float] = time.monotonic) -> AgentAnswer:
+              guards: Guards | None = None, clock: Callable[[], float] = time.monotonic,
+              memory_rss: MemoryRss | None = None) -> AgentAnswer:
     """Pergunta -> rodadas -> resposta (em streaming quando `emit` é dado; `progress` recebe a rodada e as contagens).
     `thread_id` None cria a conversa; sem provedor com chave, pergunta vazia ou conversa apagada, `ValueError`. A pergunta é
     gravada antes da 1ª rodada (é ela que chama a LLM)."""
@@ -369,7 +371,7 @@ def run_agent(store: Store, thread_id: int | None, question: str, filters: Searc
             thread_id = store.chat.create_thread(thread_title(question))
         question_id = store.chat.add(None, ChatRole.USER, question, thread_id=thread_id)
     run = _Run(store, cfg, guards or Guards.from_store(store), question, filters, label or describe(filters),
-               _history(store, previous), cancelled, progress, clock)
+               _history(store, previous), cancelled, progress, clock, memory_rss)
     try:
         run.loop()
         return run.finish(thread_id, question_id, emit)

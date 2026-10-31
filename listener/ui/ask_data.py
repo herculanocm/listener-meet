@@ -17,19 +17,21 @@ from .common import copy_rich
 from .theme import note
 
 if TYPE_CHECKING:
-    from ..rag.sandbox import QueryResult
+    from ..rag.sandbox import MemoryRss, QueryResult
     from ..store import Store
 
 TITLE = "Ver dados"
 RUNNING = "rodando a consulta de novo…"
 
 
-def run_query(store: Store, steps: dict[str, Any], ref: str, max_rows: int, timeout_s: float) -> QueryResult:
-    """A consulta `ref` da resposta, refeita na sandbox com os filtros com que a pergunta rodou (numa `Task`)."""
+def run_query(store: Store, steps: dict[str, Any], ref: str, max_rows: int, timeout_s: float,
+              memory_rss: MemoryRss | None = None) -> QueryResult:
+    """A consulta `ref` da resposta, refeita na sandbox com os filtros com que a pergunta rodou (numa `Task`), com o teto de
+    memória pela `memory_rss` da plataforma."""
     q = trace.query(steps, ref)
     if q is None:
         raise ValueError("a consulta não está nesta resposta")
-    with semantic.open_sandbox(store, trace.filters_of(steps)) as box:
+    with semantic.open_sandbox(store, trace.filters_of(steps), memory_rss=memory_rss) as box:
         return box.run(str(q.get("sql") or ""), [str(p) for p in q.get("params") or ()], max_rows=max_rows, timeout_s=timeout_s)
 
 

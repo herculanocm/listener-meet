@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from ..llm.prompts import rag_sql
 from ..llm.schema import validate
 from .citations import SentLine
+from .sandbox import CELL_CHARS
 from .semantic import now_row
 
 if TYPE_CHECKING:
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
 ROUND_CHARS = 24_000
 QUERY_CHARS = 8_000
 MIN_QUERY_CHARS = 600            # menos que isto sobrando na rodada: a consulta nem roda
-CELL_CHARS = 300
 FOOTER_ROOM = 60
 NO_NEWS_ROUNDS = 3
 NULL = "∅"
@@ -163,14 +163,18 @@ def fmt_count(n: int) -> str:
 
 
 def cell(value: Any) -> str:
-    """Uma célula: `∅` para nulo, os bytes pelo tamanho, tab e quebra escapados e o corte em 300 com "[+N]"."""
+    """Uma célula: `∅` para nulo, os bytes pelo tamanho, tab e quebra escapados e o corte em 300 com "[+N]" (N conta também o
+    que a sandbox já cortou na coleta, `Cut.rest`)."""
     if value is None:
         return NULL
     if isinstance(value, bytes | bytearray | memoryview):
         return f"<{len(value)} bytes>"
+    rest = int(getattr(value, "rest", 0))
     text = format(value, ".10g") if isinstance(value, float) else str(value)
     text = text.replace("\t", "\\t").replace("\r", "\\r").replace("\n", "\\n")
-    return text if len(text) <= CELL_CHARS else f"{text[:CELL_CHARS]}[+{len(text) - CELL_CHARS}]"
+    if len(text) > CELL_CHARS:
+        rest, text = rest + len(text) - CELL_CHARS, text[:CELL_CHARS]
+    return f"{text}[+{rest}]" if rest else text
 
 
 def table(res: QueryResult, cap: int) -> tuple[str, int]:

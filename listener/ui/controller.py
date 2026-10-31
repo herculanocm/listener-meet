@@ -1334,7 +1334,8 @@ class Controller(QObject):
         log.info("histórico aberto%s", " pelo atalho da busca" if focus_search else "")
         if win is None:
             win = HistoryWindow(self.store, on_open=self.deleter.open_from_history, on_edited=self.on_edited,
-                                on_answer=self._history_answered, on_delete=self.deleter.request)
+                                on_answer=self._history_answered, on_delete=self.deleter.request,
+                                memory_rss=self.platform.memory_rss)     # F5.10 (D-075): o teto de memória das consultas
             self._history = win
         win.show()
         win.raise_()

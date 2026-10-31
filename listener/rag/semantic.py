@@ -24,7 +24,7 @@ from ..model import PIPELINE_JOB_KINDS, JobStatus, SummaryKind, SummaryStatus
 from ..pipeline.voices import numbering, speaker_of
 from ..store.meetings import effective_title
 from ..store.segments import role_of
-from .sandbox import Sandbox
+from .sandbox import MemoryRss, Sandbox
 
 if TYPE_CHECKING:
     import sqlite3
@@ -284,12 +284,13 @@ def fill(layer: Layer, visible: frozenset[int], now: datetime, filtered: bool) -
     return run
 
 
-def open_sandbox(store: Store, filters: SearchFilters | None = None, *, layer: Layer | None = None,
-                 now: datetime | None = None) -> Sandbox:
-    """A sandbox das visões com os filtros da aba Reuniões (só as reuniões filtradas) e o agora de quem pergunta."""
+def open_sandbox(store: Store, filters: SearchFilters | None = None, *, layer: Layer | None = None, now: datetime | None = None,
+                 memory_rss: MemoryRss | None = None) -> Sandbox:
+    """A sandbox das visões com os filtros da aba Reuniões (só as reuniões filtradas) e o agora de quem pergunta; `memory_rss`
+    é o leitor de memória da plataforma (o teto de memória de cada consulta)."""
     layer = layer if layer is not None else CACHE.get(store)[0]
     filtered = filters is not None and filters.active
-    return Sandbox.open(store.main_path, fill(layer, layer.visible(filters), now or datetime.now().astimezone(), filtered))
+    return Sandbox.open(store.main_path, fill(layer, layer.visible(filters), now or datetime.now().astimezone(), filtered), memory_rss)
 
 
 __all__ = ["CACHE", "CACHE_TTL_S", "TABLES", "VIEWS", "WEEKDAYS", "BuildStopped", "Layer", "build", "fill", "fingerprint", "now_row",

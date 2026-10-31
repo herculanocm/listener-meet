@@ -103,6 +103,7 @@ class AskMixin:
     _tasks: set[QThread]
     _expanded: set[int]
     data_dialogs: list[ask_data.AskDataDialog]
+    memory_rss: Callable[[], int | None] | None                       # a da plataforma: o teto de memória das consultas
 
     def filters(self) -> SearchFilters:
         raise NotImplementedError
@@ -179,7 +180,8 @@ class AskMixin:
         self.threads.setEnabled(False)
         self._chat_status("Consultando a base…")
         log.info("perguntar à base: pergunta enviada (%d caracteres; conversa %s)", len(text), self.thread_id)   # o texto não (LGPD)
-        fn = functools.partial(agent.run_agent, self.store, self.thread_id, text, self.filters(), self.filters_text())
+        fn = functools.partial(agent.run_agent, self.store, self.thread_id, text, self.filters(), self.filters_text(),
+                               memory_rss=self.memory_rss)
         task = run_stream(fn, self.store, self._on_chunk, self._on_chat_done, self._on_progress)
         self._watch_local()                              # o vetor da pergunta pode reabrir a sessão do e5 solta antes
         self.chat_task = task
@@ -320,7 +322,7 @@ class AskMixin:
         self.data_dialogs.append(dialog)
         dialog.show()
         fn = functools.partial(ask_data.run_query, self.store, steps, ref, int(self.store.get(SPECS["rag.sql_max_rows"])),
-                               float(self.store.get(SPECS["rag.sql_timeout_s"])))
+                               float(self.store.get(SPECS["rag.sql_timeout_s"])), self.memory_rss)
         self._start(fn, functools.partial(self._on_data, dialog))
         return dialog
 

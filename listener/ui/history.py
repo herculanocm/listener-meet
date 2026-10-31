@@ -124,9 +124,10 @@ class LinkBrowser(HtmlView):
 class HistoryPage(AskMixin, QWidget):
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
                  on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
-                 on_delete: OnDelete | None = None, parent: QWidget | None = None):
+                 on_delete: OnDelete | None = None, memory_rss: Callable[[], int | None] | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.store = store
+        self.memory_rss = memory_rss                              # F5.10 (D-075): o teto de memória das consultas da base
         self.on_open = on_open
         self.on_edited = on_edited
         self.on_answer = on_answer                                # F5.3 (A-12): a resposta chegou com a janela fora de foco
@@ -642,12 +643,13 @@ class HistoryWindow(QWidget):
 
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
                  on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
-                 on_delete: OnDelete | None = None, parent: QWidget | None = None):
+                 on_delete: OnDelete | None = None, memory_rss: Callable[[], int | None] | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.setWindowTitle("Histórico — listener-meet")
         self.setMinimumSize(640, 420)
-        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, on_answer=on_answer, today=today, on_delete=on_delete)
+        self.page = HistoryPage(store, on_open=on_open, on_edited=on_edited, on_answer=on_answer, today=today, on_delete=on_delete,
+                                memory_rss=memory_rss)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(self.page)
