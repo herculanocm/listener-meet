@@ -182,6 +182,16 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
                 phase="F5"),
     SettingSpec("rag.max_per_meeting", 3, _NOW, "Trechos por reunião no chat sobre todas as reuniões (1 a 10)", int, low=1, high=10,
                 phase="F5"),
+    # F5.10: "Perguntar à base" (cartão próprio na página Busca). As três guardas não limitam o raciocínio: só cortam o caso
+    # patológico (custo, tempo e laço); a de custo fica inativa sem preço cadastrado
+    SettingSpec("rag.sql_strong", False, _NOW, "Usar o modelo forte nas consultas (mais caro)", _bool, phase="F5.10"),
+    SettingSpec("rag.sql_max_rows", 200, _NOW, "Linhas de cada consulta que voltam à LLM (20 a 1.000)", int, low=20, high=1000,
+                phase="F5.10"),
+    SettingSpec("rag.sql_timeout_s", 3, _NOW, "Prazo de cada consulta (s, 1 a 30)", int, low=1, high=30, phase="F5.10"),
+    SettingSpec("rag.sql_max_cost_usd", 0.10, _NOW, "Guarda de custo por pergunta (US$)", float, low=0.01, high=10.0, phase="F5.10"),
+    SettingSpec("rag.sql_max_minutes", 3, _NOW, "Guarda de tempo por pergunta (min)", int, low=1, high=30, phase="F5.10"),
+    SettingSpec("rag.sql_max_rounds", 30, _NOW, "Guarda de rodadas por pergunta (contra laço)", int, low=5, high=100,
+                phase="F5.10"),
 )}
 
 CAPTURE_KEYS = tuple(k for k in SPECS if k.startswith("capture."))
@@ -189,7 +199,8 @@ HOTKEY_KEYS = tuple(k for k in SPECS if k.startswith("hotkeys."))
 PIPELINE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("pipeline.") and not s.internal)
 LLM_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("llm.") and not s.internal)
 LIVE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("live.") and not s.internal)
-RAG_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("rag.") and not s.internal)
+RAG_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("rag.") and not k.startswith("rag.sql_") and not s.internal)
+RAG_SQL_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("rag.sql_") and not s.internal)     # F5.10: "Perguntar à base"
 
 # Vistas derivadas para quem só precisa do texto padrão, do escopo ou do rótulo
 DEFAULTS: dict[str, tuple[str, str]] = {k: (s.default_text, str(s.scope)) for k, s in SPECS.items()}

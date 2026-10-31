@@ -11,7 +11,9 @@ A conversa nasce na primeira pergunta (título = a pergunta cortada); pergunta e
 `task = rag_chat`, reunião e job nulos e o erro redigido. `thread_html` desenha a conversa a partir das citações gravadas
 (sem recasar segmentos) e `rate_answer` guarda o "citação certa?" (U-027). Tudo síncrono por `run_async`: a tela chama numa
 `StreamTask` (`run_stream(partial(run_global_chat, store, thread_id, pergunta, filtros), ...)`). F5.3 (A-02): a resposta
-sai no idioma padrão das Configurações (`app.language`): a conversa cruza reuniões de idiomas diferentes."""
+sai no idioma padrão das Configurações (`app.language`): a conversa cruza reuniões de idiomas diferentes. F5.10 (D5): a
+busca por sentido (o vetor, a busca híbrida e os trechos enviados) é `retrieve`, que "Perguntar à base" também usa, com
+o apelido `R<reuniao_id>`."""
 from __future__ import annotations
 
 import html
@@ -120,8 +122,10 @@ def _meetings(store: Store, ids: Iterable[int]) -> dict[int, tuple[str | None, s
 
 
 # ---------------------------------------------------------------- trechos enviados
-def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[MeetingBlock], dict[str, Target]]:
-    """Os trechos escolhidos como blocos por reunião (apelido na ordem do melhor trecho de cada uma) e, por apelido, a reunião
+def build_excerpts(store: Store, hits: Sequence[SearchHit],
+                   alias_of: Callable[[int], str] | None = None) -> tuple[list[MeetingBlock], dict[str, Target]]:
+    """Os trechos escolhidos como blocos por reunião (apelido na ordem do melhor trecho de cada uma ou, F5.10, `alias_of`
+    da reunião) e, por apelido, a reunião
     e as linhas enviadas com tempo (o que uma citação pode ligar). Falas: os segmentos vigentes que cruzam o intervalo do
     trecho, lidos só nessas janelas (sem `words_json`; R6-02: ler a reunião inteira custava ~55 ms por reunião de 2 h), sem
     repetir, em ordem de tempo; sem nenhum (reprocessada e ainda não reindexada), o texto do trecho. Ata, ação, executivo e
@@ -136,7 +140,7 @@ def build_excerpts(store: Store, hits: Sequence[SearchHit]) -> tuple[list[Meetin
         meeting = store.get_meeting(mid)
         if meeting is None:                                  # apagada entre a busca e o prompt
             continue
-        alias = f"R{len(blocks) + 1}"
+        alias = alias_of(mid) if alias_of is not None else f"R{len(blocks) + 1}"
         windows = _windows(mhits)
         read = review.reading(store, mid)                 # F5.5 (A-17): uma leitura de `segments.speakers()` por reunião
         rows = review.transcript_rows_between(store, mid, windows, prefer_llm=True, read=read) if windows else []
@@ -182,6 +186,38 @@ def _history(store: Store, rows: Sequence[Any]) -> list[tuple[str, str]]:
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class Retrieved:
+    """O que a busca por sentido devolve para um texto (D5): os trechos em blocos por reunião, os alvos das citações por
+    apelido, os trechos achados, se foi híbrida (ou o motivo de ser só por palavras) e o custo do vetor da consulta."""
+    blocks: list[MeetingBlock]
+    targets: dict[str, Target]
+    hits: tuple[SearchHit, ...]
+    hybrid: bool
+    reason: str
+    vector_cost_usd: float | None
+    ms: float
+
+    @property
+    def aliases(self) -> dict[str, int]:
+        return {b.alias: b.meeting_id for b in self.blocks}
+
+
+def retrieve(store: Store, text: str, filters: SearchFilters | None = None, alias_of: Callable[[int], str] | None = None, *,
+             should_stop: Callable[[], bool] | None = None) -> Retrieved:
+    """F5.10 (D5): a busca por sentido do chat global, extraída: o vetor da consulta (`should_stop` cancela a rede presa), a
+    busca híbrida com os filtros e os tetos das Configurações e os trechos enviados (`build_excerpts`; sem `alias_of`, R1,
+    R2... na ordem de relevância, o do chat global)."""
+    from ..config.defaults import SPECS
+
+    t0 = time.perf_counter()
+    qv = embed_query(store, text, should_stop=should_stop)
+    found = search(store, text, filters, query_vector=qv, k=int(store.get(SPECS["rag.top_k"])),
+                   per_meeting=int(store.get(SPECS["rag.max_per_meeting"])), snippets=False)
+    blocks, targets = build_excerpts(store, found.hits, alias_of)
+    return Retrieved(blocks, targets, found.hits, found.hybrid, found.reason, qv.cost_usd, _ms(t0))
+
+
 # ---------------------------------------------------------------- pergunta
 def run_global_chat(store: Store, thread_id: int | None, question: str, filters: SearchFilters | None = None,
                     emit: Callable[[str], None] | None = None, cancelled: Callable[[], bool] | None = None) -> GlobalChatAnswer:
@@ -190,8 +226,6 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     LLM não grava nada; antes do primeiro pedaço, a pergunta fica e nenhuma resposta vazia é gravada; no meio, a parte que
     chegou fica. `thread_id` None cria a conversa na primeira pergunta. Sem provedor de LLM com chave, `ValueError` com o
     caminho nas Configurações; sem trecho relevante, a LLM ainda responde (diz que não achou)."""
-    from ..config.defaults import SPECS
-
     question = (question or "").strip()
     if not question:
         raise ValueError("escreva uma pergunta")
@@ -201,20 +235,15 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
         raise ValueError("esta conversa não existe mais: comece uma nova")
     cfg = LlmJobConfig.from_store(store)
     redact.GLOBAL.add(store.providers.key(cfg.provider_id))   # CP10: a chave some do erro gravado e do log, como no parcial
-    t0 = time.perf_counter()
     previous = store.chat.list_for_thread(thread_id) if thread_id is not None else []
     last = next((str(m["text"]) for m in reversed(previous) if str(m["role"]) == ChatRole.USER), "")
     query = f"{last}\n{question}" if last else question               # seguimento: "e o prazo?" depois de "o que decidimos..."
-    qv = embed_query(store, query, should_stop=cancelled)
-    found = search(store, query, filters, query_vector=qv, k=int(store.get(SPECS["rag.top_k"])),
-                   per_meeting=int(store.get(SPECS["rag.max_per_meeting"])), snippets=False)
-    picked = list(found.hits)
-    blocks, targets = build_excerpts(store, picked)
-    aliases = {b.alias: b.meeting_id for b in blocks}
-    search_ms = _ms(t0)
+    got = retrieve(store, query, filters, should_stop=cancelled)
+    aliases = got.aliases
+    common = (got.hybrid, got.reason, aliases, len(got.hits))
     if cancelled is not None and cancelled():
-        return GlobalChatAnswer("", "", (), None, thread_id, None, None, None, None, True, found.hybrid, found.reason, aliases, len(picked))
-    ctx = RagChatCtx(blocks, _history(store, previous), question, default_language(store))
+        return GlobalChatAnswer("", "", (), None, thread_id, None, None, None, None, True, *common)
+    ctx = RagChatCtx(got.blocks, _history(store, previous), question, default_language(store))
     req = Request(LlmTask.RAG_CHAT, cfg.fast_model, cfg.build(LlmTask.RAG_CHAT, ctx), None, max_output_tokens=MAX_OUTPUT_TOKENS,
                   reasoning=TASK_REASONING[LlmTask.RAG_CHAT], timeout_s=120.0)
     with store.transaction():
@@ -229,7 +258,6 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
     stopped = comp is None and cancelled is not None and cancelled()     # parou no meio do streaming (a parte que chegou fica)
     version = cfg.version(LlmTask.RAG_CHAT)                   # F5.6 L2 (A-28): `rag_chat/1.2+u<hash>` com instruções suas
     task = str(LlmTask.RAG_CHAT)
-    common = (found.hybrid, found.reason, aliases, len(picked))
     if err is not None:
         message = redact.GLOBAL.redact(str(err))
         call_id = store.llm_calls.insert(LlmCallInsert(None, None, task, cfg.provider_id, cfg.fast_model, version, None, 0, 0, 0, 0, None,
@@ -254,11 +282,11 @@ def run_global_chat(store: Store, thread_id: int | None, question: str, filters:
                       usage.output_tokens if usage else 0, usage.cached_tokens if usage else 0, 0, cost,
                       comp.latency_ms if comp else int(_ms(t1)), LlmCallStatus.OK, None, "stream" if emit else "direct", payload_req,
                       {"text": text} if cfg.store_payloads else None), store_payloads=cfg.store_payloads)
-    rendered, cites = citations.rewrite(text, targets)
-    total = None if cost is None else round(cost + (qv.cost_usd or 0.0), 6)
+    rendered, cites = citations.rewrite(text, got.targets)
+    total = None if cost is None else round(cost + (got.vector_cost_usd or 0.0), 6)
     message_id = store.chat.add(None, ChatRole.ASSISTANT, text, cfg.provider_id, model, cites, total, thread_id=thread_id)
-    log.info("chat global: %d trecho(s) de %d reunião(ões), %s, em %.1f ms; resposta em %.1f ms%s; %d citação(ões)", len(picked),
-             len(blocks), "busca híbrida" if found.hybrid else f"busca por palavras ({found.reason})", search_ms, _ms(t1),
+    log.info("chat global: %d trecho(s) de %d reunião(ões), %s, em %.1f ms; resposta em %.1f ms%s; %d citação(ões)", len(got.hits),
+             len(got.blocks), "busca híbrida" if got.hybrid else f"busca por palavras ({got.reason})", got.ms, _ms(t1),
              " (interrompida)" if stopped else "", len(cites))
     return GlobalChatAnswer(text, rendered, tuple(cites), total, thread_id, message_id, question_id, call_id, None, stopped, *common)
 
@@ -318,5 +346,5 @@ def rate_answer(store: Store, message_id: int, rating: int | None) -> bool:
     return store.chat.set_rating(message_id, rating)
 
 
-__all__ = ["GlobalChatAnswer", "build_excerpts", "load_citations", "parse_rate_link", "rate_answer", "rate_link", "run_global_chat",
-           "thread_html", "thread_title"]
+__all__ = ["GlobalChatAnswer", "Retrieved", "build_excerpts", "load_citations", "parse_rate_link", "rate_answer", "rate_link", "retrieve",
+           "run_global_chat", "thread_html", "thread_title"]

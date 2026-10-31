@@ -10,12 +10,13 @@ from typing import Any
 
 from ...config.prompts import text_hash
 from ..types import LlmTask, Message
-from . import chat, executive, glossary, identify, minutes, partial, pre_summary, rag_chat, revise, test, title, transcribe
+from . import (chat, executive, glossary, identify, minutes, partial, pre_summary, rag_answer, rag_chat, rag_sql, revise, test, title,
+               transcribe)
 
 MODULES: dict[LlmTask, ModuleType] = {
     LlmTask.GLOSSARY: glossary, LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: executive,
     LlmTask.PRE_SUMMARY: pre_summary, LlmTask.TITLE: title, LlmTask.REVISE: revise, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat,
-    LlmTask.TEST: test, LlmTask.PARTIAL: partial, LlmTask.RAG_CHAT: rag_chat,
+    LlmTask.TEST: test, LlmTask.PARTIAL: partial, LlmTask.RAG_CHAT: rag_chat, LlmTask.RAG_SQL: rag_sql, LlmTask.RAG_ANSWER: rag_answer,
 }
 # A-25: as tarefas com instruções editáveis, na ordem da página "Prompts" (o `test` fica fora)
 EDITABLE: tuple[LlmTask, ...] = (LlmTask.IDENTIFY, LlmTask.REVISE, LlmTask.TITLE, LlmTask.PRE_SUMMARY, LlmTask.MINUTES,

@@ -5,7 +5,8 @@ entre o apelido e o tempo e o intervalo `12:03-12:40` (vale o começo). O tempo 
 reunião, até 5 s (a mais próxima): casou, vira o link `listener://open?m=<reunião>&t=<ms>&seg=<segmento>` (o tempo navega; o
 segmento é só dica, F5A-06) com um texto legível (título curto, data dd/mm e mm:ss); não casou, fica o texto legível sem
 link; apelido desconhecido fica como veio. Nada some. F5.6 (P-02): a reunião excluída no Histórico vira "reunião excluída",
-sem link, no redesenho da conversa e na cópia (o histórico do prompt segue só com o tempo).
+sem link, no redesenho da conversa e na cópia (o histórico do prompt segue só com o tempo). F5.10: o apelido aceita até 6
+dígitos, porque "Perguntar à base" cita a reunião pelo id (`[R<reuniao_id> mm:ss]`, D5).
 
 `rewrite` devolve o HTML e as citações `[{alias, meeting_id, t_ms, segment_id, cited_ms}]` que `chat_messages` guarda (`t_ms`
 é o da linha casada; nulo = sem link de tempo; `cited_ms` é o que a LLM escreveu). `render_saved` redesenha a conversa a
@@ -26,8 +27,8 @@ MAX_DISTANCE_MS = 5000
 TITLE_CHARS = 32
 GONE_LABEL = "reunião excluída"      # F5.6 (P-02): a citação de uma reunião que não existe mais (o piso nunca reaproveita o id)
 SCHEME = "listener"
-BRACKET_RE = re.compile(r"\[\s*([Rr]\d{1,3}\b[^\[\]\n]{0,160}?)\s*\]")
-TOKEN_RE = re.compile(r"\s*(?:(?P<alias>[Rr]\d{1,3})\b|(?P<time>(?:\d{1,2}:)?\d{1,3}:\d{2})\b|(?P<sep>[;,])|(?P<dash>[-\u2013\u2014]))\s*")
+BRACKET_RE = re.compile(r"\[\s*([Rr]\d{1,6}\b[^\[\]\n]{0,160}?)\s*\]")
+TOKEN_RE = re.compile(r"\s*(?:(?P<alias>[Rr]\d{1,6})\b|(?P<time>(?:\d{1,2}:)?\d{1,3}:\d{2})\b|(?P<sep>[;,])|(?P<dash>[-\u2013\u2014]))\s*")
 
 type Citation = dict[str, Any]
 

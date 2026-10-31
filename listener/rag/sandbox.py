@@ -195,6 +195,7 @@ class Sandbox:
         self.policy = policy
         self.views = views
         self._deadline = math.inf
+        self._stop: Callable[[], bool] | None = None
         conn.set_authorizer(policy)
         conn.set_progress_handler(self._tick, PROGRESS_STEPS)
 
@@ -217,14 +218,17 @@ class Sandbox:
         return cls(conn, policy, views)
 
     def _tick(self) -> int:
-        return 1 if time.monotonic() > self._deadline else 0
+        return 1 if time.monotonic() > self._deadline or (self._stop is not None and self._stop()) else 0
 
-    def run(self, sql: str, params: Sequence[object] = (), *, max_rows: int, timeout_s: float) -> QueryResult:
-        """Uma consulta de leitura com prazo: as primeiras `max_rows` linhas e o total, ou a categoria do erro."""
+    def run(self, sql: str, params: Sequence[object] = (), *, max_rows: int, timeout_s: float,
+            should_stop: Callable[[], bool] | None = None) -> QueryResult:
+        """Uma consulta de leitura com prazo: as primeiras `max_rows` linhas e o total, ou a categoria do erro. `should_stop()`
+        verdadeiro (a pergunta cancelada) interrompe a consulta como o prazo."""
         t0 = time.perf_counter()
         if first_word(sql) not in READ_ONLY_WORDS:
             return QueryResult((), (), 0, _ms(t0), Category.DENIED, ONLY_READS)
         self._deadline = time.monotonic() + max(0.05, float(timeout_s))
+        self._stop = should_stop
         cur: sqlite3.Cursor | None = None
         try:
             cur = self.conn.execute(sql, tuple(str(p) for p in params))
@@ -239,7 +243,7 @@ class Sandbox:
         except (sqlite3.Error, sqlite3.Warning) as e:
             return QueryResult((), (), 0, _ms(t0), category(e), str(e))
         finally:
-            self._deadline = math.inf
+            self._deadline, self._stop = math.inf, None
             if cur is not None:
                 cur.close()
 
