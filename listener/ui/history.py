@@ -30,11 +30,11 @@ vermelho; os trechos e as respostas em HTML por classes (cores dos tokens). As f
 `ui/history_data.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17).
 F5.6 L3 (U-093, A-40, P-04): a lista em seleção múltipla, com "Excluir…" no menu de contexto, num botão sob a lista e na tecla
 Delete (só na tabela) e a confirmação única, em `ui/history_delete.py`; quem exclui é o controlador (`on_delete`). A montagem
-da aba "Perguntar às reuniões" mora em `ui/history_chat.py`."""
+da aba "Perguntar às reuniões" mora em `ui/history_chat.py`. F5.10 (D7): a conversa dela mora em
+`ui/history_ask.py` (`AskMixin`)."""
 from __future__ import annotations
 
 import functools
-import html
 import json
 import threading
 from collections import deque
@@ -49,21 +49,21 @@ from PySide6.QtGui import QAction, QCloseEvent, QContextMenuEvent, QGuiApplicati
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QSizePolicy,
                                QStackedWidget, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..llm.costs import fmt_usd
 from ..log import get_logger
-from ..model import ActionStatus, ChatRole
-from ..rag import chat_global, citations, export
+from ..model import ActionStatus
+from ..rag import chat_global
 from ..rag import search as rag_search
 from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed
 from .components import Badge, BadgeDelegate, HtmlView
+from .history_ask import CHAT_EMPTY, AskMixin
 from .history_chat import build_chat_tab
 from .history_data import (ACTION_COLUMNS, DUE_COL, HIT_SCHEME, KIND_TAB, MEETING_COLUMNS, MEETING_SCHEME, PERIODS, STATUS_COL, STATUS_TEXT,
                            ActionLine, MeetingLine, MeetingsModel, coverage_text, fmt_int, friendly_reason, hit_link, hit_quote,
                            hit_target, is_overdue, load_actions, load_meetings, period_range, results_html, search_filters)
 from .history_delete import MeetingsDelete, OnDelete
 from .icons import tone_icon
-from .tasks import StreamTask, run_stream, run_task, wait_before_close
-from .theme import METRICS, TONE_ROLE, Tone, note, surface_tokens, tone
+from .tasks import StreamTask, run_task, wait_before_close
+from .theme import METRICS, TONE_ROLE, Tone, note, surface_tokens
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -78,8 +78,6 @@ VECTOR_DELAY_MS = 600            # o vetor da consulta (pago) no Enter ou depois
 TASK_WAIT_MS = 3000              # saída do app: espera cada busca ou pergunta em voo até isto
 LOCAL_IDLE_S = 600.0             # F5.1 (A-11): a sessão do e5 local é solta depois de 10 min sem uso
 LOCAL_RELEASE_TICK_MS = 60_000   # ...conferido a cada minuto
-CHAT_EMPTY = ("<p class='note'>Pergunte sobre todas as reuniões. A resposta cita a reunião, quem falou e o minuto; o clique "
-              "numa citação abre a reunião naquele ponto e toca. Os filtros de pessoa e período valem aqui também.</p>")
 OVERDUE_TONE = Tone.DANGER       # F5.4 (A-11): a ação atrasada e a busca que falhou, no tom de perigo do tema
 KEPT = 100                       # instrumentação dos testes: as últimas respostas e cópias
 
@@ -124,7 +122,7 @@ class LinkBrowser(HtmlView):
         menu.exec(event.globalPos())
 
 
-class HistoryPage(QWidget):
+class HistoryPage(AskMixin, QWidget):
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
                  on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
                  on_delete: OnDelete | None = None, parent: QWidget | None = None):
@@ -608,135 +606,6 @@ class HistoryPage(QWidget):
         else:
             self._open(line.meeting_id, "acoes")
 
-    # ---------------------------------------------------------------- perguntar às reuniões (item 11, U-027)
-    def _load_threads(self, select: int | None = None) -> None:
-        self.threads.blockSignals(True)
-        self.threads.clear()
-        self.threads.addItem("Nova conversa", None)
-        for t in self.store.chat.list_threads():
-            when = export.fmt_date(str(t.get("last_at") or t.get("created_at") or ""))
-            title = str(t.get("title") or "(sem título)")
-            self.threads.addItem(f"{title} · {when}" if when else title, int(t["id"]))
-        self.threads.setCurrentIndex(max(0, self.threads.findData(select)) if select is not None else 0)
-        self.threads.blockSignals(False)
-
-    def _thread_chosen(self, index: int) -> None:
-        if self.chat_task is not None:
-            return
-        data = self.threads.itemData(index)
-        self.thread_id = int(data) if data is not None else None
-        self._render_thread()
-
-    def new_thread(self) -> None:
-        if self.chat_task is not None:
-            return
-        self.thread_id = None
-        self.threads.setCurrentIndex(0)
-        self._render_thread()
-        self.question.setFocus()
-
-    def _render_thread(self, keep_scroll: bool = False) -> None:
-        bar = self.chat_view.verticalScrollBar()
-        value = bar.value()
-        self.chat_view.setHtml(chat_global.thread_html(self.store, self.thread_id) if self.thread_id is not None else CHAT_EMPTY)
-        if keep_scroll:
-            bar.setValue(value)
-        else:
-            self.chat_view.moveCursor(self.chat_view.textCursor().MoveOperation.End)
-
-    def _update_chat_note(self) -> None:
-        filt = self.filters_text()
-        self.chat_note.setText(f"Filtros da aba Reuniões: {filt}." if filt else "Sem filtros: a pergunta vai a todas as reuniões.")
-
-    def ask(self) -> None:
-        text = self.question.text().strip()
-        if not text or self.chat_task is not None:
-            return
-        if self.store.providers.active_with_key("llm") is None:
-            self._chat_warning("Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso.")
-            return
-        self.question.clear()
-        self._partial = ""
-        self._chat_stopped = False
-        self._base_html = ((chat_global.thread_html(self.store, self.thread_id) if self.thread_id is not None else "")
-                           + f"<p><b>Você:</b> {html.escape(text)}</p>")
-        self._render_partial()
-        self.btn_ask.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        self.btn_new.setEnabled(False)
-        self.threads.setEnabled(False)
-        self._chat_status("procurando nas reuniões…")
-        log.info("chat global: pergunta enviada (%d caracteres; conversa %s)", len(text), self.thread_id)   # o texto não (LGPD)
-        fn = functools.partial(chat_global.run_global_chat, self.store, self.thread_id, text, self.filters())
-        task = run_stream(fn, self.store, self._on_chunk, self._on_chat_done)
-        self._watch_local()                              # o vetor da pergunta pode reabrir a sessão do e5 solta antes
-        self.chat_task = task
-        self._tasks.add(task)
-        task.finished.connect(functools.partial(self._tasks.discard, task))
-
-    def _on_chunk(self, piece: str) -> None:
-        if self._closed:
-            return
-        self._partial += piece
-        self._render_partial()
-        self._chat_status(f"recebendo… {len(self._partial)} caracteres")
-
-    def _render_partial(self) -> None:
-        partial = html.escape(self._partial).replace("\n", "<br>") or "…"
-        self.chat_view.setHtml(f"{self._base_html}<p><b>LLM:</b> {partial}</p>")
-        self.chat_view.moveCursor(self.chat_view.textCursor().MoveOperation.End)
-
-    def _on_chat_done(self, result: Any) -> None:
-        self.chat_task = None
-        if self._closed:
-            return
-        self.btn_ask.setEnabled(True)
-        self.btn_stop.setEnabled(False)
-        self.btn_new.setEnabled(True)
-        self.threads.setEnabled(True)
-        if isinstance(result, ValueError):              # sem provedor, pergunta vazia, conversa apagada: aviso
-            self._render_thread()
-            self._chat_warning(str(result)[:1].upper() + str(result)[1:] + ".")
-            self._answered_away(False)
-            return
-        if isinstance(result, BaseException):
-            self._render_thread()
-            self._chat_warning(f"A pergunta falhou: {result}")
-            self._answered_away(False)
-            return
-        ans: chat_global.GlobalChatAnswer = result
-        self.answers.append(ans)
-        if ans.thread_id is not None and ans.thread_id != self.thread_id:
-            self.thread_id = ans.thread_id
-            self._load_threads(select=ans.thread_id)
-        self._render_thread()
-        if ans.error:
-            self._chat_warning(f"A LLM falhou: {ans.error}")
-        elif ans.cancelled and ans.message_id is None:
-            self._chat_status("Pergunta cancelada.")
-        else:
-            cost = f" · {fmt_usd(ans.cost_usd)}" if ans.cost_usd is not None else ""
-            how = "busca híbrida" if ans.hybrid else "busca por palavras"
-            stopped = " · interrompida" if ans.cancelled else ""
-            self._chat_status(f"{ans.linked} citação(ões) com link · {ans.excerpts} trecho(s) de {len(ans.aliases)} "
-                                     f"reunião(ões) · {how}{cost}{stopped}")
-        if ans.error or not ans.cancelled:
-            self._answered_away(not ans.error)
-
-    def _answered_away(self, ok: bool) -> None:
-        """F5.3 (A-12): terminou com o Histórico fora de foco (o usuário foi para outro app ou o escondeu: a pergunta segue e
-        grava): o controlador avisa. Parada pelo usuário ("Parar"), não."""
-        if self.on_answer is not None and not self._chat_stopped and not self.window().isActiveWindow():
-            self.on_answer(ok)
-
-    def _chat_warning(self, text: str) -> None:
-        self._chat_status(text, Tone.WARNING)
-
-    def _chat_status(self, text: str, value: Tone = Tone.SECONDARY) -> None:
-        """A linha de estado do chat, em texto puro no tom (F5.4, A-10: o aviso em `warning`, sem HTML com cor)."""
-        self.chat_status.setText(text)
-        tone(self.chat_status, value)
-
     def _set_badge(self, text: str, value: Tone | None = None, count: str = "") -> None:
         """O estado da busca num selo (verde híbrida, âmbar só palavras, vermelho falhou) e a contagem ao lado (U-084)."""
         self.badge.setText(text)
@@ -744,52 +613,6 @@ class HistoryPage(QWidget):
         self.badge.setVisible(bool(text))
         self.badge_count.setText(count)
         self.badge_count.setVisible(bool(count))
-
-    def stop_chat(self) -> None:
-        if self.chat_task is not None:
-            self._chat_stopped = True
-            self.chat_task.cancel()
-            self._chat_status("parando…")
-
-    def _chat_link(self, url: QUrl) -> None:
-        link = url.toString()
-        opened = citations.parse_open_link(link)
-        if opened is not None:
-            self._open(opened.meeting_id, "transcricao" if opened.t_ms is not None else None, opened.t_ms, opened.t_ms is not None)
-            return
-        rated = chat_global.parse_rate_link(link)
-        if rated is not None and self.chat_task is None:
-            chat_global.rate_answer(self.store, rated[0], rated[1])
-            self._render_thread(keep_scroll=True)
-
-    def _answer_at(self, pos: QPoint) -> dict[str, Any] | None:
-        """A mensagem do chat debaixo do cursor: a conversa é um parágrafo por mensagem (`thread_html`)."""
-        if self.thread_id is None or self.chat_task is not None:
-            return None
-        block = self.chat_view.cursorForPosition(pos).block().blockNumber()
-        rows = self.store.chat.list_for_thread(self.thread_id)
-        if 0 <= block < len(rows) and str(rows[block]["role"]) == ChatRole.ASSISTANT:
-            return dict(rows[block])
-        return None
-
-    def _answer_actions(self, pos: QPoint, _link: str) -> list[tuple[str, Callable[[], Any]]]:
-        row = self._answer_at(pos)
-        if row is None:
-            return []
-        return [("Copiar com citação", functools.partial(self.copy_answer, row))]
-
-    def copy_answer(self, row: dict[str, Any]) -> str:
-        """U-029 numa resposta: o texto com as citações legíveis (reunião, data e [mm:ss]), em texto e HTML sem links."""
-        saved = chat_global.load_citations(row.get("citations_json"))
-        meetings: dict[int, tuple[str | None, str | None]] = {}
-        for mid in citations.saved_meeting_ids(saved):
-            m = self.store.get_meeting(mid)
-            if m is not None:
-                meetings[mid] = (m.get("title") or m.get("title_llm"), str(m.get("started_at") or "")[:10])
-        plain, rich = export.quote_answer(str(row.get("text") or ""), saved, meetings)
-        copy_rich(plain, rich)
-        self.copied.append(plain)
-        return plain
 
     @override
     def showEvent(self, event: QShowEvent) -> None:
