@@ -7,14 +7,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   leitura até a resposta com citações `[R12 03:15]`, o "Como cheguei aqui" e o "Ver dados". Na revisão do diff, um
   revisor novo achou a junção com `USING` ou `NATURAL` que lia a chave de API e os e-mails; fechada em três camadas,
   mais o teto de memória por consulta e outros quatro achados (D-075; o teto medido no Windows). Suíte de 1.376 testes.
+  O `.exe` foi gerado de novo com a F5.10 (31/10, 09:19: 407 s, 892 MB, sonda `--probe` ok, os 12 módulos novos no
+  pacote, o `sqlite3.dll` igual ao dos testes); é ele que vale para as Partes 19 e 21.
   **Falta o dono:** o aceite G5.10 pela Parte 21 do roteiro, com a chave do Gemini no banco real (15 perguntas).
 - **D-072, a revisão do código inteiro** (30/10, pedido do dono): sete leitores e dois revisores, 27 achados; quatro
   corrigidos com teste (o logoff cancelado que deixava o app vivo sem banco, o log que parava aos 5 MB, a pausa manual
   que derrubava o worker leve e o CI) mais o `_MutePoller` preso na saída; os reais e pequenos ficaram em "Dívidas
   técnicas". **O CI nunca tinha rodado um teste** (o `ci.yml` era YAML inválido desde 24/10): o próximo push do dono é o
   primeiro de verdade e pode mostrar falhas de Linux e macOS que nunca apareceram. O logoff cancelado, o dono confere
-  pela Parte 9 do roteiro. O `.exe` foi gerado de novo com as correções (30/10, 22:21: 658 s, 892 MB, sonda `--probe`
-  ok); é ele que vale para a Parte 19.
+  pela Parte 9 do roteiro.
 - **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
   versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
   ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
