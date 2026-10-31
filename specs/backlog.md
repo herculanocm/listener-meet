@@ -13,7 +13,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.10 em rascunho** (30/10, pedido do dono, `features/F5.10-perguntar-a-base.md`): perguntar à base com consultas
   SQL de leitura que a LLM escreve e o app executa numa sandbox, em rodadas, até poder responder com citações. As seis
   perguntas respondidas no padrão, com a mudança do dono: o laço para por exaustão, sem número fixo de consultas
-  (D-073). Agora: a revisão de arquitetura (D-040), depois a aprovação.
+  (D-073). **Aprovada** depois da revisão de arquitetura (D-074); a implementação, lotes L0 a L4, está com um agente
+  programador; depois, a revisão do diff por um agente novo e a verificação no Windows.
 - **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
   versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
   ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
