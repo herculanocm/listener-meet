@@ -2,7 +2,12 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
+## Onde paramos (31/10/2026, Windows nativo; tudo commitado; push do dono)
+- **F5.10 implementada** (31/10; o detalhe na seção Implementação da spec): perguntar à base em rodadas de SQL só de
+  leitura até a resposta com citações `[R12 03:15]`, o "Como cheguei aqui" e o "Ver dados". Na revisão do diff, um
+  revisor novo achou a junção com `USING` ou `NATURAL` que lia a chave de API e os e-mails; fechada em três camadas,
+  mais o teto de memória por consulta e outros quatro achados (D-075; o teto medido no Windows). Suíte de 1.376 testes.
+  **Falta o dono:** o aceite G5.10 pela Parte 21 do roteiro, com a chave do Gemini no banco real (15 perguntas).
 - **D-072, a revisão do código inteiro** (30/10, pedido do dono): sete leitores e dois revisores, 27 achados; quatro
   corrigidos com teste (o logoff cancelado que deixava o app vivo sem banco, o log que parava aos 5 MB, a pausa manual
   que derrubava o worker leve e o CI) mais o `_MutePoller` preso na saída; os reais e pequenos ficaram em "Dívidas
@@ -10,11 +15,6 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   primeiro de verdade e pode mostrar falhas de Linux e macOS que nunca apareceram. O logoff cancelado, o dono confere
   pela Parte 9 do roteiro. O `.exe` foi gerado de novo com as correções (30/10, 22:21: 658 s, 892 MB, sonda `--probe`
   ok); é ele que vale para a Parte 19.
-- **F5.10 em rascunho** (30/10, pedido do dono, `features/F5.10-perguntar-a-base.md`): perguntar à base com consultas
-  SQL de leitura que a LLM escreve e o app executa numa sandbox, em rodadas, até poder responder com citações. As seis
-  perguntas respondidas no padrão, com a mudança do dono: o laço para por exaustão, sem número fixo de consultas
-  (D-073). **Aprovada** depois da revisão de arquitetura (D-074); a implementação, lotes L0 a L4, está com um agente
-  programador; depois, a revisão do diff por um agente novo e a verificação no Windows.
 - **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
   versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
   ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
@@ -33,7 +33,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   reunião de verdade, pela Parte 19 do roteiro. A telemetria do pyannote foi desligada depois (`5b6496a`, pergunta 16).
 - **F5.7 implementada** (29/10; o detalhe está no item do Concluído). Falta o dono verificar no Windows, pela Parte 17
   do roteiro, numa chamada de verdade.
-- **Próximo passo do dono:** testar os canais que se recuperam pela Parte 20 (F5.9), a troca de aparelho pela Parte
+- **Próximo passo do dono:** perguntar à base pela Parte 21 (F5.10, o gate G5.10), testar os canais que se recuperam
+  pela Parte 20 (F5.9), a troca de aparelho pela Parte
   18 (D-067), o `.exe` pela Parte 19 (F5.8) e a
   F5.7 pela Parte 17 (reinicie o app
   antes), a F5.6 L2 pela Parte 16 (reinicie o app antes), a L1 pela Parte 15 e a L3 pela
@@ -268,6 +269,10 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
   cancelado gravado como `OK` sem custo; o preparo do ao vivo sem prazo no `repo_info` e sem Cancelar; o
   `db-location.json` sem gravação atômica; "Apagar preset" sem confirmação (UX: perguntar ao dono); o assistente diz
   "cinco passos" e mostra seis.
+- **F5.10, da revisão do diff** (D-075): o `--downgrade` com o app aberto faz o chat falhar até reabrir (nada se perde;
+  sem trava de instância única); a `memory_rss` do Windows mede o working set, que o sistema pode encolher, e o teto da
+  consulta mediria menos que o real; `rag/agent.py` (380), `ui/history_ask.py` (363) e `rag/sandbox.py` (356) perto do
+  limite de 400 linhas.
 - **Caminho no log** (visto no L3 da F5.7, de antes dela): o `attach_log` do `app.py`, quando falha, loga o caminho do
   arquivo de log, que tem a pasta do usuário. Isso vai contra a D-053. Trocar pelo código do erro e pôr o `app.py` no
   teste de privacidade. A linha de abertura de todo log também grava `"banco": <pasta>` (`ui/app.py:136`; visto na

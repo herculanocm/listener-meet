@@ -13,7 +13,7 @@ dono não está aqui. Tamanho-alvo: 11 KB.
   (LLM e índice) e `listener-live.log` (ao vivo). Chave e token não vão para o log.
 - Devolver: cole no chat o que a parte pede (saída de comando, números, print da tela estranha) ou o caminho do log.
   Nunca cole a chave nem o token.
-- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 20 quando der; a 8 e a 9 nas reuniões reais da semana.
+- Ordem: as partes 1 a 6 numa sessão (~2 h); a 7 e as 10 a 21 quando der; a 8 e a 9 nas reuniões reais da semana.
 - Para ver a RAM e a CPU de cada processo: Gerenciador de Tarefas › Detalhes, com a coluna "Linha de comando" (clique
   direito no cabeçalho › Selecionar colunas). O app é o `python.exe` com `-m listener`; o processamento, `--worker`; a
   LLM e o índice, `--worker --light`; o ao vivo, `--live`.
@@ -434,6 +434,44 @@ e foi só isso que a rodada de 30/10 (reunião 8) acabou testando.
 - Devolva: as linhas `device_lost`, `device_back` e `source_change` do log com os horários; o tempo entre fechar o app
   e o aviso, e entre o som voltar e o R gravar de novo; prints do "agora X", da tabela de fontes e do aviso de eco;
   qualquer caixa de erro.
+
+## Parte 21 — F5.10: perguntar à base (40 min; o gate G5.10, com a chave do Gemini)
+Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). Precisa da chave do Gemini (Parte 2) e de reuniões já
+processadas. A LLM só lê a base: nenhuma pergunta muda nada. O custo de cada pergunta aparece no "Como cheguei aqui".
+- [ ] Configurações › Busca: o cartão "Perguntar à base" com o modelo forte (desligado), as linhas e o prazo de cada
+      consulta e as três guardas (custo, tempo, rodadas). Deixe no padrão. Configurações › Prompts: 12 tarefas, com
+      "Perguntar à base: consultas" e "Perguntar à base: resposta"; o "Chat de todas as reuniões" saiu.
+- [ ] Histórico › "Perguntar às reuniões", sem filtro na aba Reuniões. O estado vazio traz sugestões clicáveis. Faça 15
+      perguntas sobre as suas reuniões de verdade, de três tipos, e anote para cada uma se está certa, errada ou é um
+      "não sei" honesto; se as citações `[R12 03:15]` levam ao trecho certo; o tempo; o custo; e onde parou:
+      - 5 de contagem ou soma ("quantas reuniões tive em outubro?", "quantas horas de reunião por semana?", "quem mais
+        falou nas últimas 5?", "quanto gastei de LLM este mês?", "ações abertas por dono");
+      - 5 por atributo ("reuniões com a <pessoa>", "as presenciais", "as de terça", "a mais longa", "ações vencidas");
+      - 5 de conteúdo ("o que foi decidido sobre <assunto>?", "o que a <pessoa> disse sobre <tema>?", "quando falamos
+        de <tema> pela primeira vez?").
+- [ ] Durante: "Consultando a base… rodada 2 · 7 consultas" e o Cancelar. Cancele uma pergunta no meio: ela para e a
+      conversa segue usável.
+- [ ] Na resposta: "Como cheguei aqui" abre e fecha, com cada consulta, o SQL e o tempo; "Copiar SQL" copia; "Ver
+      dados" abre a tabela da consulta e "Copiar como tabela" cola no Excel em colunas.
+- [ ] Com um filtro na aba Reuniões (uma pessoa ou um período): a resposta começa por "Considerando os filtros: …" e só
+      conta essas reuniões.
+- [ ] Desempenho: a primeira pergunta depois de abrir o app monta a base de consulta (anote o tempo até a 1ª rodada);
+      nenhuma consulta sobre as falas para por prazo (no "Como cheguei aqui", o erro diz "prazo").
+- [ ] Telas a 150 %: o progresso com o Cancelar, o "Como cheguei aqui" aberto, o "Ver dados", o cartão e a página
+      Prompts, no claro e no escuro.
+- [ ] Modelo forte (opcional): ligue "Usar o modelo forte nas consultas" no cartão, refaça duas perguntas e confira
+      que o custo no "Como cheguei aqui" sobe e a resposta continua certa; depois, desligue.
+- [ ] Opcional (5 min, com o app fechado): a volta da v9 numa cópia. Copie a pasta do banco para uma pasta local fora
+      do OneDrive (por exemplo `C:\temp\copia-banco`) e rode `.venv\Scripts\python.exe -m listener --downgrade
+      C:\temp\copia-banco 8`: a saída é `{"downgrade": "ok", "desfeitas": [9]}`. Depois, `.venv\Scripts\python.exe -m
+      listener --check C:\temp\copia-banco` roda sem erro. Apague a cópia no fim: ela tem as suas reuniões.
+- O gate passa com 12 ou mais das 15 certas e com as citações certas, a mediana até 30 s e até US$ 0,03 por pergunta,
+  e nenhuma parando numa guarda.
+- Devolva:
+  - a tabela das 15 (pergunta resumida, certa ou não, citações, tempo, custo, onde parou);
+  - prints das telas;
+  - as linhas de erro do `listener.log`, que nunca traz a pergunta, o SQL nem os dados;
+  - a saída do `--downgrade` e do `--check`, se fez.
 
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.

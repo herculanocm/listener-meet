@@ -31,8 +31,8 @@ KB.
 | processing_jobs | main | id, meeting_id (FK cascade), kind (meeting, reprocess, embed_range; F3: llm, classe leve; F5: index, classe leve, depois dos llm e com a varredura por último), status (pendente, rodando, pausado, concluído, erro, cancelado), step (F3: identify, minutes, executive, pre_summary, title, revise, test; F5: index_text, index_vectors), progress, error, attempts, params_json (llm: tasks, parent_job_id, auto; F5 index: reason pipeline, llm, review, edit, sweep ou reindex, force e not_before, a espera durável das edições), config_json (snapshot `pipeline.*`; llm: `LlmJobConfig` sem chave), cancel_requested, heartbeat_at, worker_pid, claimed_at, started_at, finished_at, timings_json (llm: cost_usd, skipped, done; index: trechos, vetores e a nota dos faltantes) | F2, F3, F5 | v8 |
 | clusters | main | id, meeting_id (FK cascade), job_id, channel, cluster (SPK_n; L = usuário), speech_ms, centroid BLOB, model, person_id (sugestão ou confirmação), similarity, margin, status (auto, confirmado, ambíguo, sem_nome, ignorado), merged_into; F3: llm_person_id, llm_name, llm_confidence, llm_evidence_json (só em ambíguo e sem_nome, via `set_llm_suggestion`, CP11), decision_source (auto, usuario, usuario_pyannote, usuario_llm, usuario_outro) | F2, F3 | v6 |
 | job_artifacts | main | job_id (FK cascade), step, idx, data BLOB (JSON zlib mais float32), PK (job_id, step, idx); dado derivado, apagado ao concluir; F3: `ok` por tarefa concluída e notas por bloco da ata hierárquica | F2, F3 | v4 |
-| llm_calls | main | id, meeting_id (nulo = glossário antes da reunião ou reunião apagada: Cancelar mantém a chamada paga, para o custo do mês, sem a reunião e sem o pedido e a resposta guardados), job_id (do pai), task (F4: partial; F5: rag_embed, por lote do índice com a reunião ou da consulta com reunião nula e strategy `query`, e rag_chat, do chat global, com reunião nula), provider, model, prompt_version, schema_hash, input_tokens, output_tokens, cached_tokens, audio_tokens, cost_usd (nulo = sem preço), latency_ms, status (ok, erro), error (redigido), strategy (direct, map_reduce:n, stream, canary), request_blob e response_blob (zlib, se `llm.store_payloads`), created_at | F3 | v6 |
-| chat_messages | main | id, meeting_id (FK cascade; nulo = chat global ou órfã da reconstrução da v8), thread_id (F5, FK cascade), role (user, assistant), text, provider, model, citations_json (F3: [{t_ms, segment_id}]; global: [{alias, meeting_id, t_ms, cited_ms, segment_id}]), cost_usd, rating (U-027: 1, 0 ou nulo), created_at | F3, F5 | v8 |
+| llm_calls | main | id, meeting_id (nulo = glossário antes da reunião ou reunião apagada: Cancelar mantém a chamada paga, para o custo do mês, sem a reunião e sem o pedido e a resposta guardados), job_id (do pai), task (F4: partial; F5: rag_embed, por lote do índice com a reunião ou da consulta com reunião nula e strategy `query`, e rag_chat, do chat global, com reunião nula; F5.10: rag_sql, cada rodada de "Perguntar à base", e rag_answer, a resposta em streaming, as duas com reunião nula), provider, model, prompt_version, schema_hash, input_tokens, output_tokens, cached_tokens, audio_tokens, cost_usd (nulo = sem preço), latency_ms, status (ok, erro), error (redigido), strategy (direct, map_reduce:n, stream, canary), request_blob e response_blob (zlib, se `llm.store_payloads`), created_at | F3 | v6 |
+| chat_messages | main | id, meeting_id (FK cascade; nulo = chat global ou órfã da reconstrução da v8), thread_id (F5, FK cascade), role (user, assistant), text, provider, model, citations_json (F3: [{t_ms, segment_id}]; global: [{alias, meeting_id, t_ms, cited_ms, segment_id}]), cost_usd, rating (U-027: 1, 0 ou nulo), trace_json (F5.10: os passos de "Perguntar à base", `rag/trace.py`: cada rodada com a nota, o custo e o tempo; cada consulta com o SQL, os `params`, o objetivo, as linhas, os ms e a categoria do erro; cada busca com o texto, quantos trechos e os ms; por que parou e os filtros da pergunta; nunca os dados), created_at | F3, F5, F5.10 | v9 |
 | chat_threads | main | id, title (primeira pergunta), created_at: conversas do chat global | F5 | v8 |
 | llm_prices | main | provider, model (id ou prefixo de família), input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at; PK (provider, model); sementes do projeto, editáveis na sub-aba | F3 | v6 |
 
@@ -54,12 +54,15 @@ toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `
 `rtf_json`), `llm.*` (F3: output_language, auto_tasks, cost_alert_usd, max_parallel, audio_second_opinion,
 glossary_enabled, store_payloads, proxy_url, ca_bundle, system_certs), `live.*` (F4: enabled, names, model, threads,
 summary_interval_min com 0 = parcial desligado, in_widget), `ui.live_geometry`, `ui.live_on_top`, `rag.*` (F5:
-auto_index = vetores automáticos, top_k, max_per_meeting), `hotkeys.history`, `ui.history_geometry`,
+auto_index = vetores automáticos, top_k, max_per_meeting; F5.10: sql_strong, sql_max_rows, sql_timeout_s e as guardas
+sql_max_cost_usd, sql_max_minutes, sql_max_rounds), `hotkeys.history`, `ui.history_geometry`,
 `ui.meeting_geometry`, `ui.history_filters`; tipo, faixa e escopo na tabela `SPECS` (M-24).
 Esquema do main: v1 (F1), v2 (datas com offset, A5), v3 (`meetings.audio_file`), v4 (F2: fila, clusters, artefatos,
 colunas dos perfis), v5 (calib_n, cluster_id), v6 (F3: camada de LLM, sementes de preço e provedores), v7 (F4: colunas
 de `captions` e `presets`, índice das legendas), v8 (F5: base consultável, FTS5 obrigatório, conversas, índice da fila
-por reunião; a guarda da CP3 renomeia tabelas da v1 com linhas para `*_v1`); áudio: v1 tabela, v2 datas, por arquivo;
+por reunião; a guarda da CP3 renomeia tabelas da v1 com linhas para `*_v1`), v9 (F5.10: `chat_messages.trace_json`,
+a primeira com volta: `MAIN_DOWNS[9]` em `store/downgrade.py`, pela linha de comando com o app fechado, `python -m
+listener --downgrade <pasta do banco> 8`); áudio: v1 tabela, v2 datas, por arquivo;
 `user_version` acompanha; cada migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo `json_default`
 (numpy e datas; o resto é erro).
 Papéis do `Store`: APP migra; WORKER (worker da F2 e processo ao vivo da F4) escreve no main sem migrar e lê o áudio em
@@ -67,5 +70,9 @@ Papéis do `Store`: APP migra; WORKER (worker da F2 e processo ao vivo da F4) es
 Job vigente de uma reunião (revisão, leitura, trecho de 5 s): o `concluído` mais recente entre `meeting` e `reprocess`;
 sem concluído, o ativo; jobs `llm` nunca contam (F3A-04) e tudo que escrevem leva o `job_id` do pai. Chaves de API em
 `providers.api_key`, nunca em `config_json`, log ou erro (redação, CP10).
+O que a LLM lê em "Perguntar à base" (F5.10): só as visões TEMP em PT-BR de `rag/semantic.py`, numa conexão própria só
+de leitura (`rag/sandbox.py`); nunca `providers`, `settings`, `people.email` e `notes`, `meetings.notes`, os pedidos e
+respostas guardados de `llm_calls`, `chat_*` e o resto da lista de negação da spec (D2). Visão nova ou coluna nova numa
+visão entra no dicionário (`rag/dictionary.py`) e passa pelo teste da lista de negação.
 Fora do SQLite, por decisão: o ponteiro `db-location.json` na
 pasta de configuração do sistema (D-029) e o arquivo de log rotativo escolhido pelo usuário (D-033).

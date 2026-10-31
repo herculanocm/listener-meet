@@ -4,7 +4,8 @@ Quando ler: antes de revisar código ou propor correção (T3). Origem: a revis�
 com sete leitores e dois revisores: 27 achados conferidos no código e, quando dava, por experimento ("provado"). Um item
 daqui só volta com fato novo: o código mudou ou apareceu um caso real que a explicação não cobre. Achado novo confirmado
 entra aqui ao fechar a revisão. Critério usado: corrigir só com caminho concreto de dano no uso real (perda de dado,
-queda, travamento, erro visível, CI quebrado). Tamanho-alvo: 5 KB.
+queda, travamento, erro visível, CI quebrado). Depois, a revisão do diff da F5.10 (D-075, 31/10), na seção própria.
+Tamanho-alvo: 8 KB.
 
 ## Corrigidos (D-072)
 | Achado | Correção | Commit |
@@ -42,6 +43,26 @@ Estão em "Dívidas técnicas" do `specs/backlog.md`; não são novidade. A mort
 de leitura ociosa nos três adaptadores) e o cancelado gravado como `OK` sem custo; o preparo do ao vivo sem prazo no
 `repo_info` e sem Cancelar; o `db-location.json` sem gravação atômica; "Apagar preset" sem confirmação (UX: perguntar ao
 dono); o assistente diz "cinco passos" e mostra seis.
+
+## Revisão do diff da F5.10, "Perguntar à base" (D-075, 31/10)
+Corrigidos: a junção com `USING` ou `NATURAL` lia a lista de negação, porque o SQLite não chama o autorizador para a
+coluna da junção (a chave de API e o e-mail vazavam; provado), fechada em três camadas (as palavras recusadas, `people`
+fora das visões e o `EXPLAIN` que só deixa abrir as páginas-raiz das visões) com os nomes sem caixa, `e516141`; a
+memória sem teto dentro do prazo (~2,5 GB/s), o prazo e o Cancelar ~5 s atrasados, `4f1c501`; o custo da resposta com o
+preço do modelo forte e o `too_large` que mandava a resposta sem dado, `3d1a610`; a busca por palavra que logava a
+expressão, `18c62b7`.
+Tentados e fechados (não reapontar sem fato novo): CTE com o nome de uma visão sobre tabela negada; subconsulta;
+`sqlite_schema` e `sqlite_temp_master`; `pragma_*`, também em maiúsculas; `load_extension`, `fts3_tokenizer` e `fts5`;
+`ATTACH` com `mode=rwc`; `WITH … INSERT` em TEMP, `CREATE TEMP VIEW`, `DROP VIEW`, `PRAGMA query_only = 0` e `VACUUM
+INTO`; duas instruções numa string; `dbstat` e `sqlite_dbpage` (não compilados); LIKE e GLOB patológicos; a resposta
+escapada (sem link `listener://` injetável); a sandbox e o "Ver dados" abertos e fechados na mesma thread; a pergunta
+nova e o "Ver dados" barrados com outra em curso; `params` que não são texto; o cache refeito nos sete caminhos de
+escrita.
+Aceitos: o `--downgrade` com o app aberto (o chat falha até reabrir; nada se perde); o FTS lido sem visão e sem filtro
+e a CTE com nome de visão que ignora o filtro (D2: sentido, não sigilo); a contagem sem coluna de uma tabela que uma
+visão lê ignora o filtro (mesma classe); `llm_calls` no `main` sob o autorizador (as colunas negadas guardam pedido,
+resposta e erro, sem chave); a resposta cancelada gravada sem custo (como o chat global); a impressão digital que não vê
+estado, duração nem sala (validade de 10 min); `custos_llm` com filtro esconde as chamadas sem reunião.
 
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),

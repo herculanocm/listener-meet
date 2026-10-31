@@ -306,7 +306,7 @@ class Platform(Protocol):
     def disable_own_power_throttling(self) -> bool: ...
     def sync_stdout_handle(self) -> None: ...
     def lower_own_priority(self) -> bool: ...        # o worker se rebaixa ao nascer (nunca `preexec_fn`)
-    def memory_rss(self) -> int | None: ...          # RSS do próprio processo em bytes, só para o log
+    def memory_rss(self) -> int | None: ...          # RSS do próprio processo em bytes: o log e o teto das consultas da F5.10
 
     # F5.7 (L1): o sensor do aviso de reunião sem gravação; sem ele (outras plataformas, CP15), None ou vazio.
     # `audio_activity` e `close_audio_activity` só na thread que lê: os objetos do sistema nascem, vivem e morrem nela.
