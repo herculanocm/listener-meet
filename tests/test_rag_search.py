@@ -5,10 +5,11 @@ nas duas listas, "por palavras" sem vetor da consulta, sem vetores do modelo ati
 cache das assinaturas (μ refeito, vetor novo de outro processo, trecho apagado, maior id trocado), o vetor da consulta
 (cache, `llm_calls` com reunião nula, falha e tempo esgotado viram o motivo, índice sem vetores não chama a rede),
 `group_by_meeting` e `limit_per_meeting`, as configurações `rag.*` com os vetores automáticos desligados e o `fmt_usd`
-abaixo de um centavo."""
+abaixo de um centavo. O FTS que falha leva ao log só o tipo do erro (D-075)."""
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 import numpy as np
@@ -131,6 +132,24 @@ def test_search_by_words_and_or_fallback_snippet_and_diacritics(store, monkeypat
 
     monkeypatch.setattr(store.rag, "fts_hits", ten)
     assert not search.search(store, "auditoria sexta").fts_or and asked == ['"auditoria" "sexta"*']
+
+
+def test_a_failed_word_search_logs_only_the_error_type(store, monkeypatch, caplog):
+    """C6 (D-075; D-053, D-059): o FTS que falha não leva ao log a expressão (os termos da pergunta) nem a mensagem do SQLite,
+    que a repete; só o tipo do erro. A busca segue, sem nada por palavra."""
+    mark = "MARCAC6NUNCANOLOG"
+    who = _people(store)
+    mid, _job = _meeting(store, who)
+    index.sync_text(store, mid)
+
+    def broken(match: str, *_a: Any, **_kw: Any) -> list[Any]:
+        raise sqlite3.OperationalError(f'fts5: syntax error near "{match}"')
+
+    monkeypatch.setattr(store.rag, "fts_hits", broken)
+    with caplog.at_level("DEBUG", logger="listener"):
+        res = search.search(store, f"auditoria {mark}")
+    assert res.hits == () and mark in res.fts_query and "busca por palavra falhou (OperationalError)" in caplog.text
+    assert mark.casefold() not in caplog.text.casefold()
 
 
 def test_rrf_order_and_ties():

@@ -444,7 +444,7 @@ def _by_words(store: Store, q: fts.FtsQuery, filters: SearchFilters, snippets: b
             expr, used_or = q.any_term, True
             hits = store.rag.fts_hits(expr, LIST_K, filters, snippet_tokens=tokens, per_meeting=cap)
     except sqlite3.OperationalError as e:  # a expressão é montada aqui e segura; o FTS em si nunca derruba a busca
-        log.warning("busca por palavra falhou (%s): %s", expr, e)
+        log.warning("busca por palavra falhou (%s)", type(e).__name__)   # D-053, D-059: a expressão e a mensagem trazem a pergunta
         return [], expr, used_or
     return hits, expr, used_or
 
