@@ -1,5 +1,6 @@
 """A página "Prompts" das Configurações (F5.6 L2, U-092; A-25, A-27, A-30, A-31; CP2, CP8): as instruções de cada uma das
-onze tarefas da LLM, editáveis; o resto do pedido fica embaixo, só leitura.
+tarefas da LLM, editáveis; o resto do pedido fica embaixo, só leitura. F5.10: "Perguntar à base" entra com as consultas
+(`rag_sql`, com o dicionário de dados fixo embaixo) e a resposta (`rag_answer`); o chat antigo de todas as reuniões sai.
 
 - À esquerda, as tarefas com o nome e quando rodam; à direita, a tarefa aberta. A lista só nasce quando a página aparece
   (`prompt_page_shown`, pela troca de página do diálogo) e o editor de cada tarefa (`PromptPane`), quando ela é escolhida: a
@@ -57,7 +58,10 @@ TASKS: dict[LlmTask, tuple[str, str, str]] = {
     LlmTask.PARTIAL: ("Resumo parcial", "durante a gravação",
                       "Roda durante a gravação, com o resumo parcial ligado ou em \"Atualizar resumo agora\"."),
     LlmTask.CHAT: ("Chat da reunião", "a cada pergunta", "Roda a cada pergunta no chat de uma reunião."),
-    LlmTask.RAG_CHAT: ("Chat de todas as reuniões", "a cada pergunta", "Roda a cada pergunta sobre todas as reuniões, no Histórico."),
+    LlmTask.RAG_SQL: ("Perguntar à base: consultas", "a cada pergunta",
+                      "Roda a cada pergunta sobre todas as reuniões, no Histórico: decide as consultas à base e quando parar."),
+    LlmTask.RAG_ANSWER: ("Perguntar à base: resposta", "a cada pergunta",
+                         "Roda no fim de cada pergunta sobre todas as reuniões: escreve a resposta com as citações."),
     LlmTask.GLOSSARY: ("Glossário", "antes de gravar", "Roda no \"Antes de gravar\": os termos que ajudam a transcrição."),
     LlmTask.TRANSCRIBE: ("Transcrição pelo áudio", "ao processar, pela LLM",
                          "Roda ao processar quando a transcrição é feita pela LLM (página Processamento)."),

@@ -54,7 +54,7 @@ def build_chat_tab(page: ChatOwner, view: QTextBrowser) -> ChatTab:
     question.returnPressed.connect(page.ask)
     btn_ask = QPushButton("Perguntar")
     btn_ask.clicked.connect(page.ask)
-    btn_stop = QPushButton("Parar")
+    btn_stop = QPushButton("Cancelar")                     # F5.10: "Consultando a base…" e Cancelar
     btn_stop.setEnabled(False)
     btn_stop.clicked.connect(page.stop_chat)
     chat_status = _plain_note()

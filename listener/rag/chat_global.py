@@ -19,7 +19,7 @@ from __future__ import annotations
 import html
 import json
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
@@ -37,7 +37,7 @@ from ..model import ChatRole, ChunkKind, LlmCallStatus
 from ..pipeline import review
 from ..store.llm_calls import LlmCallInsert
 from ..store.rag import SearchFilters
-from . import citations
+from . import citations, trace
 from .citations import SentLine, Target
 from .search import SearchHit, embed_query, search
 
@@ -320,11 +320,12 @@ def _rating_html(message_id: int, rating: Any) -> str:
     return f'<br><span class="note">Citação certa: {"sim" if int(rating) == 1 else "não"} · {a("desfazer", None)}</span>'
 
 
-def thread_html(store: Store, thread_id: int, *, rating: bool = True) -> str:
+def thread_html(store: Store, thread_id: int, *, rating: bool = True, expanded: Collection[int] = ()) -> str:
     """A conversa como HTML: perguntas escapadas; respostas redesenhadas das citações gravadas (título e data atuais da
     reunião, sem recasar segmentos; F5.6, P-02: a excluída vira "reunião excluída", sem link) e, com `rating`, o "citação
     certa? sim · não" (U-027)
-    como links `listener://rate?msg=<id>&v=1|0` (`parse_rate_link`, `rate_answer`)."""
+    como links `listener://rate?msg=<id>&v=1|0` (`parse_rate_link`, `rate_answer`). F5.10: a resposta de "Perguntar à base"
+    leva o "Como cheguei aqui" dos passos gravados, aberto nas mensagens de `expanded`."""
     rows = store.chat.list_for_thread(thread_id)
     saved = {int(r["id"]): load_citations(r.get("citations_json")) for r in rows if str(r["role"]) == ChatRole.ASSISTANT}
     meetings = _meetings(store, (mid for cites in saved.values() for mid in citations.saved_meeting_ids(cites)))
@@ -334,7 +335,9 @@ def thread_html(store: Store, thread_id: int, *, rating: bool = True) -> str:
             out.append(f"<p><b>Você:</b> {html.escape(str(r['text'])).replace(chr(10), '<br>')}</p>")
             continue
         body = citations.render_saved(str(r["text"]), saved[int(r["id"])], meetings)
-        out.append(f"<p><b>LLM:</b> {body}{_rating_html(int(r['id']), r.get('rating')) if rating else ''}</p>")
+        steps = trace.load(r.get("trace_json"))
+        how = trace.html_of(steps, int(r["id"]), int(r["id"]) in expanded) if steps else ""
+        out.append(f"<p><b>LLM:</b> {body}{how}{_rating_html(int(r['id']), r.get('rating')) if rating else ''}</p>")
     return "".join(out)
 
 

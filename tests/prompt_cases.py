@@ -1,6 +1,8 @@
 """Contextos representativos de cada prompt da LLM (F5.6 L2): a cópia congelada de `tests/data/prompts_ptbr.json` saiu
 destes casos rodados no código em pt-BR (D-071); `test_prompts_custom.py` monta os mesmos casos no código de hoje e compara
-byte a byte. As falas trazem chaves soltas e `{idioma}` de propósito: o dado da reunião nunca passa pelo substituidor."""
+byte a byte. As falas trazem chaves soltas e `{idioma}` de propósito: o dado da reunião nunca passa pelo substituidor.
+F5.10: os casos de `rag_sql` e `rag_answer` entraram na cópia sem mudar os antigos (o dicionário de teste é curto: o de
+verdade tem os próprios testes em `test_rag_semantic.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -41,6 +43,9 @@ BLOCKS = (
                   ExcerptLine(125_000, "Enviar a planilha", kind="acao"))),
     MeetingBlock("R2", 6, "", "", "", (ExcerptLine(5_000, "Abertura {idioma}", "Ana Souza — CFO", 11),)),
 )
+DICTIONARY = "\n".join(("agora: uma linha só {x}", "  hoje (texto): AAAA-MM-DD em {idioma}"))
+NOW_TEXT = "2026-10-30 (sexta), 14:05, fuso -03:00"
+ROUNDS = "\n".join(("Rodada 1:", "", "#1.1 contar {x}", "SQL: SELECT count(*) AS n FROM reunioes", "n", "3", "1 linha · 2 ms"))
 
 
 def _cases() -> dict[str, tuple[ModuleType, str, Any]]:
@@ -68,6 +73,14 @@ def _cases() -> dict[str, tuple[ModuleType, str, Any]]:
         "chat/first-en": (p.chat, "build", p.chat.ChatCtx(meeting("en", full=False), LINES[:1], (), "Who opened?")),
         "rag_chat/blocks": (p.rag_chat, "build", p.rag_chat.RagChatCtx(BLOCKS, HISTORY, "O que decidimos {x}?", "pt-BR")),
         "rag_chat/empty-en": (p.rag_chat, "build", p.rag_chat.RagChatCtx((), (), "Anything?", "en")),
+        "rag_sql/first": (p.rag_sql, "build", p.rag_sql.RagSqlCtx(DICTIONARY, (), NOW_TEXT, "", "Quantas reuniões {x}?", "", 1, "pt-BR")),
+        "rag_sql/rounds-en": (p.rag_sql, "build", p.rag_sql.RagSqlCtx(DICTIONARY, HISTORY, NOW_TEXT, "pessoa: Ana · {idioma}", "And Bia?",
+                                                                      ROUNDS, 2, "en")),
+        "rag_answer/results": (p.rag_answer, "build", p.rag_answer.RagAnswerCtx(HISTORY, NOW_TEXT, "pessoa: Ana", "Quantas {x}?",
+                                                                               "R5 = Orçamento {2027} — 2026-10-20", ROUNDS,
+                                                                               "a LLM teve o que precisava", "pt-BR")),
+        "rag_answer/empty-en": (p.rag_answer, "build", p.rag_answer.RagAnswerCtx((), NOW_TEXT, "", "Anything?", "", "",
+                                                                                "três rodadas seguidas sem informação nova", "en")),
         "glossary/full": (p.glossary, "build", p.glossary.GlossaryCtx("Orçamento {2027}", "Ana, {Bia}", ("Bia",), (ANA,), "OKR", "pt-BR")),
         "glossary/bare-en": (p.glossary, "build", p.glossary.GlossaryCtx(None, None, (), (), "", "en")),
         "transcribe/hints": (p.transcribe, "build", p.transcribe.TranscribeCtx(AUDIO, "pt", "ACME, {idioma}, OKR")),

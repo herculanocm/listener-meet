@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeade
 
 from ..log import get_logger
 from ..model import ActionStatus
-from ..rag import chat_global
 from ..rag import search as rag_search
 from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed
 from .components import Badge, BadgeDelegate, HtmlView
@@ -134,7 +133,7 @@ class HistoryPage(AskMixin, QWidget):
         self._chat_stopped = False                                # "Parar": o usuário cancelou, não avisa
         self.today = today or (lambda: datetime.now().astimezone().date())
         self.result: SearchResult | None = None
-        self.answers: deque[chat_global.GlobalChatAnswer] = deque(maxlen=KEPT)   # instrumentação dos testes
+        self.answers: deque[Any] = deque(maxlen=KEPT)             # instrumentação dos testes: as respostas
         self.copied: deque[str] = deque(maxlen=KEPT)              # instrumentação dos testes: o texto copiado com citação
         self.thread_id: int | None = None
         self.chat_task: StreamTask | None = None
@@ -146,6 +145,8 @@ class HistoryPage(AskMixin, QWidget):
         self._closed = False
         self._partial = ""
         self._base_html = ""
+        self._expanded: set[int] = set()                          # F5.10: as respostas com o "Como cheguei aqui" aberto
+        self.data_dialogs: list[Any] = []                         # F5.10 (U-097): os "Ver dados" abertos (testes)
 
         # --- barra de cima ---
         self.search = QLineEdit()

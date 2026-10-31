@@ -2,7 +2,9 @@
 por sinal; a referência fica viva até `finished` (QThread sem parent é destruída pelo Qt se for coletada antes).
 F3 (item 10, F3A-19): `StreamTask` acrescenta um sinal por pedaço de texto e `cancel()` (um `threading.Event` lido entre
 pedaços) para o chat em streaming. F5 R7-03: `wait_before_close` é a espera da saída do app antes de fechar o banco; R8-04:
-a `Task` comum também aceita um evento de cancelamento (`run_task(..., cancel=evento)`), que a saída acende."""
+a `Task` comum também aceita um evento de cancelamento (`run_task(..., cancel=evento)`), que a saída acende. F5.10 (D6): o
+`run_stream` com `on_progress` passa à função um terceiro argumento, que leva o progresso (um objeto qualquer) à tela pelo
+sinal `progress`; `_on_chunk` segue só com o texto."""
 from __future__ import annotations
 
 import functools
@@ -86,12 +88,14 @@ class StreamTask(QThread):
     """`fn(emit, cancelled)` roda numa QThread: chama `emit(pedaço)` a cada trecho (sinal `chunk`) e consulta `cancelled()`
     entre pedaços; `done(resultado ou exceção)` ao fim. `cancel()` só pede: a função decide quando parar."""
     chunk = Signal(str)
+    progress = Signal(object)
     done = Signal(object)
 
-    def __init__(self, fn: Callable[[Emit, Cancelled], Any], store: Store | None):
+    def __init__(self, fn: Callable[..., Any], store: Store | None, with_progress: bool = False):
         super().__init__(None)
         self.fn = fn
         self.store = store
+        self.with_progress = with_progress
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -105,7 +109,10 @@ class StreamTask(QThread):
     def run(self) -> None:
         result: Any
         try:
-            result = self.fn(self.chunk.emit, self._cancel.is_set)
+            if self.with_progress:
+                result = self.fn(self.chunk.emit, self._cancel.is_set, self.progress.emit)
+            else:
+                result = self.fn(self.chunk.emit, self._cancel.is_set)
         except BaseException as e:  # a exceção é entregue a quem pediu a tarefa
             log.exception("tarefa em streaming falhou")
             result = e
@@ -115,11 +122,14 @@ class StreamTask(QThread):
         self.done.emit(result)
 
 
-def run_stream(fn: Callable[[Emit, Cancelled], Any], store: Store | None, on_chunk: Callable[[str], None],
-               on_done: Callable[[Any], None]) -> StreamTask:
-    task = StreamTask(fn, store)
+def run_stream(fn: Callable[..., Any], store: Store | None, on_chunk: Callable[[str], None], on_done: Callable[[Any], None],
+               on_progress: Callable[[Any], None] | None = None) -> StreamTask:
+    """`fn(emit, cancelled)` numa `StreamTask`; com `on_progress`, `fn(emit, cancelled, report)` e o progresso vai a ele."""
+    task = StreamTask(fn, store, on_progress is not None)
     live_threads.add(task)
     task.chunk.connect(on_chunk)
+    if on_progress is not None:
+        task.progress.connect(on_progress)
     task.done.connect(on_done)
     task.finished.connect(functools.partial(release, task))
     task.start()

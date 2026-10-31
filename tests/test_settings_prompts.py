@@ -51,7 +51,7 @@ def test_the_page_lists_the_eleven_tasks_and_builds_an_editor_only_when_one_is_p
     dlg.nav.setCurrentRow(titles.index(PROMPTS_TITLE))                                     # a página aparece: a lista nasce
     assert dlg._prompt_ui is not None and page.findChildren(QListWidget) == [dlg.prompt_list]
     texts = [dlg.prompt_list.item(i).text() for i in range(dlg.prompt_list.count())]
-    assert texts == [f"{TASKS[t][0]}\n{TASKS[t][1]}" for t in prompts.EDITABLE] and len(texts) == 11
+    assert texts == [f"{TASKS[t][0]}\n{TASKS[t][1]}" for t in prompts.EDITABLE] and len(texts) == 12   # F5.10: sem o rag_chat
     assert "Ata e ações\na pedido" in texts and "Identificação das vozes\nautomática, ao processar" in texts
     assert dlg.prompt_panes == {} and page.findChildren(QPlainTextEdit) == []           # nada montado ao abrir
     dlg.prompt_list.setCurrentRow(prompts.EDITABLE.index(LlmTask.MINUTES))

@@ -331,13 +331,14 @@ class _Run:
         return self._summary(AgentAnswer(text, rendered, tuple(cites), steps["custo_usd"], thread_id, message_id, question_id, call_id,
                                          None, comp is None, steps))
 
-    def _summary(self, answer: AgentAnswer) -> AgentAnswer:
-        s = answer.trace
+    def _summary(self, result: AgentAnswer) -> AgentAnswer:
+        """D8: a conversa, as contagens, o tempo, o custo e por que parou; nunca a pergunta, o SQL, os dados nem nomes."""
+        s = result.trace
         cost = "sem preço" if s["sem_preco"] else f"US$ {s['custo_usd'] or 0:.4f}"
         log.info("perguntar à base: conversa %s, %d rodada(s), %d consulta(s) (%d com erro), %d busca(s), %d linha(s), %.0f ms, %s; "
-                 "parou: %s", answer.thread_id, len(s["rodadas"]), s["consultas"], s["erros"], s["buscas"], s["linhas"], s["ms"], cost,
+                 "parou: %s", result.thread_id, len(s["rodadas"]), s["consultas"], s["erros"], s["buscas"], s["linhas"], s["ms"], cost,
                  s["parou"])
-        return answer
+        return result
 
 
 def _check(store: Store, thread_id: int | None, question: str) -> str:

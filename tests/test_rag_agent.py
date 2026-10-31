@@ -276,3 +276,26 @@ def test_validation_like_the_global_chat(store, monkeypatch):
     with pytest.raises(ValueError, match="provedor"):
         agent.run_agent(store, None, QUESTION)
     assert store.chat.list_threads() == []
+
+
+def test_the_log_never_carries_the_question_the_sql_the_params_names_or_the_data(store, monkeypatch, caplog):
+    """D8: um teste estático (os nomes proibidos da F5.10 nos `log.*`, com `len` e `type` liberados) e um com uma marca na
+    pergunta, no filtro, no SQL, nos params, no objetivo, na nota, num nome, nas falas, na busca e na resposta."""
+    from listener.store.segments import SegmentInsert
+    from tests.log_privacy import F510_ALLOWED_CALLS, F510_FORBIDDEN, F510_MODULES, leaks
+
+    assert {m.name: leaks(m, F510_FORBIDDEN, F510_ALLOWED_CALLS) for m in F510_MODULES} == {m.name: [] for m in F510_MODULES}
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    mark = "MARCA-F510-NUNCA-NO-LOG"
+    a, _b, who = _two_meetings(store)
+    store.people.update_person(who["bia"], f"Bia {mark}")
+    job = store.segments.current_job_id(a)
+    store.segments.insert_segments([SegmentInsert(a, job, "R", 900_000, 901_000, f"o código é {mark}", "pyannote", "final",
+                                                  person_id=who["bia"])])
+    query = ("SELECT reuniao_id, inicio, falante, texto FROM falas WHERE texto LIKE ? OR falante LIKE ?", (f"%{mark}%", f"%{mark}"),
+             f"achar {mark}")
+    _provider(monkeypatch, Script([consult(query, searches=((mark, []),), note=mark)], f"Achei {mark} [R{a} 15:00]."))
+    with caplog.at_level("DEBUG", logger="listener"):
+        ans = agent.run_agent(store, None, f"onde está {mark}?", SearchFilters(person_ids=(who["bia"],)), f"pessoa: Bia {mark}")
+    assert ans.error is None and mark in ans.text and ans.trace["linhas"] == 4                 # as falas da Bia e a marcada
+    assert "perguntar à base: conversa" in caplog.text and mark not in caplog.text

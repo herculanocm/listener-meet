@@ -8,6 +8,8 @@ de 400 linhas; o comportamento é o da F4, da F5 L5 e da F5.1).
   o botão.
 - F5.4 L3: cada download com o estado em selo (U-075: Prontos, Faltam, Baixando, Falhou); o estado do índice com o nome
   legível do modelo ("e5-small, local") e sem mandar para as Configurações quem já está nelas (U-036).
+- F5.10: o cartão "Perguntar à base" com as `rag.sql_*` (o modelo forte nas consultas, as linhas e o prazo de cada consulta
+  e as três guardas, que só cortam o caso patológico).
 
 `SearchMixin` é parte do `SettingsDialog`: lê `store`, `platform`, `recording`, `preparer` e `on_launch` dele e pergunta
 pelo `_ask` dele (o `ask_reindex` do `settings_min`, que os testes trocam)."""
@@ -19,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QPushButton
 
-from ..config.defaults import LIVE_KEYS, RAG_KEYS
+from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS
 from ..llm import local_embed
 from ..model import SettingScope
 from .keys import note
@@ -39,6 +41,9 @@ LIVE_SUBTITLE = ("A legenda e o resumo parcial durante a gravação. Vale na pr�
                  "agora.")
 SEARCH_SUBTITLE = ("A busca do Histórico e o chat sobre todas as reuniões. Aplica agora; o índice por palavra é grátis, e "
                    "os vetores só custam nos provedores pagos.")
+ASK_CARD = "Perguntar à base"
+ASK_NOTE = ("A LLM consulta a base em rodadas, quantas precisar, só lendo. As guardas de custo, tempo e rodadas só cortam o "
+            "caso patológico; sem preço cadastrado para o modelo, a de custo fica inativa.")
 PROVIDER_NAMES = {"gemini": "Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
 LOCAL_NAME = "e5-small, local"
 
@@ -145,6 +150,10 @@ class SearchMixin:
         self.local_btn, self.local_bar, self.local_status = self.local_row.btn, self.local_row.bar, self.local_row.status
         self.local_btn.clicked.connect(self.prepare_local)
         page.card("Busca local").content.addWidget(self.local_row)
+        ask = page.form(ASK_CARD)                                       # F5.10: o cartão próprio das `rag.sql_*`
+        ask.addRow(note(ASK_NOTE))
+        for key in RAG_SQL_KEYS:
+            self._add(page, ask, key)
         self.index_status = note("")
         self.complete_btn = QPushButton("Completar índice")
         self.complete_btn.setToolTip("Põe na fila as reuniões com trecho sem vetor do modelo ativo (e as ainda sem índice)")
@@ -289,4 +298,4 @@ class SearchMixin:
         row.set_badge(*download_badge(self.store, what, str(st.get("state") or "")))
 
 
-__all__ = ["IDLE", "OTHER_DOWNLOAD", "SearchMixin", "download_badge", "here", "index_status_text", "model_name", "vectors_note"]
+__all__ = ["ASK_CARD", "IDLE", "OTHER_DOWNLOAD", "SearchMixin", "download_badge", "here", "index_status_text", "model_name", "vectors_note"]

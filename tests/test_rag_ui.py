@@ -265,9 +265,12 @@ def test_history_global_chat_with_the_fake_rating_citation_link_and_warnings(qtb
     from PySide6.QtCore import QPoint, QUrl
 
     from listener.ui.history import CHAT_EMPTY, HistoryPage
+    from tests.test_rag_agent import Script, _provider, consult
 
     monkeypatch.setenv("LISTENER_LLM", "fake")
     a, _b, _who = _indexed(store)
+    # F5.10: a aba agora é "Perguntar à base"; o roteiro faz uma busca e cita a primeira fala dela, como o falso do chat global
+    _provider(monkeypatch, Script([consult(searches=(("auditoria", []),))], f"Resposta simulada [R{a} 01:10] e [R{a}]."))
     opened: list[tuple[object, ...]] = []
     page = HistoryPage(store, on_open=lambda *args: opened.append(args))
     qtbot.addWidget(page)
@@ -608,7 +611,9 @@ def test_exit_cancels_the_search_vector_and_both_chats_stuck_on_the_network(qtbo
     panel.shutdown()
     assert time.monotonic() - t0 < 1.5 and not any(t.isRunning() for t in tasks)
     cancelled = sorted(str(r[0]) for r in store._q("SELECT task FROM llm_calls WHERE error = 'cancelado'"))
-    assert cancelled == ["chat", "rag_embed", "rag_embed"] and store.chat.list_threads() == []
+    # F5.10: "Perguntar à base" grava a pergunta antes da 1ª rodada, que fica presa na rede (a busca nem começou)
+    assert cancelled == ["chat", "rag_embed", "rag_sql"] and [m["role"] for t in store.chat.list_threads()
+                                                             for m in store.chat.list_for_thread(int(t["id"]))] == [ChatRole.USER]
     assert [str(m["role"]) for m in store.chat.list_for_meeting(a)] == [ChatRole.USER]
     slow = run_task(lambda: time.sleep(0.4), None, lambda _r: None)
     t0 = time.monotonic()

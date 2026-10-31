@@ -8,7 +8,8 @@ import json
 from typing import Any
 
 from ..types import AudioPart, LlmTask, Message, Role
-from . import build, chat, executive, glossary, identify, minutes, partial, rag_chat, revise, schema_for, title, transcribe
+from . import (build, chat, executive, glossary, identify, minutes, partial, rag_answer, rag_chat, rag_sql, revise, schema_for, title,
+               transcribe)
 from .common import Line, Marker, MeetingCtx, Person
 from .rag_chat import MeetingBlock
 
@@ -50,7 +51,21 @@ def _meeting() -> MeetingCtx:
                       speakers=(_Person(0, "{falantes identificados}"),))
 
 
+def _ask(task: LlmTask) -> Any:
+    """F5.10: as rodadas e a resposta de "Perguntar à base"; o dicionário de dados é fixo e aparece inteiro."""
+    from ...rag import dictionary
+
+    history = (("user", "{perguntas e respostas anteriores}"),)
+    if task == LlmTask.RAG_SQL:
+        return rag_sql.RagSqlCtx(dictionary.render(), history, "{agora}", "{filtros da aba Reuniões}", "{pergunta}",
+                                 "{o que as rodadas anteriores trouxeram}", 1, "{idioma padrão}")
+    return rag_answer.RagAnswerCtx(history, "{agora}", "{filtros da aba Reuniões}", "{pergunta}", "{reuniões citáveis}",
+                                   "{o que as consultas e as buscas trouxeram}", "{como as rodadas terminaram}", "{idioma padrão}")
+
+
 def _context(task: LlmTask) -> Any:
+    if task in (LlmTask.RAG_SQL, LlmTask.RAG_ANSWER):
+        return _ask(task)
     m, people = _meeting(), (_Person(0, "{pessoas cadastradas}"),)
     summary = executive.SummaryCtx(m, "{ata em JSON}")
     contexts: dict[LlmTask, Any] = {

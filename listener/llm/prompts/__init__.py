@@ -1,8 +1,9 @@
 """Prompts e esquemas do projeto, um módulo por tarefa (`PROMPT_VERSION`, `SCHEMA`, `build(ctx)`); mudar o texto de um prompt
 sobe a versão (regra de revisão de diff). `summaries.prompt_version` e `llm_calls.prompt_version` gravam `"minutes/1.0"`.
-F5.6 L2 (A-24 a A-28): as onze tarefas de `EDITABLE` separam `INSTRUCTIONS` (editáveis nas Configurações) de `CONTRACT`
+F5.6 L2 (A-24 a A-28): as tarefas de `EDITABLE` separam `INSTRUCTIONS` (editáveis nas Configurações) de `CONTRACT`
 (fixo) e recebem `build(ctx, instructions)`; com instruções do usuário, a versão gravada leva a marca `+u<hash>` do texto
-(`minutes/1.2+u3fa9c1`), nunca o texto."""
+(`minutes/1.2+u3fa9c1`), nunca o texto. F5.10: `rag_sql` e `rag_answer` ("Perguntar à base") entram na página e o `rag_chat`
+sai dela (o chat do Histórico passa a ser o agente; o módulo segue para o chat global antigo)."""
 from __future__ import annotations
 
 from types import ModuleType
@@ -18,10 +19,10 @@ MODULES: dict[LlmTask, ModuleType] = {
     LlmTask.PRE_SUMMARY: pre_summary, LlmTask.TITLE: title, LlmTask.REVISE: revise, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat,
     LlmTask.TEST: test, LlmTask.PARTIAL: partial, LlmTask.RAG_CHAT: rag_chat, LlmTask.RAG_SQL: rag_sql, LlmTask.RAG_ANSWER: rag_answer,
 }
-# A-25: as tarefas com instruções editáveis, na ordem da página "Prompts" (o `test` fica fora)
+# A-25: as tarefas com instruções editáveis, na ordem da página "Prompts" (o `test` fica fora; F5.10: o `rag_chat` também)
 EDITABLE: tuple[LlmTask, ...] = (LlmTask.IDENTIFY, LlmTask.REVISE, LlmTask.TITLE, LlmTask.PRE_SUMMARY, LlmTask.MINUTES,
-                                 LlmTask.EXECUTIVE, LlmTask.PARTIAL, LlmTask.CHAT, LlmTask.RAG_CHAT, LlmTask.GLOSSARY,
-                                 LlmTask.TRANSCRIBE)
+                                 LlmTask.EXECUTIVE, LlmTask.PARTIAL, LlmTask.CHAT, LlmTask.RAG_SQL, LlmTask.RAG_ANSWER,
+                                 LlmTask.GLOSSARY, LlmTask.TRANSCRIBE)
 
 
 def prompt_version(task: LlmTask, instructions: str | None = None) -> str:
