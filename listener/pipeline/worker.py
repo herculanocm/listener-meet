@@ -55,10 +55,10 @@ EXIT_STALLED = 70                    # D-058: saída pelo vigia do laço (o app 
 
 
 def exit_stalled(reason: str) -> None:
-    """D-058, o `on_stall` do vigia: o motivo e o traceback de todas as threads vão para o log e o processo sai na hora (a
-    chamada presa não volta; nenhum `finally` a destrava). O heartbeat vence em `STALE_S`, o app relança o worker e o job
-    é retomado (até `MAX_ATTEMPTS`)."""
-    log.error("worker: %s; saindo para o app relançar (o job volta à fila)", reason)
+    """D-058, o `on_stall` do vigia: o motivo vai para o log, o traceback de todas as threads para o arquivo de crash ao lado
+    dele (D-072), e o processo sai na hora (a chamada presa não volta; nenhum `finally` a destrava). O heartbeat vence em
+    `STALE_S`, o app relança o worker e o job é retomado (até `MAX_ATTEMPTS`)."""
+    log.error("worker: %s; saindo para o app relançar (o job volta à fila; as threads no arquivo -crash do log)", reason)
     dump_all_threads()
     shutdown()
     os._exit(EXIT_STALLED)

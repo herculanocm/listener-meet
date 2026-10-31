@@ -269,10 +269,17 @@ def dump_all_threads() -> None:
             faulthandler.dump_traceback(file=f, all_threads=True)
 
 
+def crash_path(path: Path) -> Path:
+    """O arquivo do faulthandler, ao lado do log (`listener.log` -> `listener-crash.log`), sem rotação. No mesmo arquivo do
+    log, o descritor aberto impedia o `rename` da rotação no Windows (WinError 32): aos 5 MB o log parava de vez e cada
+    tentativa apagava um arquivo antigo (D-072)."""
+    return path.with_name(f"{path.stem}-crash{path.suffix}")
+
+
 def _enable_faulthandler(path: Path) -> None:
-    """Crash nativo (ctypes, COM, PortAudio) deixa o traceback no arquivo de log."""
+    """Crash nativo (ctypes, COM, PortAudio) deixa o traceback no arquivo de crash ao lado do log (`crash_path`)."""
     try:
-        f = path.open("a", encoding="utf-8")   # fica aberto de propósito: o faulthandler escreve no descritor
+        f = crash_path(path).open("a", encoding="utf-8")   # fica aberto de propósito: o faulthandler escreve no descritor
         faulthandler.enable(file=f, all_threads=True)
     except Exception as e:
         get_logger().debug("faulthandler indisponível: %s", e)

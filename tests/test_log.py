@@ -25,6 +25,21 @@ def test_file_handler_level_and_thread_name(tmp_path):
     assert applog.current_file() is None
 
 
+def test_the_log_rotates_with_the_crash_handler_on(tmp_path, capsys):
+    """D-072: o faulthandler segurava o próprio arquivo do log aberto; no Windows o `rename` da rotação falhava (WinError 32),
+    o log parava de vez aos 5 MB e cada tentativa apagava um arquivo antigo. Ele escreve agora num arquivo à parte."""
+    applog.setup("INFO")
+    path = applog.attach_file(tmp_path / "listener.log", max_bytes=3000, backups=5)
+    lg = applog.get_logger("teste")
+    for i in range(120):
+        lg.info("registro %03d %s", i, "x" * 60)
+    applog.flush()
+    assert "registro 119" in path.read_text(encoding="utf-8")
+    assert (tmp_path / "listener.log.1").exists() and (tmp_path / "listener-crash.log").exists()
+    assert "Logging error" not in capsys.readouterr().err
+    applog.detach_file()
+
+
 def test_drain_writes_from_another_thread_without_restarting_the_listener(tmp_path):
     """R-08: o handler de console do Windows roda noutra thread no fechamento do terminal; `drain` esvazia a fila e grava sem
     parar nem reiniciar o listener (o `flush` faz stop e start, que ali disputaria o listener com a thread principal)."""
