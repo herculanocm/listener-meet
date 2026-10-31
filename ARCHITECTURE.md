@@ -71,8 +71,10 @@ só quando mudam); INFO para marcos e ações do usuário (gravação, pausa, mu
 janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada com latência, tokens e motivo,
 provedor e chave definidos, exportação, avisos da bandeja); WARNING para o recuperável (job devolvido à fila, chamada
 que falhou de vez, terminal fechado com o app aberto); ERROR para falha (tentativas esgotadas, vigia do laço, D-058). O
-faulthandler grava crash nativo. Nunca no log: nome de pessoa, fala, título de reunião, e-mail, chave ou token, título de
-janela (D-053, D-056); vão ids, contagens, durações, modelos e estados. Para diagnosticar, o dono usa o nível DEBUG.
+faulthandler grava crash nativo e o dump do vigia num `<log>-crash.log` ao lado de cada log, sem rotação (D-072: no
+mesmo arquivo, o Windows recusava a rotação). Nunca no log: nome de pessoa, fala, título de reunião, e-mail, chave ou
+token, título de janela (D-053, D-056); vão ids, contagens, durações, modelos e estados. Para diagnosticar, o dono usa o
+nível DEBUG.
 
 ## Stack
 Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6

@@ -44,8 +44,10 @@ processing_jobs(meeting_id, kind, status); rag_chunks(meeting_id, t_start_ms); r
 chat_messages(thread_id, id). v7:
 captions(meeting_id, t_start_ms).
 
-Regras: nada apaga dados (CP3), salvo Cancelar da gravação em curso e Reprocessar (troca atômica dos clusters e segments
-do job anterior no último passo, decisões humanas transportadas por cosseno; só o usuário dispara); `revisions` registra
+Regras: nada apaga dados sem o usuário pedir (CP3): Cancelar da gravação em curso, Reprocessar (troca atômica dos
+clusters e segments do job anterior no último passo, decisões humanas transportadas por cosseno), excluir reunião (F5.6,
+D-063: tudo dela em cascata, áudio e legendas inclusive; os perfis de voz ficam) e apagar pessoa (F5.2: o perfil e os
+vetores de voz dela); `revisions` registra
 toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
 `listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`,
 `ui.widget_pos`, `ui.widget_size`, `warmup.last_*`, `pipeline.*` (F2; internas `paused_until`, `paused_manual`,

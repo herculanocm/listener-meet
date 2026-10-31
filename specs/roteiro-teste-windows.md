@@ -148,6 +148,9 @@ Precisa da Parte 2 e de ao menos uma reunião processada.
 - [ ] Clique num balão do Windows 11 e na central de notificações: abre a reunião.
 - [ ] Logoff (ou desligar) durante uma gravação de teste: no próximo login, a gravação está salva e na Fila; o
       `listener.log` tem "encerramento durante a gravação … parando sem diálogo".
+- [ ] Reinicie (ou saia do Windows) com um documento sem salvar aberto noutro app e clique Cancelar quando o Windows
+      pedir: o listener-meet saiu (some da bandeja; reabra pelo menu Iniciar). Antes da D-072 ele ficava na bandeja sem
+      banco e a próxima gravação falhava calada.
 - Devolva: o que não se comportou assim.
 
 ## Parte 10 — F5.2: fone novo, ficha da pessoa e a ata depois das vozes (20 min)

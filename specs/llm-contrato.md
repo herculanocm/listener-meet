@@ -10,12 +10,13 @@ contrato e pelo canário do "testar conexão".
 `Role` (system, user, assistant) · `AudioPart(data: bytes, mime: str, label: str)` · `Message(role, text, audio=())` ·
 `Request(task: LlmTask, model: str, messages, json_schema: Mapping | None, temperature=0.2, max_output_tokens=8192,
 reasoning: Reasoning = NONE, timeout_s=120.0, cache_prefix=False)` · `Usage(input_tokens, output_tokens, cached_tokens=0,
-audio_tokens=0)` · `Completion(text, data: Mapping | None, usage, model, latency_ms, finish, raw_id)` · `ModelInfo(id,
-display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok, latency_ms, model, error)` ·
+audio_tokens=0, cache_write_tokens=0)` · `Completion(text, data: Mapping | None, usage, model, latency_ms, finish,
+raw_id)` · `ModelInfo(id, display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok,
+latency_ms, model, error)` ·
 `Capability`: TEXT, JSON, AUDIO_IN, EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary, identify, minutes,
 executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5) · `Reasoning`:
-none, low, high · `ProviderKind`: gemini,
-openai, anthropic · `SummaryKind`: pre_summary, minutes, executive, partial (F4) · `SummaryStatus`: atual, superada, erro ·
+none, low, high · `ProviderKind`: gemini, openai, anthropic, local (F5.1: só embeddings) · `SummaryKind`: pre_summary,
+minutes, executive, partial (F4) · `SummaryStatus`: atual, superada, erro ·
 `ActionStatus`: aberta, feita, descartada, superada · `DecisionSource`: auto, usuario, usuario_pyannote, usuario_llm,
 usuario_outro.
 
@@ -47,10 +48,13 @@ Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI for
 de ferramenta com `input_schema` e `tool_choice` forçado (resposta em `content[].input`). Validação sempre do projeto
 (~120 linhas): `type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho;
 dataclass `frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte
-(pydantic vem com os SDKs, mas não entra no WSL nem no CI base). `SCHEMA_VERSION` por tarefa; hash gravado em `llm_calls`.
+(pydantic vem com os SDKs, mas não entra no WSL nem no CI base). O hash do esquema (`schema_hash`) vai para `llm_calls`,
+sem versão própria por tarefa.
 
 ## Prompts (`llm/prompts/<task>.py`)
-`PROMPT_VERSION = "2.0"`, `SCHEMA`, `build(ctx) -> tuple[Message, ...]`. Instruções e contrato em pt-BR, o idioma padrão
+`PROMPT_VERSION = "2.0"`, `SCHEMA`, `INSTRUCTIONS` (editáveis na página Prompts, F5.6) e `CONTRACT` (fixo, por último no
+texto de sistema), `build(ctx, instructions=None) -> tuple[Message, ...]`; com instruções do usuário, a versão gravada
+leva `+u<hash>` do texto. Instruções e contrato em pt-BR, o idioma padrão
 do app (D-071, 30/10: o experimento em inglês acabou), com `output_language` injetado como instrução de idioma e `{idioma}`
 trocado pelo nome do idioma em português ("português do Brasil", "inglês"); glossário, nomes próprios e siglas nunca
 traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version` gravam `"minutes/2.0"`; mudar o texto do prompt sobe a
@@ -98,16 +102,17 @@ provedor ativo, e a sub-aba diz isso.
 
 ## Custo (`llm/costs.py`)
 Tabela `llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at)` com sementes do
-projeto por família, editável na sub-aba; custo = `input × p_in + cached × p_cached + output × p_out + audio × p_audio`;
-sem linha de preço, custo nulo e "sem preço cadastrado" na tela. Estimativa prévia por tarefa a partir de
+projeto por família, editável na sub-aba; custo = `input × p_in + cached × p_cached + cache_write × p_in × 1,25 + output
+× p_out + audio × p_audio` (a escrita no cache da Anthropic custa 1,25 vez a entrada); sem linha de preço, custo nulo e
+"sem preço cadastrado" na tela. Estimativa prévia por tarefa a partir de
 `count_tokens` ou caracteres ÷ 3,5. Projeção [chute]: reunião de 2 h ≈ US$ 0,30 a 0,50 (rápido nas leves, forte na
 ata); 3 h ≈ US$ 0,50 a 0,80. Pedido e resposta completos comprimidos (`zlib`) em `llm_calls` quando `llm.store_payloads`
 estiver ligado (padrão sim, P-N4).
 
 ## O que a implementação fixou além do texto acima (2026-10-25, medido com os SDKs instalados)
 `stream()` devolve `LlmStream` (iterador assíncrono com `.result`); `Embeddings.vectors` é `np.ndarray` float32 normalizado;
-`AudioPart.seconds` estima a duração pelo tamanho e tipo. Os adaptadores recebem o esquema inteiro, menos as chaves que o
-modo estrito da OpenAI pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`: `schema.provider_schema`); a
+`AudioPart.seconds` estima a duração pelo tamanho e tipo. Gemini e Anthropic recebem o esquema inteiro; a OpenAI, sem as
+chaves que o modo estrito dela pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`: `schema.provider_schema`); a
 validação do projeto usa o esquema inteiro. anthropic 2.x: `messages.create` não aceita `temperature`, `top_p` nem `top_k`
 (não são enviados); pensamento estendido só sem ferramenta forçada; `Authorization: Bearer`; openai 3.x e anthropic 2.x
 usam `httpx2` (o `http_client` próprio só entra com proxy ou PEM configurados). google-genai 2.33: timeout em ms,

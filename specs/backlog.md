@@ -3,6 +3,12 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (30/10/2026, Windows nativo; tudo commitado; push do dono)
+- **D-072, a revisão do código inteiro** (30/10, pedido do dono): sete leitores e dois revisores, 27 achados; quatro
+  corrigidos com teste (o logoff cancelado que deixava o app vivo sem banco, o log que parava aos 5 MB, a pausa manual
+  que derrubava o worker leve e o CI) mais o `_MutePoller` preso na saída; os reais e pequenos ficaram em "Dívidas
+  técnicas". **O CI nunca tinha rodado um teste** (o `ci.yml` era YAML inválido desde 24/10): o próximo push do dono é o
+  primeiro de verdade e pode mostrar falhas de Linux e macOS que nunca apareceram. O logoff cancelado, o dono confere
+  pela Parte 9 do roteiro.
 - **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
   versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
   ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
@@ -168,7 +174,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Código: F1, F1.1, F1.2, F2, F3, F3.1, F4, F5, F5.1, F5.2, F5.3, F5.4 e **F5.5 implementadas**, F5.6 L3 e L1: 805 testes
   mais 7 pulados no Windows com `--tudo` (85 a 110 s; 348 mais 5 no Linux de desenvolvimento no L5 da F5, ~22 s);
   `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs e o do truststore com clientes reais; ruff e mypy
-  limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm`.
+  limpos (Linux e `--platform win32`), CI em três sistemas × Python 3.12 e 3.13 mais uma célula com o extra `llm` (só
+  no papel: o `ci.yml` era YAML inválido e nenhum teste rodou no CI até a D-072).
   Esquema v8. Nada do app importa torch, ML, os SDKs de LLM, onnxruntime, tokenizers nem docx no nível do módulo (teste
   estático).
   Whisper, pyannote (F2 L5), os três adaptadores de LLM e o processo ao vivo real foram escritos às cegas, contra
@@ -246,9 +253,13 @@ do dono, cujo passo a passo está em `specs/roteiro-teste-windows.md` (a parte i
    sessão no Linux.
 
 ## Dívidas técnicas
-- **Saída com a thread do mudo presa** (visto na revisão do L3 da F5.7, de antes dela): o `_MutePoller` só recebe
-  `interrupt()`, sem `wait`. Preso no COM na saída, ele cai na mesma 0xC0000409 que o R-01 corrigiu no sensor de
-  chamada. Correção: entrar na conta do `leave_if_stuck` do `app.py`, num commit pequeno.
+- **Reais e pequenos, sem correção por ora** (revisão de 30/10, D-072): a morte da thread de trabalho da captura não
+  marca a reunião (os pedaços na fila somem; o aviso de erro aparece); o "banco não responde há N s" exagera quando parte
+  dos pedaços entra (`pending_since`); corridas de leitura e escrita fora da transação (sugestão da LLM num cluster recém
+  confirmado, ação superada que volta, `upsert_me`); o chat em streaming sem retentativa antes do primeiro pedaço, e o
+  cancelado gravado como `OK` sem custo; o preparo do ao vivo sem prazo no `repo_info` e sem Cancelar; o
+  `db-location.json` sem gravação atômica; "Apagar preset" sem confirmação (UX: perguntar ao dono); o assistente diz
+  "cinco passos" e mostra seis.
 - **Caminho no log** (visto no L3 da F5.7, de antes dela): o `attach_log` do `app.py`, quando falha, loga o caminho do
   arquivo de log, que tem a pasta do usuário. Isso vai contra a D-053. Trocar pelo código do erro e pôr o `app.py` no
   teste de privacidade. A linha de abertura de todo log também grava `"banco": <pasta>` (`ui/app.py:136`; visto na
