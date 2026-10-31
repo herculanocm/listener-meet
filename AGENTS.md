@@ -23,6 +23,7 @@ WSL está certo, mas nada está pronto antes de rodar no Windows. Antes de qualq
 | T1 | mexer em produto ou arquitetura | `specs/00-handoff-v4.md` (mestre; em conflito, vence) · `ARCHITECTURE.md` · `specs/decisoes.md` |
 | T2 | trabalhar numa fase | `specs/features/F<n>-*.md` (só o que está nela é escopo) · `specs/dados.md` · `specs/ux-melhorias.md` · `specs/roadmap.md` |
 | T3 | ambiente desta máquina ou preferências do dono | `memory/dono.md` · `memory/maquina.md` |
+| T3 | revisar código ou propor correção | `memory/revisao-codigo.md` (achados já decididos: não reapontar sem fato novo) |
 
 Como escrever aqui: `specs/README.md` (ciclo de vida, template, regras de escrita para IA). Quem edita: o handoff, só o
 Herculano; `AGENTS.md` e `specs/README.md`, a LLM propõe e ele aprova; o resto, a LLM dentro do que foi aprovado.

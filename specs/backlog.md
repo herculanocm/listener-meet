@@ -11,8 +11,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   pela Parte 9 do roteiro. O `.exe` foi gerado de novo com as correções (30/10, 22:21: 658 s, 892 MB, sonda `--probe`
   ok); é ele que vale para a Parte 19.
 - **F5.10 em rascunho** (30/10, pedido do dono, `features/F5.10-perguntar-a-base.md`): perguntar à base com consultas
-  SQL de leitura que a LLM escreve e o app executa numa sandbox, em rodadas, até poder responder com citações. Seis
-  perguntas ao dono; com as respostas, a revisão de arquitetura (D-040) e a aprovação.
+  SQL de leitura que a LLM escreve e o app executa numa sandbox, em rodadas, até poder responder com citações. As seis
+  perguntas respondidas no padrão, com a mudança do dono: o laço para por exaustão, sem número fixo de consultas
+  (D-073). Agora: a revisão de arquitetura (D-040), depois a aprovação.
 - **D-071, os prompts em pt-BR** (30/10, pedido do dono; código `d8a06b1`): tudo o que vai à LLM saiu do inglês, com
   versão 2.0 em todos os módulos e a cópia congelada nova nos testes. Falta o dono conferir numa reunião real (ou numa
   ata a pedido) que o modelo segue o contrato em pt-BR como seguia em inglês: evidências nos itens da ata, `[mm:ss]` no
@@ -171,7 +172,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   17. F5.8, pergunta 3: uma trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo
       banco (não agora; uma spec pequena quando você quiser).
   18. `AGENTS.md`, na tabela de camadas: "revisar código ou propor correção: `memory/revisao-codigo.md`", para toda LLM
-      ler os achados já decididos antes de revisar (D-072) (sim).
+      ler os achados já decididos antes de revisar (D-072). Respondida (30/10, D-073): sim, aplicada.
 - **F3 e F4 implementadas** (D-043, D-044): desvios e o que só o Windows verifica nas seções Implementação de
   `features/F3.1-correcoes-revisao.md` e `features/F4-ao-vivo.md`. Toda sessão começa verificando o ambiente (D-045,
   `AGENTS.md`).

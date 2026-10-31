@@ -105,3 +105,5 @@ Tamanho-alvo: 3 KB.
 | U-093 | Excluir reunião no Histórico, com seleção múltipla e confirmação; perfis de voz ficam | Histórico | implementada (F5.6 L3, 29/10) |
 | U-094 | Aviso de reunião sem gravação: cartão sem foco e fora da captura com "Gravar…" (abre o "Antes de gravar" com o app como fonte) e "Agora não" (até a chamada acabar), um lembrete, a bandeja e o cartão nas Configurações; substitui a U-012 | Aviso, bandeja | implementada (F5.7 L3, 29/10) |
 | U-095 | Ícone do `.exe` (Explorer e barra) com a marca do app no estado ocioso, um tamanho desenhado por escala; a descrição do arquivo "listener-meet" | Executável | implementada (F5.8, 30/10) |
+| U-096 | Perguntar às reuniões: sugestões de perguntas no estado vazio (contagem com uma pessoa, ações atrasadas por dono, custo da LLM por mês) | Histórico | aprovada (F5.10, D-073) |
+| U-097 | Resposta da base: "Ver dados" abre a tabela de uma consulta (refeita na sandbox), com "Copiar como tabela" | Histórico | aprovada (F5.10, D-073) |
