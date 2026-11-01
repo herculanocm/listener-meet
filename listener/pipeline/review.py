@@ -50,6 +50,7 @@ class ReviewItem:
     llm_confidence: float | None = None
     llm_evidence: tuple[tuple[int, str, int], ...] = ()   # (segment_id, citação, t_start_ms)
     decision_source: str | None = None
+    learned: bool = False            # o perfil tem o vetor desta voz (confirmação ativa ligada a ela; U-101 da F5.11)
 
     @property
     def pending(self) -> bool:
@@ -79,8 +80,7 @@ class ReviewItem:
     def title(self) -> str:
         return voice_label(self.label) if self.channel == "R" else f"{voice_label(self.label)} (canal {self.channel})"
 
-    def summary(self) -> str:
-        """O estado e as sugestões, sem as teclas: os botões dizem o que cada uma faz (U-098 da F5.11)."""
+    def summary(self) -> str:                                    # sem as teclas: os botões dizem (U-098 da F5.11)
         if self.merged_into is not None:
             return f"mesclada com a voz #{self.merged_into}"
         if self.status == ClusterStatus.IGNORED:
@@ -138,7 +138,7 @@ def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
     job_id = store.segments.current_job_id(meeting_id)
     if job_id is None:
         return []
-    people = _people(store)
+    people, learned = _people(store), store.profiles.learned_clusters(meeting_id)
     out: list[ReviewItem] = []
     for c in store.segments.list_clusters(meeting_id, job_id):
         if c["channel"] == "L" and c["cluster"] == USER_CLUSTER:
@@ -150,7 +150,7 @@ def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
                               int(pid) if pid is not None else None, name, c.get("similarity"), c.get("margin"), c.get("merged_into"),
                               bool(c["centroid"].size and c.get("model")), int(llm_pid) if llm_pid is not None else None,
                               llm_name or None, c.get("llm_confidence"), _evidence(store, c.get("llm_evidence_json")),
-                              c.get("decision_source")))
+                              c.get("decision_source"), int(c["id"]) in learned))
     return out
 
 
@@ -253,9 +253,7 @@ def clip_range(store: Store, cluster_id: int, seconds: float = CLIP_S) -> tuple[
             for a, b, label in header.get("turns", []):
                 if label == c["cluster"] and (best is None or b - a > best[1] - best[0]):
                     best = (int(a), int(b))
-    if best is None:
-        return None
-    return str(c["channel"]), best[0], min(best[1], best[0] + int(seconds * 1000))
+    return None if best is None else (str(c["channel"]), best[0], min(best[1], best[0] + int(seconds * 1000)))
 
 
 def decode_clip(store: Store, meeting_id: int, channel: str, t0_ms: int, t1_ms: int) -> tuple[np.ndarray, int]:
@@ -391,8 +389,9 @@ def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "us
         store.add_revision("cluster", cluster_id, "merged_into", c.get("merged_into"), into_cluster_id, author)
         if pid is not None:
             confirm(store, cluster_id, pid, author)
-        else:
-            _unlearn(store, c, f"cluster {into_cluster_id}", author)               # P-03: numa voz sem pessoa, sai do perfil
+        else:                                                                  # P-03: numa voz sem pessoa, sai do perfil
+            _unlearn(store, c, f"cluster {into_cluster_id}", author)               # e as falas seguem o alvo, sem nome
+            store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
     log.info("voz %s mesclada na voz %s da reunião %s (%s)", c["cluster"], target["cluster"], c["meeting_id"],
              f"confirmada como pessoa {pid}" if pid is not None else "o alvo ainda não tem pessoa")
 

@@ -405,7 +405,8 @@ def test_review_cards_key_badges_and_the_primary_follows_the_stage(qtbot, platfo
     assert isinstance(dlg.list.itemDelegate(), VoiceCardDelegate)
     assert all(dlg.list.item(i).data(BADGE_TONE_ROLE) == Tone.WARNING.value for i in range(dlg.list.count()))
     keys = {b.text(): b.key for b in dlg.findChildren(KeyButton)}                 # F5.11: M, I e E no "Mais" (U-100)
-    assert keys == {"Escolher pessoa…": "Enter", "Sem sugestão pelo contexto": "L", "Outra pessoa": "O", "Nova pessoa": "N"}
+    assert keys == {"Escolher pessoa…": "Enter", "Sem sugestão pelo contexto": "L", "Outra pessoa": "O", "Nova pessoa": "N",
+                    "Mais": ""}                                                      # o "Mais": sem tecla, com a seta
     assert dlg.btn_confirm.width() >= dlg.btn_confirm.full_width > dlg.fontMetrics().horizontalAdvance("Escolher pessoa…") + 40
     assert dlg.btn_confirm.property(KIND_PROP) == PRIMARY and dlg.btn_finish.property(KIND_PROP) is None
     assert not any(b.isDefault() for b in (dlg.btn_confirm, dlg.btn_finish))         # o Enter segue da lista (U-006)

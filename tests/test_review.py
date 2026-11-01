@@ -266,14 +266,16 @@ def _samples(store, person_id: int) -> tuple[int, list[str]]:
 
 def test_ignoring_or_merging_a_confirmed_voice_into_nobody_unlearns_it(platform, store):
     """P-03 (F5.11): ignorar a voz confirmada, ou mesclá-la numa voz sem pessoa, tira o vetor do perfil como a troca de
-    pessoa (R2-09): fonte `invalidado`, nada apagado (CP3), com uma revisão; mesclada na mesma pessoa, o vetor fica."""
+    pessoa (R2-09): fonte `invalidado`, nada apagado (CP3), com uma revisão; mesclada na mesma pessoa, o vetor fica. Mesclada
+    numa voz sem pessoa, as falas dela perdem o nome, como no "Ignorar"; `learned` diz se o perfil tem o vetor da voz."""
     from listener.store.segments import ClusterInsert
 
     mid, items = _processed(platform, store)
     first, second = items[0].cluster_id, items[1].cluster_id
     ana = review.new_person(store, first, "Ana")
+    assert {i.cluster_id: i.learned for i in review.review_items(store, mid)} == {first: True, second: False}
     review.ignore(store, first)
-    assert _samples(store, ana) == (0, ["invalidado"])
+    assert _samples(store, ana) == (0, ["invalidado"]) and not review.review_items(store, mid)[0].learned
     review.confirm(store, first, ana)                                                     # escolhida de novo: aprende de novo
     review.confirm(store, second, ana)
     review.merge(store, first, second)                                                    # na mesma pessoa: nada sai
@@ -283,5 +285,6 @@ def test_ignoring_or_merging_a_confirmed_voice_into_nobody_unlearns_it(platform,
     nobody = next(i.cluster_id for i in review.review_items(store, mid) if i.label == "SPK_9")
     review.merge(store, second, nobody)                                                   # numa voz sem pessoa: sai
     assert _samples(store, ana) == (1, ["invalidado", "confirmacao", "invalidado"])
+    assert all(s["person_id"] is None for s in store.segments.list_segments(mid) if s["cluster_id"] == second)   # sem o nome
     rev = store._q("SELECT after FROM revisions WHERE entity = 'voice_profile' AND field = 'invalidado' ORDER BY id")
     assert [r["after"] for r in rev] == [ClusterStatus.IGNORED, f"cluster {nobody}"]

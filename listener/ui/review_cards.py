@@ -7,7 +7,7 @@
   clique por `editorEvent` emite `play_requested`, e o Espaço segue tocando.
 - `KeyButton`: o botão da ação com o atalho num selo de tecla à direita ("É Ana [Enter]"); a tecla também vai na dica e na
   descrição acessível. `set_label` troca o texto e a tecla com o estado da voz (A-19); sem espaço, o texto é cortado no
-  meio, o que corta o nome e deixa o começo e o fim.
+  meio, o que corta o nome e deixa o começo e o fim. Sem tecla e com menu, a seta no lugar do selo (o "Mais" da F5.11).
 - `stage_primary`: o primário segue a etapa (com voz pendente, o da voz; sem nenhuma, "Concluir"). Nenhum vira o padrão do
   Enter: na lista, o Enter faz o que o principal da voz diz (U-098), e num campo de texto não fecha a revisão; num botão
   com foco, o Enter aciona esse botão (`ReviewDialog.keyPressEvent`, R-01 da revisão da F5.4)."""
@@ -48,6 +48,7 @@ CARD_PAD, CARD_GAP, CARD_MARGIN = 12, 4, 3            # px lógicos: dentro do c
 PILL_PAD_X, PILL_PAD_Y = 8, 2
 CAP_PAD_X, CAP_GAP, BUTTON_PAD = 6, 12, 12            # o selo de tecla: por dentro, até o texto e a borda do botão
 META_GAP = 12                                          # entre os minutos e o que vem antes deles no cabeçalho do cartão
+ARROW = 16                                             # a seta do botão com menu, no lugar do selo de tecla
 PLAY_TEXT, PLAY_TIP = "Ouvir 5 s", "Ouvir 5 s desta voz (tecla Espaço)"   # U-099
 PLAY_ICON, PLAY_PAD_X, PLAY_GAP = 14, 8, 4             # o "Ouvir 5 s": o ícone, por dentro e entre o ícone e o texto
 DETAIL_FLAGS = int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -242,10 +243,11 @@ class KeyButton(QPushButton):
         fm = QFontMetrics(self.cap_font)
         self.setText(text)
         self.key = key
-        self._cap = QSize(fm.horizontalAdvance(key) + 2 * CAP_PAD_X, fm.height() + 4)
+        self._cap = QSize(fm.horizontalAdvance(key) + 2 * CAP_PAD_X, fm.height() + 4) if key else QSize(ARROW, ARROW)
         self.full_width = BUTTON_PAD + self.fontMetrics().horizontalAdvance(text) + CAP_GAP + self._cap.width() + BUTTON_PAD
-        self.setToolTip(f"{text} (tecla {key})")
-        self.setAccessibleDescription(f"tecla {key}")
+        if key:
+            self.setToolTip(f"{text} (tecla {key})")
+            self.setAccessibleDescription(f"tecla {key}")
         self.updateGeometry()
         self.update()
 
@@ -263,6 +265,7 @@ class KeyButton(QPushButton):
         p = QStylePainter(self)
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
+        opt.features &= ~QStyleOptionButton.ButtonFeature.HasMenu        # a seta do menu é a nossa, no lugar do selo
         p.drawControl(QStyle.ControlElement.CE_PushButtonBevel, opt)
         cap = self._cap_size()
         rect = opt.rect
@@ -278,10 +281,13 @@ class KeyButton(QPushButton):
         p.setPen(qcolor(t.on_accent if on_fill else t.text if enabled else t.disabled))     # o texto à esquerda (o rótulo do
         p.drawText(room, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)   # estilo centraliza e corta)
         ink = t.on_accent if on_fill else t.secondary if enabled else t.disabled
-        rounded(p, cap_rect, t.metrics.radius, None, t.on_accent if on_fill else t.stroke_strong if enabled else t.disabled)
-        p.setFont(self.cap_font)
-        p.setPen(qcolor(ink))
-        p.drawText(cap_rect, int(Qt.AlignmentFlag.AlignCenter), self.key)
+        if not self.key:
+            p.drawPixmap(cap_rect.topLeft(), icons.pixmap("chevron-down", ink, ARROW, self.devicePixelRatioF()))
+        else:
+            rounded(p, cap_rect, t.metrics.radius, None, t.on_accent if on_fill else t.stroke_strong if enabled else t.disabled)
+            p.setFont(self.cap_font)
+            p.setPen(qcolor(ink))
+            p.drawText(cap_rect, int(Qt.AlignmentFlag.AlignCenter), self.key)
         if opt.state & QStyle.StateFlag.State_HasFocus:
             focus = QStyleOptionFocusRect()
             focus.initFrom(self)

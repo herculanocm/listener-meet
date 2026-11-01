@@ -55,9 +55,10 @@ def test_the_learning_line_promises_only_what_the_confirmation_does():
     assert action_labels(replace(BASE, has_centroid=False), NAMES).line == "Ao confirmar, as falas desta voz ficam com o nome de Ana."
     chooses = replace(BASE, person_id=None, person_name="")
     assert UNDO in action_labels(chooses, NAMES).line and "aprende" not in action_labels(replace(chooses, has_centroid=False), NAMES).line
-    done = replace(BASE, status=ClusterStatus.CONFIRMED)
+    done = replace(BASE, status=ClusterStatus.CONFIRMED, learned=True)
     assert action_labels(done, NAMES).line == f"O perfil de voz de Ana aprendeu com esta fala. {UNDO}"
-    assert "aprend" not in action_labels(replace(done, has_centroid=False), NAMES).line
+    carried = action_labels(replace(done, learned=False), NAMES).line          # o vetor está na voz de antes do reprocessamento
+    assert carried == "As falas desta voz estão com o nome de Ana." and UNDO not in carried
     assert action_labels(replace(BASE, merged_into=9), NAMES).line == "Mesclada com a Voz 3."
     assert all(way in UNDO for way in ("escolha outra pessoa", "ignore", "mescle numa voz sem pessoa"))   # os três da P-03
     assert action_labels(None, NAMES) == ReviewActions(Primary.NONE, "Confirmar", None, "")
@@ -144,7 +145,8 @@ def test_more_menu_has_the_rare_actions_and_m_i_e_still_work(qtbot, platform, st
     actions = [a for a in dlg.btn_more.menu().actions() if not a.isSeparator()]
     assert [a.text() for a in actions] == ["É a mesma que…\tM", "Ignorar\tI", "Editar pessoa\tE", "Sugerir de novo pelo contexto"]
     assert all(a.shortcut().isEmpty() for a in actions)                              # A-21: as teclas são do `handle_key`
-    assert {b.key for b in dlg.findChildren(KeyButton)} == {"Enter", "L", "O", "N"}    # M, I, E e o tocar saíram da coluna
+    assert {b.key for b in dlg.findChildren(KeyButton)} == {"Enter", "L", "O", "N", ""}    # M, I, E e o tocar saíram da coluna
+    assert dlg.btn_more.text() == "Mais" and dlg.btn_more.menu() is not None and not dlg.btn_more.grab().isNull()   # à esquerda
     for key in (Qt.Key.Key_M, Qt.Key.Key_I, Qt.Key.Key_E):
         qtbot.keyClick(dlg.list, key)
     for action in actions[:3]:

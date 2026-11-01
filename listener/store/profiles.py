@@ -139,6 +139,13 @@ class ProfilesRepo:
         return self.core.execute("UPDATE voice_embeddings SET cluster_id = NULL, segment_id = NULL WHERE meeting_id = ? "
                                  "AND (cluster_id IS NOT NULL OR segment_id IS NOT NULL)", (meeting_id,))
 
+    def learned_clusters(self, meeting_id: int) -> set[int]:
+        """As vozes da reunião com vetor de confirmação ativo num perfil (F5.11, U-101: a revisão só promete desfazer o que
+        acha; a voz confirmada que veio de um reprocessamento tem o vetor na voz antiga)."""
+        rows = self.core.q("SELECT DISTINCT cluster_id FROM voice_embeddings WHERE meeting_id = ? AND source = ? "
+                           "AND cluster_id IS NOT NULL", (meeting_id, EmbeddingSource.CONFIRM))
+        return {int(r[0]) for r in rows}
+
     def embeddings(self, profile_id: int, sources: tuple[str, ...] | None = None) -> list[tuple[int, np.ndarray, str]]:
         if sources:
             marks = ",".join("?" * len(sources))

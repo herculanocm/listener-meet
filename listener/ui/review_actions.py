@@ -12,9 +12,9 @@ confirmação faz (U-101), conforme o estado da voz selecionada, com o nome e se
 | mesclada | "É a mesma que a Voz 3", apagado | apagado |
 
 Sem sugestão pelo contexto, o L fica apagado. As teclas não mudam; o Enter faz o que o principal diz e, apagado, nada.
-`ReviewActionsMixin` monta a coluna de largura fixa (o nome comprido é cortado no meio), o "Mais" (U-100, A-21: a tecla
-depois do Tab no texto do item; quem a atende é o `handle_key`, sem `QAction.setShortcut`) e a linha do U-101, e faz o
-que cada ação da voz faz."""
+`ReviewActionsMixin` monta a coluna de largura fixa (o nome comprido é cortado no meio), o "Mais" (U-100, A-21: um botão
+com menu, o texto à esquerda como os outros; a tecla depois do Tab no texto do item, atendida pelo `handle_key`, sem
+`QAction.setShortcut`) e a linha do U-101, e faz o que cada ação da voz faz."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,7 +26,6 @@ from PySide6.QtWidgets import QInputDialog, QLabel, QMenu, QMessageBox, QVBoxLay
 
 from ..model import BY_CONTEXT, ClusterStatus, JobStep
 from ..pipeline import review
-from .meeting_parts import menu_button
 from .review_cards import KeyButton
 from .review_person import PersonActionsMixin
 from .theme import note
@@ -87,9 +86,10 @@ def _choose_line(item: review.ReviewItem) -> str:
 
 
 def _done_line(item: review.ReviewItem, name: str) -> str:
+    """A confirmada: o "Para desfazer" só com o vetor dela no perfil (a que veio de um reprocessamento o tem na voz antiga)."""
     if not name:
         return ""
-    if item.has_centroid:
+    if item.learned:
         return f"O perfil de voz de {name} aprendeu com esta fala. {UNDO}"
     return f"As falas desta voz estão com o nome de {name}."
 
@@ -111,7 +111,9 @@ class ReviewActionsMixin(PersonActionsMixin):
         self.btn_llm = KeyButton(NO_CONTEXT, "L")
         self.btn_other = KeyButton("Outra pessoa", "O")
         self.btn_new = KeyButton("Nova pessoa", "N")
-        self.btn_more = menu_button("Mais", MORE_TIP, self._more_menu())
+        self.btn_more = KeyButton("Mais", "")                              # sem tecla: o texto à esquerda e a seta
+        self.btn_more.setMenu(self._more_menu())
+        self.btn_more.setToolTip(MORE_TIP)
         self.learn = QLabel("")
         note(self.learn)
         self.learn.setWordWrap(True)
