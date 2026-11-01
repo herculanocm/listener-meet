@@ -108,16 +108,16 @@ Tamanho-alvo: 3 KB.
 | U-095 | Ícone do `.exe` (Explorer e barra) com a marca do app no estado ocioso, um tamanho desenhado por escala; a descrição do arquivo "listener-meet" | Executável | implementada (F5.8, 30/10) |
 | U-096 | Perguntar às reuniões: sugestões de perguntas no estado vazio (contagem com uma pessoa, ações atrasadas por dono, custo da LLM por mês) | Histórico | aprovada (F5.10, D-073) |
 | U-097 | Resposta da base: "Ver dados" abre a tabela de uma consulta (refeita na sandbox), com "Copiar como tabela" | Histórico | aprovada (F5.10, D-073) |
-| U-098 | Botões da revisão pelo resultado, com o nome ("É a Ana [Enter]"); sem candidato, "Escolher pessoa…" | Revisão | proposta (F5.11) |
+| U-098 | Botões da revisão pelo resultado, com o nome e sem gênero ("É Ana [Enter]"), conforme o estado da voz | Revisão | proposta (F5.11) |
 | U-099 | Tocar 5 s no cartão da voz selecionada | Revisão | proposta (F5.11) |
 | U-100 | Ações raras da revisão num menu "Mais", com as mesmas teclas | Revisão | proposta (F5.11) |
 | U-101 | O que a confirmação ensina ao perfil e como desfazer, numa linha | Revisão | proposta (F5.11) |
 | U-102 | Cabeçalho da reunião numa linha: título que grava sozinho, "Exportar" e "⋯" | Reunião | proposta (F5.11) |
 | U-103 | Gerar ata e resumo dentro das abas, com o estado da F5.6 na linha de origem | Reunião | proposta (F5.11) |
-| U-104 | `[mm:ss]` da ata, do resumo e das ações tocam o ponto | Reunião | proposta (F5.11) |
+| U-104 | `[mm:ss]` da ata e o "Quando" das ações tocam a fala | Reunião | proposta (F5.11) |
 | U-105 | Atalhos do player: Espaço, ← e → | Reunião | proposta (F5.11) |
 | U-106 | Rótulos pelo resultado fora das Configurações ("pela voz", "pelo contexto", "você") | Todas | proposta (F5.11) |
-| U-107 | "Descartar gravação" com lixeira no widget; "Cancelar processamento" na fila | Widget, fila | proposta (F5.11) |
+| U-107 | "Descartar gravação" com lixeira, e o Enter da confirmação continua gravando; "Cancelar processamento" na fila | Widget, fila | proposta (F5.11) |
 | U-108 | "Você" em toda tela; o nome na ata, na exportação e na LLM | Todas | proposta (F5.11) |
 | U-109 | Plural de verdade e datas em dd/mm/aaaa | Todas | proposta (F5.11) |
 | U-110 | A saída escolhida pela lista do painel do widget, com medidor por linha | Warm-up | proposta (F5.11) |
@@ -126,7 +126,7 @@ Tamanho-alvo: 3 KB.
 | U-113 | "Testar" no token do Hugging Face; o assistente conta os passos que mostra | Config., assistente | proposta (F5.11) |
 | U-114 | Reunião sem fala diz qual canal ficou sem som e qual fonte estava escolhida | Reunião | proposta (F5.11) |
 | U-115 | "Gravação salva com falha" quando um canal ficou sem áudio | Resumo | proposta (F5.11) |
-| U-116 | Alerta do widget inteiro, sem corte | Widget | proposta (F5.11) |
+| U-116 | Alerta do widget e etapa da fila inteiros, sem corte | Widget, fila | proposta (F5.11) |
 | U-117 | Rodapé da transcrição claro; a caixa da revisada só com uma revisada | Reunião | proposta (F5.11) |
 | U-118 | Bandeira fora do rótulo da linha do tempo; duração no player antes de tocar | Reunião | proposta (F5.11) |
 | U-119 | Títulos da ata abaixo do título da janela | Reunião | proposta (F5.11) |
