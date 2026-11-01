@@ -805,7 +805,9 @@ class Controller(QObject):
     def cancel_recording(self) -> None:
         if not self.recorder or self.state == AppState.SAVING:
             return
-        r = QMessageBox.question(self.widget, "Cancelar gravação", "Descartar esta gravação? Isso apaga o áudio gravado até agora.")
+        r = QMessageBox.question(self.widget, "Cancelar gravação", "Descartar esta gravação? Isso apaga o áudio gravado até agora.",
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                 QMessageBox.StandardButton.No)      # D-076: o Enter fica com o "Não" (sem padrão, apagava)
         if r != QMessageBox.StandardButton.Yes or not self.recorder:
             return
         rec = self.recorder

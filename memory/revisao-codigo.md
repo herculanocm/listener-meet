@@ -64,6 +64,10 @@ visão lê ignora o filtro (mesma classe); `llm_calls` no `main` sob o autorizad
 resposta e erro, sem chave); a resposta cancelada gravada sem custo (como o chat global); a impressão digital que não vê
 estado, duração nem sala (validade de 10 min); `custos_llm` com filtro esconde as chamadas sem reunião.
 
+## Revisão de arquitetura da F5.11 (01/11)
+Corrigido: o Enter na confirmação do descarte apagava a gravação (`QMessageBox.question` sem botão padrão; provado com
+a caixa real), D-076. Os outros achados (A-01 a A-41) estão na spec da F5.11, não no código de hoje.
+
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),
 SQL curto na thread da interface, as listas de apps de reunião em `platform.py` e `activity.py`, riscos sem chamador

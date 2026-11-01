@@ -289,6 +289,56 @@ def test_quit_while_recording_enqueues_the_meeting_and_clears_the_lease(qtbot, q
     c.emergency_stop()
 
 
+def test_enter_on_the_discard_confirmation_keeps_recording(qtbot, qapp, store, platform, monkeypatch):
+    """D-076 (A-12 da revisão de arquitetura da F5.11): o Enter na confirmação do descarte fica com o "Não" e a gravação
+    segue. Sem o botão padrão, a caixa real do Qt atendia o Enter com o "Sim", e a tecla apagava a gravação."""
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from listener.capture.recorder import RecordConfig
+    from listener.ui import controller as ctl
+    from listener.ui.controller import Controller
+
+    c = Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    cfg = RecordConfig(source=SourceSpec("app", pid=4242, exe="meeting.exe", label="Reunião"), chunk_seconds=0.5, stop_timeout_s=1.0,
+                       retry_base_s=0.001)
+    defaults: list[object] = []
+    forced: list[bool] = []
+
+    def press_enter(tries: int = 100) -> None:                 # roda dentro do laço da caixa modal
+        boxes = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMessageBox) and w.isVisible()]
+        if not boxes:
+            if tries:
+                QTimer.singleShot(20, lambda: press_enter(tries - 1))          # a caixa ainda não abriu
+            return
+        box = boxes[0]
+        button = box.defaultButton()
+        defaults.append(box.standardButton(button) if button is not None else None)
+
+        def give_up() -> None:                                 # o Enter não fechou: fecha em 2 s, sem travar a suíte
+            forced.append(True)
+            box.reject()
+
+        guard = QTimer(box)
+        guard.setSingleShot(True)
+        guard.timeout.connect(give_up)
+        guard.start(2000)
+        qtbot.keyClick(box, Qt.Key.Key_Return)
+
+    try:
+        assert c.start_recording(cfg, {"title": "d"})
+        rec = c.recorder
+        platform.pump(0.6)
+        QTimer.singleShot(0, press_enter)
+        c.cancel_recording()
+        assert c.recorder is rec and c.state == AppState.RECORDING and store.get_meeting(rec.meeting_id) is not None
+        assert defaults == [QMessageBox.StandardButton.No] and not forced
+    finally:
+        c.emergency_stop()
+
+
 def test_dead_worker_job_is_relaunched_by_the_app(qtbot, qapp, store, platform):
     """R2-01: job `rodando` com heartbeat vencido (worker morto) conta como ativo sem worker: o app relança."""
     from datetime import datetime, timedelta

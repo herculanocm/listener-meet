@@ -4,11 +4,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
 ## Onde paramos (01/11/2026, Windows nativo; tudo commitado; o push é do dono)
 - Código: F1 a F5.10 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.376 testes, esquema v9. Nenhum gate medido ainda.
+  rascunho inicial e F7 é futuro. Suíte de 1.377 testes (um falha desde 01/11, ver Dívidas), esquema v9. Nenhum gate
+  medido ainda.
 - **F5.11 em revisão** (01/11, `features/F5.11-revisao-reuniao-e-linguagem.md`): a crítica de UX do app inteiro
   (28/40) virou 23 melhorias, U-098 a U-120; a revisão de arquitetura (A-01 a A-41) está incorporada, com 13 perguntas
-  no padrão e 14 a 18 dias [chute]. Falta a aprovação do dono. Achado de produção: na confirmação do descarte, o Enter
-  apaga a gravação (`ui/controller.py:808`; pergunta 13 da spec).
+  no padrão e 14 a 18 dias [chute]. Falta a aprovação do dono. O achado de produção dela, o Enter que apagava a
+  gravação na confirmação do descarte, saiu à parte na D-076 (01/11), com teste.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
@@ -49,8 +50,9 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
    venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 9. [ ] Gemini, busca local e ao vivo (Partes 5, 6 e 7; B15): busca e perguntas com o Gemini (F5), a busca local sem
    custo (F5.1) e o ao vivo com nomes (F4).
-10. [ ] Reuniões reais e bordas (Partes 8 e 9): G1 (B2), G2, G3, G4 e G5; a D-072, o logoff cancelado, entra na
-    Parte 9; a metade Linux do L0 da F5.1, na próxima sessão no Linux.
+10. [ ] Reuniões reais e bordas (Partes 8 e 9): G1 (B2), G2, G3, G4 e G5; a D-072, o logoff cancelado, e a D-076 (o
+    ✕ do widget com Enter na confirmação: a gravação segue) entram na Parte 9; a metade Linux do L0 da F5.1, na
+    próxima sessão no Linux.
 
 Concluídos: checkout, venv e suíte no Windows (25/10; pelo lock desde 26/10, D-050); Parte 1 (26/10); Parte 2, as
 chaves (o Gemini 3 passou no "Testar conexão" em 26/10, D-055; o pyannote diarizou a reunião 8 com o token em 30/10).
@@ -113,6 +115,11 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
   2 min; suspeita: a consulta WMI do `platform.machine()`); se voltar, rodar com a saída num arquivo, não por `| tail`.
   `test_rag_ui.py::test_the_system_loopback_never_opens_with_the_player_playing` falhou uma vez com `-x` (0 em 15
   depois); se voltar, guardar a saída e ver a espera do player.
+- `test_rag_search.py::test_hybrid_search_fuses_both_lists_and_finds_by_meaning` falha desde 01/11, também no `93179a8`
+  (antes da D-076): o cosseno dá 0,198 contra o mínimo de 0,2 [chute: o texto do trecho leva a data da reunião, criada
+  com a data de hoje, e o embedder falso hasheia cada palavra]. Fixar a data no teste.
+- O assistente atende o Enter com o "Sim" na pergunta da pasta sincronizada (`ui/wizard.py:121`, sem botão padrão,
+  como o descarte antes da D-076): uma tecla põe o banco numa pasta sincronizada com a nuvem.
 - Suíte acima da meta de 8 s (D-050; a inteira levou 152 s com 1.376 testes em 31/10): a meta pede execução paralela
   (pergunta 6); o resto é lógica espalhada (o `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
   `listener-*` no `%TEMP%` (82 em três dias, apagadas na D-052): passar os testes para o `tmp_path` e as sondas a apagar
