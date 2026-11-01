@@ -12,9 +12,9 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   `C:\Users\<usuário>\dev\listener-meet\.venv`
   tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos do F0 (large-v3-turbo, wav2vec2 pt) em
   `C:\Users\<usuário>\listener-meet\models\`; a pasta padrão do app (`%LOCALAPPDATA%\listener-meet\models`) já tem `small`
-  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10) e o large-v3-turbo copiado do F0 (26/10); o cache
-  global do HF (`~\.cache\huggingface\hub`) ganhou `models--Systran--faster-whisper-small` (483 MB) de um teste que ia à
-  rede antes da correção de 26/10: lixo, apagar com o OK do dono;
+  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10) e o large-v3-turbo copiado do F0 (26/10); no cache
+  global do HF (`~\.cache\huggingface\hub`) sobram só as duas entradas vazias de 24/10, que saem com o venv do F0 depois
+  da Parte 3 do roteiro (o `small` de um teste saiu na limpeza da D-052);
   áudio sintético de calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em
   `C:\Users\<usuário>\listener-meet\f0\`. SQLite do Python do python.org: 3.49.1 com FTS5 (25/10).
 - CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch
