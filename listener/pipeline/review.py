@@ -2,9 +2,10 @@
 
 Cada confirmação: `clusters.status = confirmado` com a pessoa, `segments.person_id` e `role_at_time` do cluster, um vetor em
 `voice_embeddings` (`source = confirmacao`) com centroide recalculado e autocalibração (Welford com a similaridade medida
-antes), `revisions` e um evento `PROFILE_CONFIRM`. Mesclar guarda `clusters.merged_into` (segmentos mantêm o `cluster_id`,
-D-F2-9). "Perfil de um trecho" nesta fase é o centroide do cluster já embedado pelo job (P6). O trecho de 5 s para ouvir
-vem dos segmentos ou, enquanto o Whisper ainda roda, dos turnos guardados no artefato da costura.
+antes), `revisions` e um evento `PROFILE_CONFIRM`; a confirmada que deixa a pessoa (outra, ignorada ou, P-03 da F5.11,
+mesclada numa voz sem pessoa) tira o vetor do perfil. Mesclar guarda `clusters.merged_into` (segmentos mantêm o `cluster_id`,
+D-F2-9). "Perfil de um trecho" é o centroide do cluster (P6). O trecho de 5 s vem dos segmentos ou, com o Whisper ainda
+rodando, dos turnos do artefato da costura. A ficha da pessoa (U-041) está em `pipeline/review_person.py` (F5.11, A-35).
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Any
 import numpy as np
 
 from ..log import get_logger
-from ..model import ClusterStatus, DecisionSource, EventType, MeetingStatus
+from ..model import BY_CONTEXT, BY_VOICE, ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
 from ..store.profiles import normalize
 from ..store.segments import ClusterRow, resolve_person, role_of
@@ -43,7 +44,7 @@ class ReviewItem:
     similarity: float | None
     margin: float | None
     merged_into: int | None
-    has_centroid: bool
+    has_centroid: bool               # vetor e modelo: só assim a confirmação ensina o perfil (U-101 da F5.11)
     llm_person_id: int | None = None        # F3 item 5: sugestão por contexto (só em vozes pendentes)
     llm_name: str | None = None
     llm_confidence: float | None = None
@@ -59,7 +60,7 @@ class ReviewItem:
         return bool(self.llm_name) and self.pending
 
     def llm_text(self) -> str:
-        """"LLM: Rodrigo (0,8) 'valeu, Rodrigo' aos 12:03" para o card da revisão (U-006)."""
+        """"pelo contexto: Rodrigo (0,80) 'valeu, Rodrigo' aos 12:03" para o card da revisão (U-006; U-106 da F5.11)."""
         if not self.has_llm:
             return ""
         conf = f" ({self.llm_confidence:.2f})".replace(".", ",") if self.llm_confidence is not None else ""
@@ -68,7 +69,7 @@ class ReviewItem:
             _sid, text, t_ms = self.llm_evidence[0]
             s = max(0, t_ms // 1000)
             quote = f" \u201c{text}\u201d aos {s // 60:02d}:{s % 60:02d}"
-        return f"LLM: {self.llm_name}{conf}{quote}"
+        return f"{BY_CONTEXT}: {self.llm_name}{conf}{quote}"
 
     @property
     def minutes_text(self) -> str:
@@ -79,6 +80,7 @@ class ReviewItem:
         return voice_label(self.label) if self.channel == "R" else f"{voice_label(self.label)} (canal {self.channel})"
 
     def summary(self) -> str:
+        """O estado e as sugestões, sem as teclas: os botões dizem o que cada uma faz (U-098 da F5.11)."""
         if self.merged_into is not None:
             return f"mesclada com a voz #{self.merged_into}"
         if self.status == ClusterStatus.IGNORED:
@@ -92,10 +94,9 @@ class ReviewItem:
             case ClusterStatus.AUTO:
                 return f"{self.person_name}{sim}"
             case ClusterStatus.AMBIGUOUS:
-                return f"pyannote: {self.person_name}{sim}{llm}; Enter aceita o pyannote" + ("; L aceita a LLM" if llm else "")
+                return f"{BY_VOICE}: {self.person_name}{sim}{llm}"
             case _:
-                base = f"sem nome; parecida com {self.person_name}{sim}" if self.person_name else "sem nome"
-                return base + llm + ("; Enter ou L aceita a LLM" if llm and not self.person_name else ("; L aceita a LLM" if llm else ""))
+                return (f"sem nome; parecida com {self.person_name}{sim}" if self.person_name else "sem nome") + llm
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,14 +143,14 @@ def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
     for c in store.segments.list_clusters(meeting_id, job_id):
         if c["channel"] == "L" and c["cluster"] == USER_CLUSTER:
             continue
-        pid = c.get("person_id")
+        pid, llm_pid = c.get("person_id"), c.get("llm_person_id")
         name = str(people.get(int(pid), {}).get("name") or "") if pid is not None else ""
-        llm_pid = c.get("llm_person_id")
         llm_name = str(people.get(int(llm_pid), {}).get("name") or "") if llm_pid is not None else (c.get("llm_name") or None)
         out.append(ReviewItem(int(c["id"]), str(c["cluster"]), str(c["channel"]), ClusterStatus(str(c["status"])), int(c["speech_ms"]),
                               int(pid) if pid is not None else None, name, c.get("similarity"), c.get("margin"), c.get("merged_into"),
-                              bool(c["centroid"].size), int(llm_pid) if llm_pid is not None else None, llm_name or None,
-                              c.get("llm_confidence"), _evidence(store, c.get("llm_evidence_json")), c.get("decision_source")))
+                              bool(c["centroid"].size and c.get("model")), int(llm_pid) if llm_pid is not None else None,
+                              llm_name or None, c.get("llm_confidence"), _evidence(store, c.get("llm_evidence_json")),
+                              c.get("decision_source")))
     return out
 
 
@@ -310,10 +311,8 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     segs = [s for s in store.segments.list_segments(int(c["meeting_id"]), int(c["job_id"])) if s.get("cluster_id") == cluster_id]
     previous = int(c["person_id"]) if str(c["status"]) == ClusterStatus.CONFIRMED and c.get("person_id") is not None else None  # type: ignore[arg-type]
     with store.transaction():
-        if previous is not None and previous != pid and c.get("model"):
-            old = store.profiles.profile_for(previous, str(c["model"]))             # correção: o vetor sai do perfil anterior (R2-09)
-            if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), cluster_id):
-                store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {cluster_id}", str(pid), author)
+        if previous is not None and previous != pid:
+            _unlearn(store, c, str(pid), author)                                   # correção: o vetor sai do perfil anterior (R2-09)
         store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid, decision_source=str(source))
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, pid, str(person.get("role") or "") or None)
         if c["centroid"].size and c.get("model") and previous != pid:
@@ -326,6 +325,17 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     return pid
 
 
+def _unlearn(store: Store, c: ClusterRow, after: str, author: str) -> None:
+    """R2-09 e P-03 (F5.11): a voz confirmada que deixa a pessoa tira o vetor do perfil (fonte `invalidado`, nada apagado,
+    CP3), na transação de quem chama; a calibração não volta (dívida da F2)."""
+    pid = c.get("person_id")
+    if str(c["status"]) != ClusterStatus.CONFIRMED or pid is None or not c.get("model"):
+        return
+    old = store.profiles.profile_for(int(pid), str(c["model"]))  # type: ignore[arg-type]
+    if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), int(c["id"])):
+        store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {c['id']}", after, author)
+
+
 def new_person(store: Store, cluster_id: int, name: str, role: str = "", author: str = "usuario",
                source: DecisionSource | None = None) -> int:
     """Nome novo vira pessoa só na confirmação (F3 item 5)."""
@@ -336,60 +346,6 @@ def new_person(store: Store, cluster_id: int, name: str, role: str = "", author:
     pid = int(existing["id"]) if existing else store.people.create_person(name, role=role)
     log.info("voz %s: pessoa %s %s pelo nome", cluster_id, pid, "reaproveitada" if existing else "criada")
     return confirm(store, cluster_id, pid, author, source=source)
-
-
-def create_person(store: Store, cluster_id: int, name: str, role: str = "", company: str = "", email: str = "",
-                  author: str = "usuario") -> int:
-    """U-041 (A-11): a ficha da revisão cria a pessoa com todos os campos e confirma a voz. Nunca reaproveita pelo nome: o
-    homônimo a interface oferece antes ("é ela?"), e um "não" quer dizer outra pessoa com o mesmo nome."""
-    name = name.strip()
-    if not name:
-        raise ValueError("informe o nome")
-    pid = store.people.create_person(name, email=email.strip(), role=role.strip(), company=company.strip())
-    log.info("pessoa %s criada pela ficha da revisão (voz %s; cargo %s, empresa %s, e-mail %s)", pid, cluster_id,
-             _filled(role), _filled(company), _filled(email))
-    return confirm(store, cluster_id, pid, author)
-
-
-def edit_person(store: Store, person_id: int, meeting_id: int, name: str, role: str = "", company: str = "",
-                email: str = "") -> list[int]:
-    """U-041 (A-09, A-12): muda a ficha. Um cargo novo vale para as falas da pessoa nesta reunião e congela o antigo nas
-    outras (o cargo do dia, D-016). Devolve as reuniões a reindexar: todas as da pessoa quando o nome ou o cargo mudam (o
-    falante entra no texto dos trechos da busca), senão nenhuma."""
-    person = store.people.get_person(person_id)
-    if person is None:
-        raise ValueError(f"pessoa {person_id} não existe")
-    name, role = name.strip(), role.strip()
-    if not name:
-        raise ValueError("informe o nome")
-    old_role = str(person.get("role") or "")
-    with store.transaction():
-        if role != old_role:
-            frozen = store.segments.freeze_role(person_id, old_role, meeting_id)
-            here = store.segments.set_role_in_meeting(meeting_id, person_id, role)
-            log.info("pessoa %s: cargo mudou na reunião %s (%d fala(s) aqui; %d fala(s) de outras reuniões guardam o antigo)",
-                     person_id, meeting_id, here, frozen)
-        store.people.update_person(person_id, name, email.strip(), role, company.strip())
-    renamed = name != str(person["name"])
-    reindex = store.people.meetings_of(person_id) if renamed or role != old_role else []
-    log.info("pessoa %s editada pela revisão da reunião %s (nome %s, cargo %s); %d reunião(ões) para reindexar", person_id,
-             meeting_id, "mudou" if renamed else "igual", "mudou" if role != old_role else "igual", len(reindex))
-    return reindex
-
-
-def forget_person(store: Store, person_id: int) -> list[int]:
-    """U-041 (A-06, A-08, LGPD): apaga a pessoa (`PeopleRepo.forget`) e limpa o vínculo órfão que outro processo tenha
-    gravado; devolve as reuniões afetadas, para reindexar. Atas, resumos e respostas já gerados ficam como estão (CP3)."""
-    meetings = store.people.forget(person_id)
-    orphans = store.people.scrub_orphans()
-    log.info("pessoa %s apagada pela revisão: %d reunião(ões) afetada(s), %d vínculo(s) órfão(s) limpo(s)", person_id,
-             len(meetings), orphans)
-    return meetings
-
-
-def _filled(value: str) -> str:
-    """Só se o campo veio preenchido: o valor nunca vai para o log (D-053, LGPD)."""
-    return "sim" if value.strip() else "não"
 
 
 def accept_llm(store: Store, cluster_id: int, author: str = "usuario") -> int:
@@ -411,6 +367,7 @@ def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:
     if c is None:
         return
     with store.transaction():
+        _unlearn(store, c, str(ClusterStatus.IGNORED), author)                     # P-03: ignorar a confirmada desfaz o reforço
         store.segments.update_cluster(cluster_id, status=ClusterStatus.IGNORED)
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
         store.add_revision("cluster", cluster_id, "status", c["status"], ClusterStatus.IGNORED, author)
@@ -434,6 +391,8 @@ def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "us
         store.add_revision("cluster", cluster_id, "merged_into", c.get("merged_into"), into_cluster_id, author)
         if pid is not None:
             confirm(store, cluster_id, pid, author)
+        else:
+            _unlearn(store, c, f"cluster {into_cluster_id}", author)               # P-03: numa voz sem pessoa, sai do perfil
     log.info("voz %s mesclada na voz %s da reunião %s (%s)", c["cluster"], target["cluster"], c["meeting_id"],
              f"confirmada como pessoa {pid}" if pid is not None else "o alvo ainda não tem pessoa")
 

@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt
 
 from listener.capture.recorder import RecordConfig, SourceSpec
 from listener.model import EventType, JobKind, JobStatus
-from listener.pipeline import llm_requests, review
+from listener.pipeline import llm_requests, review, review_person
 from listener.pipeline.llm_requests import Mode, Outcome, Species
 from listener.pipeline.runner import JobRunner
 from listener.ui import llm_ask
@@ -95,7 +95,7 @@ def test_the_popup_in_the_four_situations(qtbot, platform, store):
     reviewed = llm_ask.question(store, mid, ["minutes", "executive"])
     assert reviewed.title == "Gerar ata, ações e resumo" and llm_ask.REVIEWED in reviewed.lines and not reviewed.named
     for cid, name in zip(_pending(store, mid), ("Ana", "Bia"), strict=True):         # 4. todas com nome
-        review.create_person(store, cid, name)
+        review_person.create_person(store, cid, name)
     named = llm_ask.question(store, mid, ["minutes"])
     assert named.named and named.lines[0] == llm_ask.ALL_NAMED and llm_ask.ADVICE not in named.lines
     go = RequestDialog(named)

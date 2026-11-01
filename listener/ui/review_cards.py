@@ -2,30 +2,35 @@
 
 - `VoiceCardDelegate`: cada voz num cartão, com o título ("Voz 2", U-035), o estado num selo (a confirmar, sem nome,
   confirmada, automática, ignorada, mesclada; o texto e o tom, nunca só a cor, U-054), os minutos de fala à direita e o
-  resumo (a sugestão do pyannote e a da LLM) embaixo. O `DisplayRole` do item segue com a linha inteira, para o leitor de
-  tela e os testes.
-- `KeyButton`: o botão da ação com o atalho num selo de tecla à direita ("Confirmar pyannote [Enter]"); a tecla também vai
-  na dica e na descrição acessível.
-- `stage_primary`: o primário segue a etapa (com voz pendente, "Confirmar pyannote"; sem nenhuma, "Concluir"). Nenhum vira
-  o padrão do Enter: na lista, Enter segue confirmando o pyannote (U-006), e num campo de texto não fecha a revisão; num
-  botão com foco, o Enter aciona esse botão (`ReviewDialog.keyPressEvent`, R-01 da revisão da F5.4)."""
+  resumo (a sugestão pela voz e a pelo contexto) embaixo. O `DisplayRole` do item segue com a linha inteira, para o leitor
+  de tela e os testes. F5.11 (U-099, A-20): no cartão selecionado, o "Ouvir 5 s" pintado (nada de widget por linha); o
+  clique por `editorEvent` emite `play_requested`, e o Espaço segue tocando.
+- `KeyButton`: o botão da ação com o atalho num selo de tecla à direita ("É Ana [Enter]"); a tecla também vai na dica e na
+  descrição acessível. `set_label` troca o texto e a tecla com o estado da voz (A-19); sem espaço, o texto é cortado no
+  meio, o que corta o nome e deixa o começo e o fim.
+- `stage_primary`: o primário segue a etapa (com voz pendente, o da voz; sem nenhuma, "Concluir"). Nenhum vira o padrão do
+  Enter: na lista, o Enter faz o que o principal da voz diz (U-098), e num campo de texto não fecha a revisão; num botão
+  com foco, o Enter aciona esse botão (`ReviewDialog.keyPressEvent`, R-01 da revisão da F5.4)."""
 from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QFontMetrics, QPainter, QPaintEvent
-from PySide6.QtWidgets import (QAbstractScrollArea, QListView, QListWidgetItem, QPushButton, QStyle, QStyledItemDelegate,
-                               QStyleOptionButton, QStyleOptionFocusRect, QStyleOptionViewItem, QStylePainter, QWidget)
+from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPersistentModelIndex, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QFontMetrics, QHelpEvent, QMouseEvent, QPainter, QPaintEvent
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractScrollArea, QListView, QListWidgetItem, QPushButton, QStyle,
+                               QStyledItemDelegate, QStyleOptionButton, QStyleOptionFocusRect, QStyleOptionViewItem, QStylePainter,
+                               QToolTip, QWidget)
 
 from ..model import ClusterStatus
+from . import icons
 from .style import rounded
 from .theme import KIND_PROP, PRIMARY, Tone, font_for, qcolor, set_kind, surface_tokens
 
 if TYPE_CHECKING:
     from ..pipeline.review import ReviewItem
     from ..pipeline.voices import VoiceNames
+    from .tokens import Tokens
 
 TITLE_ROLE = Qt.ItemDataRole.UserRole + 0x5201      # "Voz 2"
 DETAIL_ROLE = Qt.ItemDataRole.UserRole + 0x5202     # o resumo da voz (pyannote, LLM, similaridade)
@@ -42,6 +47,9 @@ MERGED_BADGE = ("mesclada", Tone.NEUTRAL)
 CARD_PAD, CARD_GAP, CARD_MARGIN = 12, 4, 3            # px lógicos: dentro do cartão, entre o título e o resumo, em volta dele
 PILL_PAD_X, PILL_PAD_Y = 8, 2
 CAP_PAD_X, CAP_GAP, BUTTON_PAD = 6, 12, 12            # o selo de tecla: por dentro, até o texto e a borda do botão
+META_GAP = 12                                          # entre os minutos e o que vem antes deles no cabeçalho do cartão
+PLAY_TEXT, PLAY_TIP = "Ouvir 5 s", "Ouvir 5 s desta voz (tecla Espaço)"   # U-099
+PLAY_ICON, PLAY_PAD_X, PLAY_GAP = 14, 8, 4             # o "Ouvir 5 s": o ícone, por dentro e entre o ícone e o texto
 DETAIL_FLAGS = int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
 
@@ -78,16 +86,78 @@ def card_item(item: ReviewItem, names: VoiceNames) -> QListWidgetItem:
 
 
 class VoiceCardDelegate(QStyledItemDelegate):
-    """O cartão de uma voz na lista da revisão (a lista dá o espaço entre os cartões com `setSpacing`)."""
+    """O cartão de uma voz na lista da revisão (a lista dá o espaço entre os cartões com `setSpacing`); no selecionado, o
+    "Ouvir 5 s", que toca pelo clique (`play_requested`, A-20)."""
+
+    play_requested = Signal(int)            # a linha do cartão cujo "Ouvir 5 s" foi clicado
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.strong = font_for("body_strong")
         self.caption = font_for("caption")
         self._strong_fm, self._caption_fm = QFontMetrics(self.strong), QFontMetrics(self.caption)
+        self._play_w = 2 * PLAY_PAD_X + PLAY_ICON + PLAY_GAP + self._caption_fm.horizontalAdvance(PLAY_TEXT)
+        self._armed: int | None = None      # a linha onde o botão do mouse desceu no "Ouvir 5 s" (o clique vale se subir nela)
 
     def _head_h(self) -> int:
         return max(self._strong_fm.height(), self._caption_fm.height() + 2 * PILL_PAD_Y)
+
+    def play_rect(self, rect: QRect, index: QModelIndex | QPersistentModelIndex) -> QRectF:
+        """O "Ouvir 5 s" no cabeçalho do cartão de `rect` (o retângulo do item), à esquerda dos minutos."""
+        card = QRectF(rect).adjusted(CARD_MARGIN, CARD_MARGIN, -CARD_MARGIN, -CARD_MARGIN)
+        right = card.right() - CARD_PAD - self._caption_fm.horizontalAdvance(str(index.data(META_ROLE) or "")) - META_GAP
+        pill_h = self._caption_fm.height() + 2 * PILL_PAD_Y
+        return QRectF(right - self._play_w, card.top() + CARD_PAD + (self._head_h() - pill_h) / 2, self._play_w, pill_h)
+
+    def _hit(self, view: QWidget | None, rect: QRect, index: QModelIndex | QPersistentModelIndex) -> QRectF | None:
+        """A área do clique no "Ouvir 5 s" do cartão selecionado, com a altura de um controle (o alvo de 32 px da F5.4);
+        None fora do selecionado, onde ele não está pintado."""
+        if not isinstance(view, QAbstractItemView) or not view.selectionModel().isSelected(index):
+            return None
+        pill = self.play_rect(rect, index)
+        grow = max(0.0, (surface_tokens(view).metrics.control_h - pill.height()) / 2)
+        return pill.adjusted(0, -grow, 0, grow)
+
+    @override
+    def editorEvent(self, event: QEvent, model: QAbstractItemModel, option: QStyleOptionViewItem,
+                    index: QModelIndex | QPersistentModelIndex) -> bool:
+        """A-20: o clique no "Ouvir 5 s" toca. O aperto chega antes de a seleção mudar: o cartão que o próprio clique
+        seleciona não tinha o botão à vista, e o clique nele só seleciona."""
+        if not isinstance(event, QMouseEvent) or event.button() != Qt.MouseButton.LeftButton:
+            return super().editorEvent(event, model, option, index)
+        hit = self._hit(option.widget, option.rect, index)
+        inside = hit is not None and hit.contains(event.position())
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self._armed = index.row() if inside else None
+            return inside
+        if event.type() == QEvent.Type.MouseButtonRelease and self._armed is not None:
+            row, self._armed = self._armed, None
+            if inside and row == index.row():
+                self.play_requested.emit(row)
+                return True
+        return super().editorEvent(event, model, option, index)
+
+    @override
+    def helpEvent(self, event: QHelpEvent, view: QAbstractItemView, option: QStyleOptionViewItem,
+                  index: QModelIndex | QPersistentModelIndex) -> bool:
+        """A dica do "Ouvir 5 s", com a tecla (o Espaço segue tocando a voz selecionada)."""
+        hit = self._hit(view, option.rect, index)
+        if event.type() == QEvent.Type.ToolTip and hit is not None and hit.contains(QPointF(event.pos())):
+            QToolTip.showText(event.globalPos(), PLAY_TIP, view)
+            return True
+        return super().helpEvent(event, view, option, index)
+
+    def _paint_play(self, painter: QPainter, pill: QRectF, t: Tokens) -> None:
+        """O "Ouvir 5 s" num selo de botão: o ícone de tocar no destaque e o texto (U-099)."""
+        rounded(painter, pill, t.metrics.radius, t.card, t.stroke_strong)
+        dpr = painter.device().devicePixelRatioF() if painter.device() is not None else 1.0
+        painter.drawPixmap(QPointF(pill.left() + PLAY_PAD_X, pill.center().y() - PLAY_ICON / 2),
+                           icons.pixmap("play", t.accent, PLAY_ICON, dpr))
+        left = pill.left() + PLAY_PAD_X + PLAY_ICON + PLAY_GAP
+        painter.setFont(self.caption)
+        painter.setPen(qcolor(t.text))
+        painter.drawText(QRectF(left, pill.top(), pill.right() - left, pill.height()),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), PLAY_TEXT)
 
     @staticmethod
     def _item_w(option: QStyleOptionViewItem) -> int:
@@ -127,7 +197,8 @@ class VoiceCardDelegate(QStyledItemDelegate):
         title = str(index.data(TITLE_ROLE) or "")
         badge = str(index.data(BADGE_ROLE) or "")
         pill_w = self._caption_fm.horizontalAdvance(badge) + 2 * PILL_PAD_X if badge else 0
-        room = max(0.0, right - meta_w - 12 - x - (pill_w + 8 if badge else 0))
+        play_w = self._play_w + META_GAP if selected else 0                 # U-099: o "Ouvir 5 s" só no selecionado
+        room = max(0.0, right - meta_w - META_GAP - play_w - x - (pill_w + 8 if badge else 0))
         shown = self._strong_fm.elidedText(title, Qt.TextElideMode.ElideRight, int(room))
         painter.setFont(self.strong)
         painter.setPen(qcolor(t.on_selected(t.text, selected)))
@@ -146,6 +217,8 @@ class VoiceCardDelegate(QStyledItemDelegate):
             painter.setPen(qcolor(t.on_selected(t.secondary, selected)))
             top = y + head_h + CARD_GAP
             painter.drawText(QRectF(x, top, right - x, card.bottom() - CARD_PAD - top), DETAIL_FLAGS, detail)
+        if selected:
+            self._paint_play(painter, self.play_rect(option.rect, index), t)
         painter.restore()
         if state & QStyle.StateFlag.State_HasFocus and option.widget is not None:
             focus = QStyleOptionFocusRect()
@@ -159,14 +232,28 @@ class KeyButton(QPushButton):
 
     def __init__(self, text: str, key: str, parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
-        self.key = key
         self.cap_font = font_for("caption")         # por botão: nada de fonte do Qt viva no nível da classe até a saída (R-06)
+        self.set_label(text, key)
+        self.setMinimumWidth(self.full_width)            # a largura do texto inicial e do selo (sem medida em Python no layout)
+
+    def set_label(self, text: str, key: str) -> None:
+        """A-19 (F5.11): o texto e a tecla conforme o estado da voz; refaz o selo, a largura cheia e a dica. A largura mínima
+        fica a do texto inicial: a coluna é fixa e um nome comprido é cortado no meio (`paintEvent`)."""
         fm = QFontMetrics(self.cap_font)
-        self._cap = QSize(fm.horizontalAdvance(key) + 2 * CAP_PAD_X, fm.height() + 4)     # o selo, medido uma vez
+        self.setText(text)
+        self.key = key
+        self._cap = QSize(fm.horizontalAdvance(key) + 2 * CAP_PAD_X, fm.height() + 4)
         self.full_width = BUTTON_PAD + self.fontMetrics().horizontalAdvance(text) + CAP_GAP + self._cap.width() + BUTTON_PAD
-        self.setMinimumWidth(self.full_width)            # a largura do texto e do selo, uma vez (sem medida em Python no layout)
         self.setToolTip(f"{text} (tecla {key})")
         self.setAccessibleDescription(f"tecla {key}")
+        self.updateGeometry()
+        self.update()
+
+    @override
+    def sizeHint(self) -> QSize:
+        """A largura do texto e do selo (a do `QPushButton` não conta o selo; a sonda dos `cortados` mede por esta)."""
+        base = super().sizeHint()
+        return QSize(max(base.width(), self.full_width), base.height())
 
     def _cap_size(self) -> QSize:
         return self._cap
@@ -186,8 +273,8 @@ class KeyButton(QPushButton):
         on_fill = enabled and self.property(KIND_PROP) == PRIMARY
         room = QRect(rect.left() + BUTTON_PAD, rect.top(), int(cap_rect.left()) - CAP_GAP - rect.left() - BUTTON_PAD, rect.height())
         text = self.text()
-        if self.width() < self.full_width:                                                  # só corta quando não cabe
-            text = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, room.width())
+        if self.width() < self.full_width:                       # só corta quando não cabe, no meio: o nome (A-19)
+            text = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideMiddle, room.width())
         p.setPen(qcolor(t.on_accent if on_fill else t.text if enabled else t.disabled))     # o texto à esquerda (o rótulo do
         p.drawText(room, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)   # estilo centraliza e corta)
         ink = t.on_accent if on_fill else t.secondary if enabled else t.disabled
@@ -213,5 +300,5 @@ def stage_primary(primary: QPushButton, others: Iterable[QPushButton]) -> None:
     primary.setDefault(False)
 
 
-__all__ = ["BADGE_ROLE", "BADGE_TONE_ROLE", "DETAIL_ROLE", "META_ROLE", "STATUS_BADGES", "TITLE_ROLE", "KeyButton",
-           "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "stage_primary"]
+__all__ = ["BADGE_ROLE", "BADGE_TONE_ROLE", "DETAIL_ROLE", "META_ROLE", "PLAY_TEXT", "PLAY_TIP", "STATUS_BADGES", "TITLE_ROLE",
+           "KeyButton", "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "stage_primary"]

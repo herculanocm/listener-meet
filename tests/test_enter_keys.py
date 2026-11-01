@@ -1,6 +1,6 @@
 """Revisão da F5.4: o Enter como no Windows. Num botão com foco, aciona esse botão (Cancelar cancela); num campo, o primário
 da janela (R-02, desvio do A-02, que tirava o `autoDefault` dos outros botões). Na revisão de falantes, o Enter na lista
-segue confirmando o pyannote (U-006) e num campo de texto não aciona nada (R-01). Na fila, o Enter na tabela não aciona
+faz o que o principal da voz diz (U-006; U-098 da F5.11) e num campo de texto não aciona nada (R-01). Na fila, o Enter na tabela não aciona
 botão nenhum (antes clicava "Pausar fila")."""
 from __future__ import annotations
 
@@ -53,20 +53,20 @@ def test_review_enter_on_a_focused_button_runs_that_button(qtbot, platform, stor
     from tests.test_review import _processed
 
     mid, _items = _processed(platform, store)
-    seen = _calls(monkeypatch, ReviewDialog, "confirm_current", "finish", "ask_other_person", "_open_transcript", "regenerate")
+    seen = _calls(monkeypatch, ReviewDialog, "press_primary", "finish", "ask_other_person", "_open_transcript")
     dlg = ReviewDialog(store, mid)
     qtbot.addWidget(dlg)
     dlg.show()
     for button, action in ((dlg.btn_finish, "finish"), (dlg.btn_other, "ask_other_person"),
-                           (dlg.btn_transcript, "_open_transcript"), (dlg.btn_identify, "regenerate")):
+                           (dlg.btn_transcript, "_open_transcript"), (dlg.btn_confirm, "press_primary")):
         if not button.isEnabled():
             button.setEnabled(True)
         seen.clear()
         _enter(qtbot, button)
         assert seen == [action], button.text()
     seen.clear()
-    _enter(qtbot, dlg.list)                                                          # U-006: na lista, confirma o pyannote
-    assert seen == ["confirm_current"]
+    _enter(qtbot, dlg.list)                                                          # U-098: na lista, o que o principal diz
+    assert seen == ["press_primary"]
 
 
 def test_review_enter_in_a_text_field_does_not_press_any_button(qtbot, platform, store, monkeypatch):

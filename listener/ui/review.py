@@ -1,15 +1,15 @@
-"""Revisão de falantes (F2 item 13, U-006; F3 item 5): um card por voz com a sugestão do pyannote e a da LLM (origem,
-confiança, citação com minuto); Enter aceita o pyannote (motor principal, CP5/CP11), `L` aceita a LLM, setas navegam, O =
-outra pessoa, N = nova pessoa, M = mesclar, I = ignorar, Espaço ouve 5 s (numa `Task`). F3 item 11: abas de título,
-pré-resumo, ata, executivo e ações editáveis com "gerar de novo" por aba (job `llm`), selo de custo no cabeçalho. "Concluir"
-marca a reunião como revisada. Só metadados no construtor (R-9). F5: cada decisão sobre uma voz e cada edição das abas
-chama `on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reunião 30 s depois da última; "Concluir" na
-hora). F5 L4: as abas da LLM vêm do `LlmTabsGroup` (o mesmo da reunião aberta, F5A-26) e os 5 s passam pelo player único
-do app (um som por vez; o aviso de reprodução aparece no cabeçalho).
-U-041 (F5.2): N abre a ficha (nome, cargo, empresa, e-mail; nome repetido pergunta "é ela?"); O lista "Nome — Cargo ·
-Empresa" pelo id; E edita a ficha da pessoa da voz confirmada e tem "Apagar pessoa…" (LGPD; confirmação, CP3).
-F5.4 L4 (U-086, U-035; `ui/review_cards.py`): cada voz num cartão ("Voz 2", com o estado num selo), as ações numa coluna
-com a tecla num selo e o primário seguindo a etapa (com voz pendente, "Confirmar pyannote"; sem nenhuma, "Concluir")."""
+"""Revisão de falantes (F2 item 13, U-006; F3 item 5): um card por voz com a sugestão pela voz e a pelo contexto (origem,
+confiança, citação com minuto); setas navegam, Espaço ouve 5 s (numa `Task`). F3 item 11: abas de título, pré-resumo, ata,
+executivo e ações editáveis com "gerar de novo" por aba (job `llm`), selo de custo no cabeçalho. "Concluir" marca a reunião
+como revisada. Só metadados no construtor (R-9). F5: cada decisão sobre uma voz e cada edição das abas chama
+`on_edited(meeting_id, motivo, now=...)` (o controlador reindexa a reunião 30 s depois da última; "Concluir" na hora). F5 L4:
+as abas da LLM vêm do `LlmTabsGroup` (o mesmo da reunião aberta, F5A-26) e os 5 s passam pelo player único do app (um som
+por vez; o aviso de reprodução aparece no cabeçalho).
+U-041 (F5.2): a ficha da pessoa (`ui/review_person.py`). F5.4 L4 (U-086, U-035; `ui/review_cards.py`): cada voz num cartão,
+as ações numa coluna com a tecla num selo e o primário seguindo a etapa (com voz pendente, o da voz; sem nenhuma, "Concluir").
+F5.11 L1 (`ui/review_actions.py`, A-35): os botões dizem o resultado, com o nome (U-098), o "Ouvir 5 s" no cartão
+selecionado (U-099), as ações raras no "Mais" (U-100) e a linha do que a confirmação ensina ao perfil (U-101). As teclas são
+as mesmas (Enter, L, O, N, M, I, E, Espaço); o Enter faz o que o principal diz e, apagado, nada."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,18 +17,19 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListView, QListWidget, QListWidgetItem, QMessageBox,
-                               QPushButton, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QListView, QListWidget, QListWidgetItem, QPushButton, QTabWidget,
+                               QVBoxLayout, QWidget)
 
+from ..fmt import plural
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import llm_requests, review
 from ..pipeline.voices import VoiceNames, voice_names
-from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .common import click_focused_button, keep_until_destroyed
+from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .player import ERROR, PlayerState
-from .review_cards import KeyButton, VoiceCardDelegate, card_item, stage_primary
-from .review_person import PersonActionsMixin
+from .review_actions import ReviewActionsMixin
+from .review_cards import VoiceCardDelegate, card_item, stage_primary
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -38,7 +39,7 @@ log = get_logger("ui.review")
 ENTER_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
 
 
-class ReviewDialog(PersonActionsMixin, QDialog):
+class ReviewDialog(ReviewActionsMixin, QDialog):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, on_transcript: Any = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None,
                  player: Player | None = None):
@@ -61,44 +62,20 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.list.installEventFilter(self)                 # Enter, Espaço e letras valem com o foco na lista
-        self.list.setItemDelegate(VoiceCardDelegate(self.list))    # U-086: cada voz num cartão
+        self.cards = VoiceCardDelegate(self.list)          # U-086: cada voz num cartão; U-099: o "Ouvir 5 s" no selecionado
+        self.list.setItemDelegate(self.cards)
         self.list.setResizeMode(QListView.ResizeMode.Adjust)
         self.list.setSpacing(2)
-        self.btn_confirm = KeyButton("Confirmar pyannote", "Enter")
-        self.btn_llm = KeyButton("Aceitar LLM", "L")
-        self.btn_other = KeyButton("Outra pessoa", "O")
-        self.btn_new = KeyButton("Nova pessoa", "N")
-        self.btn_merge = KeyButton("É a mesma que…", "M")
-        self.btn_ignore = KeyButton("Ignorar", "I")
-        self.btn_play = KeyButton("Ouvir 5 s", "Espaço")
-        self.btn_edit = KeyButton("Editar pessoa", "E")                     # U-041: a ficha da pessoa desta voz
-        self.btn_edit.clicked.connect(self.edit_current)
+        column = self.build_actions()                      # F5.11 (A-19 a A-21): a coluna, o "Mais" e a linha do U-101
         self.btn_transcript = QPushButton("Ver transcrição")
         self.btn_finish = QPushButton("Concluir")
-        self.btn_identify = QPushButton("Identidade por contexto de novo")     # F3.1 R3-05: `identify` sob demanda
-        self.btn_identify.clicked.connect(self._identify_clicked)
-        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore, self.btn_play,
-                  self.btn_edit, self.btn_transcript, self.btn_finish, self.btn_identify):
+        for b in (self.btn_transcript, self.btn_finish):
             b.setAutoDefault(False)                        # U-086: nenhum vira o padrão do Enter (o Enter num botão: `keyPressEvent`)
-        self.btn_confirm.clicked.connect(self._confirm_clicked)
-        self.btn_llm.clicked.connect(self.accept_llm_current)
-        self.btn_other.clicked.connect(self.ask_other_person)
-        self.btn_new.clicked.connect(self.ask_new_person)
-        self.btn_merge.clicked.connect(self.ask_merge)
-        self.btn_ignore.clicked.connect(self.ignore_current)
-        self.btn_play.clicked.connect(self.play_current)
         self.btn_transcript.clicked.connect(self._open_transcript)
         self.btn_finish.clicked.connect(self.finish)
-        column = QVBoxLayout()                             # U-086: as ações da voz numa coluna, a tecla em selo
-        for b in (self.btn_confirm, self.btn_llm, self.btn_other, self.btn_new, self.btn_merge, self.btn_ignore, self.btn_play,
-                  self.btn_edit):
-            column.addWidget(b)
-        column.addSpacing(12)
-        column.addWidget(self.btn_identify)
-        column.addStretch(1)
         body = QHBoxLayout()
         body.addWidget(self.list, 1)
-        body.addLayout(column)
+        body.addWidget(column)
         foot = QHBoxLayout()
         foot.addWidget(self.btn_transcript)
         foot.addStretch(1)
@@ -106,6 +83,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         voices = QWidget()
         vlay = QVBoxLayout(voices)
         vlay.addLayout(body, 1)
+        vlay.addWidget(self.learn)
         vlay.addLayout(foot)
         self.tabs = QTabWidget()
         self.tabs.addTab(voices, "Vozes")
@@ -126,6 +104,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         lay.addWidget(self.tabs, 1)
         self.list.itemDoubleClicked.connect(self._double_clicked)          # R-06: métodos, não lambdas com `self`
         self.list.currentRowChanged.connect(self._row_changed)
+        self.cards.play_requested.connect(self.card_play)
         if player is not None:
             player.state_changed.connect(self._on_player)
         self.reload(focus=True)
@@ -153,14 +132,16 @@ class ReviewDialog(PersonActionsMixin, QDialog):
                 self.on_launch(True)
         return job_id
 
-    def _identify_clicked(self) -> None:
-        self.regenerate(JobStep.IDENTIFY)
-
     def _double_clicked(self, _item: QListWidgetItem) -> None:
         self.play_current()
 
+    def card_play(self, row: int) -> None:
+        """U-099: o "Ouvir 5 s" pintado no cartão (só o selecionado o mostra)."""
+        if row == self.list.currentRow():
+            self.play_current()
+
     def _row_changed(self, _row: int) -> None:
-        self._update_edit_button()
+        self.apply_actions()
 
     def _text_edited(self) -> None:
         if self.on_edited is not None:
@@ -169,10 +150,11 @@ class ReviewDialog(PersonActionsMixin, QDialog):
     # ---------------------------------------------------------------- abas da LLM (F3 item 11)
     def reload_llm(self) -> None:
         busy = self.llm.reload()
-        self.btn_identify.setEnabled(not busy)
-        self.btn_identify.setToolTip("há um job de LLM em andamento para esta reunião" if busy
+        self.act_identify.setEnabled(not busy)
+        self.act_identify.setToolTip("há um job de LLM em andamento para esta reunião" if busy
                                      else "a LLM sugere de novo quem é cada voz pendente, pelo contexto da conversa")
 
+    @override
     def regenerate(self, step: JobStep) -> int | None:
         """"Gerar de novo": job `llm` de uma tarefa pela fila (P6); a versão anterior vira `superada` quando a nova chegar."""
         return self.llm.regenerate(step)
@@ -183,6 +165,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         return self.llm.regenerated
 
     # ---------------------------------------------------------------- estado
+    @override
     def reload(self, keep: int | None = None, focus: bool = False) -> None:
         """Relê os cards; `focus` só nas ações do próprio diálogo (o polling do app não rouba o foco, R2-26)."""
         self.reloads += 1
@@ -195,7 +178,7 @@ class ReviewDialog(PersonActionsMixin, QDialog):
         waiting = review.pending(self.items)
         stage_primary(self.btn_confirm if waiting else self.btn_finish, (self.btn_confirm, self.btn_finish))
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else
-                            f"{len(waiting)} voz(es) para confirmar. Enter aceita o pyannote, L a LLM; setas navegam.")
+                            f"{plural(len(waiting), 'voz', 'vozes')} para confirmar. Setas trocam de voz; Espaço ouve 5 s.")
         self.btn_transcript.setEnabled(self.store.segments.count_segments(self.meeting_id) > 0)
         self.reload_llm()
         target = current if current is not None else (waiting[0].cluster_id if waiting else None)
@@ -205,104 +188,24 @@ class ReviewDialog(PersonActionsMixin, QDialog):
                 break
         if self.list.currentRow() < 0 and self.list.count():
             self.list.setCurrentRow(0)
-        self._update_edit_button()
+        self.apply_actions()
         if focus:
             self.list.setFocus()
 
+    @override
     def current_cluster_id(self) -> int | None:
         item = self.list.currentItem()
         return int(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
 
+    @override
     def current_item(self) -> review.ReviewItem | None:
         cid = self.current_cluster_id()
         return next((i for i in self.items if i.cluster_id == cid), None)
 
+    @override
     def _next_pending(self) -> None:
         waiting = review.pending(review.review_items(self.store, self.meeting_id))
         self.reload(waiting[0].cluster_id if waiting else self.current_cluster_id(), focus=True)
-
-    # ---------------------------------------------------------------- ações
-    def _confirm_clicked(self) -> None:
-        self.confirm_current()
-
-    def confirm_current(self, person_id: int | None = None) -> bool:
-        it = self.current_item()
-        if it is None:
-            return False
-        if person_id is None and it.person_id is None:
-            self.ask_other_person()
-            return False
-        try:
-            review.confirm(self.store, it.cluster_id, person_id)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._edited()
-        self._next_pending()
-        return True
-
-    def accept_llm_current(self) -> bool:
-        """Tecla `L`: aceita a sugestão da LLM (pessoa cadastrada ou nome novo); `decision_source = usuario_llm`."""
-        it = self.current_item()
-        if it is None:
-            return False
-        if not it.has_llm:
-            self.header.setText("Esta voz não tem sugestão da LLM.")
-            return False
-        try:
-            review.accept_llm(self.store, it.cluster_id)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._edited()
-        self._next_pending()
-        return True
-
-    def ask_merge(self) -> None:
-        it = self.current_item()
-        others = [o for o in self.items if o.cluster_id != (it.cluster_id if it else None) and o.merged_into is None]
-        if it is None or not others:
-            return
-        labels = [f"{self.names.title(o.cluster_id, o.title)} · {o.summary()}" for o in others]
-        choice, ok = QInputDialog.getItem(self, "É a mesma pessoa que…", "Voz:", labels, 0, False)
-        if ok and choice in labels:
-            self.merge_into(others[labels.index(choice)].cluster_id)
-
-    def merge_into(self, cluster_id: int) -> bool:
-        it = self.current_item()
-        if it is None:
-            return False
-        try:
-            review.merge(self.store, it.cluster_id, cluster_id)
-        except ValueError as e:
-            QMessageBox.warning(self, "Revisão", str(e))
-            return False
-        self._edited()
-        self._next_pending()
-        return True
-
-    def ignore_current(self) -> None:
-        it = self.current_item()
-        if it is not None:
-            review.ignore(self.store, it.cluster_id)
-            self._edited()
-            self._next_pending()
-
-    def play_current(self) -> None:
-        it = self.current_item()
-        if it is None:
-            return
-        rng = review.clip_range(self.store, it.cluster_id)
-        if rng is None:
-            self.header.setText("Esta voz ainda não tem trecho para ouvir.")
-            return
-        channel, t0, t1 = rng
-        self.played.append(rng)
-        if self.player is None:
-            self.header.setText("Reprodução indisponível nesta janela.")
-            return
-        self.player.play_from(self.meeting_id, t0, end_ms=t1, channel=channel,
-                              title=f"{self.names.title(it.cluster_id, it.title)} (5 s)")
 
     def _on_player(self, st: object) -> None:
         """Sem dispositivo de saída ou sem o arquivo de áudio: o motivo no cabeçalho, como antes."""
@@ -321,35 +224,25 @@ class ReviewDialog(PersonActionsMixin, QDialog):
 
     # ---------------------------------------------------------------- teclado (U-006)
     def handle_key(self, key: int) -> bool:
-        """True quando a tecla é um atalho da revisão (setas ficam com a lista)."""
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.confirm_current()
-        elif key == Qt.Key.Key_L:
-            self.accept_llm_current()
-        elif key == Qt.Key.Key_O:
-            self.ask_other_person()
-        elif key == Qt.Key.Key_N:
-            self.ask_new_person()
-        elif key == Qt.Key.Key_E:
-            self.edit_current()
-        elif key == Qt.Key.Key_M:
-            self.ask_merge()
-        elif key == Qt.Key.Key_I:
-            self.ignore_current()
-        elif key == Qt.Key.Key_Space:
-            self.play_current()
-        elif key == Qt.Key.Key_Escape:
-            self.reject()
-        else:
+        """True quando a tecla é um atalho da revisão (setas ficam com a lista). U-098: o Enter faz o que o principal diz;
+        U-100 (A-21): M, I e E, do "Mais", seguem aqui."""
+        actions: dict[int, Callable[[], object]] = {           # `Qt.Key` é `IntEnum`: o código da tecla acha o item
+            Qt.Key.Key_Return: self.press_primary, Qt.Key.Key_Enter: self.press_primary, Qt.Key.Key_L: self.accept_llm_current,
+            Qt.Key.Key_O: self.ask_other_person, Qt.Key.Key_N: self.ask_new_person, Qt.Key.Key_E: self.edit_current,
+            Qt.Key.Key_M: self.ask_merge, Qt.Key.Key_I: self.ignore_current, Qt.Key.Key_Space: self.play_current,
+            Qt.Key.Key_Escape: self.reject}
+        action = actions.get(key)
+        if action is None:
             return False
+        action()
         return True
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Revisão da F5.4 (R-01): o Enter num botão com foco aciona esse botão (os botões da revisão não são `autoDefault`,
-        para nenhum virar o padrão sozinho); na aba Vozes, as teclas da revisão (U-006: o Enter confirma o pyannote); nas
-        abas de texto as letras são texto e o Enter fora de um botão não aciona nada (um botão das abas que já teve o foco
-        fica sendo o padrão no Qt: o Enter num campo não gera ata nem fecha a revisão)."""
+        para nenhum virar o padrão sozinho); na aba Vozes, as teclas da revisão (U-098: o Enter faz o que o principal diz);
+        nas abas de texto as letras são texto e o Enter fora de um botão não aciona nada (um botão das abas que já teve o
+        foco fica sendo o padrão no Qt: o Enter num campo não gera ata nem fecha a revisão)."""
         enter = event.key() in ENTER_KEYS
         if enter and click_focused_button(self):
             return

@@ -16,7 +16,7 @@ import pytest
 
 from listener.llm.types import LlmTask
 from listener.model import ChunkKind, ClusterStatus, EventType, JobStatus, SummaryKind
-from listener.pipeline import llm_steps, review, summary_gate, voices
+from listener.pipeline import llm_steps, review, review_person, summary_gate, voices
 from listener.rag import chat_global, export, index, voice_sweep
 from listener.rag.search import SearchHit
 from listener.store.segments import ClusterInsert, SegmentInsert
@@ -163,7 +163,7 @@ def test_the_v1_signature_is_the_old_value_and_an_old_minutes_does_not_light_up(
     assert summary_gate.speakers_digest(store, mid, 1) == old != summary_gate.speakers_digest(store, mid)
     _minutes_done(store, mid, {"speakers": old})                                          # ata de antes: sem `speakers_v`
     assert not summary_gate.names_changed(store, mid)
-    review.edit_person(store, ana, mid, "Ana Souza", "CFO")
+    review_person.edit_person(store, ana, mid, "Ana Souza", "CFO")
     assert summary_gate.names_changed(store, mid)                                         # a v1 segue vendo o nome mudar
 
 

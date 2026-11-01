@@ -9,7 +9,7 @@ import pytest
 
 from listener.llm.types import LlmTask
 from listener.model import ClusterStatus, JobStatus, SummaryKind
-from listener.pipeline import llm_steps, review
+from listener.pipeline import llm_steps, review, review_person
 from listener.rag.index import sync_text
 from listener.store.actions import ActionInsert
 from listener.store.captions import CaptionInsert
@@ -35,7 +35,7 @@ def test_forget_unlinks_every_table_and_the_id_never_comes_back(platform, store,
     mid = _record(platform, store)
     _pipeline(store, mid)
     voices = _voices(store, mid)
-    ana = review.create_person(store, voices["SPK_0"]["id"], "Ana", "CFO", "Empresa X", CANARY)
+    ana = review_person.create_person(store, voices["SPK_0"]["id"], "Ana", "CFO", "Empresa X", CANARY)
     bia = store.people.create_person("Bia")
     store.segments.set_llm_suggestion(voices["SPK_1"]["id"], ana, "Ana", 0.7, "[]")
     store.captions.insert(CaptionInsert(mid, "R", 0, 900, "oi", ana, "Ana — CFO", 0.9))
@@ -46,7 +46,7 @@ def test_forget_unlinks_every_table_and_the_id_never_comes_back(platform, store,
     store.add_revision("person", ana, "role", "", "CFO", "usuario")
     assert store._q("SELECT COUNT(*) FROM voice_profiles WHERE person_id = ?", (ana,))[0][0] == 1        # a confirmação criou
     with caplog.at_level("INFO", logger="listener.pipeline.review"):
-        assert review.forget_person(store, ana) == [mid]
+        assert review_person.forget_person(store, ana) == [mid]
     assert store.people.get_person(ana) is None and "Ana" not in caplog.text and CANARY not in caplog.text
     assert store._q("SELECT COUNT(*) FROM voice_profiles WHERE person_id = ?", (ana,))[0][0] == 0
     assert store._q("SELECT COUNT(*) FROM voice_embeddings e LEFT JOIN voice_profiles p ON p.id = e.profile_id "
@@ -61,11 +61,11 @@ def test_forget_unlinks_every_table_and_the_id_never_comes_back(platform, store,
     assert (action["owner_person_id"], action["owner_text"]) == (None, "Ana")                                # texto da ata fica
     assert json.loads(store.get_meeting(mid)["expected_people_json"]) == [bia]
     assert store._q("SELECT COUNT(*) FROM revisions WHERE entity = 'person' AND entity_id = ?", (ana,))[0][0] == 0
-    assert review.forget_person(store, bia) == [mid]                                                         # o maior id
+    assert review_person.forget_person(store, bia) == [mid]                                                         # o maior id
     assert store.people.create_person("Carla") == bia + 1                                                   # A-07: não volta
     assert store.get_meeting(mid)["expected_people_json"] is None
     with pytest.raises(ValueError, match="canal do microfone"):
-        review.forget_person(store, me)
+        review_person.forget_person(store, me)
 
 
 def test_orphan_links_are_scrubbed(platform, store, monkeypatch):
@@ -103,11 +103,11 @@ def test_editing_the_role_keeps_the_role_of_the_day_in_other_meetings(store, cap
     first, _ = _meeting(store, {"ana": ana, "bia": bia})                 # falas da Ana sem cargo do dia: seguiam a ficha
     second, _ = _meeting(store, {"ana": ana, "bia": bia}, title="Outra")
     with caplog.at_level("INFO", logger="listener.pipeline.review"):
-        again = review.edit_person(store, ana, second, "Ana", "CEO", "Empresa X", CANARY)
+        again = review_person.edit_person(store, ana, second, "Ana", "CEO", "Empresa X", CANARY)
     assert sorted(again) == [first, second] and "Ana" not in caplog.text and CANARY not in caplog.text
     rows = {mid: {r.role for r in review.transcript_rows(store, mid) if r.person_id == ana} for mid in (first, second)}
     assert rows == {first: {"CFO"}, second: {"CEO"}}                                                       # o cargo do dia
-    assert review.edit_person(store, ana, second, "Ana", "CEO", "Outra", CANARY) == []                     # nada no texto
+    assert review_person.edit_person(store, ana, second, "Ana", "CEO", "Outra", CANARY) == []                     # nada no texto
     assert store.people.get_person(ana)["company"] == "Outra"
 
 
@@ -117,8 +117,8 @@ def test_the_llm_sees_speakers_with_role_and_company_but_never_the_email(platfor
     _provider_ready(store)
     parent = _pipeline(store, mid)
     voices = _voices(store, mid)
-    ana = review.create_person(store, voices["SPK_0"]["id"], "Ana", "CFO", "Empresa X", CANARY)
-    review.create_person(store, voices["SPK_1"]["id"], "Bia", email=CANARY)
+    ana = review_person.create_person(store, voices["SPK_0"]["id"], "Ana", "CFO", "Empresa X", CANARY)
+    review_person.create_person(store, voices["SPK_1"]["id"], "Bia", email=CANARY)
     ctx = llm_steps.build_context(store, mid, parent)
     speakers = {p.name: (p.role, p.company) for p in ctx.meeting_ctx.speakers}
     assert speakers == {"Eu": ("Gerente", "Empresa Y"), "Ana": ("CFO", "Empresa X"), "Bia": ("", "")}

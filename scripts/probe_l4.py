@@ -191,8 +191,9 @@ def _review_shots(store: Any, mid: int, shot: Callable[..., None], tabs_of: Call
     from listener.ui.review import ReviewDialog
 
     dlg = ReviewDialog(store, mid)
-    shot(dlg, "revisao")
+    shot(dlg, "revisao")                                   # F5.11: a voz sem nome e sem candidato ("Escolher pessoa…")
     tabs_of(dlg, "revisao")
+    _review_states(store, dlg, shot)
     _discard(dlg)
     ficha = PersonDialog(data=PersonData("Ana", "CFO", "Empresa X", "ana@empresa.com.br"), can_delete=True)
     shot(ficha, "ficha-editar")
@@ -200,6 +201,28 @@ def _review_shots(store: Any, mid: int, shot: Callable[..., None], tabs_of: Call
     nova = PersonDialog()
     shot(nova, "ficha-nova")
     _discard(nova)
+
+
+def _review_states(store: Any, dlg: Any, shot: Callable[..., None]) -> None:
+    """F5.11 L1 (U-098 a U-101): a revisão por estado da voz. A confirmada (o principal apagado e a linha do que o perfil
+    aprendeu) e a outra voz com a sugestão pela voz e a pelo contexto (os dois botões com o nome); a voz volta como estava."""
+    from listener.model import ClusterStatus
+
+    dlg.tabs.setCurrentIndex(0)
+    ana = next(i for i in dlg.items if i.status == ClusterStatus.CONFIRMED)
+    other = next(i for i in dlg.items if i.cluster_id != ana.cluster_id)
+    dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(ana.cluster_id))
+    shot(dlg, "revisao-confirmada")
+    store.segments.update_cluster(other.cluster_id, status=ClusterStatus.AMBIGUOUS, person_id=ana.person_id, similarity=0.71,
+                                  margin=0.04)
+    store.segments.set_llm_suggestion(other.cluster_id, None, "Bruno", 0.8, "[]")
+    try:
+        dlg.reload(keep=other.cluster_id)
+        shot(dlg, "revisao-sugestao")
+    finally:
+        store.segments.set_llm_suggestion(other.cluster_id, other.llm_person_id, other.llm_name, other.llm_confidence, None)
+        store.segments.update_cluster(other.cluster_id, status=other.status, person_id=other.person_id,
+                                      similarity=other.similarity, margin=other.margin)
 
 
 def _wizard_shots(platform: Any, shot: Callable[..., None]) -> None:

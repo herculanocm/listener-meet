@@ -15,7 +15,7 @@ import pytest
 from listener.llm.fake import FakeProvider
 from listener.model import EventType, JobKind, JobStatus, SummaryKind
 from listener.model import JobStep
-from listener.pipeline import llm_requests, llm_steps, reprocess, review, summary_gate
+from listener.pipeline import llm_requests, llm_steps, reprocess, review, review_person, summary_gate
 from listener.pipeline.runner import JobRunner
 from listener.store.summaries import SummaryInsert
 from tests.fake_pipeline import FakeDeps
@@ -141,7 +141,7 @@ def test_names_changed_without_a_click(qtbot, platform, store, fake):
     store.add_event(mid, None, EventType.JOB_STEP, {"step": "minutes_done", "summary_id": sid, "speakers_v": summary_gate.SPEAKERS_V,
                                                     "speakers": summary_gate.speakers_digest(store, mid)})
     first, _second = (c.cluster_id for c in review.pending(review.review_items(store, mid)))
-    review.create_person(store, first, "Ana", "CFO")
+    review_person.create_person(store, first, "Ana", "CFO")
     assert summary_gate.names_changed(store, mid)
     group = LlmTabsGroup(store, mid)
     qtbot.addWidget(group.text_tabs[str(SummaryKind.MINUTES)])

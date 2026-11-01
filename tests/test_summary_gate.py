@@ -13,7 +13,7 @@ from listener.llm.fake import FakeProvider
 from listener.llm.fake_scripts import DEFAULTS
 from listener.llm.types import LlmTask
 from listener.model import EventType, JobKind, JobStatus, MeetingStatus, SummaryKind
-from listener.pipeline import llm_requests, review, summary_gate
+from listener.pipeline import llm_requests, review, review_person, summary_gate
 from listener.pipeline.llm_steps import enqueue_after_pipeline
 from tests.test_llm_steps import _ask, _pipeline, _provider_ready, _record, _run_llm
 
@@ -56,8 +56,8 @@ def test_the_minutes_wait_for_the_voices_and_come_out_once(platform, store, capl
     assert llm_requests.release(store, mid, "teste") is None                                  # ainda há voz pendente
     with caplog.at_level("INFO", logger="listener.pipeline"):
         voices = _voices(store, mid)
-        review.create_person(store, voices[0], "Ana", "CFO")
-        review.create_person(store, voices[1], "Bia")
+        review_person.create_person(store, voices[0], "Ana", "CFO")
+        review_person.create_person(store, voices[1], "Bia")
         job = llm_requests.release(store, mid, "revisão sem voz pendente")
     assert job is not None
     assert json.loads(store.jobs.get(job)["params_json"]) == {"tasks": list(WAITING), "parent_job_id": parent, "auto": False,
@@ -68,7 +68,7 @@ def test_the_minutes_wait_for_the_voices_and_come_out_once(platform, store, capl
     assert status == JobStatus.DONE and store.summaries.current(mid, SummaryKind.MINUTES) is not None
     assert not summary_gate.names_changed(store, mid)
     ana = store.people.find_by_name("Ana")["id"]
-    review.edit_person(store, ana, mid, "Ana Souza", "CFO")
+    review_person.edit_person(store, ana, mid, "Ana Souza", "CFO")
     assert summary_gate.names_changed(store, mid)                                             # o nome mudou depois da ata
     assert _llm_jobs(store, mid)[-1]["id"] == job                                             # nomes mudados: nada sai sozinho
 
@@ -81,7 +81,7 @@ def test_an_old_automatic_deferral_without_the_request_mark_never_fires(platform
     store.add_event(mid, None, EventType.LLM_DEFERRED, {"parent_job_id": parent, "tasks": ["minutes", "executive"], "pending": 2})
     assert summary_gate.deferred(store, mid) is None
     for voice in _voices(store, mid):
-        review.create_person(store, voice, f"Pessoa {voice}")
+        review_person.create_person(store, voice, f"Pessoa {voice}")
     assert llm_requests.release(store, mid, "revisão sem voz pendente") is None
     assert llm_requests.release(store, mid, "concluir", force=True) is None
     assert len(_llm_jobs(store, mid)) == 1                                                    # só o núcleo
@@ -151,13 +151,13 @@ def test_a_name_given_while_the_minutes_are_written_lights_the_refresh(platform,
     _run_llm(store)                                                                           # o núcleo
     _names(store, mid)
     first, second = _voices(store, mid)
-    review.create_person(store, first, "Ana", "CFO")
+    review_person.create_person(store, first, "Ana", "CFO")
     assert llm_requests.release(store, mid, "teste", force=True) is not None
     named: list[int] = []
 
     def minutes(req):
         if not named:                                                                         # a revisão anda durante a chamada
-            named.append(review.create_person(store, second, "Bia"))
+            named.append(review_person.create_person(store, second, "Bia"))
         return DEFAULTS[LlmTask.MINUTES](req)
 
     _runner, status, _fake = _run_llm(store, FakeProvider(scripts={LlmTask.MINUTES: minutes}))
@@ -272,7 +272,7 @@ def test_the_minutes_tab_offers_generate_now_and_refresh_only_what_exists(qtbot,
     _run_llm(store)                                                                           # a ata pedida
     group.reload()
     assert ata.btn_extra.isHidden()
-    review.create_person(store, _voices(store, mid)[0], "Ana", "CFO")                        # o nome chegou depois da ata
+    review_person.create_person(store, _voices(store, mid)[0], "Ana", "CFO")                        # o nome chegou depois da ata
     group.reload()
     assert ata.btn_extra.text() == "Atualizar a ata com os nomes" and "Os nomes mudaram" in ata.notice.text()
     ata.btn_extra.click()
@@ -312,7 +312,7 @@ def test_names_on_a_reviewed_meeting_waits_like_any_other(platform, store):
     second = _names(store, mid, ["executive"])
     assert second.waiting
     for voice in _voices(store, mid):
-        review.create_person(store, voice, f"Pessoa {voice}")
+        review_person.create_person(store, voice, f"Pessoa {voice}")
     job = llm_requests.release(store, mid, "revisão sem voz pendente")
     assert job is not None and "executive" in json.loads(store.jobs.get(job)["params_json"])["tasks"]
 
@@ -335,6 +335,6 @@ def test_a_now_request_takes_its_tasks_out_of_the_pending_deferrals(platform, st
     assert deferred.request_ids == (big.request_id,) and deferred.tasks == ("executive", "pre_summary")   # sobreposição
     _run_llm(store)
     for voice in _voices(store, mid):
-        review.create_person(store, voice, f"Pessoa {voice}")
+        review_person.create_person(store, voice, f"Pessoa {voice}")
     job = llm_requests.release(store, mid, "revisão sem voz pendente")
     assert json.loads(store.jobs.get(job)["params_json"])["tasks"] == ["minutes", "executive", "pre_summary"]

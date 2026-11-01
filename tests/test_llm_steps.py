@@ -312,8 +312,8 @@ def test_decision_source_and_accept_llm(platform, store):
     with_llm = next(i for i in items if i.llm_name == "Ana")
     other = next(i for i in items if i.cluster_id != with_llm.cluster_id)
     assert with_llm.has_llm and with_llm.llm_person_id == ana and with_llm.llm_evidence[0][1] == "Ana"
-    assert with_llm.summary().startswith("sem nome · LLM: Ana (0,80)") and "aos 00:00" in with_llm.summary()
-    assert "Enter ou L aceita a LLM" in with_llm.summary() and not other.has_llm
+    assert with_llm.summary().startswith("sem nome · pelo contexto: Ana (0,80)") and "aos 00:00" in with_llm.summary()
+    assert "Enter" not in with_llm.summary() and not other.has_llm                       # F5.11 (U-098): as teclas nos botões
     review.accept_llm(store, with_llm.cluster_id)                                                           # tecla L
     c = store.segments.get_cluster(with_llm.cluster_id)
     assert c["status"] == "confirmado" and c["person_id"] == ana and c["decision_source"] == DecisionSource.USER_LLM

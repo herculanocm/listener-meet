@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from listener.model import ClusterStatus
-from listener.pipeline import review
+from listener.pipeline import review, review_person
 from listener.ui import review as review_ui
 from listener.ui.person import DELETE, PersonData, PersonDialog
 from tests.test_review import _processed
@@ -38,7 +38,7 @@ def _fill(monkeypatch, data: PersonData, code: int = QDialog.DialogCode.Accepted
 def test_new_person_saves_every_field_and_a_repeated_name_asks(qtbot, platform, store, monkeypatch):
     mid, items = _processed(platform, store)
     dlg = _dialog(qtbot, store, mid)
-    assert not dlg.btn_edit.isEnabled()                                                   # voz pendente: sem ficha a editar
+    assert not dlg.act_edit.isEnabled()                                                   # voz pendente: sem ficha a editar
     _fill(monkeypatch, PersonData("Ana", "CFO", "Empresa X", "ana@x.com"))
     dlg.ask_new_person()
     ana = store.people.find_by_name("Ana")
@@ -69,7 +69,7 @@ def test_other_person_lists_role_and_company_and_picks_by_id(qtbot, platform, st
         shown.append(list(labels))
         return f"Ana — CFO (#{second})", True
 
-    monkeypatch.setattr(review_ui.QInputDialog, "getItem", staticmethod(pick))
+    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
     dlg.ask_other_person()
     assert f"Ana — CFO (#{first})" in shown[0] and f"Ana — CFO (#{second})" in shown[0]
     assert store.segments.get_cluster(items[0].cluster_id)["person_id"] == second
@@ -77,11 +77,11 @@ def test_other_person_lists_role_and_company_and_picks_by_id(qtbot, platform, st
 
 def test_edit_changes_the_record_and_delete_asks_first(qtbot, platform, store, monkeypatch):
     mid, items = _processed(platform, store)
-    ana = review.create_person(store, items[0].cluster_id, "Ana", "CFO")
+    ana = review_person.create_person(store, items[0].cluster_id, "Ana", "CFO")
     edited: list[tuple] = []
     dlg = _dialog(qtbot, store, mid, edited)
     dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(items[0].cluster_id))
-    assert dlg.btn_edit.isEnabled() and dlg.editable_person() == ana
+    assert dlg.act_edit.isEnabled() and dlg.editable_person() == ana
     _fill(monkeypatch, PersonData("Ana", "CEO", "Empresa X", "ana@x.com"))
     dlg.edit_current()
     assert (store.people.get_person(ana)["role"], store.people.get_person(ana)["company"]) == ("CEO", "Empresa X")

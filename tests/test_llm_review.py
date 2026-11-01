@@ -1,5 +1,5 @@
 """Revisão e leitura da F3 (L5): recarga por assinatura (sugestões da LLM, resumos, título) numa só consulta; cards com as
-duas sugestões, Enter (pyannote) e L (LLM); abas de título, pré-resumo, ata, executivo e ações editáveis com `revisions` e
+duas sugestões, Enter (pela voz) e L (pelo contexto); abas de título, pré-resumo, ata, executivo e ações editáveis com `revisions` e
 "gerar de novo" como job (desabilitado com job `llm` ativo); marca de reprocessamento; selo de custo; alternância
 revisada/original na leitura; "LLM: ata (2 de 4)" e custo na fila; notificação por kind."""
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_controller_signature_reloads_review_when_llm_data_changes(qtbot, qapp, 
         cid = review.review_items(store, mid)[0].cluster_id
         store.segments.set_llm_suggestion(cid, None, "Rodrigo", 0.7, "[]")
         c._poll_queue()
-        assert dlg.reloads == base + 1 and "LLM: Rodrigo" in dlg.list.item(0).text()                  # sugestão da LLM recarrega
+        assert dlg.reloads == base + 1 and "pelo contexto: Rodrigo" in dlg.list.item(0).text()        # sugestão da LLM recarrega
         store.summaries.insert(SummaryInsert(mid, SummaryKind.MINUTES, "{}", "# Ata", "gemini", "m", "minutes/1.0", 1, None, "pt-BR"))
         c._poll_queue()
         assert dlg.reloads == base + 2 and dlg.text_tabs["minutes"].editor.toPlainText() == "# Ata"
@@ -80,13 +80,14 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     dlg = ReviewDialog(store, mid, on_launch=launched.append)
     qtbot.addWidget(dlg)
     dlg.show()
-    assert "custo da LLM: US$" in dlg.cost.text() and dlg.tabs.count() == 6 and "L a LLM" in dlg.header.text()
+    assert "custo da LLM: US$" in dlg.cost.text() and dlg.tabs.count() == 6 and "para confirmar" in dlg.header.text()
     llm_item = next(i for i in dlg.items if i.has_llm)
     other = next(i for i in dlg.items if not i.has_llm)
-    assert "LLM: Ana (0,80)" in dlg.list.item([i.cluster_id for i in dlg.items].index(llm_item.cluster_id)).text()
+    assert "pelo contexto: Ana (0,80)" in dlg.list.item([i.cluster_id for i in dlg.items].index(llm_item.cluster_id)).text()
     dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(other.cluster_id))
     assert not dlg.accept_llm_current() and "não tem sugestão" in dlg.header.text()
     dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(llm_item.cluster_id))
+    assert dlg.btn_llm.text() == "É Ana, pelo contexto" and dlg.btn_llm.isEnabled()                   # U-098: o L com o nome
     qtbot.keyClick(dlg.list, Qt.Key.Key_L)                                                            # L aceita a LLM
     c = store.segments.get_cluster(llm_item.cluster_id)
     assert c["status"] == "confirmado" and c["decision_source"] == DecisionSource.USER_LLM and c["person_id"] == llm_item.llm_person_id
@@ -234,8 +235,8 @@ def test_reload_never_overwrites_unsaved_edits(qtbot, platform, store):
 
 
 def test_on_demand_revise_and_identify(qtbot, platform, store):
-    """R3-05: "Revisar transcrição pela LLM" na leitura (com o motivo de quando foi pulada) e "Identidade por contexto de
-    novo" na aba Vozes viram jobs `llm` de uma tarefa; desabilitados com job `llm` ativo."""
+    """R3-05: "Revisar transcrição pela LLM" na leitura (com o motivo de quando foi pulada) e "Sugerir de novo pelo
+    contexto" no "Mais" da aba Vozes (F5.11, U-100) viram jobs `llm` de uma tarefa; desabilitados com job `llm` ativo."""
     from listener.ui.review import ReviewDialog
     from listener.ui.transcript import TranscriptTab
 
@@ -255,13 +256,13 @@ def test_on_demand_revise_and_identify(qtbot, platform, store):
     assert dlg.request_revise() is None and "em andamento" in dlg.llm_note.text()
     review_dlg = ReviewDialog(store, mid, on_launch=launched.append)
     qtbot.addWidget(review_dlg)
-    assert not review_dlg.btn_identify.isEnabled()
+    assert not review_dlg.act_identify.isEnabled()
     _runner, status, fake = _run_llm(store)
     assert status == JobStatus.DONE and {r.task for r in fake.requests} <= {"revise"}
     dlg.reload()
     review_dlg.reload()
-    assert dlg.btn_revise.isEnabled() and dlg.llm_note.text() == "" and review_dlg.btn_identify.isEnabled()
-    review_dlg.btn_identify.click()
+    assert dlg.btn_revise.isEnabled() and dlg.llm_note.text() == "" and review_dlg.act_identify.isEnabled()
+    review_dlg.act_identify.trigger()
     job = store.jobs.get(review_dlg.regenerated[-1])
     assert json.loads(job["params_json"])["tasks"] == ["identify"] and launched == [True, True]
     dlg.close()
@@ -269,7 +270,8 @@ def test_on_demand_revise_and_identify(qtbot, platform, store):
 
 
 def test_enter_on_ambiguous_card_with_both_suggestions_accepts_pyannote(qtbot, platform, store):
-    """R3-14 (CP11): card `ambíguo` com o pyannote sugerindo uma pessoa e a LLM outra: Enter aceita o pyannote; L, a LLM."""
+    """R3-14 (CP11): card `ambíguo` com o pyannote sugerindo uma pessoa e a LLM outra: Enter aceita a sugestão pela voz ("É
+    Ana"); L, a do contexto ("É Bia, pelo contexto"; F5.11, U-098)."""
     from PySide6.QtCore import Qt
 
     from listener.ui.review import ReviewDialog
@@ -286,7 +288,8 @@ def test_enter_on_ambiguous_card_with_both_suggestions_accepts_pyannote(qtbot, p
     dlg.show()
     order = [i.cluster_id for i in dlg.items]
     dlg.list.setCurrentRow(order.index(cids[0]))
-    assert "LLM: Bia" in dlg.list.currentItem().text()
+    assert "pelo contexto: Bia" in dlg.list.currentItem().text()
+    assert (dlg.btn_confirm.text(), dlg.btn_llm.text()) == ("É Ana", "É Bia, pelo contexto")
     qtbot.keyClick(dlg.list, Qt.Key.Key_Return)
     c = store.segments.get_cluster(cids[0])
     assert c["status"] == "confirmado" and c["person_id"] == ana and c["decision_source"] == DecisionSource.USER_PYANNOTE

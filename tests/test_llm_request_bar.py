@@ -12,7 +12,7 @@ import pytest
 from listener.llm.fake import FakeProvider
 from listener.llm.types import LlmTask
 from listener.model import JobStatus, JobStep, SummaryKind
-from listener.pipeline import review
+from listener.pipeline import review, review_person
 from listener.pipeline.llm_request_state import STALE_NAMES
 from listener.pipeline.llm_requests import Mode, RequestState, Species, State
 from listener.pipeline.llm_steps import STALE_TRANSCRIPT
@@ -104,7 +104,7 @@ def test_the_bar_shows_the_six_states_from_one_reading(qtbot, platform, store, m
     assert _shown(win, Species.MINUTES) == (f"gerado em {day}", LABELS[Species.MINUTES], True)
     assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.SUCCESS
     first = next(c.cluster_id for c in review.pending(review.review_items(store, mid)))
-    review.create_person(store, first, "Ana", "CFO")                                 # os nomes mudaram depois da ata
+    review_person.create_person(store, first, "Ana", "CFO")                                 # os nomes mudaram depois da ata
     win.reload()
     assert _shown(win, Species.MINUTES)[0] == f"desatualizado ({STALE_NAMES})"
     assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.WARNING

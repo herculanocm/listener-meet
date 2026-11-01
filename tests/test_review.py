@@ -125,16 +125,17 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     dlg = ReviewDialog(store, mid, player=player)
     qtbot.addWidget(dlg)
     dlg.show()
-    assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 voz(es)" in dlg.header.text()
+    assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 vozes para" in dlg.header.text()
     assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
-    assert "pyannote: Ana (similaridade 0,70, margem 0,03)" in dlg.list.item(0).text()          # vírgula decimal (U-032)
+    assert "pela voz: Ana (similaridade 0,70, margem 0,03)" in dlg.list.item(0).text()          # vírgula decimal (U-032)
+    assert dlg.btn_confirm.text() == "É Ana" and dlg.btn_confirm.isEnabled()                    # U-098: o resultado, com o nome
     qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: pelo player único (F5)
     channel, t0, t1 = dlg.played[0]
     req = player.requests[0]
     assert (req.meeting_id, req.t_ms, req.end_ms, req.channel) == (mid, t0, t1, channel) and t1 - t0 <= 5000
     qtbot.waitUntil(lambda: not player.engine.alive and bool(outputs.opened), timeout=3000)
     assert 0 < len(outputs.opened[0].frames) <= round((t1 - t0) * 16) and "close" in outputs.opened[0].calls   # um canal, só o trecho
-    qtbot.keyClick(dlg, Qt.Key.Key_Return)                                            # Enter confirma a sugestão
+    qtbot.keyClick(dlg, Qt.Key.Key_Return)                                            # Enter: o principal ("É Ana")
     assert store.segments.get_cluster(items[0].cluster_id)["status"] == ClusterStatus.CONFIRMED
     assert dlg.current_cluster_id() == items[1].cluster_id                            # pula para a próxima pendente
     qtbot.keyClick(dlg.list, Qt.Key.Key_Up)                                          # setas: na lista, como o usuário
@@ -255,3 +256,32 @@ def test_reconfirming_with_another_person_invalidates_the_old_vector(platform, s
     assert all(s["person_id"] == bia for s in store.segments.list_segments(mid) if s["cluster_id"] == items[0].cluster_id)
     review.confirm(store, items[0].cluster_id)                                           # Enter de novo na mesma pessoa: nada muda
     assert store.profiles.profile_for(bia, "fake-tone-256")["n_samples"] == 1
+
+
+def _samples(store, person_id: int) -> tuple[int, list[str]]:
+    """(amostras do perfil, fontes dos vetores na ordem) da pessoa, no modelo do pipeline falso."""
+    prof = store.profiles.profile_for(person_id, "fake-tone-256")
+    return int(prof["n_samples"]), [e[2] for e in store.profiles.embeddings(prof["id"])]
+
+
+def test_ignoring_or_merging_a_confirmed_voice_into_nobody_unlearns_it(platform, store):
+    """P-03 (F5.11): ignorar a voz confirmada, ou mesclá-la numa voz sem pessoa, tira o vetor do perfil como a troca de
+    pessoa (R2-09): fonte `invalidado`, nada apagado (CP3), com uma revisão; mesclada na mesma pessoa, o vetor fica."""
+    from listener.store.segments import ClusterInsert
+
+    mid, items = _processed(platform, store)
+    first, second = items[0].cluster_id, items[1].cluster_id
+    ana = review.new_person(store, first, "Ana")
+    review.ignore(store, first)
+    assert _samples(store, ana) == (0, ["invalidado"])
+    review.confirm(store, first, ana)                                                     # escolhida de novo: aprende de novo
+    review.confirm(store, second, ana)
+    review.merge(store, first, second)                                                    # na mesma pessoa: nada sai
+    assert _samples(store, ana) == (2, ["invalidado", "confirmacao", "confirmacao"])
+    job = store.segments.current_job_id(mid)
+    store.segments.insert_clusters([ClusterInsert(mid, job, "R", "SPK_9", 10, None, None, ClusterStatus.UNNAMED)])
+    nobody = next(i.cluster_id for i in review.review_items(store, mid) if i.label == "SPK_9")
+    review.merge(store, second, nobody)                                                   # numa voz sem pessoa: sai
+    assert _samples(store, ana) == (1, ["invalidado", "confirmacao", "invalidado"])
+    rev = store._q("SELECT after FROM revisions WHERE entity = 'voice_profile' AND field = 'invalidado' ORDER BY id")
+    assert [r["after"] for r in rev] == [ClusterStatus.IGNORED, f"cluster {nobody}"]

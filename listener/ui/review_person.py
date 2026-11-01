@@ -1,16 +1,19 @@
 """A ficha da pessoa na revisão de falantes (U-041, F5.2), fora do `ui/review.py`, que passava de 400 linhas (F5.4 L4): "Outra
 pessoa" (O, a escolha pelo id), "Nova pessoa" (N, a ficha; nome repetido pergunta "é ela?"), "Editar pessoa" (E, só voz com
-pessoa decidida) e "Apagar pessoa…" (LGPD; confirmação, CP3). Um mixin do `ReviewDialog`: usa o estado e os métodos dele."""
+pessoa decidida; item do "Mais" desde a F5.11, U-100) e "Apagar pessoa…" (LGPD; confirmação, CP3). A base do mixin das
+ações (`ui/review_actions.py`), que o `ReviewDialog` herda: usa o estado e os métodos dele."""
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtWidgets import QDialog, QInputDialog, QLabel, QMessageBox, QPushButton, QWidget
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QDialog, QInputDialog, QLabel, QMessageBox, QWidget
 
 from ..log import get_logger
 from ..model import ClusterStatus
 from ..pipeline import review
+from ..pipeline import review_person as sheet
 from .person import DELETE, PersonData, PersonDialog, person_data, person_labels
 
 if TYPE_CHECKING:
@@ -29,7 +32,7 @@ class PersonActionsMixin:
     store: Store
     meeting_id: int
     header: QLabel
-    btn_edit: QPushButton
+    act_edit: QAction
     on_edited: Callable[..., Any] | None
 
     def current_item(self) -> review.ReviewItem | None:
@@ -90,7 +93,7 @@ class PersonActionsMixin:
             if answer != QMessageBox.StandardButton.No:
                 return False
         try:
-            review.create_person(self.store, it.cluster_id, name, role, company, email)
+            sheet.create_person(self.store, it.cluster_id, name, role, company, email)
         except ValueError as e:
             QMessageBox.warning(self._parent(), "Revisão", str(e))
             return False
@@ -106,10 +109,10 @@ class PersonActionsMixin:
             return None
         return int(it.person_id)
 
-    def _update_edit_button(self) -> None:
+    def _update_edit_action(self) -> None:
         pid = self.editable_person()
-        self.btn_edit.setEnabled(pid is not None)
-        self.btn_edit.setToolTip("editar a ficha (nome, cargo, empresa, e-mail) ou apagar a pessoa" if pid is not None
+        self.act_edit.setEnabled(pid is not None)
+        self.act_edit.setToolTip("editar a ficha (nome, cargo, empresa, e-mail) ou apagar a pessoa" if pid is not None
                                  else "confirme a voz antes: só voz com pessoa decidida tem ficha a editar")
 
     def edit_current(self) -> None:
@@ -130,7 +133,7 @@ class PersonActionsMixin:
 
     def save_person(self, person_id: int, data: PersonData) -> bool:
         try:
-            meetings = review.edit_person(self.store, person_id, self.meeting_id, data.name, data.role, data.company, data.email)
+            meetings = sheet.edit_person(self.store, person_id, self.meeting_id, data.name, data.role, data.company, data.email)
         except ValueError as e:
             QMessageBox.warning(self._parent(), "Revisão", str(e))
             return False
@@ -146,7 +149,7 @@ class PersonActionsMixin:
             log.info("revisão da reunião %s: apagar a pessoa %s cancelado", self.meeting_id, person_id)
             return False
         try:
-            meetings = review.forget_person(self.store, person_id)
+            meetings = sheet.forget_person(self.store, person_id)
         except ValueError as e:
             QMessageBox.warning(self._parent(), "Revisão", str(e))
             return False

@@ -14,7 +14,7 @@ from listener.llm.base import LlmError
 from listener.llm.fake import FakeProvider
 from listener.llm.types import LlmTask
 from listener.model import EventType, JobKind, JobStatus, SummaryKind
-from listener.pipeline import llm_request_state, llm_requests, llm_steps, reprocess, review, summary_gate
+from listener.pipeline import llm_request_state, llm_requests, llm_steps, reprocess, review, review_person, summary_gate
 from listener.pipeline.llm_requests import Mode, Species, State
 from listener.pipeline.runner import JobRunner
 from tests.fake_pipeline import FakeDeps
@@ -67,7 +67,7 @@ def test_now_and_names_after_the_processing(platform, store):
     assert [_tasks(store, j["id"]) for j in _llm(store, mid)] == [["identify", "title", "revise"], ["minutes"]]
     assert len(_events(store, mid, EventType.LLM_DEFERRED)) == 1 and len(_events(store, mid, EventType.LLM_RELEASED)) == 1
     for cid in [c.cluster_id for c in review.pending(review.review_items(store, mid))]:
-        review.create_person(store, cid, f"P{cid}")
+        review_person.create_person(store, cid, f"P{cid}")
     assert _ask(store, mid, ["executive"], Mode.NAMES).job_id is not None           # sem voz pendente: "quando" vira "já"
 
 
@@ -150,7 +150,7 @@ def test_the_summary_with_up_to_date_minutes_does_not_redo_them(platform, store)
     asked = _ask(store, mid, ["executive", "pre_summary"])
     assert _tasks(store, asked.job_id) == ["executive", "pre_summary"]               # em dia: só o resumo
     _run_llm(store)
-    review.create_person(store, review.pending(review.review_items(store, mid))[0].cluster_id, "Ana")
+    review_person.create_person(store, review.pending(review.review_items(store, mid))[0].cluster_id, "Ana")
     assert llm_requests.resolve(store, mid, ["executive"]) == ["minutes", "executive"]   # os nomes mudaram: a ata vai junto
 
 
@@ -213,7 +213,7 @@ def test_the_six_states_and_the_computed_stale(platform, store):
     assert summary.state == State.STALE and summary.reasons == ("ata nova",)
     store._x("UPDATE summaries SET language = 'en' WHERE meeting_id = ? AND kind = 'minutes' AND status = 'atual'", (mid,))
     assert llm_requests.request_state(store, mid, Species.MINUTES).reasons == ("idioma",)
-    review.create_person(store, review.pending(review.review_items(store, mid))[0].cluster_id, "Ana")
+    review_person.create_person(store, review.pending(review.review_items(store, mid))[0].cluster_id, "Ana")
     assert "nomes" in llm_requests.request_state(store, mid, Species.MINUTES).reasons    # F5.5 v2
     _pipeline(store, mid, JobKind.REPROCESS)
     assert "transcrição" in llm_requests.request_state(store, mid, Species.MINUTES).reasons
@@ -265,7 +265,7 @@ def test_the_unnamed_voices_in_the_three_cases(platform, store):
     assert llm_requests.voices(store, mid) == llm_requests.Voices(2, True, True)       # o núcleo pendente
     _run_llm(store)
     for cid in [c.cluster_id for c in review.pending(review.review_items(store, mid))]:
-        review.create_person(store, cid, f"P{cid}")
+        review_person.create_person(store, cid, f"P{cid}")
     assert llm_requests.voices(store, mid) == llm_requests.Voices(0, True, False)
 
 
