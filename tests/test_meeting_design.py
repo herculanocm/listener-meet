@@ -286,9 +286,9 @@ def test_title_has_no_frame_until_focus_facts_are_captions_and_menus_carry_their
     qtbot.addWidget(win)
     title = win.llm.title_tab.title
     assert title.property(FLAT_PROP) and title.font().pixelSize() == 20 and title.property("theme_font") == "subtitle"
-    assert win.info.property("theme_font") == "caption" and win.language_bar.label.property("theme_font") == "caption"
+    assert win.info.property("theme_font") == "caption" and "Idioma: pt-BR" in win.info.text()     # F5.11 (U-102): a legenda
     assert isinstance(win.btn_export, QPushButton) and win.btn_export.menu() is not None
-    assert isinstance(win.llm.title_tab.btn_menu, QPushButton) and win.llm.title_tab.btn_menu.menu() is not None
+    assert {win.llm.title_tab.act_use, win.language_bar.action} <= set(win.more_menu.actions())       # o "LLM ▾" foi para o "⋯"
     box = QWidget()                                                                   # sem foco, o campo plano não pinta o fundo
     lay = QVBoxLayout(box)
     flat, normal = QLineEdit("título"), QLineEdit("campo")

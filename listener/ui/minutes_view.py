@@ -15,20 +15,26 @@
   a mais é criado e polido na abertura).
 - F5.6 L1b (A-10, Comportamento 1): "Gerar de novo", a ação do estado vazio e a da faixa ficam ligadas com job de LLM ativo
   (o pedido entra na fila atrás dele); apagadas só pelo motivo que o grupo passa na recarga (`blocked`: sem chave, ou a
-  própria espécie "gerando"), que vira a dica."""
+  própria espécie "gerando"), que vira a dica.
+- F5.11 L2: com `on_play` (a ata da reunião aberta), os `[mm:ss]` da leitura viram `listener://play?t=<ms>` (U-104, A-24; o
+  editor, o .md e o .docx ficam como estão), e o clique só aceita esse link dentro da duração da reunião (o Markdown vem da
+  LLM); os títulos da leitura no `body_strong`, um passo abaixo do título da janela (U-119, A-34); `set_own_requests(False)`
+  esconde o "Gerar de novo" e a ação do estado vazio quando a linha de pedido da aba é o pedido (A-23)."""
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtGui import QShowEvent, QTextCursor
+from PySide6.QtCore import QRegularExpression, QUrl
+from PySide6.QtGui import QShowEvent, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
 
 from ..model import JobStep, SummaryKind
 from ..rag.export import fmt_datetime
 from .components import EmptyState, InfoBar
 from .icons import set_icon
-from .theme import PRIMARY, note, set_kind
+from .theme import PRIMARY, font_for, note, qcolor, set_kind, surface_tokens
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -45,6 +51,9 @@ STALE_MARK = "gerados antes do reprocessamento"
 NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" grava o seu texto sobre a versão nova (o texto "
                 "da LLM fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
 HEADING_GAP = 12                 # px lógicos antes de cada título da leitura (o primeiro, colado no topo)
+STAMP = r"\[(\d{2,}):(\d{2})\]"     # A-24: o `[mm:ss]` da ata (`llm.render`), minutos com dois algarismos ou mais
+PLAY_LINK = "listener://play?t="
+PLAY_RE = re.compile(r"listener://play\?t=(\d{1,9})")
 
 
 def origin_text(row: dict[str, Any]) -> str:
@@ -85,6 +94,8 @@ class TextTab(QWidget):
         self._empty: EmptyState | None = None                    # U-059 (sob demanda)
         self._blocked = ""                                       # L1b: por que pedir está apagado; vazio = ligado
         self._waiting = self._deferred = False
+        self._own_requests = True                                # A-23: sem a linha de pedido da aba, os botões daqui
+        self.on_play: Callable[[int], Any] | None = None         # U-104: o clique num `[mm:ss]` da leitura (a reunião aberta)
         self.editor = QPlainTextEdit()
         self.stack = QStackedWidget()
         self.stack.addWidget(self.editor)
@@ -157,6 +168,7 @@ class TextTab(QWidget):
             self._reader = QTextBrowser()
             self._reader.setOpenLinks(False)
             self._reader.setOpenExternalLinks(False)
+            self._reader.anchorClicked.connect(self._anchor)
             self.stack.addWidget(self._reader)
         return self._reader
 
@@ -175,7 +187,7 @@ class TextTab(QWidget):
         if self._empty is not None:
             self._empty.action.setEnabled(not self._blocked)
             self._empty.action.setToolTip(self._blocked)
-            self._empty.action.setVisible(not self._waiting)
+            self._empty.action.setVisible(not self._waiting and self._own_requests)
 
     # ---------------------------------------------------------------- estado
     def editing(self) -> bool:
@@ -192,7 +204,7 @@ class TextTab(QWidget):
         self.info.setVisible(has)
         self.btn_save.setVisible(self.edit_mode)
         self.btn_cancel.setVisible(self.edit_mode)
-        self.btn_regen.setVisible(has or self.edit_mode)        # sem versão, a ação é a do estado vazio
+        self.btn_regen.setVisible((has or self.edit_mode) and self._own_requests)    # sem versão, a do estado vazio
         self._row.invalidate()          # [fato, 28/10] numa aba escondida, o mínimo da fileira ficava o de todos os botões à vista
         self.updateGeometry()           # (e o da aba e do cartão em volta, que somavam a largura deles)
 
@@ -242,6 +254,12 @@ class TextTab(QWidget):
         self._sync_bar()
         self._waiting = self._extra_action is not None and missing     # U-042: a ação da faixa no lugar da do estado vazio
 
+    def set_own_requests(self, on: bool) -> None:
+        """A-23: com a linha de pedido da aba (a reunião aberta), o "Gerar de novo" e a ação do estado vazio saem daqui."""
+        self._own_requests = on
+        self._page()
+        self._sync_empty()
+
     def set_extra(self, note_text: str, label: str = "", action: Callable[[], Any] | None = None) -> None:
         """U-042: um aviso a mais e um botão contextual (a ata que espera as vozes, os nomes que mudaram); vazio esconde."""
         self._extra_note, self._extra_label, self._extra_action = note_text, label, action
@@ -270,8 +288,12 @@ class TextTab(QWidget):
         if self._reader is None and not md:
             return
         self.reader.setMarkdown(md)
-        cursor = QTextCursor(self.reader.document())
-        block = self.reader.document().begin()
+        doc = self.reader.document()
+        cursor = QTextCursor(doc)
+        heading = QTextCharFormat()
+        heading.setFont(font_for("body_strong"))                 # U-119: um passo abaixo do título da janela (20 px)
+        heading.setProperty(QTextFormat.Property.FontSizeAdjustment, 0)
+        block = doc.begin()
         while block.isValid():
             if block.blockFormat().headingLevel():
                 fmt = block.blockFormat()
@@ -279,8 +301,42 @@ class TextTab(QWidget):
                 fmt.setBottomMargin(HEADING_GAP / 3)
                 cursor.setPosition(block.position())
                 cursor.setBlockFormat(fmt)
+                cursor.setPosition(block.position() + max(0, block.length() - 1), QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(heading)
             block = block.next()
-        self.reader.document().setModified(False)
+        if self.on_play is not None:
+            self._links(doc)
+        doc.setModified(False)
+
+    def _links(self, doc: QTextDocument) -> None:
+        """U-104 (A-24): cada `[mm:ss]` da leitura vira `listener://play?t=<ms>`, na cor do destaque dos tokens."""
+        link = QTextCharFormat()
+        link.setForeground(qcolor(surface_tokens(self).accent))
+        link.setFontUnderline(True)
+        link.setAnchor(True)
+        expr = QRegularExpression(STAMP)
+        cursor = doc.find(expr)
+        while not cursor.isNull():
+            m = re.fullmatch(STAMP, cursor.selectedText())
+            if m is not None:
+                link.setAnchorHref(f"{PLAY_LINK}{(int(m.group(1)) * 60 + int(m.group(2))) * 1000}")
+                cursor.mergeCharFormat(link)
+            cursor = doc.find(expr, cursor)
+
+    def _anchor(self, url: QUrl) -> None:
+        """A-24: só `listener://play?t=<ms>` dentro da duração da reunião toca (o Markdown vem da LLM e pode trazer um link
+        digitado); qualquer outro link da leitura não faz nada."""
+        m = PLAY_RE.fullmatch(url.toString())
+        if m is None or self.on_play is None:
+            return
+        t_ms = int(m.group(1))
+        if t_ms <= int((self.store.get_meeting(self.meeting_id) or {}).get("duration_ms") or 0):
+            self.on_play(t_ms)
+
+    def retheme(self) -> None:
+        """A troca de tema: os links da leitura na cor nova (A-24), relendo o texto já carregado, sem o banco."""
+        if self._reader is not None and self._loaded is not None and self.on_play is not None:
+            self._read(self._loaded[1])
 
     # ---------------------------------------------------------------- edição (A-15)
     def start_edit(self) -> None:
@@ -330,4 +386,4 @@ class TextTab(QWidget):
         return changed
 
 
-__all__ = ["EMPTY", "INDEXED_KINDS", "KIND_STEP", "KIND_TITLE", "NEWER_NOTICE", "STALE_MARK", "TextTab", "origin_text"]
+__all__ = ["EMPTY", "INDEXED_KINDS", "KIND_STEP", "KIND_TITLE", "NEWER_NOTICE", "PLAY_LINK", "STALE_MARK", "TextTab", "origin_text"]

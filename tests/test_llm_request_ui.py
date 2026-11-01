@@ -242,8 +242,9 @@ def test_without_a_key_boxes_buttons_and_the_popup_are_off(qtbot, platform, stor
     assert summary.choose.seen == [] and _asked(store, mid) == [] and llm_ask.last_choice(store) == {Species.MINUTES}
     win = MeetingWindow(store, mid)
     qtbot.addWidget(win)
-    bar = win.llm.bar
-    assert bar is not None and not any(b.isEnabled() for b in bar.buttons.values()) and bar.note.isVisibleTo(win)
+    win.show_tab("ata")
+    line = win.llm.line(Species.MINUTES)
+    assert not any(win.llm.line(sp).button.isEnabled() for sp in Species) and line.note.isVisibleTo(win)
     ata = win.llm.text_tabs["minutes"]
     assert not ata.empty.action.isEnabled() and ata.empty.action.toolTip() == llm_ask.NO_KEY_TIP
     popup = Chooser(Mode.NOW)
@@ -275,13 +276,13 @@ def test_the_language_change_with_a_box_asks_and_binds_the_request_to_the_reproc
     lang.confirm = confirm
     popup = lang.choose = Chooser(Mode.NOW)
     handed = _spy_after(monkeypatch)
-    lang.button.click()
+    lang.action.trigger()
     job = reprocess.pending_language(store, mid)
     assert job is not None and boxes_for == [store] and popup.seen[0][1].lines[0] == llm_ask.RERUN     # R-04: roda de novo
     assert handed == [job[0]]
     assert _asked(store, mid) == [{"tasks": ["minutes"], "mode": "now", "origin": "troca de idioma", "after_job_id": job[0]}]
     assert "sai quando o processamento da reunião terminar" in win.message.text()
-    lang.button.click()                                                              # desfazer: sem caixas nem pedido
+    lang.action.trigger()                                                              # desfazer: sem caixas nem pedido
     assert boxes_for[-1] is None and len(_asked(store, mid)) == 1 and len(popup.seen) == 1
 
 

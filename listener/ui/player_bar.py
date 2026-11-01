@@ -1,6 +1,7 @@
 """A barra do player da reunião aberta (F5 L4), saída do `ui/player.py`, que passava de 400 linhas. F5.4 L4 (U-083): Tocar e
 Pausar, -10 s e +10 s com o ícone junto do texto (o texto fica: o leitor de tela e os testes leem); o tempo em algarismos
-de largura fixa (`tnum` da fonte do tema) numa coluna de largura fixa, sem empurrar o resto enquanto toca."""
+de largura fixa (`tnum` da fonte do tema) numa coluna de largura fixa, sem empurrar o resto enquanto toca. F5.11 (U-118): a
+duração da reunião antes de tocar ("00:00 / 32:10"); com `keys` (a reunião aberta, U-105), a tecla de cada botão na dica."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -36,19 +37,21 @@ class PlayerBar(QWidget):
     vira HTML (R7-07)."""
 
     def __init__(self, player: Player, meeting_id: int | None = None, *, title: Callable[[], str] | None = None,
-                 start: Callable[[], int] | None = None, parent: QWidget | None = None):
+                 start: Callable[[], int] | None = None, duration_ms: int | None = None, keys: bool = False,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.player = player
         self.meeting_id = meeting_id
+        self.duration_ms = duration_ms                   # U-118: mostrada antes de tocar
         self.title_fn = title
         self.start_fn = start
         self.setObjectName("playerBar")
         self.btn_play = QPushButton("Tocar")
-        self.btn_play.setToolTip("Toca a reunião a partir da fala selecionada (ou pausa e retoma)")
+        self.btn_play.setToolTip("Toca a reunião a partir da fala selecionada, ou pausa e retoma" + (" (tecla Espaço)" if keys else ""))
         self.btn_back = QPushButton("-10 s")
-        self.btn_back.setToolTip("Volta 10 segundos")
+        self.btn_back.setToolTip("Volta 10 segundos" + (" (tecla ←)" if keys else ""))
         self.btn_fwd = QPushButton("+10 s")
-        self.btn_fwd.setToolTip("Avança 10 segundos")
+        self.btn_fwd.setToolTip("Avança 10 segundos" + (" (tecla →)" if keys else ""))
         set_icon(self.btn_play, "play")
         set_icon(self.btn_back, "back-10")
         set_icon(self.btn_fwd, "forward-10")
@@ -85,6 +88,11 @@ class PlayerBar(QWidget):
         p.setPen(qcolor(surface_tokens(self).stroke))
         p.drawLine(0, 0, self.width(), 0)
         p.end()
+
+    def set_duration(self, duration_ms: int | None) -> None:
+        """U-118: a duração da reunião mudou (a gravação terminou com a janela aberta)."""
+        self.duration_ms = duration_ms
+        self.show_state(self.player.state())
 
     def mine(self, st: PlayerState) -> bool:
         return self.meeting_id is None or st.meeting_id == self.meeting_id
@@ -128,8 +136,10 @@ class PlayerBar(QWidget):
         self.btn_fwd.setEnabled(st.active and mine)
         if mine and st.meeting_id is not None and st.state != ERROR:
             self.time.setText(f"{fmt_mmss(st.t_ms / 1000)} / {fmt_mmss((st.duration_ms or 0) / 1000)}")
-        else:
+        elif (mine and st.state == ERROR) or not self.duration_ms:
             self.time.setText(EMPTY_TIME)
+        else:                                            # U-118: parada (ou com outra reunião), a duração desta
+            self.time.setText(f"{fmt_mmss(0)} / {fmt_mmss(self.duration_ms / 1000)}")
         if st.active:
             prefix = "" if mine else "outra reunião: "
             self.what.setText(f"{prefix}{STATE_TEXT[st.state]} · {st.title}" if st.title else f"{prefix}{STATE_TEXT[st.state]}")

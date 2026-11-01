@@ -21,7 +21,10 @@ tema vigente (claro e escuro), refeitos quando o tema muda.
 F5.4 L4: a fala pelo `SpeechDelegate` (U-081: o [mm:ss] em legenda e o ponto na cor da faixa do falante na linha do tempo,
 o nome em negrito), a voz sem pessoa como "Voz N" (U-035; F5.5 A-18: o nome de `review.transcript_rows`, o mesmo da ata,
 da exportação e da busca; o `DisplayRole` leva o mesmo nome) e, sem falas, o estado vazio (U-059). A barra de rolagem fica
-sempre à vista: a largura das falas não muda quando ela aparece, e a altura de cada uma é medida uma vez só."""
+sempre à vista: a largura das falas não muda quando ela aparece, e a altura de cada uma é medida uma vez só.
+
+F5.11 L2: o rodapé foi para `ui/transcript_footer.py` (A-35); na lista, o Espaço pausa e retoma pelo `on_space` (o da barra
+do player da reunião, P-06), e o Enter segue tocando a fala."""
 from __future__ import annotations
 
 import bisect
@@ -33,19 +36,17 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QTimer
 from PySide6.QtGui import QBrush, QGradient, QKeyEvent, QLinearGradient, QShowEvent
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QListView, QMenu, QPushButton, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QAbstractItemView, QListView, QMenu, QStackedWidget, QVBoxLayout, QWidget
 
 from ..log import get_logger
-from ..model import JobStep
 from ..pipeline import review
 from ..rag import export
 from .common import copy_rich
 from .components import EmptyState
-from .llm_tabs import last_llm_info, llm_job_active, request_llm_step
 from .speech_delegate import COLOR_ROLE, ROLE_ROLE, SPEAKER_ROLE, STAMP_ROLE, TEXT_ROLE, SpeechDelegate
-from .theme import Tokens, Tone, note, qcolor, tokens
+from .theme import Tokens, Tone, qcolor, tokens
 from .timeline import build_lanes, lane_of_rows
+from .transcript_footer import TranscriptFooterMixin
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -146,7 +147,7 @@ def nearest_row(rows: list[review.TranscriptRow], t_ms: int) -> int | None:
     return best[1] if best is not None else None
 
 
-class TranscriptTab(QWidget):
+class TranscriptTab(TranscriptFooterMixin, QWidget):
     def __init__(self, store: Store, meeting_id: int, parent: QWidget | None = None, *, player: Player | None = None,
                  on_launch: Callable[[bool], Any] | None = None, title: Callable[[], str] | None = None):
         super().__init__(parent)
@@ -159,6 +160,7 @@ class TranscriptTab(QWidget):
         self.played: deque[tuple[int, int]] = deque(maxlen=100)   # (t0, fim da fala) pedidos: instrumentação dos testes
         self.followed: deque[int] = deque(maxlen=100)     # instrumentação dos testes: as falas que o destaque trouxe à vista
         self.prefer_llm = True
+        self.on_space: Callable[[], Any] | None = None     # P-06 (F5.11): o Espaço na lista pausa e retoma (a barra)
         self.playing_ms: int | None = None                # U-025: onde o som desta reunião está (None: parado)
         self._user_scroll_at = float("-inf")
         me = store.get_me()
@@ -173,25 +175,13 @@ class TranscriptTab(QWidget):
         self.view.setSpacing(1)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.view.clicked.connect(self._clicked)
-        self.view.installEventFilter(self)                # Enter e Espaço tocam a fala selecionada; setas e páginas rolam
+        self.view.installEventFilter(self)                # Enter toca a fala selecionada (P-06); setas e páginas rolam
         self._viewport = self.view.viewport()
         self._viewport.installEventFilter(self)           # a roda do mouse é rolagem do usuário (Q2)
         self.view.verticalScrollBar().actionTriggered.connect(self.user_scrolled)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._context_menu)
-        self.status = QLabel("")
-        self.toggle = QCheckBox("mostrar a transcrição revisada pela LLM")
-        self.toggle.setChecked(True)
-        self.toggle.toggled.connect(self.set_prefer_llm)
-        self.btn_revise = QPushButton("Revisar transcrição pela LLM")
-        self.btn_revise.clicked.connect(self.request_revise)
-        self.llm_note = QLabel("")
-        self.llm_note.setWordWrap(True)
-        note(self.llm_note)
-        bottom = QHBoxLayout()
-        bottom.addWidget(self.toggle)
-        bottom.addStretch(1)
-        bottom.addWidget(self.btn_revise)
+        bottom = self._build_footer()                    # F5.11 (A-35): o rodapé, de `ui/transcript_footer.py`
         self._empty: EmptyState | None = None                            # U-059: sem falas, o estado vazio (sob demanda)
         self._deferred = False
         self.stack = QStackedWidget()
@@ -224,10 +214,6 @@ class TranscriptTab(QWidget):
             self._page()
 
     # ---------------------------------------------------------------- leitura
-    def set_prefer_llm(self, on: bool) -> None:
-        self.prefer_llm = bool(on)
-        self.reload(force=True)
-
     def _rows(self) -> list[review.TranscriptRow]:
         """As falas com o nome da tela: "Voz N" no lugar do rótulo interno da voz sem pessoa (U-035), já na leitura (F5.5)."""
         return review.transcript_rows(self.store, self.meeting_id, self.prefer_llm)
@@ -251,37 +237,6 @@ class TranscriptTab(QWidget):
             self._highlight(self._row_at(self.playing_ms), follow=False)                     # o destaque volta (A-17)
         self._update_status()
         return changed
-
-    def _update_status(self) -> None:
-        revised = sum(1 for r in self.model.rows if r.text_llm)
-        mode = "revisada" if self.prefer_llm else "original"
-        self.toggle.setEnabled(revised > 0)
-        self._page()
-        self.status.setVisible(self.model.rowCount() > 0)        # sem falas, o estado vazio já diz (o texto fica)
-        self.status.setText(f"{self.model.rowCount()} fala(s), {revised} revisada(s) pela LLM; mostrando a {mode}. "
-                            "Clique numa fala para ouvir daquele ponto.")
-        busy = llm_job_active(self.store, self.meeting_id)
-        self.btn_revise.setEnabled(not busy and self.model.rowCount() > 0)
-        self.btn_revise.setToolTip("há um job de LLM em andamento para esta reunião" if busy
-                                   else "a LLM revisa os trechos ainda não revisados (pelo provedor ativo, com custo)")
-        reason = (last_llm_info(self.store, self.meeting_id).get("skipped") or {}).get(str(JobStep.REVISE))
-        if busy:
-            self.llm_note.setText("LLM em andamento para esta reunião.")
-        elif reason:
-            self.llm_note.setText(f"Revisão pela LLM não feita: {reason}; revisar?")
-        else:
-            self.llm_note.setText("")
-
-    def request_revise(self) -> int | None:
-        """"Revisar transcrição pela LLM": job `llm` só com `revise` (incremental: só trechos sem revisão)."""
-        job_id, message = request_llm_step(self.store, self.meeting_id, JobStep.REVISE)
-        if job_id is not None:
-            self.requested.append(job_id)
-            if self.on_launch is not None:
-                self.on_launch(True)
-        self._update_status()
-        self.llm_note.setText(message)
-        return job_id
 
     # ---------------------------------------------------------------- navegação e som
     def current_row(self) -> review.TranscriptRow | None:
@@ -324,6 +279,9 @@ class TranscriptTab(QWidget):
         elif watched is self.__dict__.get("view") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
             if event.key() in NAV_KEYS:
                 self.user_scrolled()
+            elif event.key() == Qt.Key.Key_Space and self.on_space is not None:
+                self.on_space()                                  # P-06: o Espaço pausa e retoma; o Enter toca a fala
+                return True
             elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                 index = self.view.currentIndex()
                 if index.isValid():

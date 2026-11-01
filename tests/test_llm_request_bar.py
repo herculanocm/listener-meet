@@ -1,7 +1,9 @@
-"""F5.6 L1b (item 11; A-10, A-13, A-14; Comportamento 2; Aceite 2): a barra "Gerar ata e ações" e "Gerar resumo" da reunião
-aberta nos seis estados, lidos da mesma função (`request_states`) numa recarga; com job de LLM ativo os pedidos seguem ligados
-e só a espécie "gerando" fica apagada; "falhou" pede de novo sem o popup, salvo a transcrição que mudou; e, pela tela, o
-"quando todos tiverem nome" sai uma vez (ao resolver a última voz) e o "agora" sai já."""
+"""F5.6 L1b (item 11; A-10, A-13, A-14; Comportamento 2; Aceite 2), desde a F5.11 nas linhas de pedido das abas (U-103,
+A-23; A-37: os estados testados na linha nova antes de a barra sair): "Gerar ata e ações" e "Gerar resumo" nos seis
+estados, lidos da mesma função (`request_states`) numa recarga; com versão, "Gerar de novo"; com job de LLM ativo os
+pedidos seguem ligados e só a espécie "gerando" fica apagada; "falhou" pede de novo sem o popup, salvo a transcrição que
+mudou; pela tela, o "quando todos tiverem nome" sai uma vez (ao resolver a última voz) e o "agora" sai já; e as três abas
+(Ata, Ações e Resumo) com um botão de pedido cada, a linha da aba escondida nascendo quando ela aparece."""
 from __future__ import annotations
 
 from collections import Counter
@@ -53,8 +55,8 @@ def _window(qtbot: Any, platform: Any, store: Any, fake: FakeProvider | None = N
 
 
 def _shown(win: Any, sp: Species) -> tuple[str, str, bool]:
-    bar = win.llm.bar
-    return bar.badges[sp].text(), bar.buttons[sp].text(), bar.buttons[sp].isEnabled()
+    line = win.llm.line(sp)
+    return line.badge.text(), line.button.text(), line.button.isEnabled()
 
 
 def _fail(store: Any, error: str) -> int:
@@ -87,33 +89,33 @@ def test_the_bar_shows_the_six_states_from_one_reading(qtbot, platform, store, m
     assert reads and max(reads.values()) == 1, reads                                 # A-15 (R-06): cada evento lido uma vez
     assert _shown(win, Species.MINUTES) == ("não gerado", LABELS[Species.MINUTES], True)
     win.llm.choose = Chooser(Mode.NAMES)
-    win.llm.bar.buttons[Species.MINUTES].click()                                     # pedido: espera as duas vozes
+    win.llm.line(Species.MINUTES).button.click()                                     # pedido: espera as duas vozes
     assert _shown(win, Species.MINUTES) == ("pedido · espera 2 vozes", LABELS[Species.MINUTES], True)
-    assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.INFO
+    assert win.llm.line(Species.MINUTES).badge.badge_tone == Tone.INFO
     win.llm.choose = Chooser(Mode.NOW)
-    win.llm.bar.buttons[Species.MINUTES].click()                                     # "agora": tira a ata do adiamento
+    win.llm.line(Species.MINUTES).button.click()                                     # "agora": tira a ata do adiamento
     assert _shown(win, Species.MINUTES) == ("gerando", LABELS[Species.MINUTES], False)
     assert _shown(win, Species.SUMMARY) == ("não gerado", LABELS[Species.SUMMARY], True)    # o outro segue ligado (A-10)
-    win.llm.bar.buttons[Species.SUMMARY].click()                                     # entra na fila atrás da ata
+    win.llm.line(Species.SUMMARY).button.click()                                     # entra na fila atrás da ata
     for sp in Species:                                                               # gerando: a espécie apagada, com a dica
-        assert _shown(win, sp) == ("gerando", LABELS[sp], False) and win.llm.bar.buttons[sp].toolTip() == RUNNING_TIP
+        assert _shown(win, sp) == ("gerando", LABELS[sp], False) and win.llm.line(sp).button.toolTip() == RUNNING_TIP
     assert not win.llm.text_tabs[str(SummaryKind.EXECUTIVE)].btn_regen.isEnabled()
     assert _drain(store, FakeProvider()) == 2
     win.reload()
     day = fmt_datetime(store.summaries.current(mid, SummaryKind.MINUTES)["created_at"])[:5]
-    assert _shown(win, Species.MINUTES) == (f"gerado em {day}", LABELS[Species.MINUTES], True)
-    assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.SUCCESS
+    assert _shown(win, Species.MINUTES) == (f"gerado em {day}", RETRY, True)                    # A-23: com versão
+    assert win.llm.line(Species.MINUTES).badge.badge_tone == Tone.SUCCESS
     first = next(c.cluster_id for c in review.pending(review.review_items(store, mid)))
     review_person.create_person(store, first, "Ana", "CFO")                                 # os nomes mudaram depois da ata
     win.reload()
     assert _shown(win, Species.MINUTES)[0] == f"desatualizado ({STALE_NAMES})"
-    assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.WARNING
-    win.llm.bar.buttons[Species.MINUTES].click()
+    assert win.llm.line(Species.MINUTES).badge.badge_tone == Tone.WARNING
+    win.llm.line(Species.MINUTES).button.click()
     _fail(store, "Ata falhou: tempo esgotado")
     win.reload()
     assert _shown(win, Species.MINUTES) == ("falhou", RETRY, True)
-    assert win.llm.bar.badges[Species.MINUTES].toolTip() == "Ata falhou: tempo esgotado"
-    assert win.llm.bar.badges[Species.MINUTES].badge_tone == Tone.DANGER and not win.llm.bar.note.isVisibleTo(win)
+    assert win.llm.line(Species.MINUTES).badge.toolTip() == "Ata falhou: tempo esgotado"
+    assert win.llm.line(Species.MINUTES).badge.badge_tone == Tone.DANGER and not win.llm.line(Species.MINUTES).note.isVisibleTo(win)
 
 
 def test_with_an_llm_job_running_the_requests_stay_on_and_the_core_regenerate_refuses(qtbot, platform, store):
@@ -128,7 +130,8 @@ def test_with_an_llm_job_running_the_requests_stay_on_and_the_core_regenerate_re
     assert all(_shown(win, sp)[2] for sp in Species) and not win.llm.title_tab.act_regen.isEnabled()
     win.show()
     ata = win.llm.text_tabs[str(SummaryKind.MINUTES)]
-    assert ata.empty.action.isEnabled() and ata.empty.action.toolTip() == ""
+    assert not ata.empty.action.isVisibleTo(ata) and not ata.btn_regen.isVisibleTo(ata)       # o pedido é o da linha (A-23)
+    assert win.llm.line(Species.MINUTES).button.toolTip() != RUNNING_TIP
     win.llm.choose = Chooser(Mode.NOW)
     job = win.llm.regenerate(JobStep.MINUTES)                                        # "Gerar de novo" da ata, pelo popup
     core = [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm"]
@@ -139,17 +142,17 @@ def test_failed_asks_again_without_the_popup_except_after_a_changed_transcript(q
     """Comportamento 2: o custo já foi aceito; com `STALE_TRANSCRIPT`, a transcrição mudou e o popup volta."""
     mid, win = _window(qtbot, platform, store)
     popup = win.llm.choose = Chooser(Mode.NOW)
-    win.llm.bar.buttons[Species.MINUTES].click()
+    win.llm.line(Species.MINUTES).button.click()
     assert popup.asked == [("minutes",)]
     _fail(store, "Ata falhou: tempo esgotado")
     win.reload()
-    win.llm.bar.buttons[Species.MINUTES].click()                                     # "Gerar de novo": sem popup
+    win.llm.line(Species.MINUTES).button.click()                                     # "Gerar de novo": sem popup
     again = [j for j in store.jobs.for_meeting(mid) if j["kind"] == "llm" and j["status"] == JobStatus.PENDING]
     assert popup.asked == [("minutes",)] and len(again) == 1 and "gerando pela fila" in win.message.text()
     _fail(store, f"Ata falhou: {STALE_TRANSCRIPT}")
     win.reload()
     assert _shown(win, Species.MINUTES) == ("falhou", RETRY, True)
-    win.llm.bar.buttons[Species.MINUTES].click()                                     # a transcrição mudou: pergunta
+    win.llm.line(Species.MINUTES).button.click()                                     # a transcrição mudou: pergunta
     assert popup.asked == [("minutes",), ("minutes",)]
 
 
@@ -160,7 +163,7 @@ def test_names_asked_on_screen_fires_once_and_now_fires_at_once(qtbot, platform,
     fake = FakeProvider()
     mid, win = _window(qtbot, platform, store, fake)
     win.llm.choose = Chooser(Mode.NAMES)
-    win.llm.bar.buttons[Species.MINUTES].click()
+    win.llm.line(Species.MINUTES).button.click()
     assert _drain(store, fake) == 0 and not fake.calls(LlmTask.MINUTES)              # espera as vozes
     launched: list[bool] = []
     dlg = ReviewDialog(store, mid, on_launch=launched.append)
@@ -172,6 +175,28 @@ def test_names_asked_on_screen_fires_once_and_now_fires_at_once(qtbot, platform,
     assert _drain(store, fake) == 0 and len(fake.calls(LlmTask.MINUTES)) == 1
     win.llm.choose = Chooser(Mode.NOW)
     win.reload()
-    win.llm.bar.buttons[Species.SUMMARY].click()                                     # "agora": já na fila
+    win.llm.line(Species.SUMMARY).button.click()                                     # "agora": já na fila
     assert _drain(store, fake) == 1 and len(fake.calls(LlmTask.EXECUTIVE)) == len(fake.calls(LlmTask.PRE_SUMMARY)) == 1
     assert len(fake.calls(LlmTask.MINUTES)) == 1                                     # P-07: a ata em dia não volta
+
+
+def test_each_llm_tab_has_one_request_button_and_hidden_lines_are_born_when_shown(qtbot, platform, store):
+    """U-103 (A-23): Ata, Resumo e Ações com a linha da espécie em cima; o botão da linha é o único pedido da aba (o "Gerar
+    de novo" e a ação do estado vazio das abas de texto saem); a linha de uma aba escondida nasce quando ela aparece, já com o
+    estado da última recarga (as três pela mesma leitura)."""
+    from PySide6.QtWidgets import QPushButton
+
+    _mid, win = _window(qtbot, platform, store)
+    win.show()
+    pages = [win.tabs.widget(i) for i in range(3)]
+    assert [p.species for p in pages] == [Species.MINUTES, Species.SUMMARY, Species.MINUTES]
+    assert win.tabs.currentWidget() is win.transcript and all(p.line is None for p in pages)   # abre na transcrição
+    win.show_tab("ata")
+    assert pages[0].line is not None and pages[1].line is None and pages[2].line is None      # só a aba que apareceu
+    win.show_tab("resumo")
+    win.show_tab("acoes")
+    assert pages[1].line is not None and pages[2].line is not None
+    assert pages[2].line.badge.text() == pages[0].line.badge.text() == "não gerado"
+    for page, label in zip(pages, (LABELS[Species.MINUTES], LABELS[Species.SUMMARY], LABELS[Species.MINUTES]), strict=True):
+        requests = [b for b in page.findChildren(QPushButton) if b.isVisibleTo(page) and b.text().startswith("Gerar")]
+        assert requests == [page.line.button] and page.line.button.text() == label

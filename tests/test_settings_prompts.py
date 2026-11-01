@@ -198,30 +198,30 @@ def test_the_bar_offers_to_restore_the_default_prompt_after_an_off_schema_failur
     qtbot.addWidget(win)
     messages: list[str] = []
     win.llm.on_message = messages.append
-    bar = win.llm.bar
-    assert bar is not None and bar.buttons[Species.MINUTES].text() == RETRY and bar.custom == ("minutes",)
+    bar = win.llm.line(Species.MINUTES)                                              # F5.11 (A-23): a linha da aba Ata
+    assert bar.button.text() == RETRY and bar.custom == ("minutes",)
     assert bar.restore is not None and not bar.restore.isHidden() and bar.restore.text() == RESTORE
     assert bar.note.text() == custom_text(("minutes",)) == "A resposta saiu fora do formato com as suas instruções de ata."
     bar.restore.click()
     assert store.get_setting("prompt.minutes") == "" and messages == [RESTORED]
     assert bar.custom == () and bar.restore.isHidden() and bar.note.isHidden()
-    assert bar.buttons[Species.MINUTES].text() == RETRY                     # a falha fica; "Gerar de novo" pede com o padrão
+    assert bar.button.text() == RETRY                                       # a falha fica; "Gerar de novo" pede com o padrão
 
 
 def test_the_bar_without_a_custom_failure_never_builds_the_restore_button(qtbot):
     from listener.pipeline.llm_requests import RequestState, Species, State
-    from listener.ui.llm_request_bar import RequestBar
+    from listener.ui.llm_request_bar import RequestLine
 
     restored: list[tuple[str, ...]] = []
-    bar = RequestBar(_ignore, on_restore=restored.append)
+    bar = RequestLine(Species.MINUTES, _ignore, on_restore=restored.append)
     qtbot.addWidget(bar)
     plain = RequestState(State.FAILED, error=f"Ata falhou: {OFF_SCHEMA}: x")
-    bar.show_states({Species.MINUTES: plain, Species.SUMMARY: RequestState(State.NONE)})
+    bar.show_state(plain)
     assert bar.restore is None and bar.note.isHidden()
     custom = RequestState(State.FAILED, error=f"Ata falhou: {OFF_SCHEMA}: x", custom=("minutes",))
-    bar.show_states({Species.MINUTES: custom, Species.SUMMARY: RequestState(State.NONE)}, off="Sem chave de LLM.")
+    bar.show_state(custom, off="Sem chave de LLM.")
     assert bar.restore is None and bar.note.text() == "Sem chave de LLM."                   # sem chave: o motivo, sem restaurar
-    bar.show_states({Species.MINUTES: custom, Species.SUMMARY: RequestState(State.NONE)})
+    bar.show_state(custom)
     assert bar.restore is not None and not bar.restore.isHidden()
     bar.restore.click()
     assert restored == [("minutes",)]
@@ -256,19 +256,19 @@ def test_the_restore_button_follows_the_bar_buttons_in_tab_order(qtbot):
     from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
 
     from listener.pipeline.llm_requests import RequestState, Species, State
-    from listener.ui.llm_request_bar import RequestBar
+    from listener.ui.llm_request_bar import RequestLine
 
     win = QWidget()
     qtbot.addWidget(win)
     lay = QVBoxLayout(win)
-    bar = RequestBar(_ignore, on_restore=_ignore)
+    bar = RequestLine(Species.MINUTES, _ignore, on_restore=_ignore)
     lay.addWidget(bar)
-    lay.addWidget(QLineEdit("um campo depois da barra (as abas da reunião)"))
+    lay.addWidget(QLineEdit("um campo depois da linha (o conteúdo da aba)"))
     win.show()
     custom = RequestState(State.FAILED, error=f"Ata falhou: {OFF_SCHEMA}: x", custom=("minutes",))
-    bar.show_states({Species.MINUTES: custom, Species.SUMMARY: RequestState(State.NONE)})
-    start = bar.buttons[Species.SUMMARY]
-    w = start.nextInFocusChain()
-    while w is not start and not (w.focusPolicy() & Qt.FocusPolicy.TabFocus and w.isVisibleTo(win)):
+    bar.show_state(custom)
+    assert bar.restore is not None
+    w = bar.button.nextInFocusChain()                                                # logo depois do pedido da linha
+    while w is not bar.button and not (w.focusPolicy() & Qt.FocusPolicy.TabFocus and w.isVisibleTo(win)):
         w = w.nextInFocusChain()
     assert w is bar.restore

@@ -304,6 +304,10 @@ class TimelineView(QAbstractScrollArea):
         p.setClipRect(band)
         p.fillRect(band, pal.window())
         self._paint_spans(p, t0, t1, AXIS_H - 6)                 # a pausa e o marcador também na régua
+        flag = icons.pixmap("flag", tokens().tone(MARKER_TONE), FLAG_PX, self.devicePixelRatioF())    # o mastro a 1/4 da largura
+        for mt, _note in self.markers:                           # U-118 (F5.11): a bandeira antes, o rótulo por cima dela
+            if t0 <= mt <= t1:
+                p.drawPixmap(QPointF(self.x_of(mt) - FLAG_PX / 4, AXIS_H - FLAG_PX), flag)
         step = tick_step_ms(1 / self._scale())
         p.setPen(pal.color(QPalette.ColorRole.WindowText))
         t = max(0, math.floor(t0 / step)) * step
@@ -312,11 +316,6 @@ class TimelineView(QAbstractScrollArea):
             p.drawLine(QPointF(x, AXIS_H - 5), QPointF(x, AXIS_H))
             p.drawText(QPointF(x + 3, AXIS_H - 10), stamp(t))
             t += step
-        flag = icons.pixmap("flag", tokens().tone(MARKER_TONE), FLAG_PX, self.devicePixelRatioF())    # o mastro a 1/4 da largura
-        for mt, _note in self.markers:
-            if t0 <= mt <= t1:
-                p.fillRect(QRectF(self.x_of(mt) - FLAG_PX / 4, AXIS_H - FLAG_PX, FLAG_PX, FLAG_PX - 1), pal.window())   # sobre o rótulo
-                p.drawPixmap(QPointF(self.x_of(mt) - FLAG_PX / 4, AXIS_H - FLAG_PX), flag)
         p.restore()
         p.setPen(pal.color(QPalette.ColorRole.Mid))
         p.drawLine(self._label_w, AXIS_H, self.viewport().width(), AXIS_H)

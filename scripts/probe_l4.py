@@ -137,6 +137,8 @@ def _meeting_shots(store: Any, mid: int, shot: Callable[..., None], tabs_of: Cal
     mw = MeetingWindow(store, mid, player=player)
     shot(mw, "reuniao")
     tabs_of(mw, "reuniao")
+    shot(mw.more_menu, "reuniao-menu-mais")              # F5.11 (U-102): o "⋯" do cabeçalho
+    mw.more_menu.close()
     ata = mw.llm.text_tabs[str(SummaryKind.MINUTES)]
     mw.show_tab("ata")
     ata.start_edit()                                      # A-15: o Markdown aberto

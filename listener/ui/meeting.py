@@ -1,56 +1,47 @@
-"""Reunião aberta (F5 item 9, Q6, F5A-10, F5A-26): uma janela não modal por reunião, no lugar da janela "Transcrição".
-Cabeçalho com o título editável (Enter ou "Salvar" grava com `revisions` e reindexa a busca; a sugestão da LLM fica num
-menu), data e hora, duração, participantes (quem fala, `review.participants`) e o selo de custo; abas "Ata", "Resumo"
-(executivo e pré-resumo), "Ações" (as três do `LlmTabsGroup`, o mesmo da revisão: editar, "gerar de novo", marcas de
-reprocessamento e de alerta), "Transcrição" (revisada ou original), "Marcadores" (o clique toca) e "Chat" (o da F3, sobre
-a reunião inteira); "Revisar falantes…" e o menu "Exportar" (copiar a ata ou a transcrição com texto e HTML, salvar o .md com
-escrita atômica); a barra do player embaixo. Abre num ponto (`open_at`): vai para a transcrição, seleciona a fala de início
-mais perto, rola até ela e, pedido, toca do começo dela (sem fala, do ponto menos 150 ms). Fechar para o som desta reunião
-e guarda posição e tamanho (`ui.meeting_geometry`). Cabeçalho e avisos em texto puro: um título ou nome com "<b>" não vira
-HTML (R7-07).
+"""Reunião aberta (F5 item 9, Q6, F5A-10, F5A-26): uma janela não modal por reunião, no lugar da janela "Transcrição". Abas
+"Ata", "Resumo" (executivo e pré-resumo), "Ações" (as três do `LlmTabsGroup`, o mesmo da revisão: editar, marcas de
+reprocessamento e de alerta), "Transcrição" (revisada ou original), "Marcadores" (o clique toca), "Linha do tempo" e "Chat"
+(o da F3, sobre a reunião inteira); a barra do player embaixo. Abre num ponto (`open_at`): vai para a transcrição,
+seleciona a fala de início mais perto, rola até ela e, pedido, toca do começo dela (sem fala, do ponto menos 150 ms).
+Fechar para o som desta reunião e guarda posição e tamanho (`ui.meeting_geometry`). Avisos em texto puro: um título ou
+nome com "<b>" não vira HTML (R7-07).
 
-F5.1: a aba "Linha do tempo" entre Marcadores e Chat (U-008, A-15; `ui/timeline.py`), o destaque da fala que toca na
-Transcrição e o cursor da linha do tempo pelo mesmo `PlaybackFollower` (U-025) e "Salvar .docx…" no Exportar (U-011,
-A-18; `ui/docx_save.py`).
+F5.1: a "Linha do tempo" (U-008, A-15; `ui/timeline.py`), o destaque da fala que toca na Transcrição e o cursor da linha do
+tempo pelo mesmo `PlaybackFollower` (U-025). F5.3 (U-046): o idioma, cuja troca reprocessa (`ui/meeting_language.py`); a
+exportação sai no idioma da ata; (A-12) a resposta do chat com a janela fora de foco chama `on_chat_answer(ok)`. F5.4 L4: a
+ata, o executivo e o pré-resumo formatados (U-079, `ui/minutes_view.py`); os marcadores e o "Resumo" em
+`ui/meeting_parts.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17).
 
-F5.3 (U-046): "Idioma: pt-BR" no cabeçalho, com a troca pelo outro idioma que reprocessa a reunião (`ui/meeting_language.py`);
-a exportação sai no idioma da ata. (A-12) A resposta do chat com a janela fora de foco chama `on_chat_answer(ok)` (o aviso do
-controlador, cujo clique volta à aba Chat).
-
-F5.4 L4: o título em 20 px sem moldura até o foco, os fatos em legenda e o "Exportar" com a seta inteira (U-078); o aviso
-numa faixa (U-057); a ata, o executivo e o pré-resumo formatados (U-079, `ui/minutes_view.py`); os marcadores e o "Resumo"
-em `ui/meeting_parts.py`; a janela abre dentro da área livre pelo `fit_to_screen` (A-17).
-
-F5.6 L1b (item 11, U-090): sob os fatos, "Gerar ata e ações" e "Gerar resumo" com o estado de cada um (`ui/llm_request_bar.py`,
-do `LlmTabsGroup`); todo pedido passa pelo popup."""
+F5.11 L2: o cabeçalho numa linha, com o "⋯" e a legenda (U-102, `ui/meeting_header.py`, A-35); Ata, Ações e Resumo com a
+linha de pedido no lugar da barra da F5.6 (U-103, A-23); os `[mm:ss]` da ata e o "Quando" das Ações tocam a fala mais perto,
+até 5 s, como o chat (U-104, A-24); Espaço, ← e → tocam, voltam e avançam com a reunião em foco (U-105, `ui/meeting_keys.py`);
+o título mexido grava ao fechar e na saída do app (A-22)."""
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QStandardPaths, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence, QMoveEvent, QResizeEvent, QShortcut, QShowEvent
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QKeyEvent, QKeySequence, QMoveEvent, QResizeEvent, QShortcut, QShowEvent
+from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
+from ..llm import chat_task
 from ..log import get_logger
 from ..model import SummaryKind
 from ..pipeline import review
-from ..rag import export
+from ..pipeline.llm_requests import Species
+from ..rag.citations import SentLine, nearest
 from .chat import ChatPanel
-from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed, markdown_html
-from .components import InfoBar
-from .docx_save import DocxSaver
+from .common import clamp_to_screens, fit_to_screen, keep_until_destroyed
 from .llm_tabs import LlmTabsGroup
-from .meeting_language import MeetingLanguage
-from .meeting_parts import MarkersTab, SummaryTab, menu_button
+from .meeting_header import MeetingHeaderMixin
+from .meeting_keys import player_key
+from .meeting_parts import MarkersTab, SummaryTab
 from .player_bar import PlayerBar
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
-from .theme import note
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -67,7 +58,7 @@ SAVE_DELAY_MS = 600
 CASCADE_PX = 28                  # cada janela de reunião a mais nasce um pouco abaixo e à direita da anterior
 
 
-class MeetingWindow(QWidget):
+class MeetingWindow(MeetingHeaderMixin, QWidget):
     closed = Signal(int)
 
     def __init__(self, store: Store, meeting_id: int, *, player: Player | None = None, on_review: Callable[[int], Any] | None = None,
@@ -79,71 +70,30 @@ class MeetingWindow(QWidget):
         self.player = player
         self.on_review = on_review
         self.on_edited = on_edited
-        self.exported: deque[str] = deque(maxlen=100)        # instrumentação dos testes: o que foi copiado ou salvo
         self.setMinimumSize(*MIN_SIZE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
-                                compact_title=True, request_bar=True, parent=self)
-
-        # --- cabeçalho ---
-        self.btn_review = QPushButton("Revisar falantes…")
-        self.btn_review.setToolTip("Confirmar quem é cada voz desta reunião")
-        self.btn_review.clicked.connect(self._review_clicked)
-        self.btn_review.setEnabled(on_review is not None)
-        self.act_copy_minutes = QAction("Copiar ata", self)
-        self.act_copy_transcript = QAction("Copiar transcrição", self)
-        self.act_save = QAction("Salvar ata e transcrição (.md)…", self)
-        self.act_copy_minutes.triggered.connect(self.copy_minutes)
-        self.act_copy_transcript.triggered.connect(self.copy_transcript)
-        self.act_save.triggered.connect(self._save_clicked)
-        self.docx = DocxSaver(self, meeting_id, gather=self._export_data, saved=self._saved, message=self.show_message,
-                              ask_path=lambda data: self._ask_path("Salvar em .docx", data, ".docx", "Documento do Word"))
-        menu = QMenu(self)
-        menu.setToolTipsVisible(True)                    # a dica do item .docx sem o extra (A-18)
-        for act in (self.act_copy_minutes, self.act_copy_transcript):
-            menu.addAction(act)
-        menu.addSeparator()
-        menu.addAction(self.act_save)
-        menu.addAction(self.docx.action)
-        self.btn_export = menu_button("Exportar", "Copiar para a área de transferência ou salvar um arquivo .md ou .docx", menu)
-        self.info = QLabel("")
-        self.info.setObjectName("meetingInfo")
-        note(self.info)                                         # U-078: os fatos em legenda
-        self.info.setTextFormat(Qt.TextFormat.PlainText)        # participantes: nomes do usuário (R7-07)
-        self.info.setWordWrap(True)
-        self.message_bar = InfoBar("info")                      # U-057: o aviso numa faixa (o caminho salvo leva o título:
-        self.message = self.message_bar.label                   # texto puro, como a faixa)
-        self.message.setObjectName("meetingMessage")
-        self.message_bar.setVisible(False)
-        self.language_bar = MeetingLanguage(store, meeting_id, on_launch=on_launch, on_message=self.show_message, parent=self)
-        top = QHBoxLayout()
-        top.addWidget(self.llm.title_tab, 1)
-        top.addWidget(self.btn_review)
-        top.addWidget(self.btn_export)
-        facts = QHBoxLayout()
-        facts.addWidget(self.info, 1)
-        facts.addWidget(self.language_bar)
-        facts.addWidget(self.llm.cost)
+                                compact_title=True, parent=self)
+        self.transcript = TranscriptTab(store, meeting_id, player=player, on_launch=on_launch, title=self.title_text)
+        head = self._build_header(on_launch)             # U-102: a linha do título e a legenda (`ui/meeting_header.py`)
 
         # --- abas ---
-        self.transcript = TranscriptTab(store, meeting_id, player=player, on_launch=on_launch, title=self.title_text)
         self.markers = MarkersTab(store, meeting_id, play=self._play_marker)
         self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
                                     play=self._play_point if player is not None else None)
         self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)
         self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text, on_answer=on_chat_answer)
-        summary = SummaryTab(self.llm.text_tabs)
         self.tabs = QTabWidget()
-        for widget, title in zip((self.llm.text_tabs[str(SummaryKind.MINUTES)], summary, self.llm.actions_tab, self.transcript,
-                                  self.markers, self.timeline, self.chat), TAB_TITLES, strict=True):
+        pages = self._request_pages()
+        for widget, title in zip((*pages, self.transcript, self.markers, self.timeline, self.chat), TAB_TITLES, strict=True):
             self.tabs.addTab(widget, title)
-        self.bar = PlayerBar(player, meeting_id, title=self.title_text, start=self.transcript.current_play_from) if player else None
+        m = store.get_meeting(meeting_id) or {}
+        self.bar = PlayerBar(player, meeting_id, title=self.title_text, start=self.transcript.current_play_from,
+                             duration_ms=m.get("duration_ms"), keys=True) if player else None
+        self.transcript.on_space = self.bar.toggle if self.bar is not None else None     # P-06: o Espaço na lista
         self.follower = self._follow(player)
 
         lay = QVBoxLayout(self)
-        lay.addLayout(top)
-        lay.addLayout(facts)
-        if self.llm.bar is not None:
-            lay.addWidget(self.llm.bar)
+        lay.addLayout(head)
         lay.addWidget(self.message_bar)
         lay.addWidget(self.tabs, 1)
         if self.bar is not None:
@@ -159,8 +109,20 @@ class MeetingWindow(QWidget):
         self._restoring = False
         self.llm.reload()
         self.reload_header()
-        self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() else self.llm.text_tabs[str(SummaryKind.MINUTES)])
+        self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() else pages[0])
         keep_until_destroyed(self)                       # R-06: a coleta de ciclos não a apaga antes do Qt
+
+    def _request_pages(self) -> tuple[QWidget, QWidget, QWidget]:
+        """U-103 (A-23): Ata, Resumo e Ações com a linha de pedido da espécie em cima; o botão da linha é o pedido da aba. O
+        `[mm:ss]` da ata e o "Quando" das Ações tocam (U-104)."""
+        tabs = self.llm.text_tabs
+        minutes = tabs[str(SummaryKind.MINUTES)]
+        minutes.on_play = self.play_cited
+        self.llm.actions_tab.play = self.play_cited
+        summary = SummaryTab(tabs)
+        return (self.llm.add_page(minutes, Species.MINUTES, (minutes,)),
+                self.llm.add_page(summary, Species.SUMMARY, (tabs[str(SummaryKind.EXECUTIVE)], tabs[str(SummaryKind.PRE_SUMMARY)])),
+                self.llm.add_page(self.llm.actions_tab, Species.MINUTES))
 
     def _follow(self, player: Player | None) -> PlaybackFollower | None:
         """U-025: o destaque da Transcrição e o cursor da linha do tempo seguem o som desta reunião (o mesmo sinal)."""
@@ -173,21 +135,16 @@ class MeetingWindow(QWidget):
         return follower
 
     # ---------------------------------------------------------------- leitura
+    @override
     def title_text(self) -> str:
         m = self.store.get_meeting(self.meeting_id) or {}
         return str(m.get("title") or m.get("title_llm") or f"Reunião {self.meeting_id}")
 
+    @override
     def reload_header(self) -> None:
-        m = self.store.get_meeting(self.meeting_id) or {}
-        title = self.title_text()
-        self.setWindowTitle(f"{title} — reunião")
-        people = review.participants(self.store, self.meeting_id)
-        if not people and m.get("expected_participants"):
-            people = [str(m["expected_participants"])]
-        facts = [export.fmt_datetime(m.get("started_at")), export.fmt_duration(m.get("duration_ms")),
-                 f"Participantes: {', '.join(people)}" if people else ""]
-        self.info.setText(" · ".join(f for f in facts if f))
-        self.language_bar.reload()
+        super().reload_header()
+        if self.bar is not None:
+            self.bar.set_duration((self.store.get_meeting(self.meeting_id) or {}).get("duration_ms"))
 
     def reload(self) -> None:
         """Um job da reunião terminou (LLM ou índice): recarrega sem roubar o foco nem mexer na rolagem da transcrição."""
@@ -200,14 +157,6 @@ class MeetingWindow(QWidget):
             self.reload_header()
         except Exception as e:  # a reunião sumiu ou o banco fechou: a janela fica como está
             log.debug("reunião %s: recarga: %s", self.meeting_id, e)
-
-    def show_message(self, text: str) -> None:
-        self.message.setText(text)
-        self.message_bar.setVisible(bool(text))
-
-    def _review_clicked(self) -> None:
-        if self.on_review is not None:
-            self.on_review(self.meeting_id)
 
     def _edited(self) -> None:
         if self.on_edited is not None:
@@ -229,6 +178,18 @@ class MeetingWindow(QWidget):
             self.player.play_from(self.meeting_id, start, title=self.title_text())
         return row
 
+    def play_cited(self, t_ms: int) -> None:
+        """U-104 (A-24): o `[mm:ss]` da ata ou o "Quando" das Ações toca a fala mais perto do tempo, até 5 s (a regra do chat),
+        da primeira palavra menos 150 ms; sem fala por perto, do próprio tempo menos 150 ms."""
+        if self.player is None:
+            self.show_message("Reprodução indisponível nesta janela.")
+            return
+        lines = [SentLine(r.t_start_ms, r.segment_id) for r in self.transcript.model.rows]
+        best = nearest(t_ms, lines)
+        rng = chat_task.play_range(self.store, best.segment_id) if best is not None and best.segment_id is not None else None
+        start = rng[1] if rng is not None else max(0, t_ms - review.PLAY_LEAD_MS)
+        self.player.play_from(self.meeting_id, start, title=self.title_text())
+
     def _play_marker(self, t_ms: int) -> None:
         if self.player is not None:
             self.player.play_from(self.meeting_id, max(0, t_ms - review.PLAY_LEAD_MS), title=self.title_text())
@@ -238,69 +199,13 @@ class MeetingWindow(QWidget):
         if self.player is not None:
             self.player.play_from(self.meeting_id, t_ms, title=self.title_text())
 
-    # ---------------------------------------------------------------- exportar (U-011, D-012)
-    def _export_data(self) -> export.ExportMeeting | None:
-        data = export.gather(self.store, self.meeting_id, prefer_llm=self.transcript.prefer_llm)
-        if data is None:
-            self.show_message("Esta reunião não existe mais.")
-        return data
-
-    def copy_minutes(self) -> str:
-        data = self._export_data()
-        if data is None:
-            return ""
-        md = export.minutes_markdown(data)
-        copy_rich(md, markdown_html(md))
-        log.info("reunião %s: ata copiada para a área de transferência (%d caracteres)", self.meeting_id, len(md))
-        self.exported.append("ata")
-        self.show_message("Ata copiada (texto e formatação).")
-        return md
-
-    def copy_transcript(self) -> str:
-        data = self._export_data()
-        if data is None:
-            return ""
-        md = export.transcript_markdown(data)
-        copy_rich(md, markdown_html(md))
-        log.info("reunião %s: transcrição copiada para a área de transferência (%d caracteres)", self.meeting_id, len(md))
-        self.exported.append("transcricao")
-        self.show_message("Transcrição copiada (texto e formatação).")
-        return md
-
-    def _save_clicked(self) -> None:
-        self.save_markdown()
-
-    def _ask_path(self, title: str, data: export.ExportMeeting, ext: str, kind: str) -> str | None:
-        """O destino escolhido pelo usuário (nome padrão "AAAA-MM-DD título" em Documentos), com a extensão garantida."""
-        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or str(Path.home())
-        path, _ = QFileDialog.getSaveFileName(self, title, str(Path(folder) / export.default_filename(data, ext)), f"{kind} (*{ext})")
-        return path or None
-
-    def save_markdown(self, path: str | None = None) -> Path | None:
-        """Salva a reunião inteira num .md (nome padrão "AAAA-MM-DD título.md"); escreve num temporário e troca no fim; erro
-        de escrita vira aviso."""
-        data = self._export_data()
-        if data is None:
-            return None
-        path = path or self._ask_path("Salvar ata e transcrição", data, ".md", "Markdown")
-        if not path:
-            return None
-        if not path.lower().endswith(".md"):
-            path += ".md"
-        try:
-            out = export.write_atomic(path, export.meeting_markdown(data))
-        except OSError as e:                               # o nome do arquivo traz o título: só a pasta e a extensão no log
-            log.warning("reunião %s: exportar .md em %s falhou: %s", self.meeting_id, Path(path).parent, type(e).__name__)
-            QMessageBox.warning(self, "Exportar", export.save_error_text(path, e))
-            return None
-        self._saved(out)
-        return out
-
-    def _saved(self, out: Path) -> None:
-        with suppress(OSError):
-            log.info("reunião %s: exportada em %s (%s, %d bytes)", self.meeting_id, out.parent, out.suffix, out.stat().st_size)
-        self.exported.append(str(out))
-        self.show_message(f"Salvo em {out}.")
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """U-105: Espaço, ← e → do player, com a tecla que nenhum widget usou e o foco fora de quem a usa (A-38)."""
+        if player_key(self, self.bar, event):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ---------------------------------------------------------------- janela
     def _restore_geometry(self, cascade: int) -> None:
@@ -345,12 +250,16 @@ class MeetingWindow(QWidget):
             self._save_timer.start()
 
     def shutdown(self) -> None:
-        """Saída do app: o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32); o .docx em curso termina."""
+        """Saída do app: o título mexido grava (A-22); o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32);
+        o .docx em curso termina."""
+        with suppress(Exception):                        # o banco pode já não responder: a saída segue
+            self.llm.title_tab.save_if_changed()
         self.chat.shutdown()
         self.docx.shutdown()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.llm.title_tab.save_if_changed()             # A-22: fechar com o título mexido grava
         self._save_timer.stop()
         self.save_geometry()
         self.chat.close_panel()

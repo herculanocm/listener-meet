@@ -2,7 +2,8 @@
 pela reunião aberta e pela revisão. F5.4 L4 (U-080): a Ação estica e quebra a linha; o prazo em dd/mm/aaaa; a ação aberta
 com o prazo vencido leva o prazo num selo vermelho ("10/01/2020 (atrasada)", pelo `BadgeDelegate`: o texto fica no
 `DisplayRole` para o leitor de tela); sem ações, o estado vazio (U-059). `is_overdue` e `due_text` servem também as "Ações
-abertas" do Histórico. O combo de estado liga a um método (o `sender()` diz qual), sem lambda que prenda a tabela (R-06)."""
+abertas" do Histórico. O combo de estado liga a um método (o `sender()` diz qual), sem lambda que prenda a tabela (R-06).
+F5.11 (U-104): com `play` (a reunião aberta), o "Quando" fica na cor do link e o clique nele toca a fala daquele tempo."""
 from __future__ import annotations
 
 import re
@@ -25,7 +26,8 @@ if TYPE_CHECKING:
 
 ACTIONS_NEWER_NOTICE = "Há ações novas ou alteradas; recarregar?"
 ACTION_COLUMNS = ("Ação", "Dono", "Prazo", "Estado", "Quando")
-DUE_COL, STATE_COL = 2, 3
+DUE_COL, STATE_COL, WHEN_COL = 2, 3, 4
+WHEN_RE = re.compile(r"(\d{2,}):(\d{2})")         # o "Quando" com tempo ("12:03"; "sem evidência" não toca)
 STATUS_LABELS = {ActionStatus.OPEN: "aberta", ActionStatus.DONE: "feita", ActionStatus.DISCARDED: "descartada"}
 OVERDUE_TONE = Tone.DANGER       # F5.4 (A-11, U-080): o prazo vencido em selo no tom de perigo do tema
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -62,6 +64,8 @@ class ActionsTab(QWidget):
         self.today = today
         self.table = self._make_table()
         self.table.itemChanged.connect(self._item_changed)
+        self.table.cellClicked.connect(self._cell_clicked)
+        self.play: Callable[[int], Any] | None = None             # U-104: o "Quando" que toca (só na reunião aberta)
         self._empty: EmptyState | None = None                                           # U-059 (sob demanda)
         self._deferred = False
         self.stack = QStackedWidget()
@@ -166,6 +170,9 @@ class ActionsTab(QWidget):
                     item.setData(Qt.ItemDataRole.UserRole, aid)
                     if c == DUE_COL and overdue:
                         item.setData(TONE_ROLE, OVERDUE_TONE.value)        # o selo vermelho (U-080)
+                    elif c == WHEN_COL and self.play is not None and WHEN_RE.fullmatch(str(value)):
+                        item.setData(TONE_ROLE, Tone.ACCENT.value)          # U-104: o tempo que toca, na cor do link
+                        item.setToolTip("Toca a fala deste momento")
                     if c != 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table.setItem(r, c, item)
@@ -177,6 +184,13 @@ class ActionsTab(QWidget):
         self._page(bool(view))
         self.note.setText(f"{len(view)} ação(ões); edite o texto na própria célula e o estado na coluna Estado." if view
                           else "nenhuma ação na ata")
+
+    def _cell_clicked(self, row: int, col: int) -> None:
+        """U-104: o clique no "Quando" toca a fala mais perto daquele tempo, como o `[mm:ss]` da ata."""
+        item = self.table.item(row, col) if col == WHEN_COL else None
+        m = WHEN_RE.fullmatch(item.text()) if item is not None else None
+        if m is not None and self.play is not None:
+            self.play((int(m.group(1)) * 60 + int(m.group(2))) * 1000)
 
     def _status_combo(self, action_id: int, status: str) -> QComboBox:
         combo = QComboBox()

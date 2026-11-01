@@ -144,7 +144,7 @@ def l1b_shots(store: Any, shot: Callable[..., None], platform: Any = None) -> No
     from listener.pipeline.llm_requests import Species
     from listener.ui import llm_ask
     from listener.ui.llm_request import RequestDialog
-    from listener.ui.llm_request_bar import RequestBar
+    from listener.ui.llm_request_bar import RequestLine
     from listener.ui.meeting_language import ChangeConfirm, change_question
     from listener.ui.summary import SummaryDialog
 
@@ -162,12 +162,13 @@ def l1b_shots(store: Any, shot: Callable[..., None], platform: Any = None) -> No
         dlg = RequestDialog(question)
         shot(dlg, f"f56-popup-{name}")
         _discard(dlg)
-    for name, states, off, waiting in _bar_states():
-        bar = RequestBar(_asked_species)
-        bar.show_states(states, off, waiting)
-        bar.resize(760, bar.heightForWidth(760) if bar.hasHeightForWidth() else bar.sizeHint().height())
-        shot(bar, f"f56-barra-{name}")
-        _discard(bar)
+    for name, states, off, waiting in _bar_states():                # F5.11 (A-23): a linha de cada espécie, como nas abas
+        for sp in Species:
+            line = RequestLine(sp, _asked_species)
+            line.show_state(states[sp], off, (waiting or {}).get(sp, 0))
+            line.resize(760, line.heightForWidth(760) if line.hasHeightForWidth() else line.sizeHint().height())
+            shot(line, f"f56-linha-{name}-{sp}")
+            _discard(line)
     change = ChangeConfirm(change_question(store, mid, "en"), "Reprocessar em Inglês (en)", store)
     shot(change, "f56-idioma-com-caixas")
     _discard(change)
@@ -252,16 +253,14 @@ def l2_shots(store: Any, shot: Callable[..., None], platform: Any) -> None:
 def _failed_bar_shot(shot: Callable[..., None]) -> None:
     """A-29: a ata falhou fora do esquema com as instruções do usuário; o resumo, gerado."""
     from listener.pipeline.llm_requests import RequestState, Species, State
-    from listener.ui.llm_request_bar import RequestBar
+    from listener.ui.llm_request_bar import RequestLine
 
     error = "Ata falhou: resposta fora do esquema após reenvio: $.decisions: esperava lista"
-    states = {Species.MINUTES: RequestState(State.FAILED, error=error, job_id=7, custom=("minutes",)),
-              Species.SUMMARY: RequestState(State.DONE, "2026-10-29T15:39:00.000-03:00")}
-    bar = RequestBar(_asked_species, on_restore=_asked_species)
-    bar.show_states(states)
-    bar.resize(760, bar.heightForWidth(760) if bar.hasHeightForWidth() else bar.sizeHint().height())
-    shot(bar, "f56-barra-falhou-prompt-personalizado")
-    _discard(bar)
+    line = RequestLine(Species.MINUTES, _asked_species, on_restore=_asked_species)   # F5.11 (A-23): a linha da aba Ata
+    line.show_state(RequestState(State.FAILED, error=error, job_id=7, custom=("minutes",)))
+    line.resize(760, line.heightForWidth(760) if line.hasHeightForWidth() else line.sizeHint().height())
+    shot(line, "f56-linha-falhou-prompt-personalizado")
+    _discard(line)
 
 
 __all__ = ["f56_shots", "l1b_shots", "l2_shots"]

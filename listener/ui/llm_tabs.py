@@ -16,19 +16,21 @@ pedido seguem ligados e só o "Gerar de novo" do núcleo (título; identidade e 
 apagado com o aviso (Comportamento 1). A recarga lê `request_states` uma vez (A-15) e a passa às abas e à barra "Gerar ata e
 ações" e "Gerar resumo" (`request_bar`, só na reunião aberta, `ui/llm_request_bar.py`). F5.4 L4: a ata, o executivo e o
 pré-resumo (`TextTab`, com a leitura formatada, A-15) foram para `ui/minutes_view.py` e as ações (`ActionsTab`, U-080) para
-`ui/actions_table.py`, reexportadas daqui; o título do cabeçalho da reunião em 20 px, sem moldura até o foco, e o menu "LLM"
-num botão com a seta inteira (U-078). F5.6 L2 (A-29): "Restaurar o prompt padrão" da barra restaura direto as instruções das
-tarefas que falharam fora do esquema (`restore_prompts`) e recarrega."""
+`ui/actions_table.py`, reexportadas daqui; o título do cabeçalho da reunião em 20 px, sem moldura até o foco (U-078). F5.6
+L2 (A-29): "Restaurar o prompt padrão" restaura direto as instruções das tarefas que falharam fora do esquema
+(`restore_prompts`) e recarrega. F5.11 L2: a barra virou uma linha de pedido por aba da reunião aberta (`add_page`, U-103,
+A-23: Ata, Ações e Resumo, a mesma leitura da recarga); o título compacto grava ao sair do campo e no Enter, o Esc volta ao
+gravado (A-22), e a sugestão e o "gerar de novo" dele vão para o "⋯" do cabeçalho (U-102)."""
 from __future__ import annotations
 
 import functools
 import json
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QObject
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QAction, QKeyEvent
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from ..config import prompts as prompt_settings
 from ..llm.costs import fmt_usd
@@ -43,7 +45,7 @@ from . import llm_ask
 from .actions_table import ActionsTab
 from .llm_ask import step_label
 from .llm_request import Chooser, choose
-from .llm_request_bar import LABELS, RESTORED, RUNNING_TIP, RequestBar
+from .llm_request_bar import LABELS, RESTORED, RUNNING_TIP, RequestLine, RequestPage
 from .minutes_view import KIND_STEP, TextTab
 from .style import FLAT_PROP
 from .theme import note, role
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
     from ..store import Store
 
 log = get_logger("ui.llm_tabs")
+TITLE_TIP = "O título grava ao sair do campo e no Enter; Esc volta ao título gravado"
 KIND_SPECIES = {str(SummaryKind.MINUTES): Species.MINUTES, str(SummaryKind.EXECUTIVE): Species.SUMMARY,
                 str(SummaryKind.PRE_SUMMARY): Species.SUMMARY}
 
@@ -116,7 +119,8 @@ def llm_done_text(job: dict[str, Any]) -> str:
 
 class TitleTab(QWidget):
     """Título da reunião: o do usuário (editável, com `revisions`) e a sugestão da LLM à parte. `compact` (F5, cabeçalho da
-    reunião aberta): uma linha só, Enter salva, e "usar a sugestão" e "gerar de novo" num menu "LLM"."""
+    reunião aberta): o campo só, que grava ao sair dele e no Enter, com o Esc de volta ao gravado (F5.11, A-22); "usar a
+    sugestão" e "gerar de novo" são ações (`act_use`, `act_regen`) que o "⋯" do cabeçalho mostra (U-102)."""
 
     def __init__(self, store: Store, meeting_id: int, on_regenerate: Callable[[JobStep], Any], parent: QWidget | None = None,
                  on_edited: Callable[[], Any] | None = None, *, compact: bool = False):
@@ -155,24 +159,31 @@ class TitleTab(QWidget):
         role(self.title, "subtitle")                      # F5.4 (U-078): o título da reunião em 20 px,
         self.title.setProperty(FLAT_PROP, True)           # sem moldura até o foco (ou o mouse), pelo `ThemeStyle`
         self.title.setPlaceholderText("título da reunião")
-        self.title.setToolTip("Edite e tecle Enter (ou \"Salvar\") para gravar o título")
-        self.title.returnPressed.connect(self.save)
-        self.btn_save.setText("Salvar")
-        self.act_use = QAction("Usar sugestão da LLM", self)
-        self.act_regen = QAction("Gerar título de novo", self)
+        self.title.setToolTip(TITLE_TIP)
+        self.title.editingFinished.connect(self.save_if_changed)    # A-22: no Enter e ao sair do campo (sai o "Salvar")
+        self.title.installEventFilter(self)               # A-22: o Esc volta ao gravado
+        self.act_use = QAction("Usar a sugestão da IA", self)
+        self.act_regen = QAction("Gerar o título de novo", self)
         self.act_use.triggered.connect(self.use_suggestion)
         self.act_regen.triggered.connect(self.regenerate)
-        menu = QMenu(self)
-        menu.addAction(self.act_use)
-        menu.addAction(self.act_regen)
-        self.btn_menu = QPushButton("LLM")               # U-078: o botão com menu leva a seta inteira, com o espaço dela
-        self.btn_menu.setToolTip("Sugestão de título da LLM")
-        self.btn_menu.setMenu(menu)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.title, 1)
-        row.addWidget(self.btn_save)
-        row.addWidget(self.btn_menu)
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """A-22: o Esc no título volta ao gravado, sem gravar (pelo `__dict__`, como os outros filtros, R-06)."""
+        if (watched is self.__dict__.get("title") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent)
+                and event.key() == Qt.Key.Key_Escape):
+            self.title.setText(str((self.store.get_meeting(self.meeting_id) or {}).get("title") or ""))
+            self.title.setModified(False)
+            return True
+        return super().eventFilter(watched, event)
+
+    def save_if_changed(self) -> bool:
+        """A-22: o Enter, a saída do campo, o fechar da janela e a saída do app gravam o título mexido; sem mudança, nem lê o
+        banco (o campo perde o foco também quando a janela é apagada, com o banco já fechado)."""
+        return self.save() if self.title.isModified() else False
 
     def reload(self, busy: bool) -> None:
         self._busy = busy
@@ -186,7 +197,7 @@ class TitleTab(QWidget):
         if self.compact:                                                     # sem título seu, a sugestão aparece apagada
             self.title.setPlaceholderText(str(llm) if llm else "título da reunião")
             self.act_use.setEnabled(bool(llm))
-            self.act_use.setText(f"Usar sugestão da LLM: {llm}" if llm else "Sugestão da LLM: ainda não gerada")
+            self.act_use.setText(f"Usar a sugestão da IA: {llm}" if llm else "Sugestão de título da IA: ainda não gerada")
             self.act_regen.setEnabled(not busy)
 
     def regenerate(self) -> None:
@@ -215,13 +226,12 @@ class LlmTabsGroup(QObject):
     ata, executivo e ações, o selo de custo e o "gerar de novo" pela fila. `reload()` recarrega tudo de uma vez (ocupado,
     gerado antes do reprocessamento, pulado pelo alerta de custo, o estado dos pedidos; a recarga nunca apaga uma edição em
     curso, R3-01) e devolve se há job `llm` ativo. `on_message` recebe o texto do pedido; `after_regenerate` recarrega quem
-    mostra o grupo (a revisão também atualiza o botão da identidade). `request_bar` (a reunião aberta): a barra "Gerar ata e
-    ações" e "Gerar resumo" com o estado (`bar`)."""
+    mostra o grupo (a revisão também atualiza o botão da identidade). A reunião aberta põe uma linha de pedido em cada aba de
+    LLM (`add_page`, A-23), que a recarga alimenta com a mesma leitura."""
 
     def __init__(self, store: Store, meeting_id: int, *, on_launch: Callable[[bool], Any] | None = None,
                  on_edited: Callable[[], Any] | None = None, on_message: Callable[[str], Any] | None = None,
-                 after_regenerate: Callable[[], Any] | None = None, compact_title: bool = False, request_bar: bool = False,
-                 parent: QObject | None = None):
+                 after_regenerate: Callable[[], Any] | None = None, compact_title: bool = False, parent: QObject | None = None):
         super().__init__(parent)
         self.store = store
         self.meeting_id = meeting_id
@@ -236,7 +246,20 @@ class LlmTabsGroup(QObject):
         self.actions_tab = ActionsTab(store, meeting_id, on_edited=on_edited)
         self.cost = QLabel("")
         note(self.cost)
-        self.bar: RequestBar | None = RequestBar(self.ask_species, on_restore=self.restore_prompts) if request_bar else None
+        self.pages: list[RequestPage] = []                       # F5.11 (A-23): as abas com a linha de pedido
+
+    def add_page(self, content: QWidget, species: Species, tabs: Sequence[TextTab] = ()) -> RequestPage:
+        """Uma aba da reunião aberta com a linha de pedido da espécie em cima (A-23); o botão da linha é o pedido da aba: as
+        `tabs` dentro dela deixam de mostrar o delas ("um botão de pedido por aba")."""
+        for tab in tabs:
+            tab.set_own_requests(False)
+        page = RequestPage(content, species, self.ask_species, self.restore_prompts)
+        self.pages.append(page)
+        return page
+
+    def line(self, species: Species) -> RequestLine:
+        """A linha da primeira aba da espécie (criada se ainda não apareceu)."""
+        return next(p for p in self.pages if p.species == species).ensure_line()
 
     def reload(self) -> bool:
         busy = llm_job_active(self.store, self.meeting_id)
@@ -252,8 +275,8 @@ class LlmTabsGroup(QObject):
         for kind, tab in self.text_tabs.items():
             tab.reload(stale, skipped, blocked(states[KIND_SPECIES[kind]], off))
         self.actions_tab.reload()
-        if self.bar is not None:
-            self.bar.show_states(states, off, waiting)
+        for page in self.pages:
+            page.show_state(states[page.species], off, waiting.get(page.species, 0))
         badge = cost_badge(self.store, self.meeting_id)
         parts = [badge] if badge else []
         if busy:
@@ -299,7 +322,7 @@ class LlmTabsGroup(QObject):
         return self.ask(tasks, "atualizar a ata com os nomes")
 
     def ask_species(self, species: Species) -> int | None:
-        """A barra da reunião aberta: "Gerar ata e ações" ou "Gerar resumo" (ou "Gerar de novo", em "falhou")."""
+        """A linha da aba na reunião aberta: "Gerar ata e ações" ou "Gerar resumo" (ou "Gerar de novo")."""
         return self.ask(llm_ask.tasks_of([species]), f"botão {LABELS[species]}")
 
     def ask(self, tasks: Sequence[JobStep | str], origin: str) -> int | None:
@@ -347,5 +370,5 @@ def blocked(rs: RequestState, off: str) -> str:
     return RUNNING_TIP if rs.state == State.RUNNING else ""
 
 
-__all__ = ["KIND_SPECIES", "KIND_STEP", "ActionsTab", "JobStatus", "LlmTabsGroup", "TextTab", "TitleTab", "blocked", "cost_badge",
-           "last_llm_info", "llm_done_text", "llm_job_active", "request_llm_step", "step_label"]
+__all__ = ["KIND_SPECIES", "KIND_STEP", "TITLE_TIP", "ActionsTab", "JobStatus", "LlmTabsGroup", "TextTab", "TitleTab", "blocked",
+           "cost_badge", "last_llm_info", "llm_done_text", "llm_job_active", "request_llm_step", "step_label"]

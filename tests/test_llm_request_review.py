@@ -106,7 +106,7 @@ def test_the_retry_tip_says_it_asks_when_the_transcript_changed(qtbot, platform,
     win = MeetingWindow(store, mid)
     qtbot.addWidget(win)
     win.llm.choose = Chooser(Mode.NOW)
-    button = win.llm.bar.buttons[Species.MINUTES]
+    button = win.llm.line(Species.MINUTES).button
     for error, tip in (("Ata falhou: tempo esgotado", RETRY_TIP), (f"Ata falhou: {STALE_TRANSCRIPT}", RETRY_ASK_TIP)):
         button.click()
         _fail(store, error)
@@ -126,20 +126,20 @@ def test_a_failed_or_cancelled_llm_job_leaves_generating_on_the_next_poll(qtbot,
     try:
         c._poll_queue()
         win = c.open_meeting(mid)
-        assert win is not None and win.llm.bar is not None
+        assert win is not None
         win.llm.choose = Chooser(Mode.NOW)
-        bar = win.llm.bar
-        bar.buttons[Species.MINUTES].click()
-        assert bar.badges[Species.MINUTES].text() == "gerando" and not bar.buttons[Species.MINUTES].isEnabled()
+        line = win.llm.line(Species.MINUTES)                                         # F5.11 (A-23): a linha da aba Ata
+        line.button.click()
+        assert line.badge.text() == "gerando" and not line.button.isEnabled()
         _fail(store, "Ata falhou: tempo esgotado")
         c._poll_queue()                                                              # o polling, não uma recarga à mão
-        assert (bar.badges[Species.MINUTES].text(), bar.buttons[Species.MINUTES].text()) == ("falhou", RETRY)
-        assert bar.buttons[Species.MINUTES].isEnabled()
-        bar.buttons[Species.MINUTES].click()                                         # de novo; e cancelado na fila
+        assert (line.badge.text(), line.button.text()) == ("falhou", RETRY)
+        assert line.button.isEnabled()
+        line.button.click()                                                          # de novo; e cancelado na fila
         pending = next(int(j["id"]) for j in store.jobs.for_meeting(mid) if j["status"] == JobStatus.PENDING)
         assert store.jobs.request_cancel(pending) == JobStatus.CANCELLED
         c._poll_queue()
-        assert bar.badges[Species.MINUTES].text() == "não gerado" and bar.buttons[Species.MINUTES].isEnabled()
+        assert line.badge.text() == "não gerado" and line.button.isEnabled()
     finally:
         c.emergency_stop()
 
@@ -158,7 +158,7 @@ def test_a_request_bound_to_a_processing_counts_the_minutes_as_outdated(qtbot, p
     lang = win.language_bar
     lang.confirm = lambda *_a: frozenset({Species.SUMMARY})                          # só "Gerar resumo"
     popup = lang.choose = Chooser(Mode.NOW)
-    lang.button.click()
+    lang.action.trigger()
     shown = popup.seen[0]
     assert llm_ask.WITH_MINUTES in shown.lines                                       # o popup conta a ata que vai junto
     _heavy(store)
@@ -227,20 +227,19 @@ def test_a_meeting_without_speech_refuses_before_the_popup(qtbot, platform, stor
     assert not [e for e in store.list_events(mid) if e["type"] == EventType.LLM_REQUESTED]
     win = MeetingWindow(store, mid)
     qtbot.addWidget(win)
-    bar = win.llm.bar
-    assert bar is not None and not any(b.isEnabled() for b in bar.buttons.values())
-    assert bar.buttons[Species.MINUTES].toolTip() == llm_ask.NO_SPEECH_TIP and bar.note.text() == llm_ask.NO_SPEECH_TIP
+    lines = [win.llm.line(sp) for sp in Species]
+    assert not any(line.button.isEnabled() for line in lines)
+    assert all(line.button.toolTip() == line.note.text() == llm_ask.NO_SPEECH_TIP for line in lines)
 
 
-def test_the_bar_note_wraps_below_without_widening_the_bar(qtbot):
+def test_the_line_note_wraps_without_widening_the_line(qtbot):
     from listener.pipeline.llm_requests import RequestState
-    from listener.ui.llm_request_bar import RequestBar
+    from listener.ui.llm_request_bar import RequestLine
 
-    states = {sp: RequestState(State.NONE) for sp in Species}
-    on, off = RequestBar(lambda _s: None), RequestBar(lambda _s: None)
-    for bar, why in ((on, ""), (off, llm_ask.NO_KEY_TIP)):
-        qtbot.addWidget(bar)
-        bar.show_states(states, why)
+    on, off = RequestLine(Species.MINUTES, lambda _s: None), RequestLine(Species.MINUTES, lambda _s: None)
+    for line, why in ((on, ""), (off, llm_ask.NO_KEY_TIP)):
+        qtbot.addWidget(line)
+        line.show_state(RequestState(State.NONE), why)
     assert off.note.wordWrap() and off.note.text() == llm_ask.NO_KEY_TIP and not off.note.isHidden()
     assert off.minimumSizeHint().width() == on.minimumSizeHint().width()             # a nota não alarga a reunião (640 px)
 
@@ -284,11 +283,11 @@ def test_cancel_in_the_popup_keeps_the_last_choice_at_stop_and_on_language_chang
     lang = win.language_bar
     lang.confirm = lambda *_a: frozenset({Species.MINUTES})
     lang.choose = Chooser(None)
-    lang.button.click()
+    lang.action.trigger()
     assert llm_ask.last_choice(store) == frozenset()                                 # cancelado no popup
-    lang.button.click()                                                              # desfaz (sem caixas)
+    lang.action.trigger()                                                              # desfaz (sem caixas)
     lang.choose = Chooser(Mode.NAMES)
-    lang.button.click()
+    lang.action.trigger()
     assert llm_ask.last_choice(store) == {Species.MINUTES}                           # pedido feito: grava
 
 

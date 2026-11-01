@@ -177,14 +177,14 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     win = MeetingWindow(store, mid, on_launch=launched.append)
     qtbot.addWidget(win)
     bar = win.language_bar
-    assert bar.label.text() == "Idioma: pt-BR" and bar.button.text() == "Trocar para Inglês (en)…" and bar.button.isEnabled()
+    assert bar.text == "Idioma: pt-BR" and bar.action.text() == "Trocar para Inglês (en)…" and bar.action.isEnabled()
     asked: list[tuple[str, str]] = []
 
     def no(_parent, text, yes, _boxes=None):                                         # None: cancelou
         asked.append((text, yes))
 
     bar.confirm = no
-    bar.button.click()
+    bar.action.trigger()
     text, yes = asked[0]
     assert yes == "Reprocessar em Inglês (en)" and not reprocess.active_jobs(store, mid) and launched == []
     assert "Tempo estimado: " in text and "refaz a separação de vozes" in text and "custo estimado: US$" in text
@@ -192,16 +192,16 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     assert "marque abaixo" in text                                                   # F5.6 L1b (A-49): as caixas
     assert "refaz o título, a identificação das vozes e a transcrição revisada" in text
     bar.confirm = lambda *_a: frozenset()
-    bar.button.click()
+    bar.action.trigger()
     job = reprocess.pending_language(store, mid)
     assert job is not None and job[1] == "en" and launched == [False] and f"job {job[0]}" in win.message.text()
-    assert bar.label.text() == "Idioma: pt-BR → en (reprocessando)" and bar.button.text() == "Voltar para Português (pt-BR)…"
+    assert bar.text == "Idioma: pt-BR → en (reprocessando)" and bar.action.text() == "Voltar para Português (pt-BR)…"
     _done, status = _run_heavy(store, FakeDeps(SCRIPT_EN))
     win.reload()
-    assert status == JobStatus.DONE and bar.label.text() == "Idioma: en" and bar.button.text() == "Trocar para Português (pt-BR)…"
+    assert status == JobStatus.DONE and bar.text == "Idioma: en" and bar.action.text() == "Trocar para Português (pt-BR)…"
     store.meetings.set_status(mid, MeetingStatus.RECORDING)                          # gravando: desabilitado
     win.reload_header()
-    assert not bar.button.isEnabled() and bar.button.toolTip() == RECORDING_TIP
+    assert not bar.action.isEnabled() and bar.action.toolTip() == RECORDING_TIP
 
 
 # ---------------------------------------------------------------- desfazer a troca ainda não aplicada (R-08)
@@ -268,13 +268,13 @@ def test_the_open_meeting_offers_to_undo_and_then_the_other_language_again(qtbot
         return frozenset()
 
     bar.confirm = yes
-    bar.button.click()                                                                # pt-BR -> en, na fila
-    assert bar.label.text() == "Idioma: pt-BR → en (reprocessando)" and bar.button.text() == "Voltar para Português (pt-BR)…"
-    bar.button.click()                                                                # desistiu antes de rodar
+    bar.action.trigger()                                                                # pt-BR -> en, na fila
+    assert bar.text == "Idioma: pt-BR → en (reprocessando)" and bar.action.text() == "Voltar para Português (pt-BR)…"
+    bar.action.trigger()                                                                # desistiu antes de rodar
     text, button = asked[-1]
     assert button == "Desfazer a troca" and text.startswith("Desfazer a troca para Inglês (en)?") and "Tempo estimado" not in text
     assert "a LLM não refaz nada" in text and "desfeita" in win.message.text()
-    assert bar.label.text() == "Idioma: pt-BR" and bar.button.text() == "Trocar para Inglês (en)…" and not reprocess.active_jobs(store, mid)
+    assert bar.text == "Idioma: pt-BR" and bar.action.text() == "Trocar para Inglês (en)…" and not reprocess.active_jobs(store, mid)
 
 
 def test_a_cancelled_or_failed_language_change_leaves_the_reprocessing_header(qtbot, qapp, platform, store, monkeypatch):
@@ -292,12 +292,12 @@ def test_a_cancelled_or_failed_language_change_leaves_the_reprocessing_header(qt
             job = reprocess.request_reprocess(store, mid, "en").job_id
             assert job is not None
             bar.reload()
-            assert bar.label.text() == "Idioma: pt-BR → en (reprocessando)"
+            assert bar.text == "Idioma: pt-BR → en (reprocessando)"
             if end == "cancelado":
                 assert store.jobs.request_cancel(job) == JobStatus.CANCELLED
             else:
                 store.jobs.finish(job, JobStatus.ERROR, "falhou")
             c._poll_queue()
-            assert (bar.label.text(), bar.button.text()) == ("Idioma: pt-BR", "Trocar para Inglês (en)…"), end
+            assert (bar.text, bar.action.text()) == ("Idioma: pt-BR", "Trocar para Inglês (en)…"), end
     finally:
         c.emergency_stop()
