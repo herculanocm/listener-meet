@@ -6,10 +6,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Código: F1 a F5.10 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
   rascunho inicial e F7 é futuro. Suíte de 1.377 testes (um falha desde 01/11, ver Dívidas), esquema v9. Nenhum gate
   medido ainda.
-- **F5.11 em revisão** (01/11, `features/F5.11-revisao-reuniao-e-linguagem.md`): a crítica de UX do app inteiro
-  (28/40) virou 23 melhorias, U-098 a U-120; a revisão de arquitetura (A-01 a A-41) está incorporada, com 13 perguntas
-  no padrão e 14 a 18 dias [chute]. Falta a aprovação do dono. O achado de produção dela, o Enter que apagava a
-  gravação na confirmação do descarte, saiu à parte na D-076 (01/11), com teste.
+- **F5.11 aprovada, em implementação** (01/11, D-077, `features/F5.11-revisao-reuniao-e-linguagem.md`): a crítica de
+  UX do app inteiro (28/40) virou 23 melhorias, U-098 a U-120, com a revisão de arquitetura (A-01 a A-41) e as 13
+  perguntas no padrão; lotes L0 a L5. O achado de produção dela, o Enter que apagava a gravação na confirmação do
+  descarte, saiu à parte na D-076 (01/11), com teste.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
