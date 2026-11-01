@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from ..model import JOB_STEP_LABELS, JobKind
+from ..model import JobKind, step_task
 from .live_prepare import LIVE, RAG
 
 MAX_PER_MINUTE = 10              # A-10: acima disto, numa janela de 60 s, o aviso fica só no log
@@ -123,7 +123,7 @@ def job_error_text(job: Mapping[str, Any]) -> str | None:
     where = JOB_ERROR_WHERE.get(str(job.get("kind")))
     if where is None:
         return None
-    step = JOB_STEP_LABELS.get(str(job.get("step") or ""), "").removeprefix("LLM: ")
+    step = step_task(str(job.get("step") or ""), "")                  # A-28: o prefixo da fila só no `model`
     tail = f" (etapa: {step})" if step else ""
     return f"erro {where}{tail}; veja o motivo na fila."
 

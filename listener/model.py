@@ -143,14 +143,31 @@ class JobStep(StrEnum):
     INDEX_VECTORS = "index_vectors"   # F5: vetores que faltam do modelo ativo (`rag.index.fill_vectors`)
 
 
+# F5.11 (U-106, pergunta 2): o vocabulário de quem usa o app. Fora das Configurações, "IA" no lugar de "LLM"; na revisão,
+# a sugestão do pyannote é "pela voz" e a da LLM, "pelo contexto". Os nomes técnicos ficam nas dicas e nas Configurações.
+AI = "IA"
+BY_VOICE = "pela voz"
+BY_CONTEXT = "pelo contexto"
+LLM_STEP_PREFIX = "LLM: "            # A-28: o prefixo das tarefas da LLM na fila, só aqui (o L3 da F5.11 troca pelo da IA)
 JOB_STEP_LABELS: dict[str, str] = {
     JobStep.DOWNLOAD: "baixando modelo…", JobStep.WAITING: "aguardando fim da gravação", JobStep.DIARIZE: "separando vozes",
     JobStep.EMBED: "extraindo vozes", JobStep.MATCH: "casando perfis", JobStep.TRANSCRIBE_R: "transcrevendo a reunião",
     JobStep.TRANSCRIBE_L: "transcrevendo o microfone", JobStep.SEGMENTS: "montando as falas",
-    JobStep.IDENTIFY: "LLM: identidade por contexto", JobStep.MINUTES: "LLM: ata", JobStep.EXECUTIVE: "LLM: resumo executivo",
-    JobStep.PRE_SUMMARY: "LLM: pré-resumo", JobStep.TITLE: "LLM: título", JobStep.REVISE: "LLM: transcrição revisada",
-    JobStep.TEST: "LLM: teste de conexão", JobStep.INDEX_TEXT: "índice: trechos", JobStep.INDEX_VECTORS: "índice: vetores",
+    **{step: LLM_STEP_PREFIX + task for step, task in ((JobStep.IDENTIFY, "identidade por contexto"), (JobStep.MINUTES, "ata"),
+                                                      (JobStep.EXECUTIVE, "resumo executivo"), (JobStep.PRE_SUMMARY, "pré-resumo"),
+                                                      (JobStep.TITLE, "título"), (JobStep.REVISE, "transcrição revisada"),
+                                                      (JobStep.TEST, "teste de conexão"))},
+    JobStep.INDEX_TEXT: "índice: trechos", JobStep.INDEX_VECTORS: "índice: vetores",
 }
+
+
+def step_task(step: JobStep | str, default: str | None = None) -> str:
+    """O rótulo da etapa sem o prefixo da LLM ("LLM: ata" vira "ata"), para quem já diz de onde vem (F5.11, A-28: o prefixo
+    só em `LLM_STEP_PREFIX`; a troca dele não quebra quem o tira). Etapa desconhecida: `default` ou, sem ele, o nome dela."""
+    label = JOB_STEP_LABELS.get(str(step))
+    if label is None:
+        return str(step) if default is None else default
+    return label.removeprefix(LLM_STEP_PREFIX)
 LLM_STEPS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
                                   JobStep.REVISE, JobStep.TEST)
 

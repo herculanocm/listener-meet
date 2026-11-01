@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from ..config.defaults import SPECS
 from ..llm.costs import fmt_usd
 from ..log import get_logger
-from ..model import JOB_STEP_LABELS, JobKind, JobStep, MeetingStatus
+from ..model import JobKind, JobStep, MeetingStatus, step_task
 from ..pipeline import llm_requests, summary_gate
 from ..pipeline.llm_request_state import SPECIES_TASKS, ready_job
 from ..pipeline.llm_requests import Estimate, Mode, Outcome, RequestState, Species, State, Voices
@@ -91,7 +91,7 @@ type Choose = Callable[[Question], Mode | None]
 
 # ---------------------------------------------------------------- textos
 def step_label(step: JobStep | str) -> str:
-    return JOB_STEP_LABELS.get(str(step), str(step)).removeprefix("LLM: ")
+    return step_task(step)                                      # A-28: o prefixo da fila só no `model`
 
 
 def species_of(tasks: Iterable[JobStep | str]) -> frozenset[Species]:

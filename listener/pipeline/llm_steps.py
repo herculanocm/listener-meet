@@ -38,7 +38,7 @@ from ..llm.registry import build_provider
 from ..llm.render import render_minutes
 from ..llm.schema import schema_hash
 from ..llm.types import TASK_CLASS, TASK_REASONING, Completion, LlmTask, Message, ModelClass, Request
-from ..model import JOB_STEP_LABELS, ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, SummaryKind
+from ..model import ClusterStatus, EventType, JobKind, JobStatus, JobStep, LlmCallStatus, SummaryKind, step_task
 from ..store import Store
 from ..store.actions import ActionInsert
 from ..store.jobs import JobRow
@@ -467,7 +467,7 @@ class LlmJobRunner(BaseJobRunner):
         return JobStatus.DONE
 
     def _fail_partial(self, failed: list[TaskOutcome]) -> JobStatus:
-        names = [JOB_STEP_LABELS.get(o.step, str(o.step)).removeprefix("LLM: ") for o in failed]
+        names = [step_task(o.step) for o in failed]                      # A-28: o prefixo da fila só no `model`
         first = failed[0].error or "falha"
         joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " e " + names[-1]
         message = redact.GLOBAL.redact(f"{joined} falhou: {first}" if len(names) == 1 else f"{joined} falharam: {first}")
