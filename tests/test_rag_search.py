@@ -165,6 +165,8 @@ def test_hybrid_search_fuses_both_lists_and_finds_by_meaning(store):
     who = _people(store) | {"carla": store.people.create_person("Carla", role="Gerente")}
     a, _ = _meeting(store, who)
     b = _other_meeting(store, who)
+    for mid in (a, b):          # a data vai no cabeçalho do texto do vetor: fixa, para o cosseno do fake não mudar com o mês
+        store._x("UPDATE meetings SET started_at = ? WHERE id = ?", ("2026-10-15T10:00:00.000-03:00", mid))
     _ready(store)
     _indexed(store, a, b)
     res = search.search(store, "campanha redes sociais", query_vector=_qv("campanha redes sociais"))
