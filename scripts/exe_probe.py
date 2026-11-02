@@ -10,7 +10,8 @@ Uma linha JSON com:
 - o `sys.flags.utf8_mode` aqui e num filho lançado como o app lança os seus (o mesmo executável, `spawn_child` com as flags
   de criação e o `worker_env`);
 - o estilo efetivo do Qt por baixo do tema (um plugin ausente cai calado no padrão), a tradução pt-BR e se `tests` (os
-  fakes) entrou no build.
+  fakes) entrou no build;
+- o commit que o build gravou no pacote e o Sobre mostra (D-081; "dev" no venv), só informativo.
 Sai com 0 quando tudo bate com o Aceite 5. Não abre microfone, não toca som, não abre janela (Qt offscreen) nem lê o perfil
 do usuário (só o caminho de quem chama decide `APPDATA`; nada aqui o lê).
 """
@@ -172,9 +173,11 @@ def main(argv: list[str] | None = None) -> int:
     if CHILD_FLAG in args:
         print(json.dumps({"utf8_mode": sys.flags.utf8_mode, "frozen": bool(getattr(sys, "frozen", False))}), flush=True)
         return 0
+    from listener.about import build_id
+
     report: dict[str, Any] = {"frozen": bool(getattr(sys, "frozen", False)), "executable": Path(sys.executable).name,
                               "utf8_mode": sys.flags.utf8_mode, "stack": stack(), "pyannote": pyannote(),
-                              "child_utf8_mode": child(), "qt": qt(),
+                              "child_utf8_mode": child(), "qt": qt(), "build": build_id(),
                               "tests_in_build": bool(getattr(sys, "frozen", False)) and importlib.util.find_spec("tests") is not None}
     report["ok"] = verdict(report)
     print(json.dumps(report, ensure_ascii=False), flush=True)

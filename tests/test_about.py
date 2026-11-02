@@ -1,12 +1,14 @@
 """F5.12 L1 (U-121; CP15, D-079): os dados públicos do projeto em `listener/about.py`, sem Qt. O e-mail de doação, o autor e o
 repositório moram num lugar só (teste estático em todo `listener/`); a licença de cada biblioteca dos créditos sai da
-metadata instalada, com a reserva quando ela falta ou traz o texto inteiro; a cópia para suporte não leva caminho."""
+metadata instalada, com a reserva quando ela falta ou traz o texto inteiro; a cópia para suporte não leva caminho; a versão
+leva o commit do build (D-081)."""
 from __future__ import annotations
 
 import sys
 from email.message import Message
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,5 +81,17 @@ def test_the_credits_list_every_main_library_without_importing_it():
 
 def test_the_support_info_has_versions_and_the_system_but_no_path():
     text = about.support_info("3.12.10", "6.12.0", "Windows 11 Version 25H2")
-    assert text == f"listener-meet {about.VERSION}\nPython 3.12.10\nQt 6.12.0\nSistema: Windows 11 Version 25H2"
+    assert text == f"listener-meet {about.VERSION}+dev\nPython 3.12.10\nQt 6.12.0\nSistema: Windows 11 Version 25H2"
     assert "\\" not in text and "/" not in text
+
+
+def test_the_build_id_comes_from_the_stamp_the_build_puts_in_the_package(tmp_path, monkeypatch):
+    """D-081: o executável traz o commit num `build-stamp.txt` dentro do pacote; rodando do código o arquivo não existe."""
+    assert about.build_id() == "dev"                                           # este checkout não tem o carimbo
+    monkeypatch.setattr(about, "resources", SimpleNamespace(files=lambda _package: tmp_path))
+    assert (about.build_id(), about.version_label()) == ("dev", f"{about.VERSION} · dev")
+    (tmp_path / about.STAMP_FILE).write_text("45fb4ad\n", encoding="utf-8")
+    assert (about.build_id(), about.version_label()) == ("45fb4ad", f"{about.VERSION} · 45fb4ad")
+    assert about.support_info("3.12.10", "6.12.0", "Windows").startswith(f"listener-meet {about.VERSION}+45fb4ad\nPython ")
+    (tmp_path / about.STAMP_FILE).write_text(" \n", encoding="utf-8")
+    assert about.build_id() == "dev"

@@ -387,7 +387,8 @@ Antes: feche o app do venv (bandeja › Sair) e espere sumir o `--worker` no Ger
 o app do venv juntos: os dois usam o mesmo banco (pergunta 3 da F5.8).
 - [ ] Gere o executável: uma vez, `.venv\Scripts\python.exe -m pip install -r requirements\build-windows.txt`; depois,
       `.venv\Scripts\python.exe scripts\build_exe.py` (~7 min, a máquina segue usável). A última linha diz o tempo, o
-      tamanho e o número de arquivos.
+      tamanho e o número de arquivos. Para compartilhar com alguém, `scripts\build_exe.py --zip` (só com tudo
+      commitado): o mesmo build e o `build\exe\listener-meet-<versão>-win64.zip`, com a pasta inteira (D-081).
 - [ ] Copie a pasta `build\exe\dist\listener-meet` inteira para um caminho local e curto, fora do OneDrive (por exemplo
       `C:\Apps\listener-meet`). Abra o `listener-meet.exe` com duplo clique: o app abre sem janela preta, com a marca
       na bandeja, na barra e no ícone do arquivo no Explorer. Para fixar: clique direito no ícone da barra › Fixar.

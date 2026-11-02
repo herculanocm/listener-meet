@@ -1,13 +1,18 @@
 """F5.8: as partes puras de `scripts/build_exe.py`, sem empacotar. O comando do PyInstaller (em pasta, sem console, os
 pacotes que a análise não vê e os fakes de fora); a recusa em duas camadas (o `.exe` aberto, com `opener` injetado, e a
 pasta antiga trocada de lado e devolvida, também quando o build cai, e o `.old` que sobrou); o ICO escrito à mão; a versão do
-arquivo; o lançador; e a sonda sem caminho do usuário nos erros."""
+arquivo, o commit carimbado e o zip para compartilhar (D-081); o lançador; e a sonda sem caminho do usuário nos erros."""
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import struct
+import subprocess
 import sys
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -119,7 +124,7 @@ def test_an_old_folder_next_to_a_new_one_is_the_owners_choice(tmp_path, monkeypa
     old = _folder(tmp_path / "dist" / "listener-meet.old", "bom")
     dist = _folder(tmp_path / "dist" / "listener-meet", "parcial")
 
-    def never(_version: str) -> Any:
+    def never(*_: Any) -> Any:
         raise AssertionError("não devia preparar nada")
 
     monkeypatch.setattr(build_exe, "prepare", never)
@@ -136,7 +141,7 @@ def _prepared(failed: list[str]) -> Any:
 def test_an_interrupted_pyinstaller_gives_the_old_folder_back(tmp_path, monkeypatch):
     """R-01: Ctrl+C (ou exceção) no meio do PyInstaller: o `finally` tira a pasta parcial e devolve a antiga."""
     dist = _folder(tmp_path / "dist" / "listener-meet", "antigo")
-    monkeypatch.setattr(build_exe, "prepare", lambda _version: _prepared([]))
+    monkeypatch.setattr(build_exe, "prepare", lambda *_: _prepared([]))
 
     def ctrl_c(_cmd: list[str]) -> int:
         _folder(dist, "parcial")
@@ -151,7 +156,7 @@ def test_an_interrupted_pyinstaller_gives_the_old_folder_back(tmp_path, monkeypa
 def test_a_build_that_works_leaves_one_folder_and_the_probe_failures(tmp_path, monkeypatch):
     """R-09: os módulos que a sondagem da metadata não importou vão ao build-info.json (o stderr os mostra no `prepare`)."""
     dist = _folder(tmp_path / "dist" / "listener-meet", "antigo")
-    monkeypatch.setattr(build_exe, "prepare", lambda _version: _prepared(["listener.algum"]))
+    monkeypatch.setattr(build_exe, "prepare", lambda *_: _prepared(["listener.algum"]))
 
     def works(_cmd: list[str]) -> int:
         _folder(dist, "novo")
@@ -166,7 +171,7 @@ def test_a_build_that_works_leaves_one_folder_and_the_probe_failures(tmp_path, m
 
 def test_a_build_without_the_exe_counts_as_failed(tmp_path, monkeypatch):
     dist = _folder(tmp_path / "dist" / "listener-meet", "antigo")
-    monkeypatch.setattr(build_exe, "prepare", lambda _version: _prepared([]))
+    monkeypatch.setattr(build_exe, "prepare", lambda *_: _prepared([]))
     assert build_exe.build("0.4.0", dist=dist, out=tmp_path, run=lambda cmd: 0) == 1     # saiu 0 sem o .exe
     assert (dist / "listener-meet.exe").read_text(encoding="utf-8") == "antigo"
 
@@ -205,9 +210,75 @@ def test_the_script_refuses_outside_windows(monkeypatch, capsys):
 
 
 def test_the_version_file_carries_the_name_and_the_version():
-    text = build_exe.VERSION_INFO.format(v=build_exe.version_tuple("0.4.0"), s="0.4.0", name="listener-meet",
+    text = build_exe.VERSION_INFO.format(v=build_exe.version_tuple("0.5.0"), s="0.5.0", ps="0.5.0+45fb4ad", name="listener-meet",
                                          exe="listener-meet.exe")
-    assert "filevers=(0, 4, 0, 0)" in text and "'FileDescription', 'listener-meet'" in text and "'FileVersion', '0.4.0'" in text
+    assert "filevers=(0, 5, 0, 0)" in text and "'FileDescription', 'listener-meet'" in text and "'FileVersion', '0.5.0'" in text
+    assert "'ProductVersion', '0.5.0+45fb4ad'" in text                         # D-081: a de produto leva o commit
+
+
+def _git(head: str, changed: str = "", code: int = 0) -> Callable[..., Any]:
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, code, stdout=head, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=changed, stderr="")
+    return run
+
+
+def test_the_stamp_is_the_short_commit_dirty_with_changes_or_no_git(tmp_path):
+    """D-081: o hash curto; `.dirty` com arquivo rastreado mudado sem commit; "sem-git" fora de um repositório ou sem git."""
+    assert build_exe.git_stamp(tmp_path, run=_git("45fb4ad\n")) == "45fb4ad"
+    assert build_exe.git_stamp(tmp_path, run=_git("45fb4ad\n", " M listener/__init__.py\n")) == "45fb4ad.dirty"
+    assert build_exe.git_stamp(tmp_path, run=_git("", code=128)) == "sem-git"
+
+    def no_git(*_: Any, **__: Any) -> Any:
+        raise FileNotFoundError(2, "git")
+
+    assert build_exe.git_stamp(tmp_path, run=no_git) == "sem-git"
+    assert re.fullmatch(r"[0-9a-f]{7,40}(\.dirty)?|sem-git", build_exe.git_stamp(ROOT))     # o git de verdade, aqui
+
+
+def test_the_build_stamps_the_commit_in_the_package_and_the_product_version(tmp_path, monkeypatch):
+    """D-081: o carimbo chega ao `prepare`, entra no pacote `listener` pelo `--add-data` e vai à versão de produto."""
+    dist = tmp_path / "dist" / "listener-meet"
+    stamp_file = tmp_path / "stamp" / build_exe.STAMP
+    seen: dict[str, Any] = {}
+
+    def prepare(version: str, stamp: str) -> Any:
+        seen["stamp"] = stamp
+        return build_exe.Prepared(Path("l.py"), Path("i.ico"), Path("v.txt"), ["numpy"], [], stamp_file)
+
+    def works(cmd: list[str]) -> int:
+        seen["cmd"] = cmd
+        _folder(dist, "novo")
+        return 0
+
+    monkeypatch.setattr(build_exe, "prepare", prepare)
+    assert build_exe.build("0.5.0", dist=dist, out=tmp_path, run=works, stamp="45fb4ad") == 0
+    assert seen["stamp"] == "45fb4ad" and f"--add-data={stamp_file}{os.pathsep}listener" in seen["cmd"]
+    info = json.loads((tmp_path / "build-info.json").read_text(encoding="utf-8"))
+    assert (info["version"], info["product_version"]) == ("0.5.0", "0.5.0+45fb4ad")
+
+
+def test_the_zip_has_the_version_in_the_name_and_the_folder_at_the_root(tmp_path):
+    """D-081 (`--zip`): o que se compartilha é a pasta inteira (o `.exe` sozinho não roda), com o nome dela na raiz."""
+    dist = _folder(tmp_path / "dist" / "listener-meet", "novo")
+    (dist / "_internal").mkdir()
+    (dist / "_internal" / "python312.dll").write_bytes(b"MZ")
+    _folder(tmp_path / "dist" / "listener-meet.old", "antigo")                 # a vizinha fica fora
+    target = build_exe.make_zip(dist, tmp_path, "0.5.0")
+    assert target == tmp_path / "listener-meet-0.5.0-win64.zip"
+    with zipfile.ZipFile(target) as archive:
+        names = sorted(n for n in archive.namelist() if not n.endswith("/"))
+    assert names == ["listener-meet/_internal/python312.dll", "listener-meet/listener-meet.exe"]
+
+
+def test_the_zip_needs_a_commit_and_refuses_before_building(monkeypatch, capsys):
+    """D-081: o zip compartilhado sempre corresponde a um commit; a recusa vem antes dos ~7 min do build."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(build_exe, "build", lambda *_, **__: pytest.fail("não devia construir"))
+    for stamp in ("45fb4ad.dirty", "sem-git"):
+        monkeypatch.setattr(build_exe, "git_stamp", lambda _root, stamp=stamp: stamp)
+        assert build_exe.main(["--zip"]) == 2 and stamp in capsys.readouterr().err
 
 
 def test_the_probe_errors_carry_no_user_path():

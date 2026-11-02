@@ -2,6 +2,12 @@
 Nunca arquivo único: ele se descompacta a cada abertura e o app abre mais devagar.
 
   .venv\\Scripts\\python.exe scripts\\build_exe.py         ~7 min, sem rede: build\\exe\\dist\\listener-meet\\listener-meet.exe
+  .venv\\Scripts\\python.exe scripts\\build_exe.py --zip   o mesmo e o build\\exe\\listener-meet-<versão>-win64.zip para
+                                                          compartilhar (D-081); recusa com mudança sem commit
+
+Versão (D-081): `listener.__version__` nas propriedades do arquivo, a de produto com o commit (`0.5.0+45fb4ad`, com
+`.dirty` havendo mudança sem commit); o commit vai também num `build-stamp.txt` dentro do pacote `listener`, que só existe
+no executável e que o Sobre mostra. O nome do `.exe` e o da pasta não mudam (atalhos e a recusa abaixo dependem deles).
 
 Antes, uma vez (e de novo sempre que o lock do app mudar): `.venv\\Scripts\\python.exe -m pip install -r
 requirements/build-windows.txt` (só de build, D-068; o app nunca importa o PyInstaller).
@@ -18,12 +24,13 @@ requirements/build-windows.txt` (só de build, D-068; o app nunca importa o PyIn
   `truststore` e a metadata de cada distribuição que o app carrega; os fakes (`tests`) ficam fora.
 - Modo UTF-8 no executável (`--python-option X utf8`): o Python embutido ignora o `PYTHONUTF8` dos filhos.
 - Ícone (U-095): um ICO com PNGs de 16 a 256 px da marca da bandeja no estado ocioso, desenhados num subprocesso Qt
-  offscreen. Versão do arquivo: `listener.__version__`.
+  offscreen.
 - `build/exe/build-info.json`: tempo, tamanho, número de arquivos, as versões do PyInstaller e do hooks-contrib e os
   módulos que a sondagem da metadata não importou (também no stderr, só os nomes).
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import json
 import os
@@ -45,6 +52,8 @@ OUT = ROOT / "build" / "exe"
 NAME = "listener-meet"
 EXE = f"{NAME}.exe"
 DIST = OUT / "dist" / NAME
+STAMP = "build-stamp.txt"                          # D-081: o commit do build, dentro do pacote `listener` (lido pelo Sobre)
+UNSHAREABLE = ("o zip é para compartilhar e precisa de um commit: commite as mudanças e gere de novo (o carimbo deu {stamp})")
 REFUSAL = ("feche o listener-meet; se já fechou, um processamento em segundo plano ainda roda: espere ou encerre pelo "
            "Gerenciador de Tarefas")
 INTERRUPTED = ("sobrou listener-meet.old de um build anterior ao lado de listener-meet: se esse build terminou certo, a "
@@ -118,7 +127,7 @@ VERSION_INFO = """VSVersionInfo(
   ffi=FixedFileInfo(filevers={v}, prodvers={v}),
   kids=[StringFileInfo([StringTable('041604B0', [
     StringStruct('FileDescription', '{name}'), StringStruct('ProductName', '{name}'),
-    StringStruct('FileVersion', '{s}'), StringStruct('ProductVersion', '{s}'),
+    StringStruct('FileVersion', '{s}'), StringStruct('ProductVersion', '{ps}'),
     StringStruct('InternalName', '{name}'), StringStruct('OriginalFilename', '{exe}')])]),
     VarFileInfo([VarStruct('Translation', [1046, 1200])])])
 """
@@ -150,8 +159,9 @@ def ico_bytes(pngs: Mapping[int, bytes]) -> bytes:
     return struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(entries) + b"".join(pngs[s] for s in sizes)
 
 
-def pyinstaller_command(launcher: Path, icon: Path, version_file: Path, dists: Sequence[str]) -> list[str]:
-    """O comando do PyInstaller, em pasta e sem console."""
+def pyinstaller_command(launcher: Path, icon: Path, version_file: Path, dists: Sequence[str],
+                        stamp_file: Path | None = None) -> list[str]:
+    """O comando do PyInstaller, em pasta e sem console; o carimbo do commit entra no pacote `listener` (D-081)."""
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed", f"--name={NAME}",
            f"--distpath={OUT / 'dist'}", f"--workpath={OUT / 'work'}", f"--specpath={OUT}", f"--paths={ROOT}",
            f"--paths={ROOT / 'scripts'}", f"--icon={icon}", f"--version-file={version_file}", "--collect-submodules=listener",
@@ -160,7 +170,32 @@ def pyinstaller_command(launcher: Path, icon: Path, version_file: Path, dists: S
     cmd += [f"--collect-submodules={p}" for p in WHOLE_PACKAGES]
     cmd += [f"--hidden-import={m}" for m in HIDDEN]
     cmd += [f"--copy-metadata={d}" for d in dists]
+    if stamp_file is not None:
+        cmd.append(f"--add-data={stamp_file}{os.pathsep}listener")
     return [*cmd, str(launcher)]
+
+
+def git_stamp(root: Path, run: Callable[..., Any] = subprocess.run) -> str:
+    """O commit do build (D-081): o hash curto, com `.dirty` se um arquivo rastreado mudou sem commit; "sem-git" fora de
+    um repositório ou sem o git no PATH."""
+    try:
+        head = run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False)
+        changed = run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], capture_output=True,
+                      text=True, check=False)
+    except OSError:
+        return "sem-git"
+    commit = (head.stdout or "").strip()
+    if head.returncode != 0 or not commit:
+        return "sem-git"
+    return f"{commit}.dirty" if (changed.stdout or "").strip() else commit
+
+
+def make_zip(dist: Path, out: Path, version: str) -> Path:
+    """`--zip` (D-081): a pasta inteira, com `listener-meet` na raiz, num zip com a versão no nome. É o que se compartilha:
+    o `.exe` sozinho não roda."""
+    target = out / f"{NAME}-{version}-win64.zip"
+    shutil.make_archive(str(target.with_suffix("")), "zip", root_dir=dist.parent, base_dir=dist.name)
+    return target
 
 
 def check_not_running(dist: Path, opener: Callable[..., Any] = open) -> str | None:
@@ -255,21 +290,26 @@ class Prepared(NamedTuple):
     version_file: Path
     dists: list[str]
     failed: list[str]                                  # os módulos que a sondagem da metadata não importou
+    stamp_file: Path | None = None                     # D-081: o commit, dentro do pacote `listener`
 
 
-def prepare(version: str) -> Prepared:
-    """O lançador, o ícone, o arquivo de versão e a lista da metadata, todos em `build/exe/`."""
+def prepare(version: str, stamp: str = "dev") -> Prepared:
+    """O lançador, o ícone, o arquivo de versão, o carimbo do commit e a lista da metadata, todos em `build/exe/`."""
     (OUT / "launcher").mkdir(parents=True, exist_ok=True)
     launcher = OUT / "launcher" / "listener_meet.py"
     launcher.write_text(LAUNCHER, encoding="utf-8")
     icon = OUT / f"{NAME}.ico"
     write_icon(icon)
     version_file = OUT / "version-info.txt"
-    version_file.write_text(VERSION_INFO.format(v=version_tuple(version), s=version, name=NAME, exe=EXE), encoding="utf-8")
+    version_file.write_text(VERSION_INFO.format(v=version_tuple(version), s=version, ps=f"{version}+{stamp}", name=NAME,
+                                                exe=EXE), encoding="utf-8")
+    (OUT / "stamp").mkdir(parents=True, exist_ok=True)
+    stamp_file = OUT / "stamp" / STAMP
+    stamp_file.write_text(stamp, encoding="utf-8")
     dists, failed = loaded_distributions()
     if failed:
         print(f"build_exe: a sondagem da metadata não importou: {', '.join(failed)}", file=sys.stderr)
-    return Prepared(launcher, icon, version_file, dists, failed)
+    return Prepared(launcher, icon, version_file, dists, failed, stamp_file)
 
 
 def folder_stats(folder: Path) -> dict[str, float]:
@@ -277,8 +317,9 @@ def folder_stats(folder: Path) -> dict[str, float]:
     return {"files": len(files), "mb": round(sum(p.stat().st_size for p in files) / 1024 / 1024, 1)}
 
 
-def write_build_info(out: Path, dist: Path, code: int, seconds: float, version: str, failed: list[str]) -> dict[str, Any]:
-    info: dict[str, Any] = {"exit": code, "seconds": round(seconds, 1), "version": version,
+def write_build_info(out: Path, dist: Path, code: int, seconds: float, version: str, failed: list[str],
+                     stamp: str = "dev") -> dict[str, Any]:
+    info: dict[str, Any] = {"exit": code, "seconds": round(seconds, 1), "version": version, "product_version": f"{version}+{stamp}",
                             "pyinstaller": metadata.version("pyinstaller"),
                             "hooks_contrib": metadata.version("pyinstaller-hooks-contrib"), "python": sys.version.split()[0],
                             "metadata_probe_failed": failed, **(folder_stats(dist) if code == 0 and dist.exists() else {})}
@@ -295,7 +336,8 @@ def refuse(message: str) -> int:
     return 2
 
 
-def build(version: str, dist: Path = DIST, out: Path = OUT, run: Callable[[list[str]], int] = run_pyinstaller) -> int:
+def build(version: str, dist: Path = DIST, out: Path = OUT, run: Callable[[list[str]], int] = run_pyinstaller,
+          stamp: str = "dev") -> int:
     """Recusa antes de mexer, troca a pasta de lado, prepara e roda o PyInstaller; a pasta antiga se acerta no `finally`,
     também se o build cair no meio (exceção, Ctrl+C)."""
     refusal = check_not_running(dist)
@@ -310,32 +352,44 @@ def build(version: str, dist: Path = DIST, out: Path = OUT, run: Callable[[list[
     t0 = time.perf_counter()
     code, ok, failed = 1, False, []
     try:
-        prepared = prepare(version)
+        prepared = prepare(version, stamp)
         failed = prepared.failed
-        code = run(pyinstaller_command(prepared.launcher, prepared.icon, prepared.version_file, prepared.dists))
+        code = run(pyinstaller_command(prepared.launcher, prepared.icon, prepared.version_file, prepared.dists,
+                                       prepared.stamp_file))
         ok = code == 0 and (dist / EXE).exists()
     finally:
         warning = settle(dist, old, ok)
         if warning:
             print(f"build_exe: {warning}", file=sys.stderr)
     result = 0 if ok else (code or 1)
-    print(json.dumps(write_build_info(out, dist, result, time.perf_counter() - t0, version, failed), ensure_ascii=False))
+    info = write_build_info(out, dist, result, time.perf_counter() - t0, version, failed, stamp)
+    print(json.dumps(info, ensure_ascii=False))
     return result
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):              # mensagens em PT-BR também com a saída num pipe (cp1252 por padrão)
         with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     if sys.platform != "win32":
         print("build_exe: o executável é só para o Windows (F5.8; Linux e macOS ficam para a F7)", file=sys.stderr)
         return 2
+    parser = argparse.ArgumentParser(prog="build_exe", description="o listener-meet.exe em pasta (F5.8, D-081)")
+    parser.add_argument("--zip", action="store_true", help="também o zip com a versão no nome, para compartilhar")
+    args = parser.parse_args(argv)
+    stamp = git_stamp(ROOT)
+    if args.zip and (stamp.endswith(".dirty") or stamp == "sem-git"):
+        return refuse(UNSHAREABLE.format(stamp=stamp))     # antes dos ~7 min: o zip sempre corresponde a um commit
     from listener import __version__
     from listener.platform import get_platform
 
     get_platform().lower_own_priority()
     OUT.mkdir(parents=True, exist_ok=True)
-    return build(__version__)
+    code = build(__version__, stamp=stamp)
+    if code == 0 and args.zip:
+        target = make_zip(DIST, OUT, __version__)
+        print(json.dumps({"zip": str(target), "mb": round(target.stat().st_size / 1024 / 1024, 1)}, ensure_ascii=False))
+    return code
 
 
 if __name__ == "__main__":

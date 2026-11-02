@@ -4,7 +4,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 
 ## Onde paramos (02/11/2026, Windows nativo; tudo commitado; o push é do dono)
 - Código: F1 a F5.12 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.502 testes, esquema v9. Nenhum gate medido ainda.
+  rascunho inicial e F7 é futuro. Suíte de 1.509 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
@@ -15,7 +15,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
-- O `.exe` que vale para as Partes 19 a 22 é o de 02/11, 00:22, já com a F5.11 (541 s, 892 MB, sonda `--probe` ok).
+- O `.exe` que vale para as Partes 19 a 23 é o de 02/11, 11:05 (`45fb4ad`, com a F5.12 e a correção do Histórico; 441
+  s, 892 MB). Daqui em diante a versão vai no nome do zip e no Sobre (D-081): `build_exe.py --zip` para compartilhar.
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
@@ -37,7 +38,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
 1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
    com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
    endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
-   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela.
+   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081, no primeiro `.exe` 0.5.0: o
+   Sobre diz "versão 0.5.0 · <commit>" e Propriedades › Detalhes, a versão do produto `0.5.0+<commit>`.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",

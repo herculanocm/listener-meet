@@ -50,7 +50,7 @@ def test_the_about_shows_the_brand_the_project_this_computer_and_the_credits(qtb
     qtbot.addWidget(dlg)
     view = dlg.view
     assert dlg.windowTitle() == TITLE == "Sobre o listener-meet"
-    assert (view.name.text(), view.version.text()) == ("listener-meet", f"versão {about.VERSION}")
+    assert (view.name.text(), view.version.text()) == ("listener-meet", f"versão {about.version_label()}")
     assert view.tagline.text() == "Grave qualquer reunião, saiba quem falou e ache qualquer decisão, tudo no seu computador."
     assert view.license.text() == "Gratuito e de código aberto (licença MIT), feito por Herculano."
     assert about.REPOSITORY in view.repository.text() and view.repository.openExternalLinks()
@@ -74,7 +74,7 @@ def test_copy_for_support_takes_the_versions_and_the_system_without_any_path(qtb
     with caplog.at_level(logging.INFO, logger="listener.ui.about"):
         view.copy_button.click()
     copied = QGuiApplication.clipboard().text()
-    assert copied == view.support_text() and copied.startswith(f"listener-meet {about.VERSION}\nPython ")
+    assert copied == view.support_text() and copied.startswith(f"listener-meet {about.VERSION}+dev\nPython ")
     assert str(store.base_dir) not in copied and "listener.log" not in copied and not view.copied.isHidden()
     assert "informações para suporte copiadas (teste)" in caplog.text and str(store.base_dir) not in caplog.text
 

@@ -5,17 +5,21 @@ repositório não aparecem em mais nenhum arquivo de `listener/`. O e-mail nunca
 
 Os créditos são as bibliotecas abertas principais, com a licença lida da metadata instalada (`importlib.metadata`: sem
 importar a biblioteca e sem rede) e um valor de reserva quando a metadata falta (a biblioteca de outro sistema, o
-executável da F5.8) ou traz o texto inteiro da licença no lugar do nome dela."""
+executável da F5.8) ou traz o texto inteiro da licença no lugar do nome dela.
+
+A versão vem com o commit do build (D-081): o `scripts/build_exe.py` grava o hash num `build-stamp.txt` dentro do pacote, que
+só existe no executável; rodando do código, o commit é "dev"."""
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from importlib import metadata
+from importlib import metadata, resources
 
 from . import __version__
 
 APP_NAME = "listener-meet"
 VERSION = __version__
+STAMP_FILE = "build-stamp.txt"                         # o nome que o `scripts/build_exe.py` usa (D-081)
 TAGLINE = "Grave qualquer reunião, saiba quem falou e ache qualquer decisão, tudo no seu computador."
 AUTHOR = "Herculano"
 REPOSITORY = "https://github.com/herculanocm/listener-meet"
@@ -95,11 +99,27 @@ def credits() -> list[tuple[str, str]]:
     return [(c.name, license_of(c)) for c in CREDITS]
 
 
+def build_id() -> str:
+    """O commit do executável (D-081), como o build gravou (`45fb4ad`, ou `45fb4ad.dirty` com mudança sem commit); "dev"
+    sem o arquivo (rodando do código) ou com ele vazio ou ilegível."""
+    try:
+        stamp = (resources.files("listener") / STAMP_FILE).read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return "dev"
+    return stamp or "dev"
+
+
+def version_label() -> str:
+    """A versão como o Sobre a mostra, com o commit: "0.5.0 · 45fb4ad"."""
+    return f"{VERSION} · {build_id()}"
+
+
 def support_info(python: str, qt: str, system: str) -> str:
     """O texto de "Copiar informações para suporte": as versões e o sistema, sem caminho (a pasta do banco e o arquivo de
-    log têm o nome do usuário)."""
-    return f"{APP_NAME} {VERSION}\nPython {python}\nQt {qt}\nSistema: {system}"
+    log têm o nome do usuário). A do app é a de produto do `.exe`, com o commit (`0.5.0+45fb4ad`)."""
+    return f"{APP_NAME} {VERSION}+{build_id()}\nPython {python}\nQt {qt}\nSistema: {system}"
 
 
 __all__ = ["APP_NAME", "AUTHOR", "CREDITS", "DONATION_EMAIL", "LICENSE", "LICENSE_MAX", "PAYPAL_AMOUNT", "PAYPAL_URL",
-           "PIX_AMOUNT", "REPOSITORY", "TAGLINE", "VERSION", "Credit", "credits", "license_of", "support_info"]
+           "PIX_AMOUNT", "REPOSITORY", "STAMP_FILE", "TAGLINE", "VERSION", "Credit", "build_id", "credits", "license_of",
+           "support_info", "version_label"]

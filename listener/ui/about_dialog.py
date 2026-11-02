@@ -129,7 +129,7 @@ class AboutView(QWidget):
         brand.setAccessibleName(f"Marca do {about.APP_NAME}")
         self.name = _label(about.APP_NAME)
         role(self.name, "subtitle")
-        self.version = _label(f"versão {about.VERSION}")
+        self.version = _label(f"versão {about.version_label()}")
         note(self.version)
         names = QVBoxLayout()
         names.setSpacing(0)
