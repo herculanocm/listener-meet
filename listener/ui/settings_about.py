@@ -14,10 +14,9 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QFormLayout
 
-from .. import about
 from ..model import SettingScope
 from .about_dialog import AboutView, log_file
-from .donate import ENABLED, Support
+from .donate import APP_NB, ENABLED, Support
 from .settings_pages import SettingsPage
 
 if TYPE_CHECKING:
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
     from .theme import Tone
 
 ABOUT_TITLE = "Sobre"
-SUBTITLE = f"O que é o {about.APP_NAME}, quem o mantém, como apoiar e as informações para o suporte. Aplica agora."
+SUBTITLE = f"O que é o {APP_NB}, quem o mantém, como apoiar e as informações para o suporte. Aplica agora."
 
 
 class AboutPageMixin:

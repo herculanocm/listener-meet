@@ -28,7 +28,7 @@ from .. import about
 from ..log import current_file, get_logger
 from .common import copy_rich, fit_to_screen
 from .components import Card
-from .donate import PAYPAL, PIX
+from .donate import APP_NB, PAYPAL, PIX
 from .donate_dialogs import SupportSection
 from .icons import set_icon
 from .keys import WrapLabel
@@ -49,7 +49,7 @@ COPY_INFO = "Copiar informações para suporte"
 COPY_TIP = "Copia as versões e o sistema (sem a pasta do banco e o arquivo de log, que têm o nome do usuário)"
 COPIED = "Copiado para a área de transferência."
 NOT_YET = "escolhido nos próximos passos"
-CREDITS_NOTE = f"O {about.APP_NAME} é feito sobre estas bibliotecas de código aberto, cada uma com a sua licença:"
+CREDITS_NOTE = f"O {APP_NB} é feito sobre estas bibliotecas de código aberto, cada uma com a sua licença:"
 
 
 def computer_info() -> dict[str, str]:
@@ -212,7 +212,9 @@ def note_label(text: str) -> QLabel:
 
 
 class AboutDialog(QDialog):
-    """O Sobre numa janela com rolagem e "Fechar" (A-17: cabe na área livre da tela)."""
+    """O Sobre numa janela com rolagem e "Fechar" (A-17: cabe na área livre da tela). "Fechar" é o botão padrão e começa
+    com o foco (revisão da F5.12): sem isso, o Qt fazia do primeiro botão, o "Doar pelo Pix…", o padrão, e o Enter abria o
+    Pix."""
 
     def __init__(self, db_dir: Path | None, log_path: Path | None, *, support: Support | None = None, via: str = "sobre",
                  parent: QWidget | None = None) -> None:
@@ -242,6 +244,8 @@ class AboutDialog(QDialog):
         lay.setSpacing(0)
         lay.addWidget(scroll, 1)
         lay.addLayout(footer)
+        self.close_button.setDefault(True)               # já dentro do diálogo: antes, o padrão não chegava a ele
+        self.close_button.setFocus()
 
     @override
     def showEvent(self, event: QShowEvent) -> None:

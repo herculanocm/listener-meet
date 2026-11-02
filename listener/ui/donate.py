@@ -5,8 +5,11 @@
   qual o convite pode voltar), `donate.shown` (quantas vezes ele apareceu) e `donate.donated_at`.
 - Cadência (U-127, Comportamento 1 e 4; perguntas 2 e 3): o convite pode aparecer com `donate.enabled`, 3 ou mais reuniões
   processadas e `donate.next_at` vencido; mostrado, a data vai a +30 dias (no máximo um a cada 30 dias, também se o app sair
-  com ele à vista); "Agora não" e o ✕ adiam 30 dias, sumir sem resposta em 2 min, 7, e "Já doei" ou "Pronto, doei", 180. O
-  app parado (sem gravação, sem chamada, fora do assistente) o convite confere.
+  com ele à vista); "Agora não", o ✕, sumir sem resposta em 2 min e o cartão fechado pela gravação ou por uma chamada adiam
+  30 dias (revisão da F5.12: a pergunta 2 aprovada vale também para o "sem resposta", que a spec dizia 7); "Já doei" ou
+  "Pronto, doei", 180. R-01: o adiamento nunca encurta a data de uma doação, e o apoio informado por qualquer entrada
+  fecha o cartão à vista (`donation_informed`). O app parado (sem gravação, sem chamada, fora do assistente) o convite
+  confere.
 - Os números do título (Comportamento 2), em duas consultas curtas: as reuniões processadas (processada ou revisada), a
   duração delas e as ações da ata atual de cada uma (abertas e feitas).
 - `Support`: o estado, a área de transferência ("Copiar chave", "Copiar e-mail"), o navegador ("Abrir o PayPal", pelo Qt:
@@ -43,19 +46,23 @@ log = get_logger("ui.donate")
 
 ENABLED, NEXT_AT, SHOWN, DONATED_AT = "donate.enabled", "donate.next_at", "donate.shown", "donate.donated_at"
 MIN_PROCESSED = 3                    # U-127: o primeiro convite depois da 3ª reunião processada (pergunta 2)
-SHOWN_DAYS, LATER_DAYS, EXPIRED_DAYS, DONATED_DAYS = 30, 30, 7, 180      # U-127 e Comportamento 4 (pergunta 3)
+# U-127 e Comportamento 4 (pergunta 3); sem resposta, 30 como "Agora não" (revisão da F5.12: no máximo um a cada 30 dias)
+SHOWN_DAYS, LATER_DAYS, EXPIRED_DAYS, DONATED_DAYS = 30, 30, 30, 180
 PIX, PAYPAL = "pix", "paypal"
 METHOD_NAMES = {PIX: "Pix", PAYPAL: "PayPal"}
 PROCESSING_KINDS = frozenset({str(JobKind.MEETING), str(JobKind.REPROCESS)})      # o aviso de reunião processada
 
-NBSP = chr(0xA0)                     # nos textos que quebram a linha, o "R$" nunca fica longe do valor
+# nos textos que quebram a linha (o convite, o agradecimento e o Sobre), o "R$" não se separa do valor nem o nome do app
+# quebra no hífen ("listener-" numa linha e "meet" na outra): o espaço e o hífen que não quebram
+NBSP, NBHY = chr(0xA0), chr(0x2011)
+APP_NB = about.APP_NAME.replace("-", NBHY)
 PIX_MONEY, PAYPAL_MONEY = about.PIX_AMOUNT.replace(" ", NBSP), about.PAYPAL_AMOUNT.replace(" ", NBSP)
 SUPPORT_HEAD = "Apoie o projeto"
-SUPPORT_TEXT = (f"O {about.APP_NAME} é gratuito e sempre vai ser. Se ele te poupa tempo, um {PIX_MONEY} pelo Pix ou um "
+SUPPORT_TEXT = (f"O {APP_NB} é gratuito e sempre vai ser. Se ele te poupa tempo, um {PIX_MONEY} pelo Pix ou um "
                 f"{PAYPAL_MONEY} pelo PayPal ajuda a manter tudo funcionando e a trazer novidades.")
-THANKS = f"Obrigado de verdade! É o seu apoio que faz o {about.APP_NAME} continuar."
-INVITE_FALLBACK_TITLE = f"Que bom ter você usando o {about.APP_NAME}"
-INVITE_PITCH = (f"O {about.APP_NAME} é gratuito, de código aberto e feito por uma pessoa só, com muito carinho. Se ele está te "
+THANKS = f"Obrigado de verdade! É o seu apoio que faz o {APP_NB} continuar."
+INVITE_FALLBACK_TITLE = f"Que bom ter você usando o {APP_NB}"
+INVITE_PITCH = (f"O {APP_NB} é gratuito, de código aberto e feito por uma pessoa só, com muito carinho. Se ele está te "
                 f"ajudando, que tal retribuir com um gesto simbólico? {PIX_MONEY} pelo Pix ou {PAYPAL_MONEY} pelo "
                 "PayPal mantêm o projeto vivo e crescendo. Cada apoio conta muito!")
 
@@ -69,15 +76,20 @@ def _iso(when: datetime) -> str:
 
 
 def parse_when(raw: str) -> datetime | None:
-    """A data gravada (ISO com o fuso); vazia ou ilegível, None: sem espera (só um banco editado à mão chega a ilegível)."""
+    """A data gravada (ISO com o fuso; sem fuso, a hora local); vazia ou que não vale, None: sem espera (só um banco editado
+    à mão chega aí). Não vale o texto que não é data (`ValueError`) nem a data fora do alcance do relógio do sistema, que o
+    fuso local não converte (`OSError` no Windows, `OverflowError`); o DEBUG diz qual."""
     text = (raw or "").strip()
     if not text:
         return None
     try:
         when = datetime.fromisoformat(text)
+        return when if when.tzinfo is not None else when.astimezone()
     except ValueError:
-        return None
-    return when if when.tzinfo is not None else when.astimezone()
+        log.debug("apoio: a data do convite não é uma data (%d caracteres): sem espera", len(text))
+    except (OSError, OverflowError) as e:
+        log.debug("apoio: a data do convite está fora do alcance do relógio do sistema (%s): sem espera", type(e).__name__)
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +120,7 @@ def invite_texts(stats: Stats | None) -> tuple[str, str]:
     """O título e a mensagem do convite (Interface): com os números do banco ou, sem eles, o título de reserva."""
     if stats is None or stats.meetings < 1:
         return INVITE_FALLBACK_TITLE, INVITE_PITCH
-    title = f"O {about.APP_NAME} já guardou {plural(stats.meetings, 'reunião sua', 'reuniões suas')}"
+    title = f"O {APP_NB} já guardou {plural(stats.meetings, 'reunião sua', 'reuniões suas')}"
     actions = f", e {plural(stats.actions, 'ação que não se perdeu', 'ações que não se perderam')}" if stats.actions else ""
     value = f"São {duration_text(stats.duration_ms)} de conversa que você pode buscar, ouvir e citar quando quiser{actions}."
     return title, f"{value} {INVITE_PITCH}"
@@ -138,6 +150,7 @@ class Support(QObject):
     """O apoio no app: o estado do convite, a cópia do e-mail, o navegador, os diálogos e o agradecimento. `notify` é o aviso
     do app (o controlador; None nos testes sem ele); `platform` traz o diálogo à frente (o app está em segundo plano)."""
     meeting_notified = Signal()          # Comportamento 1: o aviso de reunião processada ou de ata pronta
+    donation_informed = Signal()         # R-01: "Já doei" ou "Pronto, doei", de qualquer entrada (o cartão à vista fecha)
 
     def __init__(self, store: Store, notify: Callable[[str], Any] | None = None, platform: Platform | None = None, *,
                  clock: Callable[[], datetime] = local_now, open_url: Callable[[QUrl], bool] | None = None,
@@ -176,23 +189,37 @@ class Support(QObject):
             return False
         return True
 
+    def _after(self, days: int) -> datetime:
+        """A próxima data, `days` a partir de agora, sem encurtar a de uma doação (R-01: os 180 dias do "Pronto, doei" ficam,
+        venha o adiamento de onde vier)."""
+        when = self.now() + timedelta(days=days)
+        try:
+            donated = parse_when(self.store.get_setting(DONATED_AT))
+        except Exception as e:  # banco ocupado: a data nova, que o `_write` também não grava
+            log.debug("apoio: a data do apoio não foi lida (%s)", type(e).__name__)
+            return when
+        floor = donated + timedelta(days=DONATED_DAYS) if donated is not None else None
+        return floor if floor is not None and floor > when else when
+
     def mark_shown(self) -> int:
         """O convite apareceu: a contagem sobe e a próxima data vai a +30 dias. Devolve a contagem."""
         n = self.shown() + 1
-        self._write({SHOWN: str(n), NEXT_AT: _iso(self.now() + timedelta(days=SHOWN_DAYS))})
+        self._write({SHOWN: str(n), NEXT_AT: _iso(self._after(SHOWN_DAYS))})
         return n
 
     def defer(self, days: int, why: str) -> None:
-        """"Agora não" (30 dias) ou sem resposta (7): a próxima data, contada de agora."""
-        self._write({NEXT_AT: _iso(self.now() + timedelta(days=days))})
+        """"Agora não", sem resposta ou o cartão fechado pela gravação (30 dias): a próxima data, contada de agora."""
+        self._write({NEXT_AT: _iso(self._after(days))})
         log.info("convite de apoio adiado por %d dias (%s; mostrado %s)", days, why, plural(self.shown(), "vez", "vezes"))
 
     def donated(self, via: str) -> None:
-        """"Já doei" ou "Pronto, doei": a data do apoio, o convite 180 dias depois (pergunta 3) e o agradecimento."""
+        """"Já doei" ou "Pronto, doei": a data do apoio, o convite 180 dias depois (pergunta 3), o cartão à vista fecha sem
+        adiar (R-01) e o agradecimento."""
         now = self.now()
         self._write({DONATED_AT: _iso(now), NEXT_AT: _iso(now + timedelta(days=DONATED_DAYS))})
         log.info("apoio informado (%s; convite mostrado %s); o convite volta em %d dias", via, plural(self.shown(), "vez", "vezes"),
                  DONATED_DAYS)
+        self.donation_informed.emit()
         if self.notify is not None:
             self.notify(THANKS)
 
@@ -261,7 +288,7 @@ class Support(QObject):
                 self.platform.bring_to_front(int(dlg.winId()))
 
 
-__all__ = ["DONATED_AT", "DONATED_DAYS", "ENABLED", "EXPIRED_DAYS", "INVITE_FALLBACK_TITLE", "INVITE_PITCH", "LATER_DAYS",
-           "METHOD_NAMES", "MIN_PROCESSED", "NBSP", "NEXT_AT", "PAYPAL", "PAYPAL_MONEY", "PIX", "PIX_MONEY", "SHOWN", "SHOWN_DAYS",
+__all__ = ["APP_NB", "DONATED_AT", "DONATED_DAYS", "ENABLED", "EXPIRED_DAYS", "INVITE_FALLBACK_TITLE", "INVITE_PITCH", "LATER_DAYS",
+           "METHOD_NAMES", "MIN_PROCESSED", "NBHY", "NBSP", "NEXT_AT", "PAYPAL", "PAYPAL_MONEY", "PIX", "PIX_MONEY", "SHOWN", "SHOWN_DAYS",
            "SUPPORT_HEAD", "SUPPORT_TEXT", "THANKS", "Stats", "Support", "cadence_block", "duration_text", "invite_texts", "local_now",
            "meeting_stats", "minutes_done", "parse_when"]

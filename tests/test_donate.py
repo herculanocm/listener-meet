@@ -53,16 +53,18 @@ def processed(store: Any, n: int, ms: int = 3_600_000, status: MeetingStatus = M
 
 # ---------------------------------------------------------------- textos (Interface, Comportamento 2)
 def _plain(text: str) -> str:
-    """O texto sem o espaço que não quebra (entre o "R$" e o valor, o número e a unidade): o mesmo da spec."""
-    return text.replace(donate.NBSP, " ")
+    """O texto sem o espaço e o hífen que não quebram (o "R$" e o valor, o número e a unidade, o nome do app): o da spec."""
+    return text.replace(donate.NBSP, " ").replace(donate.NBHY, "-")
 
 
 def test_the_invite_says_what_the_app_already_kept_with_the_spec_message():
     title, message = invite_texts(Stats(12, int(9.2 * 3_600_000), 47))
-    assert title == "O listener-meet já guardou 12 reuniões suas"
+    assert _plain(title) == "O listener-meet já guardou 12 reuniões suas"
     assert _plain(message) == SPEC_MESSAGE
     assert donate.NBSP + "0,99" in message and "9" + donate.NBSP + "h" in message      # a quebra não separa o valor
-    assert invite_texts(None) == ("Que bom ter você usando o listener-meet", donate.INVITE_PITCH)    # sem número ainda
+    assert "listener" + donate.NBHY + "meet" in title and "listener-meet" not in message   # nem o nome no hífen
+    fallback_title, pitch = invite_texts(None)                                          # sem número ainda
+    assert (_plain(fallback_title), pitch) == ("Que bom ter você usando o listener-meet", donate.INVITE_PITCH)
     assert message.endswith(donate.INVITE_PITCH)
     _title, one = invite_texts(Stats(3, 40 * 60_000, 1))
     assert _plain(one).startswith("São 40 min de conversa que você pode buscar, ouvir e citar quando quiser, e 1 ação que não se "
@@ -76,7 +78,7 @@ def test_the_invite_says_what_the_app_already_kept_with_the_spec_message():
 def test_the_support_text_and_the_thanks_are_the_spec_ones():
     assert _plain(donate.SUPPORT_TEXT) == ("O listener-meet é gratuito e sempre vai ser. Se ele te poupa tempo, um R$ 0,99 pelo Pix "
                                            "ou um US$ 0,20 pelo PayPal ajuda a manter tudo funcionando e a trazer novidades.")
-    assert donate.THANKS == "Obrigado de verdade! É o seu apoio que faz o listener-meet continuar."
+    assert _plain(donate.THANKS) == "Obrigado de verdade! É o seu apoio que faz o listener-meet continuar."
 
 
 def test_the_numbers_come_from_processed_meetings_and_the_current_minutes(store):
@@ -102,9 +104,34 @@ def test_the_cadence_needs_the_switch_three_processed_meetings_and_the_date():
     assert cadence_block(False, 30, None, now) == "desligado na página Sobre"                       # nunca desligado
     assert cadence_block(True, 3, now + timedelta(seconds=1), now).startswith("espera até")
     assert cadence_block(True, 3, now, now) == ""
-    assert parse_when("") is None and parse_when("lixo") is None
+    assert parse_when("") is None
     assert parse_when("2026-12-02T10:00:00-03:00") == datetime(2026, 12, 2, 10, 0, tzinfo=BRT)
     assert parse_when("2026-12-02T10:00:00").tzinfo is not None                # sem fuso: o local
+
+
+class _NoLocalTime:
+    """Uma data sem fuso que o relógio do sistema não converte (o `astimezone` do Windows no ano 1, por exemplo)."""
+    tzinfo = None
+
+    def __init__(self, error: type[Exception]) -> None:
+        self.error = error
+
+    def astimezone(self) -> datetime:
+        raise self.error("fora do alcance")
+
+
+@pytest.mark.parametrize(("raw", "error", "reason"), [
+    ("lixo", None, "não é uma data"),
+    ("0001-01-01T00:00:00", OSError, "fora do alcance do relógio do sistema (OSError)"),
+    ("9999-12-31T23:59:59", OverflowError, "fora do alcance do relógio do sistema (OverflowError)")])
+def test_a_date_that_is_not_valid_means_no_wait_and_the_debug_says_why(monkeypatch, caplog, raw, error, reason):
+    """Revisão da F5.12: o texto que não é data (`ValueError`) e a data que o fuso local não converte (`OSError`,
+    `OverflowError`) valem "sem espera", sem derrubar o convite; o DEBUG diz qual dos dois."""
+    if error is not None:
+        monkeypatch.setattr(donate, "datetime", type("D", (), {"fromisoformat": staticmethod(lambda _t: _NoLocalTime(error))}))
+    with caplog.at_level(logging.DEBUG, logger="listener.ui.donate"):
+        assert parse_when(raw) is None
+    assert reason in caplog.text
 
 
 def test_the_support_state_after_shown_later_no_answer_and_donated(store):
@@ -116,11 +143,29 @@ def test_the_support_state_after_shown_later_no_answer_and_donated(store):
     assert support.next_at() == clock.now + timedelta(days=30)
     clock.advance(days=3)
     support.defer(donate.EXPIRED_DAYS, "sem resposta")
-    assert support.next_at() == clock.now + timedelta(days=7)
+    assert donate.EXPIRED_DAYS == 30 and support.next_at() == clock.now + timedelta(days=30)        # sem resposta: 30, como "Agora não"
     support.donated("Pix, teste")
     assert support.next_at() == clock.now + timedelta(days=180) and parse_when(store.get_setting(donate.DONATED_AT)) == clock.now
     assert notices == [donate.THANKS] and support.shown() == 1
     donate.Support(store, clock=clock).donated("sem aviso")                  # sem quem avise (a página sem o controlador)
+
+
+def test_no_deferral_shortens_the_date_of_a_donation(store):
+    """R-01: depois de "Pronto, doei" (180 dias), "Agora não", sem resposta, o cartão fechado pela gravação e uma nova
+    aparição nunca trazem a data para antes; vencidos os 180 dias, o adiamento volta a contar de agora."""
+    clock = Clock()
+    support = donate.Support(store, clock=clock)
+    support.donated("Pix, bandeja")
+    donated_until = clock.now + timedelta(days=180)
+    clock.advance(minutes=1)
+    for days, why in ((donate.LATER_DAYS, "Agora não"), (donate.EXPIRED_DAYS, "sem resposta"), (donate.EXPIRED_DAYS, "gravação")):
+        support.defer(days, why)
+        assert support.next_at() == donated_until, why
+    support.mark_shown()
+    assert support.next_at() == donated_until
+    clock.advance(days=181)
+    support.defer(donate.LATER_DAYS, "Agora não")
+    assert support.next_at() == clock.now + timedelta(days=30)
 
 
 def test_only_the_processed_and_the_minutes_ready_notices_schedule_the_invite(qapp, store):

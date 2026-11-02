@@ -20,7 +20,7 @@ from .components import Card
 from .donate import PIX, SUPPORT_HEAD, SUPPORT_TEXT
 from .icons import set_icon
 from .keys import WrapLabel
-from .theme import METRICS, PRIMARY, Tone, note, primary, role, set_kind
+from .theme import METRICS, Tone, note, primary, role
 
 if TYPE_CHECKING:
     from .donate import Support
@@ -60,12 +60,12 @@ def _fit(button: QPushButton) -> QPushButton:
 
 
 class SupportSection(Card):
-    """"Apoie o projeto" (U-121, U-123): o coração, o texto e os dois caminhos. `primary`: o Pix é o primário da janela (no
-    diálogo pequeno; no Sobre e nas Configurações, o primário é outro)."""
+    """"Apoie o projeto" (U-121, U-123): o coração, o texto e os dois caminhos. Quem a põe numa janela decide o primário (no
+    diálogo pequeno, o Pix; no Sobre, o "Fechar"; nas Configurações, o "Salvar")."""
     pix_clicked = Signal()
     paypal_clicked = Signal()
 
-    def __init__(self, *, primary_pix: bool = False, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(SUPPORT_HEAD, parent)
         self.heart = QLabel()
         self.heart.setFixedSize(HEART_PX, HEART_PX)
@@ -78,8 +78,6 @@ class SupportSection(Card):
         top.addWidget(self.text, 1)
         self.pix = _fit(QPushButton(PIX_BUTTON))
         self.paypal = _fit(QPushButton(PAYPAL_BUTTON))
-        if primary_pix:
-            set_kind(self.pix, PRIMARY)
         self.pix.clicked.connect(self.pix_clicked)
         self.paypal.clicked.connect(self.paypal_clicked)
         buttons = QHBoxLayout()
@@ -99,7 +97,7 @@ class SupportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(CHOICE_TITLE)
         self.setMinimumWidth(480)
-        self.section = SupportSection(primary_pix=True)
+        self.section = SupportSection()
         self.section.pix_clicked.connect(self._pix)
         self.section.paypal_clicked.connect(self._paypal)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -110,6 +108,8 @@ class SupportDialog(QDialog):
         lay.setSpacing(METRICS.card_gap)
         lay.addWidget(self.section)
         lay.addWidget(buttons)
+        primary(self, self.section.pix)                  # o Pix é o principal (pergunta 6); já dentro do diálogo, onde o
+                                                         # padrão do Enter chega (fora dele, o Qt não o registra)
 
     def _pix(self) -> None:
         self.done(PIX_RESULT)

@@ -1,6 +1,6 @@
 """F5.12 L2 (U-123 a U-128): o apoio na tela (pytest-qt, offscreen, com a plataforma falsa e o relógio falso). Os diálogos
 (o "Apoiar o projeto", o Pix e o PayPal), o cartão do convite (sem foco, os textos e as respostas), a cola com a cadência
-inteira do Aceite 2 (nunca gravando, com chamada ou no assistente; o primeiro depois da 3ª; 30, 7 e 180 dias; nunca
+inteira do Aceite 2 (nunca gravando, com chamada ou no assistente; o primeiro depois da 3ª; 30 e 180 dias; nunca
 desligado), nenhum socket aberto pelo convite, o log sem o e-mail e as entradas (bandeja, Sobre, página Sobre, rodapé do
 Histórico e o aviso do controlador)."""
 from __future__ import annotations
@@ -18,7 +18,7 @@ import pytest
 from listener import about
 from listener.ui import donate
 from tests.fake_watch import FakeHost
-from tests.test_donate import Clock, processed
+from tests.test_donate import Clock, _plain, processed
 
 pytest.importorskip("pytestqt")
 
@@ -147,7 +147,7 @@ def test_the_card_never_takes_focus_and_has_the_texts_and_buttons_of_u126(qtbot)
     qtbot.waitExposed(card)
     assert not card.isActiveWindow() and card.width() == 360
     assert (card.header.text(), card.title.text(), card.message.text()) == (HEADER, title, message)
-    assert title == "O listener-meet já guardou 12 reuniões suas"
+    assert _plain(title) == "O listener-meet já guardou 12 reuniões suas"
     assert (card.pix_button.text(), card.paypal_button.text(), card.later_button.text()) == \
         ("Doar R$ 0,99 pelo Pix", "Doar US$ 0,20 pelo PayPal", "Agora não")
     assert card.pix_button.property(KIND_PROP) == PRIMARY and card.donated_link.accessibleName() == "Já doei"
@@ -194,14 +194,14 @@ def test_the_first_invite_only_after_the_3rd_processed_meeting_8_s_after_the_not
     processed(store, 1)
     card = _shown(qtbot, g)
     assert card.isVisible() and platform.excluded[-1] == int(card.winId())            # fora da captura (A-13)
-    assert card.title.text() == "O listener-meet já guardou 3 reuniões suas"
+    assert _plain(card.title.text()) == "O listener-meet já guardou 3 reuniões suas"
     assert g.support.shown() == 1 and g.support.next_at() == g.clock.now + timedelta(days=30)
     assert g.host.toasts.avoid is not None and g.host.toasts.avoid() == g.invite.card_rect() and g.host.toasts.relayouts == 1
     g.invite.shutdown()
     assert g.invite.card is None and not g.invite.pending()
 
 
-@pytest.mark.parametrize(("answer", "days"), [("later", 30), ("close", 30), ("expired", 7), ("donated", 180)])
+@pytest.mark.parametrize(("answer", "days"), [("later", 30), ("close", 30), ("expired", 30), ("donated", 180)])
 def test_each_answer_defers_the_next_invite(qtbot, store, platform, answer, days):
     g = _glue(qtbot, store, platform)
     processed(store, 3)
@@ -251,9 +251,9 @@ def test_a_visible_invite_closes_when_recording_starts_or_a_call_shows_up(qtbot,
     assert g.invite.card is not None                                      # parado: fica
     g.call["on"] = True
     g.invite._watch_tick()
-    assert g.invite.card is None and g.support.next_at() == g.clock.now + timedelta(days=7)    # vale sem resposta
+    assert g.invite.card is None and g.support.next_at() == g.clock.now + timedelta(days=30)   # vale sem resposta: 30
     g.call["on"] = False
-    g.clock.advance(days=7)
+    g.clock.advance(days=30)
     _shown(qtbot, g)
     g.host.busy = True
     g.invite._watch_tick()
