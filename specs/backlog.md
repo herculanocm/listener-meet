@@ -15,8 +15,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
-- O `.exe` que vale para as Partes 19 a 23 é o de 02/11, 11:05 (`45fb4ad`, com a F5.12 e a correção do Histórico; 441
-  s, 892 MB). Daqui em diante a versão vai no nome do zip e no Sobre (D-081): `build_exe.py --zip` para compartilhar.
+- O `.exe` que vale para as Partes 19 a 23 é o 0.5.0 de 02/11, 11:43 (`2a48e9f`: a F5.12, a correção do Histórico e a
+  D-081; 473 s, 892 MB, sonda `--probe` ok com o commit). Para compartilhar, o
+  `build\exe\listener-meet-0.5.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
@@ -38,8 +39,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
 1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
    com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
    endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
-   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081, no primeiro `.exe` 0.5.0: o
-   Sobre diz "versão 0.5.0 · <commit>" e Propriedades › Detalhes, a versão do produto `0.5.0+<commit>`.
+   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
+   `.exe` 0.5.0 diz "versão 0.5.0 · 2a48e9f" (a versão do produto no arquivo e a sonda já conferidas).
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",
