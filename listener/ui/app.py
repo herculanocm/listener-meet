@@ -4,7 +4,10 @@ paleta e estilo) entra depois da tradução e antes do ícone e do assistente; o
 volta (depois do `aboutToQuit` e da parada de emergência) e em toda saída antecipada (assistente cancelado, banco que não
 abre), sempre antes da derrubada do PySide (R-06). F5.7 (L3): o aviso de reunião sem gravação (`ui/call_watch.py`) começa
 depois do controlador e para antes da parada de emergência, que fecha o banco (`connect_exit`). F5.12 (U-126, U-127): o
-convite para apoiar (`ui/donate_invite.py`) começa depois do aviso de reunião e some no `aboutToQuit`."""
+convite para apoiar (`ui/donate_invite.py`) começa depois do aviso de reunião e some no `aboutToQuit`. F5.13 (U-129, U-130):
+a trava de instância única logo depois do `QApplication` e da tradução, antes do tema, do banco e do assistente
+(`ui/instance.py`); com outro app rodando, o pedido vai a ele e este processo sai com 0. O canal passa ao controlador depois
+do `start`, e a abertura mostra o Histórico (ou a tela do `--open`), menos na primeira vez e sem a bandeja."""
 from __future__ import annotations
 
 import functools
@@ -17,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import bootstrap
 from ..log import attach_file, get_logger, log_versions, set_crash_notifier, setup
+from ..model import OpenTarget
 from ..platform import get_platform
 from ..store import Store
 
@@ -24,6 +28,7 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QApplication
 
     from ..platform.base import Platform
+    from .instance import InstanceServer
 
 log = get_logger("ui.app")
 
@@ -88,7 +93,7 @@ def attach_invite(app: Any, controller: Any, platform: Platform, store: Store, c
     return invite
 
 
-def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
+def run(argv: list[str] | None = None, platform: Platform | None = None, open_target: OpenTarget | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     setup()
@@ -97,15 +102,19 @@ def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
     app = QApplication(argv or sys.argv)
     app.setApplicationName("listener-meet")
     app.setQuitOnLastWindowClosed(False)
-    from . import theme
+    from . import instance, theme
     from .common import install_translations
 
     if install_translations(app) is None:
         log.info("tradução pt-BR do Qt indisponível: os botões padrão ficam em inglês")
+    channel = instance.claim(app, platform, open_target)   # F5.13 (U-129): antes do tema, do banco e do assistente
+    if channel is None:
+        return 0                              # outra instância roda: o pedido foi a ela (ou a mensagem foi mostrada)
     theme.apply(app, platform)                # F5.4 (A-09): antes do ícone e do assistente
     try:
-        code = _run_app(app, platform)
+        code = _run_app(app, platform, channel, open_target)
     finally:
+        channel.close()
         theme.release(app)                    # A-09 (R-06): o estilo em Python não chega à derrubada do PySide
     leave_if_stuck(code)
     return code
@@ -127,7 +136,7 @@ def leave_if_stuck(code: int) -> None:
     os._exit(code)
 
 
-def _run_app(app: QApplication, platform: Platform) -> int:
+def _run_app(app: QApplication, platform: Platform, channel: InstanceServer, open_target: OpenTarget | None) -> int:
     """O ícone, o banco (ou o assistente da primeira vez), o controlador e o laço de eventos."""
     from PySide6.QtWidgets import QDialog, QMessageBox
 
@@ -167,10 +176,13 @@ def _run_app(app: QApplication, platform: Platform) -> int:
     controller.start()
     calls.start()                                 # depois do `start`: a bandeja já existe
     attach_invite(app, controller, platform, store, calls)                 # F5.12: o convite para apoiar
+    channel.attach(controller)                    # F5.13 (U-130): o pedido de outro processo vai ao controlador
     if log_error:
         controller.notify_error(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:
         controller.open_warmup()
+    elif not first_run:                           # U-130 (pergunta 2): parado, o ícone fixado abre o Histórico
+        channel.open_later(open_target or OpenTarget.HISTORY)
     try:
         return app.exec()
     finally:

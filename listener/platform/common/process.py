@@ -15,6 +15,7 @@ NICE_MAX = 19
 WORKER_FLAG = "--worker"
 LIGHT_FLAG = "--light"           # F3: worker leve (só jobs `llm`, sem torch)
 LIVE_FLAG = "--live"             # F4: processo ao vivo (legendas), preso à gravação
+OPEN_FLAG = "--open"             # F5.13: a tela pedida ao app (o ícone fixado, o Jump List)
 
 
 def worker_command(light: bool = False) -> list[str]:
@@ -46,6 +47,15 @@ def live_prepare_command(db_dir: str | Path | None = None, what: str = "live") -
 def hf_check_command(db_dir: str | Path | None = None) -> list[str]:
     """`--hf-check [--db DIR]` (F5.11, A-29): o teste do token do Hugging Face num filho; o token vai pelo stdin, nunca aqui."""
     flags = ["--hf-check", *(("--db", str(db_dir)) if db_dir else ())]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *flags]
+    return [sys.executable, "-m", "listener", *flags]
+
+
+def open_command(target: str) -> list[str]:
+    """F5.13: `--open <tela>` (history, queue, settings ou record), o pedido ao app que já roda ou a tela da abertura; o
+    comando de cada tarefa do Jump List (só o `.exe` as publica: no venv, o comando abriria um console)."""
+    flags = [OPEN_FLAG, str(target)]
     if getattr(sys, "frozen", False):
         return [sys.executable, *flags]
     return [sys.executable, "-m", "listener", *flags]

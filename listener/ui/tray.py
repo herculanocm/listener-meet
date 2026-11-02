@@ -238,10 +238,14 @@ class TrayIcon(QSystemTrayIcon):
 
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.DoubleClick, QSystemTrayIcon.ActivationReason.Trigger):
-            match self.controller.state:
-                case AppState.IDLE if self.call_exe and self._on_call_record is not None:
-                    self._on_call_record(self.call_exe)          # F5.7: o "Antes de gravar" com o app pendente
-                case AppState.IDLE:
-                    self.controller.open_warmup()
-                case _:
-                    self.controller.show_widget()
+            self.left_click()
+
+    def left_click(self) -> None:
+        """O clique esquerdo; F5.13 (U-131): também o "Gravar…" do Jump List e o `--open record` (`ui/instance.py`)."""
+        match self.controller.state:
+            case AppState.IDLE if self.call_exe and self._on_call_record is not None:
+                self._on_call_record(self.call_exe)          # F5.7: o "Antes de gravar" com o app pendente
+            case AppState.IDLE:
+                self.controller.open_warmup()
+            case _:
+                self.controller.show_widget()

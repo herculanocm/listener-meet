@@ -9,6 +9,8 @@ segue aberto (um `PyAudio()` vivo mantém a lista antiga, A-15), e `loopbacks_at
 D-067: o padrão de agora é o do Core Audio (`endpoints`): `default_output_id` e `default_input_id` o leem (contados em
 `default_reads`), `default_input_device` prefere o microfone padrão de agora quando ele está na lista, `open_output` abre um
 fluxo falso no padrão de saída e `play_sound` anota onde o teste do warm-up tocou (`played`).
+F5.13 (L1): `claim_instance` anota o nome pedido e pega a trava enquanto `instance_free` (False: outra instância roda);
+`hand_over_foreground` conta as vezes (`handovers`).
 """
 from __future__ import annotations
 
@@ -87,6 +89,9 @@ class FakePlatform(Platform):
         self.root_pids: dict[str, int | None] = {"meeting.exe": 4242}   # F5.9 (item 4): a raiz de cada app (o teste muda)
         self.mic_echo_of_r_ms: float | None = None            # F5.9 (item 7): o microfone ouve o R, com este atraso
         self.apps = [PlayingApp(pid=4242, exe="meeting.exe", title="Reunião", peak=0.5, is_meeting_app=True)]   # o teste muda
+        self.instance_free = True                             # F5.13: a trava de instância única está livre
+        self.claims: list[str] = []                           # os nomes pedidos a `claim_instance`
+        self.handovers = 0                                    # as vezes que o foco foi passado adiante
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -136,6 +141,15 @@ class FakePlatform(Platform):
     @override
     def text_scale(self) -> float:
         return self.text_scale_factor
+
+    @override
+    def claim_instance(self, name: str) -> bool:
+        self.claims.append(name)
+        return self.instance_free
+
+    @override
+    def hand_over_foreground(self) -> None:
+        self.handovers += 1
 
     @override
     def ui_style(self) -> str:

@@ -9,7 +9,8 @@ microfone pedido pode ser exigido (`strict`, A-16); o loopback do sistema inteir
 nome na lista do PyAudioWPatch (A-21); o mudo troca de endpoint de uma vez, sob trava (A-18); log com o id do endpoint,
 nunca o nome do aparelho (A-22; o id `name:<nome>`, de quando o Core Audio não casa o nome, vai resumido: `log_id`).
 F5.9 (L1a): o handle das streams em `stream.py`, o loopback do app em `app_loopback.py` (um mixin desta classe), o do
-sistema em `system_loopback.py` e o mudo em `mute.py`; aqui ficam o microfone, os dispositivos e o processo."""
+sistema em `system_loopback.py` e o mudo em `mute.py`; aqui ficam o microfone, os dispositivos e o processo.
+F5.13: a trava de instância única, o foco passado adiante, o Jump List e a dica de fixar em `taskbar.py`."""
 from __future__ import annotations
 
 import ctypes
@@ -30,7 +31,7 @@ from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, Platform, PlayingApp,
                     log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
-from . import activity, app_loopback, endpoints, mute, output, processes, sessions, system_loopback
+from . import activity, app_loopback, endpoints, mute, output, processes, sessions, system_loopback, taskbar
 from .hotkeys import Win32Hotkeys
 from .stream import _StreamHandle
 
@@ -176,7 +177,8 @@ def _endpoint_signature() -> tuple[Any, ...] | None:
     return endpoints.signature()
 
 
-class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win32AppLoopback, Platform):
+class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win32AppLoopback, taskbar.Win32Taskbar,
+                    Platform):
     name = "win32"
 
     def __init__(self) -> None:

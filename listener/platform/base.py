@@ -245,6 +245,17 @@ class Platform(Protocol):
     def text_scale(self) -> float: ...
     def ui_style(self) -> str: ...
 
+    # F5.13 (L1): uma instância só. `claim_instance` pega a trava do usuário com o nome dado (no Windows, um mutex `Local\`)
+    # e a segura até o processo sair, mesmo numa queda; True = pegou (nas outras plataformas, sempre, até a F7). O processo
+    # que não pegou passa ao que roda o direito de trazer janela à frente que o clique do usuário lhe deu
+    # (`hand_over_foreground`), antes de entregar o pedido
+    def claim_instance(self, name: str) -> bool:
+        del name                                           # sem trava nesta plataforma: segue como a única
+        return True
+
+    def hand_over_foreground(self) -> None:
+        return None
+
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...
     def default_input_device(self) -> AudioDevice | None: ...

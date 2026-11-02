@@ -1,4 +1,7 @@
 """python -m listener            abre o app (interface gráfica, CP7)
+python -m listener --open TELA  F5.13: TELA é history, queue, settings ou record ("Antes de gravar"); com o app aberto, o
+                                pedido vai a ele e este processo sai (uma instância só); parado, o app abre nela. Sem
+                                `--open`, o Histórico (o ícone fixado na barra de tarefas); o Jump List passa a TELA
 
 Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
   --selftest [--seconds N] [--app EXE] [--db DIR]   grava N s sem interface, imprime estatísticas e continuidade
@@ -223,6 +226,7 @@ def _dispatch(argv: list[str] | None) -> int:
 
         return hf_main([a for a in argv if a != "--hf-check"])
     from .log import setup
+    from .model import OpenTarget
 
     setup("INFO")
     ap = argparse.ArgumentParser(prog="listener", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -234,6 +238,7 @@ def _dispatch(argv: list[str] | None) -> int:
     ap.add_argument("--check", metavar="DIR")
     ap.add_argument("--meeting", type=int)
     ap.add_argument("--downgrade", nargs=2, metavar=("DIR", "VERSAO"))
+    ap.add_argument("--open", choices=[str(t) for t in OpenTarget], metavar="TELA")   # F5.13: fora dos diagnósticos e dos filhos
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest(args)
@@ -243,7 +248,7 @@ def _dispatch(argv: list[str] | None) -> int:
         return downgrade(args)
     from .ui.app import run
 
-    return run()
+    return run(open_target=OpenTarget(args.open) if args.open else None)
 
 
 if __name__ == "__main__":

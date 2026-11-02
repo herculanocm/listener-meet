@@ -450,6 +450,10 @@ class Controller(QObject):
         if self._quitting:
             return
         log.info("clique no aviso: %s%s", action.target, f" {action.meeting_id}" if action.meeting_id is not None else "")
+        self.open_target(action)
+
+    def open_target(self, action: NoticeAction) -> None:
+        """Abre o alvo de um aviso e o traz à frente; F5.13 (U-130): também o pedido de outro processo (`ui/instance.py`)."""
         match action.target:
             case Target.MEETING | Target.MEETING_CHAT:
                 mid = action.meeting_id
@@ -612,6 +616,11 @@ class Controller(QObject):
     def busy(self) -> bool:
         """F5.7: gravando, pausado, salvando ou saindo (o aviso de reunião cobre a chamada; o "Antes de gravar" ele vê à parte)."""
         return self.state != AppState.IDLE or self._quitting
+
+    @property
+    def quitting(self) -> bool:
+        """F5.13 (L1): saindo; o pedido de outro processo recebe "fechando" (`ui/instance.py`)."""
+        return self._quitting
 
     def open_warmup(self, source_exe: str | None = None) -> None:
         if self.state != AppState.IDLE or self._warmup_open:

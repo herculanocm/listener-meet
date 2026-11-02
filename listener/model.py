@@ -93,6 +93,15 @@ class AppState(StrEnum):
     SAVING = "saving"
 
 
+class OpenTarget(StrEnum):
+    """F5.13 (L1): o que `--open` e o pedido de outro processo abrem (o ícone fixado, o Jump List); `record` é o clique
+    esquerdo na bandeja."""
+    HISTORY = "history"
+    QUEUE = "queue"
+    SETTINGS = "settings"
+    RECORD = "record"
+
+
 class JobStatus(StrEnum):
     PENDING = "pendente"
     RUNNING = "rodando"
