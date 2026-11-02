@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -132,6 +132,15 @@ class AppAudio:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskbarTask:
+    """F5.13 (L2, U-131): uma tarefa do menu do ícone na barra de tarefas (o Jump List no Windows): o título, o programa que
+    ela abre (também o ícone dela) e os argumentos."""
+    title: str
+    program: str
+    arguments: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AudioActivity:
     """F5.7 (L1): uma leitura do sensor. `degraded`: só o indicador de microfone do sistema (sem pid, pico nem serviço)."""
     apps: tuple[AppAudio, ...]
@@ -255,6 +264,12 @@ class Platform(Protocol):
 
     def hand_over_foreground(self) -> None:
         return None
+
+    # F5.13 (L2, U-131): as tarefas do menu do ícone na barra de tarefas (no Windows, o Jump List), refeitas a cada abertura;
+    # True quando o sistema as aceitou. Sem esse menu nesta plataforma (até a F7), False
+    def set_taskbar_tasks(self, tasks: Sequence[TaskbarTask]) -> bool:
+        del tasks
+        return False
 
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...

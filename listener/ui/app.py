@@ -7,7 +7,8 @@ depois do controlador e para antes da parada de emergência, que fecha o banco (
 convite para apoiar (`ui/donate_invite.py`) começa depois do aviso de reunião e some no `aboutToQuit`. F5.13 (U-129, U-130):
 a trava de instância única logo depois do `QApplication` e da tradução, antes do tema, do banco e do assistente
 (`ui/instance.py`); com outro app rodando, o pedido vai a ele e este processo sai com 0. O canal passa ao controlador depois
-do `start`, e a abertura mostra o Histórico (ou a tela do `--open`), menos na primeira vez e sem a bandeja."""
+do `start`, e a abertura mostra o Histórico (ou a tela do `--open`), menos na primeira vez e sem a bandeja. F5.13 (U-131): o
+Jump List, só no `.exe`, uns segundos depois da abertura (`ui/taskbar.py`)."""
 from __future__ import annotations
 
 import functools
@@ -78,6 +79,17 @@ def attach_calls(app: Any, controller: Any, platform: Platform, store: Store) ->
     controller.on_start = calls.start_from_hotkey
     connect_exit(app, calls.shutdown, controller.emergency_stop)
     return calls
+
+
+def attach_channel(controller: Any, platform: Platform, channel: InstanceServer) -> None:
+    """F5.13: o pedido de outro processo vai ao controlador (U-130); o Jump List, só no `.exe`, sai uns segundos depois da
+    abertura, fora do caminho do Histórico (U-131)."""
+    from PySide6.QtCore import QTimer
+
+    from .taskbar import PUBLISH_DELAY_MS, publish_tasks
+
+    channel.attach(controller)
+    QTimer.singleShot(PUBLISH_DELAY_MS, controller, functools.partial(publish_tasks, platform))
 
 
 def attach_invite(app: Any, controller: Any, platform: Platform, store: Store, calls: Any) -> Any:
@@ -176,7 +188,7 @@ def _run_app(app: QApplication, platform: Platform, channel: InstanceServer, ope
     controller.start()
     calls.start()                                 # depois do `start`: a bandeja já existe
     attach_invite(app, controller, platform, store, calls)                 # F5.12: o convite para apoiar
-    channel.attach(controller)                    # F5.13 (U-130): o pedido de outro processo vai ao controlador
+    attach_channel(controller, platform, channel)                          # F5.13: o canal e o Jump List
     if log_error:
         controller.notify_error(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:

@@ -6,15 +6,20 @@ resumo da pasta de configuração), segurado pela vida do processo: o Windows o 
 elevada). Qualquer outra falha abre o app sem a trava, como antes dela, com uma linha de log. `AllowSetForegroundWindow`
 (`ASFW_ANY`): o processo novo, a quem o clique do usuário deu o direito de trazer janela à frente, o passa adiante antes do
 pedido; o que roda usa o `bring_to_front` de sempre. Instâncias próprias do kernel32 e do user32 (`WinDLL`), com as
-assinaturas daqui, sem mexer nas de outros módulos. Nada daqui roda fora do Windows."""
+assinaturas daqui, sem mexer nas de outros módulos. Nada daqui roda fora do Windows.
+
+L2 (U-131): o Jump List em `jumplist.py` (o comtypes só é importado ali, na primeira chamada), com o AppUserModelID do
+processo (`platform.py`)."""
 from __future__ import annotations
 
 import ctypes
 import functools
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 from ...log import get_logger
+from ..base import TaskbarTask
 
 log = get_logger("platform.win32.taskbar")
 
@@ -84,3 +89,16 @@ class Win32Taskbar:
                 log.debug("AllowSetForegroundWindow recusou (erro %s)", ctypes.get_last_error())
         except Exception as e:
             log.debug("AllowSetForegroundWindow: %s", e)
+
+    def set_taskbar_tasks(self, tasks: Sequence[TaskbarTask]) -> bool:
+        """L2 (U-131): o Jump List (`jumplist.py`) com o AppUserModelID do processo, na thread da interface."""
+        if sys.platform != "win32":
+            return False
+        try:
+            from . import jumplist
+        except Exception as e:                             # sem o comtypes (o extra `win32` ausente)
+            log.warning("Jump List indisponível: o comtypes não carregou (%s)", type(e).__name__)
+            return False
+        from .platform import APP_USER_MODEL_ID
+
+        return jumplist.publish(APP_USER_MODEL_ID, tasks)

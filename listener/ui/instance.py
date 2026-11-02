@@ -252,8 +252,8 @@ class InstanceServer(QObject):
 
 
 class _Connection(QObject):
-    """Uma conexão: junta a linha (até 256 bytes), responde e fecha; o que não é pedido válido sai sem resposta, com uma linha
-    de log, e a conexão que não manda a linha inteira em 2 s é fechada."""
+    """Uma conexão: junta a linha (até 256 bytes) e responde, e quem fecha é o cliente, depois de ler; o que não é pedido
+    válido sai sem resposta, com uma linha de log, e a conexão que não manda a linha inteira em 2 s é fechada."""
 
     def __init__(self, sock: QLocalSocket, answer: Callable[[OpenTarget], str], parent: QObject) -> None:
         super().__init__(parent)
