@@ -12,9 +12,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.12 implementada** (02/11, D-079, D-080, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e
   assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), em três commits,
   de `f953bfd` a `03b16a0`, com a revisão do diff corrigida. Falta o dono: a Parte 23 do roteiro.
-- **F5.13 em rascunho** (02/11, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de tarefas abre o
-  Histórico, com a instância única (o item 17), o Jump List e os atalhos no menu da bandeja (U-129 a U-133). Falta a
-  aprovação do dono.
+- **F5.13 aprovada** (02/11, D-082, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de tarefas abre o
+  Histórico, com a instância única (o item 17), o Jump List e os atalhos no menu da bandeja (U-129 a U-133). Em
+  implementação.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
@@ -83,7 +83,7 @@ As respondidas (2 a 4, 11 a 16 e 18) saíram daqui: o registro está em `decisoe
    encerrado": foi o terminal dele que se fechou? (sim aos dois; se não, investigar o antivírus/EDR).
 10. Além das janelas pretas (D-056) e da revisão (U-039), alguma outra janela ainda sobe por cima? (nenhuma).
 17. F5.8: a trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo banco: entrou na
-    F5.13 (U-129), em rascunho.
+    F5.13 (U-129), aprovada.
 19. A pasta do banco do teste de 26/10 (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 daquele dia, fora da
     Lixeira e sem nenhum processo da LLM nela; os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`. Foi
     você ou outra ferramenta? (sim, por fora do app; se não, investigar).
