@@ -344,6 +344,10 @@ class CallRules:
         return tuple(Pending(exe, t.label) for exe, t in sorted(self._tracks.items())
                      if t.state == State.PENDING or self._visible(t))
 
+    def active(self) -> bool:
+        """F5.12 (U-127): alguma chamada em curso (contando, avisada, pendente, coberta ou dispensada): o convite espera."""
+        return any(t.state != State.QUIET for t in self._tracks.values())
+
     def mode(self) -> str:
         """"parado" (desligado ou ocupado), "armando" (contando ou sem resposta), "lento" (só chamadas respondidas
         esperando o fim) ou "ocioso"."""

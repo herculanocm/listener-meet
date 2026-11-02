@@ -12,17 +12,16 @@ banco. As edições da revisão, das abas da LLM e do título em "Gravação sal
 fila na hora, com uma espera durável de 30 s renovada a cada edição ("não antes de" no job, R5-07); "Concluir" e fechar a
 revisão tiram a espera.
 F5 L4: um player só no app (`self.player`), passado às janelas; a reunião aberta (`open_meeting`, uma janela por reunião)
-substitui a janela "Transcrição" (`open_transcript` vira apelido de `open_meeting(mid, "transcricao")`), abre num ponto e
-toca; o Histórico (`open_history`) pela bandeja e pelo atalho U-028 (`hotkeys.history`, com o cursor na busca e a janela
-trazida à frente pela plataforma); o clique no balão abre a reunião do balão da tela (Q6: um balão sem reunião zera a
-guardada, R7-06); os jobs `llm` e `index` concluídos recarregam a reunião aberta sem roubar o foco. Q9: gravando com a fonte
-"sistema inteiro", o player pede confirmação antes de o som começar; abrir o warm-up pausa o som que já toca (R7-01), e o
-gravador chama o gancho `_before_system_loopback` antes de abrir o loopback do sistema por qualquer caminho (a fonte pedida,
-a troca automática quando o do app não abre, no começo, na troca de fonte e na reabertura), que pausa o player e espera a
-confirmação do motor (R8-01); o aviso fica na barra do player e no log, sem balão, e sai quando a gravação não começa ou
-acaba; retomar passa pela confirmação. A saída para o player e espera as threads dele, cancela o chat global e os das
-reuniões, o vetor da consulta e o glossário, mesmo presos na rede, e espera todas as threads das tarefas antes de fechar o
-banco (F5A-32, R7-03, R8-04).
+substitui a janela "Transcrição" (`open_transcript` vira apelido de `open_meeting(mid, "transcricao")`), abre num ponto e toca;
+o Histórico (`open_history`) pela bandeja e pelo atalho U-028 (`hotkeys.history`, com o cursor na busca e a janela trazida à
+frente pela plataforma); o clique no balão abre a reunião do balão da tela (Q6: um balão sem reunião zera a guardada, R7-06); os
+jobs `llm` e `index` concluídos recarregam a reunião aberta sem roubar o foco. Q9: gravando com a fonte "sistema inteiro", o
+player pede confirmação antes de o som começar; abrir o warm-up pausa o som que já toca (R7-01), e o gravador chama o gancho
+`_before_system_loopback` antes de abrir o loopback do sistema por qualquer caminho (a fonte pedida, a troca automática quando o
+do app não abre, no começo, na troca de fonte e na reabertura), que pausa o player e espera a confirmação do motor (R8-01); o
+aviso fica na barra do player e no log, sem balão, e sai quando a gravação não começa ou acaba; retomar passa pela confirmação.
+A saída para o player e espera as threads dele, cancela o chat global e os das reuniões, o vetor da consulta e o glossário,
+mesmo presos na rede, e espera todas as threads das tarefas antes de fechar o banco (F5A-32, R7-03, R8-04).
 F4 (ao vivo): ao gravar com o ao vivo ligado (caixa do warm-up ou `live.enabled`) e os modelos prontos, lança o processo
 `--live` (`LiveClient`) e liga o desvio do gravador; Parar desliga o desvio e fecha o filho sem bloquear; Cancelar o mata
 antes de apagar a reunião; uma queda tem uma nova tentativa por gravação. A interface lê `live_caption` (última legenda) e
@@ -65,7 +64,6 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
-
 from contextlib import suppress
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -86,6 +84,7 @@ from ..pipeline import llm_requests, review
 from ..platform.base import log_id
 from ..platform.common import process
 from .call_sensor import abandon
+from .donate import Support
 from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, caption_who, item_key, item_note
@@ -144,7 +143,6 @@ PREWARM_AUDIO_MS = 2000              # U-031: pré-aquece o áudio do player log
 APP_LOCAL_THREADS = 1                # F5.1 (A-03): o e5 local no app (vetor da consulta); o worker leve usa 2
 MEETING_TARGETS = (Target.MEETING, Target.MEETING_CHAT)   # F5.3: os avisos cujo balão (0 s) abre a reunião no clique (Q6)
 ENDED_BADLY = (JobStatus.ERROR, JobStatus.CANCELLED)      # R-07: o fim que não recarrega a reunião inteira, só o cabeçalho
-_Task = Task                          # nome antigo mantido para quem ainda o cita (scripts)
 
 
 def _error_key(job: Any) -> tuple[int, str]:
@@ -283,6 +281,7 @@ class Controller(QObject):
         self.notices: deque[Notice] = deque(maxlen=100)      # instrumentação dos testes: os avisos mostrados
         self.toasts = ToastManager(platform, on_action=self._on_notice_action, recording=self._recording_now,
                                    anchor=self._toast_anchor, parent=self)
+        self.support = Support(store, self.notify, platform, parent=self)   # F5.12 (U-123 a U-127): o apoio; o convite em ui/app.py
         self._notice_requested.connect(self._on_notice_requested, Qt.ConnectionType.QueuedConnection)
 
     @functools.cached_property
@@ -1160,6 +1159,7 @@ class Controller(QObject):
             self._review_offered.add(mid)
             if todo:
                 self.open_review(mid)
+        self.support.job_noticed(dict(job))                       # F5.12 (U-127): processada ou ata pronta agenda o convite
         if mid in self._meetings:
             self._meetings[mid].reload()
 
@@ -1333,8 +1333,8 @@ class Controller(QObject):
         log.info("histórico aberto%s", " pelo atalho da busca" if focus_search else "")
         if win is None:
             win = HistoryWindow(self.store, on_open=self.deleter.open_from_history, on_edited=self.on_edited,
-                                on_answer=self._history_answered, on_delete=self.deleter.request,
-                                memory_rss=self.platform.memory_rss)     # F5.10 (D-075): o teto de memória das consultas
+                                on_answer=self._history_answered, on_delete=self.deleter.request, memory_rss=self.platform.memory_rss,
+                                on_support=self.support.open_from_history)     # F5.10 (D-075): o teto de memória; F5.12: o apoio
             self._history = win
         win.show()
         win.raise_()
@@ -1792,7 +1792,7 @@ class Controller(QObject):
     def open_settings(self, *, focus: bool = False) -> None:
         """As Configurações (modal); `focus` (o clique no aviso, F5.3) as traz à frente pela plataforma ao aparecer."""
         dlg = SettingsDialog(self.store, self.platform, self.hotkey_errors, self.widget, on_launch=self.launch_worker,
-                             recording=self.recorder is not None)
+                             recording=self.recorder is not None, support=self.support)
         self._settings_dialog = dlg
         log.info("configurações abertas%s", " (gravando)" if self.recorder is not None else "")
         if focus:

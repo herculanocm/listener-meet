@@ -31,7 +31,7 @@ vermelho; os trechos e as respostas em HTML por classes (cores dos tokens). As f
 F5.6 L3 (U-093, A-40, P-04): a lista em seleção múltipla, com "Excluir…" no menu de contexto, num botão sob a lista e na tecla
 Delete (só na tabela) e a confirmação única, em `ui/history_delete.py`; quem exclui é o controlador (`on_delete`). A montagem
 da aba "Perguntar às reuniões" mora em `ui/history_chat.py`. F5.10 (D7): a conversa dela mora em
-`ui/history_ask.py` (`AskMixin`)."""
+`ui/history_ask.py` (`AskMixin`). F5.12 (U-128): o link discreto "Apoiar o listener-meet" no rodapé (`on_support`)."""
 from __future__ import annotations
 
 import functools
@@ -54,16 +54,16 @@ from ..log import get_logger
 from ..model import ActionStatus
 from ..rag import search as rag_search
 from .common import clamp_to_screens, copy_rich, fit_to_screen, keep_until_destroyed
-from .components import Badge, BadgeDelegate, HtmlView
+from .components import Badge, BadgeDelegate, HtmlView, LinkLabel, OnClick
 from .history_ask import CHAT_EMPTY, AskMixin
 from .history_chat import build_chat_tab
 from .history_data import (ACTION_COLUMNS, DUE_COL, HIT_SCHEME, KIND_TAB, MEETING_COLUMNS, MEETING_SCHEME, PERIODS, STATUS_COL, STATUS_TEXT,
                            ActionLine, MeetingLine, MeetingsModel, coverage_text, fmt_int, friendly_reason, hit_link, hit_quote,
-                           hit_target, is_overdue, load_actions, load_meetings, period_range, results_html, search_filters)
+                           hit_target, is_overdue, load_actions, load_meetings, period_range, results_html, search_filters, table_look)
 from .history_delete import MeetingsDelete, OnDelete
 from .icons import tone_icon
 from .tasks import StreamTask, run_task, wait_before_close
-from .theme import METRICS, TONE_ROLE, Tone, note, surface_tokens
+from .theme import TONE_ROLE, Tone, note, surface_tokens
 from .widget import _screen_rects
 
 if TYPE_CHECKING:
@@ -83,15 +83,6 @@ KEPT = 100                       # instrumentação dos testes: as últimas resp
 
 type OpenMeeting = Callable[..., Any]          # on_open(meeting_id, tab=None, t_ms=None, play=False)
 type ContextActions = Callable[[QPoint, str], list[tuple[str, Callable[[], Any]]]]
-
-
-def _table_look(table: QTableView) -> None:
-    """U-058: o cabeçalho à esquerda, sem o número de linha, as linhas de 32 px no mínimo e a zebra."""
-    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    table.verticalHeader().setVisible(False)
-    table.verticalHeader().setMinimumSectionSize(METRICS.control_h)
-    table.verticalHeader().setDefaultSectionSize(METRICS.control_h)
-    table.setAlternatingRowColors(True)
 
 
 class LinkBrowser(HtmlView):
@@ -194,7 +185,7 @@ class HistoryPage(AskMixin, QWidget):
         header.setSortIndicator(0, Qt.SortOrder.DescendingOrder)
         for col in range(len(MEETING_COLUMNS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch if col in (1, 3) else QHeaderView.ResizeMode.ResizeToContents)
-        _table_look(self.table)
+        table_look(self.table)
         self.table.setItemDelegateForColumn(STATUS_COL, BadgeDelegate(self.table))     # U-084: o Estado em selo
         self.table.activated.connect(self._meeting_activated)
         self.results = LinkBrowser(self._hit_actions)
@@ -219,7 +210,7 @@ class HistoryPage(AskMixin, QWidget):
         for col in range(len(ACTION_COLUMNS)):
             self.action_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch if col == 0 else QHeaderView.ResizeMode.ResizeToContents)
-        _table_look(self.action_table)
+        table_look(self.action_table)
         self.action_table.setWordWrap(True)                                   # U-080: a Ação estica e quebra a linha
         self.action_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.action_table.setItemDelegateForColumn(DUE_COL, BadgeDelegate(self.action_table))   # o prazo vencido em selo
@@ -642,8 +633,8 @@ class HistoryWindow(QWidget):
     grava); posição e tamanho em `ui.history_geometry`."""
 
     def __init__(self, store: Store, *, on_open: OpenMeeting | None = None, on_edited: Callable[..., Any] | None = None,
-                 on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None,
-                 on_delete: OnDelete | None = None, memory_rss: Callable[[], int | None] | None = None, parent: QWidget | None = None):
+                 on_answer: Callable[[bool], Any] | None = None, today: Callable[[], date] | None = None, on_delete: OnDelete | None = None,
+                 on_support: OnClick | None = None, memory_rss: Callable[[], int | None] | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.setWindowTitle("Histórico — listener-meet")
@@ -653,6 +644,7 @@ class HistoryWindow(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(self.page)
+        lay.addWidget(LinkLabel("Apoiar o listener-meet", on_support, font_role="caption"), 0, Qt.AlignmentFlag.AlignRight)  # F5.12 (U-128)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(600)

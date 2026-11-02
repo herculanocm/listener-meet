@@ -3,7 +3,8 @@
 paleta e estilo) entra depois da tradução e antes do ícone e do assistente; o estilo em Python sai quando o laço de eventos
 volta (depois do `aboutToQuit` e da parada de emergência) e em toda saída antecipada (assistente cancelado, banco que não
 abre), sempre antes da derrubada do PySide (R-06). F5.7 (L3): o aviso de reunião sem gravação (`ui/call_watch.py`) começa
-depois do controlador e para antes da parada de emergência, que fecha o banco (`connect_exit`)."""
+depois do controlador e para antes da parada de emergência, que fecha o banco (`connect_exit`). F5.12 (U-126, U-127): o
+convite para apoiar (`ui/donate_invite.py`) começa depois do aviso de reunião e some no `aboutToQuit`."""
 from __future__ import annotations
 
 import functools
@@ -72,6 +73,19 @@ def attach_calls(app: Any, controller: Any, platform: Platform, store: Store) ->
     controller.on_start = calls.start_from_hotkey
     connect_exit(app, calls.shutdown, controller.emergency_stop)
     return calls
+
+
+def attach_invite(app: Any, controller: Any, platform: Platform, store: Store, calls: Any) -> Any:
+    """F5.12 (U-126, U-127): o convite para apoiar, preso ao apoio do controlador (`Support.meeting_notified`) e à F5.7 (a
+    chamada detectada e o cartão dela, que a pilha dos avisos também evita). Começa depois do `calls.start`, que liga o
+    `avoid_also`; some no `aboutToQuit` sem mexer no banco (pode rodar depois da parada de emergência)."""
+    from .donate_invite import DonateInvite
+
+    invite = DonateInvite(controller, platform, store, controller.support, in_call=calls.in_call, other_rect=calls.card_rect,
+                          parent=controller)
+    invite.start()
+    app.aboutToQuit.connect(invite.shutdown)
+    return invite
 
 
 def run(argv: list[str] | None = None, platform: Platform | None = None) -> int:
@@ -152,6 +166,7 @@ def _run_app(app: QApplication, platform: Platform) -> int:
     calls = attach_calls(app, controller, platform, store)                # F5.7: o aviso de reunião sem gravação
     controller.start()
     calls.start()                                 # depois do `start`: a bandeja já existe
+    attach_invite(app, controller, platform, store, calls)                 # F5.12: o convite para apoiar
     if log_error:
         controller.notify_error(f"Log em arquivo indisponível: {log_error}")
     if controller.tray is None:

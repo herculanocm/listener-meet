@@ -14,8 +14,8 @@ o estado em selo (U-075); sem jargão interno na tela (U-076). Um erro de valida
 numa faixa, sem caixa de mensagem (U-072); a marca sai quando o valor do campo muda, também na tabela de preços (revisão da
 F5.4, R-09). O valor salvo que a `SPECS` recusa, num editor tipado, dá lugar ao padrão, gravado ao salvar, com o aviso numa
 faixa no topo da página (R-04). F5.6 L2 (U-092): a página "Prompts" (`ui/settings_prompts.py`), depois da LLM, com as
-instruções de cada tarefa; o Salvar valida e grava as tarefas abertas nela. F5.12 (U-122): a página "Sobre", a última, que
-nasce quando aparece (`ui/settings_about.py`)."""
+instruções de cada tarefa; o Salvar valida e grava as tarefas abertas nela. F5.12 (U-122, U-123, U-127): a página "Sobre", a
+última, que nasce quando aparece, com o apoio e o "Mostrar o convite para apoiar" (`ui/settings_about.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -46,6 +46,7 @@ from .settings_search import SearchMixin, vectors_note
 if TYPE_CHECKING:
     from ..platform.base import Platform
     from ..store import Store
+    from .donate import Support
 
 log = get_logger("ui.settings")
 
@@ -102,10 +103,11 @@ def ask_reindex(parent: QWidget | None, text: str, yes: str, no: str) -> bool:
 class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, AboutPageMixin, QDialog):
     def __init__(self, store: Store, platform: Platform, hotkey_errors: dict[str, str] | None = None,
                  parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None, *, recording: bool = False,
-                 model_preparer: ModelPreparer | None = None):
+                 model_preparer: ModelPreparer | None = None, support: Support | None = None):
         super().__init__(parent)
         self.store = store
         self.platform = platform
+        self.support = support                               # F5.12 (U-123): o apoio do controlador, na página Sobre
         self.hotkey_errors = hotkey_errors or {}
         self.recording = recording
         self.on_launch = on_launch

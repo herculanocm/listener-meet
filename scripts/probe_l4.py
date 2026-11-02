@@ -348,7 +348,7 @@ def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Call
     _review_shots(store, mid, shot, tabs_of)
     _live_shots(store, shot)
     _silent_shots(store, shot)
-    f512_shots(store, platform, shot, app)                # F5.12: o Sobre (e, no L2, o apoio e o convite)
+    f512_shots(store, platform, shot, app)                # F5.12: o Sobre, o apoio e o convite
 
 
 __all__ = ["furnish", "l4_shots", "record_meeting"]

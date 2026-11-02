@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 # U-057: o tipo da faixa no tom e no ícone dele (estado nunca só pela cor, U-054)
 INFO_KINDS: dict[str, tuple[Tone, str]] = {"info": (Tone.INFO, "info"), "success": (Tone.SUCCESS, "success"),
                                            "warning": (Tone.WARNING, "warning"), "error": (Tone.DANGER, "error")}
+type OnClick = Callable[[], Any]                     # F5.12: o que o `LinkLabel` chama (sem argumento)
 EMPTY_ICON_PX = 48
 BADGE_PAD_X, BADGE_PAD_Y = 8, 2
 
@@ -283,7 +284,7 @@ class LinkLabel(QLabel):
     aciona; sem, ele não pega foco (o cartão do convite, que nunca rouba o foco)."""
     clicked = Signal()
 
-    def __init__(self, text: str, on_click: Callable[[], Any] | None = None, *, keyboard: bool = True, font_role: str = "body",
+    def __init__(self, text: str, on_click: OnClick | None = None, *, keyboard: bool = True, font_role: str = "body",
                  parent: QWidget | None = None) -> None:
         super().__init__(f'<a href="link">{html.escape(text)}</a>', parent)
         self.setTextFormat(Qt.TextFormat.RichText)
@@ -305,4 +306,4 @@ class LinkLabel(QLabel):
 
 
 __all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "Collapsible", "EmptyState", "HtmlView", "IconButton", "InfoBar",
-           "LinkLabel", "expand_ancestors", "mic_title"]
+           "LinkLabel", "OnClick", "expand_ancestors", "mic_title"]

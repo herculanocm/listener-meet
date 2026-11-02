@@ -10,7 +10,8 @@ F5.7 (L3, U-094): com uma reunião sem gravação pendente (o aviso à vista ou 
 item do menu, em negrito e padrão, é "Gravar a reunião do Teams…", logo abaixo vem "Não avisar para o Teams" (com o nome
 do que desliga: "Chrome", não "Google Meet no Chrome", R-07) e o clique esquerdo abre o "Antes de gravar" com o app como
 fonte (a cola, `ui/call_watch.py`, liga as duas ações).
-F5.12 (U-122): "Sobre o listener-meet…", entre as Configurações e o Sair, abre o Sobre (`ui/about_dialog.py`)."""
+F5.12 (U-122, U-123): "Sobre o listener-meet…" e "Apoiar o projeto…" (com o coração em `accent`, refeito a cada abertura do
+menu: segue o tema), entre as Configurações e o Sair, abrem o Sobre (`ui/about_dialog.py`) e o apoio (`ui/donate.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -24,7 +25,7 @@ from .. import about
 from ..model import AppState
 from . import icons
 from .common import STATE_TONES
-from .theme import LIGHT, Tokens, qcolor
+from .theme import LIGHT, Tokens, Tone, qcolor
 
 if TYPE_CHECKING:
     from .controller import Controller
@@ -36,7 +37,7 @@ ICON_SIZES = (16, 20, 24, 32, 40, 48, 64)     # o que o Windows pede na bandeja,
 BADGE = 0.56                                  # o diâmetro do selo, na fração do lado do ícone (no canto de baixo à direita)
 CALL_TIP = "listener-meet: reunião no {label} sem gravação"          # F5.7 (U-094)
 CALL_RECORD, CALL_OFF = "Gravar a reunião do {label}…", "Não avisar para o {label}"
-ABOUT_ITEM = f"Sobre o {about.APP_NAME}…"                           # F5.12 (U-122)
+ABOUT_ITEM, SUPPORT_ITEM = f"Sobre o {about.APP_NAME}…", "Apoiar o projeto…"        # F5.12 (U-122, U-123)
 
 
 def icon_color(state: str) -> str:
@@ -116,6 +117,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
         self.act_about = QAction(ABOUT_ITEM, self.menu)              # F5.12 (U-122)
+        self.act_support = QAction(SUPPORT_ITEM, self.menu)          # F5.12 (U-123)
         self.act_quit = QAction("Sair", self.menu)
         self._call_actions()
         for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
@@ -126,7 +128,10 @@ class TrayIcon(QSystemTrayIcon):
         self.menu.addAction(self.act_settings)
         self.menu.addSeparator()
         self.menu.addAction(self.act_about)
+        self.menu.addAction(self.act_support)
         self.menu.addSeparator()
+        self._heart()
+        self.menu.aboutToShow.connect(self._heart)
         self.menu.addAction(self.act_quit)
         self.queue_tip = ""
         self._state = AppState.IDLE
@@ -141,6 +146,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
         self.act_about.triggered.connect(self._open_about)
+        self.act_support.triggered.connect(self._open_support)
         self.act_quit.triggered.connect(controller.quit)
         self.activated.connect(self._activated)
         self.messageClicked.connect(controller.open_last_notified)
@@ -153,10 +159,18 @@ class TrayIcon(QSystemTrayIcon):
         self.controller.open_warmup()
 
     def _open_about(self) -> None:
-        """F5.12 (U-122): o Sobre, modal, com a pasta do banco e o arquivo de log do app."""
+        """F5.12 (U-122): o Sobre, modal, com a pasta do banco, o arquivo de log do app e o apoio."""
         from .about_dialog import open_about
 
-        open_about(None, self.controller.store, via="bandeja")
+        open_about(None, self.controller.store, support=self.controller.support, via="bandeja")
+
+    def _open_support(self) -> None:
+        """F5.12 (U-123): o "Apoiar o projeto", com os dois caminhos."""
+        self.controller.support.open_choice(None, "bandeja")
+
+    def _heart(self) -> None:
+        """O coração do "Apoiar o projeto…" nos tokens do tema vigente (o ícone de uma ação não é varrido pela troca)."""
+        self.act_support.setIcon(icons.tone_icon("heart", Tone.ACCENT))
 
     # ---------------------------------------------------------------- F5.7: a reunião sem gravação
     def _call_actions(self) -> None:

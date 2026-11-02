@@ -24,9 +24,11 @@ from ..rag import search as rag_search
 from ..store.rag import SearchFilters
 from ..store.segments import ClusterRow, resolve_person
 from .actions_table import due_text, is_overdue
-from .theme import TONE_ROLE, Tone
+from .theme import METRICS, TONE_ROLE, Tone
 
 if TYPE_CHECKING:
+    from PySide6.QtWidgets import QTableView
+
     from ..rag.search import SearchHit, SearchResult
     from ..store import Store
 
@@ -221,6 +223,16 @@ def load_actions(store: Store, person_id: int | None, date_from: str | None, dat
 
 
 # ---------------------------------------------------------------- widgets
+def table_look(table: QTableView) -> None:
+    """U-058: o cabeçalho à esquerda, sem o número de linha, as linhas de 32 px no mínimo e a zebra (F5.12: saiu do
+    `ui/history.py`, que não cresce, para caber o rodapé do apoio)."""
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    table.verticalHeader().setVisible(False)
+    table.verticalHeader().setMinimumSectionSize(METRICS.control_h)
+    table.verticalHeader().setDefaultSectionSize(METRICS.control_h)
+    table.setAlternatingRowColors(True)
+
+
 class MeetingsModel(QAbstractTableModel):
     """A lista de reuniões do Histórico (milhares de linhas sem milhares de widgets), ordenável por coluna."""
 
@@ -285,4 +297,5 @@ class MeetingsModel(QAbstractTableModel):
 
 __all__ = ["ACTION_COLUMNS", "DUE_COL", "HIT_SCHEME", "KIND_TAB", "MEETING_COLUMNS", "MEETING_SCHEME", "PERIODS", "STATUS_TEXT",
            "STATUS_TONES", "ActionLine", "MeetingLine", "MeetingsModel", "coverage_text", "fmt_int", "friendly_reason", "hit_link",
-           "hit_quote", "hit_target", "is_overdue", "load_actions", "load_meetings", "period_range", "results_html", "search_filters"]
+           "hit_quote", "hit_target", "is_overdue", "load_actions", "load_meetings", "period_range", "results_html", "search_filters",
+           "table_look"]

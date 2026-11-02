@@ -312,6 +312,10 @@ class CallWatch(CallAnswersMixin, QObject):
             combo = self.store.get_setting("hotkeys.start")
         return record_tip(label, combo)
 
+    def in_call(self) -> bool:
+        """F5.12 (U-127): uma chamada detectada (o aviso à vista ou uma chamada em curso nas regras): o convite de apoio espera."""
+        return not self._closed and (self.card is not None or self.rules.active())
+
     def card_rect(self) -> tuple[int, int, int, int] | None:
         """O retângulo do cartão à vista, que a pilha dos avisos evita (`ToastManager.avoid_also`)."""
         card = self.card

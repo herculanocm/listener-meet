@@ -198,6 +198,13 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("rag.sql_max_minutes", 3, _NOW, "Guarda de tempo por pergunta (min)", int, low=1, high=30, phase="F5.10"),
     SettingSpec("rag.sql_max_rounds", 30, _NOW, "Guarda de rodadas por pergunta (contra laço)", int, low=5, high=100,
                 phase="F5.10"),
+    # F5.12 (U-127): o convite para apoiar. `donate.enabled` na página Sobre (CP8: desliga tudo); as outras, o app escreve: a
+    # data a partir da qual o convite pode voltar (ISO com o fuso; vazio = sem espera), quantas vezes ele apareceu e quando o
+    # apoio foi informado ("Já doei" e "Pronto, doei"). Só crescem (CP3)
+    SettingSpec("donate.enabled", True, _NOW, "Mostrar o convite para apoiar de vez em quando", _bool, phase="F5.12"),
+    SettingSpec("donate.next_at", "", _NOW, "Convite para apoiar: pode voltar a partir de", _text, phase="F5.12", internal=True),
+    SettingSpec("donate.shown", 0, _NOW, "Convite para apoiar: vezes que apareceu", int, low=0, phase="F5.12", internal=True),
+    SettingSpec("donate.donated_at", "", _NOW, "Convite para apoiar: apoio informado em", _text, phase="F5.12", internal=True),
 )}
 
 CAPTURE_KEYS = tuple(k for k in SPECS if k.startswith("capture."))

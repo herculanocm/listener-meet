@@ -10,7 +10,9 @@ licença de cada uma. Os dados do projeto vêm de `listener/about.py` (CP15).
   log ficam na tela e fora da cópia (têm o nome do usuário). Os caminhos quebram a linha em vez de alargar a janela.
 - No assistente ainda não há banco nem log: as duas linhas dizem que eles são escolhidos nos próximos passos (desvio
   técnico: a spec não diz o que mostrar antes da escolha).
-- Log: a abertura e a cópia, com a origem; nunca um caminho (D-053)."""
+- Log: a abertura e a cópia, com a origem; nunca um caminho (D-053).
+L2 (U-123): com o `Support`, a seção "Apoie o projeto" (`ui/donate_dialogs.py`) logo depois do link do repositório, com os
+dois caminhos; no assistente não há `Support` e a seção não aparece (pergunta 4)."""
 from __future__ import annotations
 
 import sys
@@ -26,6 +28,8 @@ from .. import about
 from ..log import current_file, get_logger
 from .common import copy_rich, fit_to_screen
 from .components import Card
+from .donate import PAYPAL, PIX
+from .donate_dialogs import SupportSection
 from .icons import set_icon
 from .keys import WrapLabel
 from .settings_general import breakable_path
@@ -33,6 +37,7 @@ from .theme import METRICS, Tone, note, role
 
 if TYPE_CHECKING:
     from ..store import Store
+    from .donate import Support
 
 log = get_logger("ui.about")
 
@@ -84,18 +89,37 @@ def _form() -> QFormLayout:
 
 
 class AboutView(QWidget):
-    """O conteúdo do Sobre; `db_dir` e `log_path` None no assistente (ainda não escolhidos). `via` é a origem, para o log."""
+    """O conteúdo do Sobre; `db_dir` e `log_path` None no assistente (ainda não escolhidos). `support` traz a seção "Apoie o
+    projeto" (None no assistente). `via` é a origem, para o log."""
 
-    def __init__(self, db_dir: Path | None, log_path: Path | None, *, via: str = "sobre", parent: QWidget | None = None) -> None:
+    def __init__(self, db_dir: Path | None, log_path: Path | None, *, support: Support | None = None, via: str = "sobre",
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.via = via
+        self.via, self.support = via, support
         self.info = computer_info()
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(METRICS.card_gap)
         self._head()
+        self.support_section = self._support_section() if support is not None else None
         self.computer = self._computer_card(db_dir, log_path)
         self.credits = self._credits_card()
+
+    def _support_section(self) -> SupportSection:
+        """U-123: "Apoie o projeto", com o coração e os dois caminhos; cada um abre o diálogo dele sobre esta janela."""
+        section = SupportSection()
+        section.pix_clicked.connect(self._pix)
+        section.paypal_clicked.connect(self._paypal)
+        self.lay.addWidget(section)
+        return section
+
+    def _pix(self) -> None:
+        if self.support is not None:
+            self.support.open_pay(PIX, self.window(), self.via)
+
+    def _paypal(self) -> None:
+        if self.support is not None:
+            self.support.open_pay(PAYPAL, self.window(), self.via)
 
     def _head(self) -> None:
         """A marca, o nome e a versão; a frase; a licença e o autor; o link do repositório (abre no navegador)."""
@@ -190,12 +214,13 @@ def note_label(text: str) -> QLabel:
 class AboutDialog(QDialog):
     """O Sobre numa janela com rolagem e "Fechar" (A-17: cabe na área livre da tela)."""
 
-    def __init__(self, db_dir: Path | None, log_path: Path | None, *, via: str = "sobre", parent: QWidget | None = None) -> None:
+    def __init__(self, db_dir: Path | None, log_path: Path | None, *, support: Support | None = None, via: str = "sobre",
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(TITLE)
         self.resize(*SIZE)
         self.setMinimumSize(*MIN_SIZE)
-        self.view = AboutView(db_dir, log_path, via=via)
+        self.view = AboutView(db_dir, log_path, support=support, via=via)
         body = QWidget()
         inner = QVBoxLayout(body)
         m = METRICS.margin
@@ -224,10 +249,11 @@ class AboutDialog(QDialog):
         fit_to_screen(self)
 
 
-def open_about(parent: QWidget | None, store: Store | None = None, *, via: str = "bandeja") -> int:
-    """O Sobre, modal: pela bandeja (com o banco) ou pelo assistente (sem banco e sem log ainda). Devolve o resultado."""
+def open_about(parent: QWidget | None, store: Store | None = None, *, support: Support | None = None, via: str = "bandeja") -> int:
+    """O Sobre, modal: pela bandeja (com o banco e o apoio) ou pelo assistente (sem banco, sem log e sem pedido de doação).
+    Devolve o resultado."""
     db_dir = store.base_dir if store is not None else None
-    dlg = AboutDialog(db_dir, log_file(store), via=via, parent=parent)
+    dlg = AboutDialog(db_dir, log_file(store), support=support, via=via, parent=parent)
     log.info("sobre aberto (%s)", via)
     try:
         return dlg.exec()
