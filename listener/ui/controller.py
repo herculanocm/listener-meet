@@ -103,7 +103,7 @@ from .sources import SourceTable
 from .summary import SummaryDialog
 from .tasks import StreamTask, Task, live_threads, release, run_stream, run_task, wait_before_close
 from .toast import ToastManager
-from .tray import TrayIcon
+from .tray import TrayIcon, menu_shortcuts
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
 from .widget_parts import confirm_discard, save_widget_pos, widget_prefs
@@ -590,6 +590,8 @@ class Controller(QObject):
         return errors
 
     def _on_hotkeys_registered(self, result: Any) -> None:
+        if self.tray is not None:                            # F5.13 (U-133): os atalhos que valem, no menu da bandeja
+            self.tray.show_shortcuts(menu_shortcuts(self.store.get_setting, result))
         if isinstance(result, BaseException):
             self._notify_as(NoticeKind.ERROR, f"Atalhos não registraram: {result}")
         elif result:

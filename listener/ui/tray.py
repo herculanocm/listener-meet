@@ -11,10 +11,13 @@ item do menu, em negrito e padrão, é "Gravar a reunião do Teams…", logo aba
 do que desliga: "Chrome", não "Google Meet no Chrome", R-07) e o clique esquerdo abre o "Antes de gravar" com o app como
 fonte (a cola, `ui/call_watch.py`, liga as duas ações).
 F5.12 (U-122, U-123): "Sobre o listener-meet…" e "Apoiar o projeto…" (com o coração em `accent`, refeito a cada abertura do
-menu: segue o tema), entre as Configurações e o Sair, abrem o Sobre (`ui/about_dialog.py`) e o apoio (`ui/donate.py`)."""
+menu: segue o tema), entre as Configurações e o Sair, abrem o Sobre (`ui/about_dialog.py`) e o apoio (`ui/donate.py`).
+F5.13 (U-133): Gravar, Pausar, Marcador, Mudo, Parar e Histórico mostram o atalho global na coluna de atalho do menu, o de
+`hotkeys.<nome>` que registrou, refeito a cada registro (a abertura e as Configurações salvas); sem atalho, só o texto.
+(U-131): o clique esquerdo também é o "Gravar…" do Jump List (`left_click`)."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QRectF, Qt
@@ -26,6 +29,7 @@ from ..model import AppState
 from . import icons
 from .common import STATE_TONES
 from .theme import LIGHT, Tokens, Tone, qcolor
+from .widget_parts import shortcut_text
 
 if TYPE_CHECKING:
     from .controller import Controller
@@ -38,6 +42,17 @@ BADGE = 0.56                                  # o diâmetro do selo, na fração
 CALL_TIP = "listener-meet: reunião no {label} sem gravação"          # F5.7 (U-094)
 CALL_RECORD, CALL_OFF = "Gravar a reunião do {label}…", "Não avisar para o {label}"
 ABOUT_ITEM, SUPPORT_ITEM = f"Sobre o {about.APP_NAME}…", "Apoiar o projeto…"        # F5.12 (U-122, U-123)
+# F5.13 (U-133): o atalho (`hotkeys.<nome>`) de cada item do menu que tem um
+SHORTCUT_ITEMS: tuple[tuple[str, str], ...] = (("start", "act_record"), ("pause", "act_pause"), ("mark", "act_mark"),
+                                               ("mute", "act_mute"), ("stop", "act_stop"), ("history", "act_history"))
+
+
+def menu_shortcuts(read: Callable[[str], str | None], failed: object) -> dict[str, str]:
+    """U-133: os atalhos que valem agora, por nome, lidos das Configurações (`read`), sem os que não registraram (`failed`:
+    combinação -> motivo; uma exceção no registro, nenhum vale)."""
+    if not isinstance(failed, dict):
+        return {}
+    return {name: combo for name, _item in SHORTCUT_ITEMS if (combo := read(f"hotkeys.{name}") or "") and combo not in failed}
 
 
 def icon_color(state: str) -> str:
@@ -225,6 +240,15 @@ class TrayIcon(QSystemTrayIcon):
         self.act_record.setEnabled(state == AppState.IDLE)
         for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
             a.setEnabled(recording)
+
+    def show_shortcuts(self, combos: Mapping[str, str]) -> None:
+        """U-133: o atalho de cada item depois de uma tabulação, que o menu desenha na coluna de atalho ("Ctrl+Alt+Shift+H"
+        à direita de "Histórico…"); sem atalho, só o texto."""
+        for name, item in SHORTCUT_ITEMS:
+            action: QAction = getattr(self, item)
+            text = action.text().split("\t", 1)[0]
+            combo = combos.get(name, "")
+            action.setText(f"{text}\t{shortcut_text(combo)}" if combo else text)
 
     def set_queue_tip(self, text: str) -> None:
         """"processando 2/6 · 43 %" ao lado do estado (F2 item 15); vazio esconde."""

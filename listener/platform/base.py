@@ -271,6 +271,11 @@ class Platform(Protocol):
         del tasks
         return False
 
+    # F5.13 (L3, U-132): a dica de fixar o app na barra de tarefas, numa linha da última página do assistente; None quando a
+    # plataforma não tem o que ensinar (até a F7)
+    def pin_hint(self) -> str | None:
+        return None
+
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...
     def default_input_device(self) -> AudioDevice | None: ...

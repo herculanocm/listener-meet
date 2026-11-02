@@ -2,7 +2,8 @@
 cada uma; só o `.exe` publica; a plataforma que recusa não derruba nada; o caminho das chamadas com objetos falsos, também
 o erro no meio, que abandona a lista) e, só no Windows, a lista de verdade: o título, os argumentos e o ícone lidos de
 volta de uma tarefa e a lista montada inteira e abandonada (`BeginList` e `AbortList`). Nunca o `CommitList`: mexeria na
-barra de tarefas de quem roda o teste."""
+barra de tarefas de quem roda o teste. L3: a dica de fixar na última página do assistente, só no `.exe` (U-132), e os
+atalhos que registraram na coluna de atalho do menu da bandeja, trocados com as Configurações (U-133)."""
 from __future__ import annotations
 
 import ctypes
@@ -154,3 +155,82 @@ def test_the_log_of_the_jump_list_carries_no_path_nor_name():
 
     for module in ("listener/platform/win32/jumplist.py", "listener/ui/taskbar.py"):
         assert leaks(ROOT / module) == [], module
+
+
+# ---------------------------------------------------------------- L3: a dica de fixar (U-132) e os atalhos no menu (U-133)
+PIN = ("Dica: para abrir o listener-meet com um clique, clique com o botão direito no ícone dele na barra de tarefas e "
+       "escolha Fixar na barra de tarefas.")
+
+
+def test_the_pin_hint_is_the_spec_line_on_windows_and_none_elsewhere(monkeypatch, tmp_path):
+    from listener.platform.win32.taskbar import Win32Taskbar
+
+    assert Win32Taskbar().pin_hint() == PIN
+    assert Platform.pin_hint(None) is None                                        # type: ignore[arg-type]
+    platform = FakePlatform(tmp_path)
+    platform.pin_text = PIN
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert taskbar.pin_hint(platform) is None                                    # no venv, fixaria o `python.exe`
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert taskbar.pin_hint(platform) == PIN
+    platform.pin_text = None
+    assert taskbar.pin_hint(platform) is None
+
+
+@pytest.mark.parametrize("packaged", [True, False])
+def test_the_last_page_of_the_wizard_teaches_pinning_in_one_line(qtbot, tmp_path, monkeypatch, packaged):
+    from PySide6.QtWidgets import QLabel
+
+    from listener.ui.wizard import FirstRunWizard
+
+    platform = FakePlatform(tmp_path)
+    platform.pin_text = PIN
+    if packaged:
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+    else:
+        monkeypatch.delattr(sys, "frozen", raising=False)
+    wiz = FirstRunWizard(platform, tmp_path / "db")
+    qtbot.addWidget(wiz)
+    assert wiz.page(wiz.pageIds()[-1]) is wiz.mic_page                             # a última página
+    hints = [label for label in wiz.mic_page.findChildren(QLabel) if label.text() == PIN]
+    assert len(hints) == (1 if packaged else 0)
+    assert all(label.wordWrap() for label in hints)
+
+
+def test_menu_shortcuts_are_the_registered_ones_by_name():
+    from listener.ui.tray import menu_shortcuts
+
+    settings = {"hotkeys.start": "ctrl+alt+shift+r", "hotkeys.mute": "ctrl+alt+shift+u", "hotkeys.mark": ""}
+    read = settings.get
+    assert menu_shortcuts(read, {}) == {"start": "ctrl+alt+shift+r", "mute": "ctrl+alt+shift+u"}
+    assert menu_shortcuts(read, {"ctrl+alt+shift+u": "já usado por outro app"}) == {"start": "ctrl+alt+shift+r"}
+    assert menu_shortcuts(read, RuntimeError("o registro falhou")) == {}
+
+
+def test_the_tray_menu_shows_the_shortcuts_and_follows_the_settings(qtbot, qapp, platform, store, monkeypatch):
+    from listener.ui import controller as ctl
+    from listener.ui.tray import TrayIcon
+
+    monkeypatch.setattr(ctl, "prewarm_audio", lambda: None)
+    c = ctl.Controller(qapp, platform, store)
+    tray = TrayIcon(c)
+    c.tray = tray
+    try:
+        c._on_hotkeys_registered(c.register_hotkeys())
+        assert [getattr(tray, item).text() for item in ("act_record", "act_pause", "act_mark", "act_mute", "act_stop",
+                                                        "act_history")] == [
+            "Gravar…\tCtrl+Alt+Shift+R", "Pausar / retomar\tCtrl+Alt+Shift+P", "Marcador\tCtrl+Alt+Shift+M",
+            "Mudo\tCtrl+Alt+Shift+U", "Parar\tCtrl+Alt+Shift+S", "Histórico…\tCtrl+Alt+Shift+H"]
+        assert tray.act_queue.text() == "Fila de processamento…" and tray.act_live.text() == "Ao vivo…"   # sem atalho
+        store.set_setting("hotkeys.history", "ctrl+alt+shift+j")                 # trocado nas Configurações
+        store.set_setting("hotkeys.mark", "")                                     # e um tirado
+        c._on_hotkeys_registered(c.register_hotkeys())
+        assert tray.act_history.text() == "Histórico…\tCtrl+Alt+Shift+J" and tray.act_mark.text() == "Marcador"
+        c._on_hotkeys_registered({"ctrl+alt+shift+u": "já usado por outro app"})  # o que não registrou não aparece
+        assert tray.act_mute.text() == "Mudo" and tray.act_record.text() == "Gravar…\tCtrl+Alt+Shift+R"
+        c._on_hotkeys_registered(RuntimeError("o registro falhou"))
+        assert not [a for a in tray.menu.actions() if "\t" in a.text()]
+    finally:
+        c.tray = None
+        tray.deleteLater()
+        c.emergency_stop()

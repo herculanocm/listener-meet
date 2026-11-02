@@ -7,7 +7,8 @@ F5.4 L4 (U-088, A-21): o `QWizard.ModernStyle`, sem a faixa vazia do Aero; no ca
 (U-056). O cabeçalho é privado do Qt: os rótulos dele são achados pelo texto, a cada troca de página.
 F5.11 (U-113): o assistente conta os passos que mostra: as boas-vindas não são passo, e o "Em cinco passos" dela sai da
 mesma conta do "Passo n de 5"; o token do Hugging Face tem "Testar" (`ui/hf_test.py`), que morre com o assistente.
-F5.12 (U-122): o link "Sobre o listener-meet" nas boas-vindas abre o Sobre, sem pedido de doação (pergunta 4)."""
+F5.12 (U-122): o link "Sobre o listener-meet" nas boas-vindas abre o Sobre, sem pedido de doação (pergunta 4).
+F5.13 (U-132): no `.exe`, a última página ensina numa linha a fixar o ícone na barra de tarefas (`ui/taskbar.py`)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,7 +30,9 @@ from .about_dialog import open_about
 from .components import LinkLabel
 from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
+from .keys import note as hint_label
 from .meters import LevelMeter
+from .taskbar import pin_hint
 from .theme import FONT_PROP, PRIMARY, Tone, note, role, set_kind, tone
 
 if TYPE_CHECKING:
@@ -213,6 +216,8 @@ class MicPage(QWizardPage):
         lay.addWidget(self.combo)
         lay.addWidget(self.meter)
         lay.addWidget(self.status)
+        if hint := pin_hint(platform):                      # F5.13 (U-132): o Windows não deixa o app se fixar sozinho
+            lay.addWidget(hint_label(hint))
         self._handle: CaptureHandle | None = None
         self._level = 0.0
         self._timer = QTimer(self)

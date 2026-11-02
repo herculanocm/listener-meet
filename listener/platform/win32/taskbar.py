@@ -9,7 +9,7 @@ pedido; o que roda usa o `bring_to_front` de sempre. Instâncias próprias do ke
 assinaturas daqui, sem mexer nas de outros módulos. Nada daqui roda fora do Windows.
 
 L2 (U-131): o Jump List em `jumplist.py` (o comtypes só é importado ali, na primeira chamada), com o AppUserModelID do
-processo (`platform.py`)."""
+processo (`platform.py`). L3 (U-132): o texto da dica de fixar, porque o Windows não deixa o app se fixar sozinho."""
 from __future__ import annotations
 
 import ctypes
@@ -26,6 +26,8 @@ log = get_logger("platform.win32.taskbar")
 ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS = 5, 183
 ASFW_ANY = 0xFFFFFFFF                                  # (DWORD)-1: qualquer processo pode trazer janela à frente
 _HELD: list[int] = []                                  # o handle do mutex vive o processo inteiro (fechar soltaria a trava)
+PIN_HINT = ("Dica: para abrir o listener-meet com um clique, clique com o botão direito no ícone dele na barra de tarefas e "
+            "escolha Fixar na barra de tarefas.")
 
 
 @functools.cache
@@ -102,3 +104,6 @@ class Win32Taskbar:
         from .platform import APP_USER_MODEL_ID
 
         return jumplist.publish(APP_USER_MODEL_ID, tasks)
+
+    def pin_hint(self) -> str | None:
+        return PIN_HINT

@@ -11,6 +11,7 @@ D-067: o padrão de agora é o do Core Audio (`endpoints`): `default_output_id` 
 fluxo falso no padrão de saída e `play_sound` anota onde o teste do warm-up tocou (`played`).
 F5.13 (L1): `claim_instance` anota o nome pedido e pega a trava enquanto `instance_free` (False: outra instância roda);
 `hand_over_foreground` conta as vezes (`handovers`). L2: `set_taskbar_tasks` guarda as tarefas e devolve `taskbar_ok`.
+L3: `pin_hint` devolve `pin_text` (None: sem dica).
 """
 from __future__ import annotations
 
@@ -94,6 +95,7 @@ class FakePlatform(Platform):
         self.handovers = 0                                    # as vezes que o foco foi passado adiante
         self.taskbar_tasks: list[TaskbarTask] | None = None   # L2: as tarefas do Jump List publicadas por último
         self.taskbar_ok = True                                # ...e se o "sistema" as aceita
+        self.pin_text: str | None = None                      # L3: a dica de fixar o ícone (None: a plataforma não tem)
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -157,6 +159,10 @@ class FakePlatform(Platform):
     def set_taskbar_tasks(self, tasks: Sequence[TaskbarTask]) -> bool:
         self.taskbar_tasks = list(tasks)
         return self.taskbar_ok
+
+    @override
+    def pin_hint(self) -> str | None:
+        return self.pin_text
 
     @override
     def ui_style(self) -> str:
