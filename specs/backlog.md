@@ -3,13 +3,12 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (01/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.10 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.377 testes (um falha desde 01/11, ver Dívidas), esquema v9. Nenhum gate
-  medido ainda.
-- **F5.11 aprovada, em implementação** (01/11, D-077, `features/F5.11-revisao-reuniao-e-linguagem.md`): a crítica de
-  UX do app inteiro (28/40) virou 23 melhorias, U-098 a U-120, com a revisão de arquitetura (A-01 a A-41) e as 13
-  perguntas no padrão; lotes L0 a L5. O achado de produção dela, o Enter que apagava a gravação na confirmação do
-  descarte, saiu à parte na D-076 (01/11), com teste.
+- Código: F1 a F5.11 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
+  rascunho inicial e F7 é futuro. Suíte de 1.438 testes, esquema v9. Nenhum gate medido ainda.
+- **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
+  crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
+  crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
+  apagava a gravação na confirmação do descarte, saiu antes, na D-076.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
@@ -32,25 +31,27 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Cada item é do dono: o passo a passo é a parte
 indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem o OK dele. Números em `decisoes.md`
 (Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
-1. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
-2. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
+1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
+   com a rede da empresa; nenhum `listener --hf-check` sobrando.
+2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
+3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",
    onde a chamada toca, eco) seguem sem resultado.
-3. [ ] D-067, o som que segue o aparelho escolhido (Parte 18).
-4. [ ] F5.8, o `.exe` numa reunião de verdade (Parte 19).
-5. [ ] F5.7, o aviso de reunião sem gravação (Parte 17; reinicie o app antes).
-6. [ ] F5.6: L2 (Parte 16; reinicie o app antes), L1 (Parte 15) e L3 (Parte 14). Junto da L1, a D-071: a ata em pt-BR
+4. [ ] D-067, o som que segue o aparelho escolhido (Parte 18).
+5. [ ] F5.8, o `.exe` numa reunião de verdade (Parte 19).
+6. [ ] F5.7, o aviso de reunião sem gravação (Parte 17; reinicie o app antes).
+7. [ ] F5.6: L2 (Parte 16; reinicie o app antes), L1 (Parte 15) e L3 (Parte 14). Junto da L1, a D-071: a ata em pt-BR
    segue o contrato como seguia em inglês (evidência nos itens, `[mm:ss]` no chat, "Voz 2" sem tradução); se piorar, o
    `prompt_version` das chamadas diz qual texto foi usado.
-7. [ ] F5.5 (Parte 13), F5.4 (Parte 12: claro, escuro, contraste alto, notebook, teclado), F5.3 (Parte 11: idioma,
+8. [ ] F5.5 (Parte 13), F5.4 (Parte 12: claro, escuro, contraste alto, notebook, teclado), F5.3 (Parte 11: idioma,
    fila, aviso, fone no meio da gravação) e F5.2 (Parte 10: fone conectado com o app aberto, ficha da pessoa, ata
    depois da identificação, log em DEBUG).
-8. [ ] Uso real (B1; Partes 3 e 4): a reunião 8 cobriu a gravação e o processamento; faltam a revisão de falantes, a
+9. [ ] Uso real (B1; Partes 3 e 4): a reunião 8 cobriu a gravação e o processamento; faltam a revisão de falantes, a
    reunião aberta e os logs que a Parte 3 pede (tempo e RAM por etapa, sonda Q8, canário). Depois da Parte 3, apagar o
    venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
-9. [ ] Gemini, busca local e ao vivo (Partes 5, 6 e 7; B15): busca e perguntas com o Gemini (F5), a busca local sem
+10. [ ] Gemini, busca local e ao vivo (Partes 5, 6 e 7; B15): busca e perguntas com o Gemini (F5), a busca local sem
    custo (F5.1) e o ao vivo com nomes (F4).
-10. [ ] Reuniões reais e bordas (Partes 8 e 9): G1 (B2), G2, G3, G4 e G5; a D-072, o logoff cancelado, e a D-076 (o
+11. [ ] Reuniões reais e bordas (Partes 8 e 9): G1 (B2), G2, G3, G4 e G5; a D-072, o logoff cancelado, e a D-076 (o
     ✕ do widget com Enter na confirmação: a gravação segue) entram na Parte 9; a metade Linux do L0 da F5.1, na
     próxima sessão no Linux.
 
@@ -115,9 +116,8 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
   2 min; suspeita: a consulta WMI do `platform.machine()`); se voltar, rodar com a saída num arquivo, não por `| tail`.
   `test_rag_ui.py::test_the_system_loopback_never_opens_with_the_player_playing` falhou uma vez com `-x` (0 em 15
   depois); se voltar, guardar a saída e ver a espera do player.
-- `test_rag_search.py::test_hybrid_search_fuses_both_lists_and_finds_by_meaning` falha desde 01/11, também no `93179a8`
-  (antes da D-076): o cosseno dá 0,198 contra o mínimo de 0,2 [chute: o texto do trecho leva a data da reunião, criada
-  com a data de hoje, e o embedder falso hasheia cada palavra]. Fixar a data no teste.
+- F5.11 (D-078): desfazer a voz transportada de um reprocessamento não acha o vetor (a linha "Para desfazer" não
+  aparece nela); o `--hf-check` atrás da inspeção TLS da empresa só o dono testa (Parte 22).
 - O assistente atende o Enter com o "Sim" na pergunta da pasta sincronizada (`ui/wizard.py:121`, sem botão padrão,
   como o descarte antes da D-076): uma tecla põe o banco numa pasta sincronizada com a nuvem.
 - Suíte acima da meta de 8 s (D-050; a inteira levou 152 s com 1.376 testes em 31/10): a meta pede execução paralela

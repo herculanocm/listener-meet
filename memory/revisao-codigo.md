@@ -68,6 +68,14 @@ estado, duração nem sala (validade de 10 min); `custos_llm` com filtro esconde
 Corrigido: o Enter na confirmação do descarte apagava a gravação (`QMessageBox.question` sem botão padrão; provado com
 a caixa real), D-076. Os outros achados (A-01 a A-41) estão na spec da F5.11, não no código de hoje.
 
+## Revisão do diff da F5.11 (02/11)
+Corrigidos em `7aee204`: R-01, o Cancelar do download no "Antes de gravar" virava aviso de erro (provado); R-02, Espaço
+e setas quase nunca chegavam ao player (o foco abria no título e a lista de falas estava excluída; provado). Também: a
+voz confirmada mesclada numa sem pessoa perde a pessoa; o título gravado no fechamento sem pular o `closed`; o token
+inválido só no 401 de verdade; os testes do "Testar" (Cancelar e saída). Conferidos sem achado: o token só pelo stdin,
+o filho morto no prazo, no Cancelar e na saída, CP3, CP9, CP11, CP15, D-053, F5.6, D-067 e D-076. Em aberto
+(dívidas): desfazer a voz transportada de um reprocessamento (D-078); o `--hf-check` atrás da inspeção TLS da empresa.
+
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),
 SQL curto na thread da interface, as listas de apps de reunião em `platform.py` e `activity.py`, riscos sem chamador

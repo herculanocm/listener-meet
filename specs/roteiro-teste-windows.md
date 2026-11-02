@@ -473,6 +473,33 @@ processadas. A LLM só lê a base: nenhuma pergunta muda nada. O custo de cada p
   - as linhas de erro do `listener.log`, que nunca traz a pergunta, o SQL nem os dados;
   - a saída do `--downgrade` e do `--check`, se fez.
 
+## Parte 22 — F5.11: revisão de vozes, reunião aberta e linguagem (40 min, numa reunião de verdade)
+Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). Os rótulos mudaram, as teclas não.
+- [ ] Antes de gravar: a saída numa lista com o ✓, o tipo, o medidor que mexe com som e "Novo" ao ligar um fone com a
+      janela aberta; o nome longo do microfone cortado no meio, inteiro na dica; com algo faltando, uma faixa só,
+      "Falta configurar", com o link de cada item. Se os modelos da legenda faltarem, "Preparar agora" baixa com
+      progresso e Cancelar, e "Gravar" interrompe o download (o aviso diz antes).
+- [ ] Configurações › Chaves de acesso: "Testar" no token do Hugging Face com o token certo, com um errado e sem rede;
+      atrás da rede da empresa, anote quanto tempo leva. Depois de Cancelar, de fechar e de sair do app, nenhum
+      `listener --hf-check` no Gerenciador de Tarefas. Configurações › Processamento: o "Avançado" fechado, e o
+      "Escolher…" da pasta dos modelos com o aviso de que a pasta nova baixa tudo de novo.
+- [ ] Grave 3 a 5 min com headset. No widget, o ✕ virou a lixeira: clique e aperte Enter na confirmação; a gravação
+      continua ("Continuar gravando" é o padrão). Os alertas cabem em até duas linhas.
+- [ ] Revisão de vozes, com 3 ou mais vozes: cada voz decidida com até 2 teclas; o principal diz o resultado ("É Ana
+      [Enter]", "Escolher pessoa…"); o "Ouvir 5 s" no cartão; o "Mais" com M, I e E; a linha "Ao confirmar, o perfil
+      de voz de … aprende" e o "Para desfazer".
+- [ ] Reunião aberta: o topo numa linha com o "⋯"; o título grava no Enter, ao sair do campo e ao fechar, e o Esc
+      desfaz; na Ata, o `[mm:ss]` toca a fala citada, e nas Ações o "Quando"; o player mostra a duração antes de tocar;
+      com a lista de falas em foco, Espaço pausa e retoma e ← e → voltam e avançam 10 s, sem roubar a tecla de campo,
+      botão ou aba; a linha de pedido de cada aba (Ata, Ações, Resumo) com o estado e o botão.
+- [ ] Linguagem: nenhum "LLM" nem "pyannote" fora das Configurações; "Você" na transcrição, na linha do tempo e no
+      Ao vivo; na fila, "Cancelar processamento" e as datas em dd/mm/aaaa.
+- [ ] Bordas: grave com a reunião tocando em outra saída: o resumo diz "Gravação salva com falha" e a linha da saída
+      diz por quê; numa reunião sem fala, a Transcrição diz qual canal ficou sem som; na sala presencial, a saída
+      muda é só aviso.
+- [ ] Telas a 150 %, no claro e no escuro: nada cortado.
+- Devolva: o que estranhou, prints das telas que pareceram erradas e o tempo do "Testar" do token.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
