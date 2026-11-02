@@ -8,7 +8,8 @@ do assistente; o Ao vivo com legendas, uma marcada, e o resumo parcial.
 `l4_shots(store, platform, shot, tabs_of, app, tmp)` usa o `shot` e o `tabs_of` do `win_probe` (a foto, os `cortados` e os
 `pequenos` de cada tela). Nada aqui sai da máquina: o banco é temporário e o LLM é o falso.
 F5.11 L4: o "Antes de gravar" sem os modelos da legenda (a lista da saída e a faixa "Falta configurar" parada e baixando, com
-o estado do preparador escrito à mão: nada é baixado) e o "Avançado" aberto no Processamento das Configurações."""
+o estado do preparador escrito à mão: nada é baixado) e o "Avançado" aberto no Processamento das Configurações. L5: a reunião
+processada sem fala (a saída sem som) e o resumo da gravação com a falha e o aviso do microfone."""
 from __future__ import annotations
 
 import json
@@ -307,6 +308,32 @@ def _setup_shots(store: Any, platform: Any, shot: Callable[..., None], tmp: Path
     _discard(sd)
 
 
+def _silent_shots(store: Any, shot: Callable[..., None]) -> None:
+    """F5.11 L5 (U-114, U-115): 30 s de silêncio nos dois canais, o microfone com som pelo `signal_ms` e a saída sem; a
+    reunião processada sem fala abre na Transcrição com o porquê, e o resumo diz a falha."""
+    import numpy as np
+
+    from listener.capture.audio import encode_flac
+    from listener.model import EventType, MeetingStatus
+    from listener.ui.meeting import MeetingWindow
+    from listener.ui.summary import SummaryDialog
+
+    rate = 16000
+    mid = store.create_meeting("Reunião sem som na saída", "ms-teams", None, None)
+    for ch in ("L", "R"):
+        store.insert_chunk(mid, ch, 0, 0, rate * 30, rate, 0, encode_flac(np.zeros(rate * 30, np.float32), rate))
+    store.add_event(mid, 0, EventType.START, {"source": "app", "exe": "ms-teams.exe"})
+    store.add_event(mid, 30_000, EventType.STOP, {"signal_ms": {"L": 21_000, "R": 0}})
+    store.finish_meeting(mid, 30_000)
+    store.meetings.set_status(mid, MeetingStatus.PROCESSED)
+    mw = MeetingWindow(store, mid)
+    shot(mw, "reuniao-sem-fala")
+    _discard(mw)
+    su = SummaryDialog(store, mid, {"duration_s": 30.0, "warnings": [], "signal_ms": {"L": 0, "R": 0}})
+    shot(su, "resumo-gravacao-com-falha")
+    _discard(su)
+
+
 def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Callable[..., None], app: Any, tmp: Path) -> None:
     """Todas as telas do L4, na ordem: assistente, reunião, Histórico, revisão e ficha, Ao vivo; F5.11, o que falta antes
     de gravar e o "Avançado"."""
@@ -318,6 +345,7 @@ def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Call
     _history_shots(store, thread, shot, tabs_of, app)
     _review_shots(store, mid, shot, tabs_of)
     _live_shots(store, shot)
+    _silent_shots(store, shot)
 
 
 __all__ = ["furnish", "l4_shots", "record_meeting"]

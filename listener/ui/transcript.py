@@ -187,6 +187,7 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
         self.view.customContextMenuRequested.connect(self._context_menu)
         bottom = self._build_footer()                    # F5.11 (A-35): o rodapé, de `ui/transcript_footer.py`
         self._empty: EmptyState | None = None                            # U-059: sem falas, o estado vazio (sob demanda)
+        self.empty_text = EMPTY_TEXT                                     # F5.11 (U-114): processada sem fala, o porquê
         self._deferred = False
         self.stack = QStackedWidget()
         self.stack.addWidget(self.view)
@@ -200,9 +201,14 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
     @property
     def empty(self) -> EmptyState:
         if self._empty is None:
-            self._empty = EmptyState("document", EMPTY_TEXT)
+            self._empty = EmptyState("document", self.empty_text)
             self.stack.addWidget(self._empty)
         return self._empty
+
+    def set_empty_text(self, text: str) -> None:
+        self.empty_text = text
+        if self._empty is not None:
+            self._empty.label.setText(text)
 
     def _page(self) -> None:
         """A lista ou o estado vazio; o vazio de uma aba escondida nasce quando ela aparece (a abertura não o cria)."""

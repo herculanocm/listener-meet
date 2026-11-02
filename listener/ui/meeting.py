@@ -15,7 +15,8 @@ ata, o executivo e o pré-resumo formatados (U-079, `ui/minutes_view.py`); os ma
 F5.11 L2: o cabeçalho numa linha, com o "⋯" e a legenda (U-102, `ui/meeting_header.py`, A-35); Ata, Ações e Resumo com a
 linha de pedido no lugar da barra da F5.6 (U-103, A-23); os `[mm:ss]` da ata e o "Quando" das Ações tocam a fala mais perto,
 até 5 s, como o chat (U-104, A-24); Espaço, ← e → tocam, voltam e avançam com a reunião em foco (U-105, `ui/meeting_keys.py`);
-o título mexido grava ao fechar e na saída do app (A-22)."""
+o título mexido grava ao fechar e na saída do app (A-22). L5 (U-114): a reunião processada sem fala abre na Transcrição,
+dizendo qual canal ficou sem som e qual fonte estava escolhida (`ui/sound_check.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -39,6 +40,7 @@ from .meeting_header import MeetingHeaderMixin
 from .meeting_keys import player_key
 from .meeting_parts import MarkersTab, SummaryTab
 from .player_bar import PlayerBar
+from .sound_check import no_speech_text
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
@@ -109,7 +111,10 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         self._restoring = False
         self.llm.reload()
         self.reload_header()
-        self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() else pages[0])
+        silent = "" if self.transcript.model.rowCount() else no_speech_text(store, meeting_id)   # F5.11 (U-114)
+        if silent:
+            self.transcript.set_empty_text(silent)
+        self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() or silent else pages[0])
         keep_until_destroyed(self)                       # R-06: a coleta de ciclos não a apaga antes do Qt
 
     def _request_pages(self) -> tuple[QWidget, QWidget, QWidget]:

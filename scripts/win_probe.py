@@ -17,10 +17,10 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               página inteira), as sub-abas dos provedores, o erro de
                                                               validação na página, e a fila nos seis estados e com o
                                                               aviso; quem usa o `fit_to_screen` cabe no notebook;
-                                                              L4 (`scripts/probe_l4.py`): a reunião com dados em todas as
-                                                              abas (pipeline falso), a ata em edição e os estados vazios, o
-                                                              Histórico com a busca, a revisão e a ficha, cada passo do
-                                                              assistente e o Ao vivo
+                                                              L4 (`scripts/probe_l4.py`): a reunião em todas as abas, a ata em
+                                                              edição, os vazios, o Histórico, a revisão, a ficha, o assistente
+                                                              e o Ao vivo; F5.11: a lista da saída, "Falta configurar" parada
+                                                              e baixando, o "Avançado" e a reunião sem fala (L5)
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -35,7 +35,7 @@ shots   janelas reais em (-10000, -10000) com WA_ShowWithoutActivating: o DPI ve
         (com WA_DontShowOnScreen os diálogos saem em DPR 1; a plataforma offscreen não tem as fontes do Windows). F5.4
         (A-03, A-21): `--escuro` força o esquema escuro no Qt (o Windows segue como está) e `--dpr1` desliga a escala
         (`QT_ENABLE_HIGHDPI_SCALING=0` antes do `QApplication`); o tema é aplicado como no app. `cortados` e `pequenos`
-        estão em `scripts/probe_ui.py`. F5.6: Histórico, caixas, popup, barra e warm-up em `scripts/probe_f56.py`.
+        estão em `scripts/probe_cuts.py`. F5.6: Histórico, caixas, popup, barra e warm-up em `scripts/probe_f56.py`.
 tempos  `scripts/probe_ui.py`: mediana de 7 aberturas por janela, em rodadas alternadas, e o menor de 3 processos; com
         `--base PASTA`, as rodadas alternam o código de antes (uma cópia, `git archive <commit> listener tests`) e o atual.
 player  a reunião é silêncio (nada audível) em pedaços de 60 s; o primeiro som roda em processos novos, um frio e um com o

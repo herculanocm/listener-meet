@@ -167,6 +167,7 @@ class CaptureSnapshot:
     db_error: str = ""
     unsaved: tuple[str, ...] = ()                       # "L3", "R7": retidos após falha definitiva
     lost: frozenset[str] = frozenset()                  # canais cujo dispositivo sumiu
+    signal_ms: tuple[int, int] = (0, 0)                 # F5.11 (A-32): o tempo com sinal acima do limiar, por canal
 
 
 # ---------------------------------------------------------------- mensagens da fila (imutáveis)
@@ -295,8 +296,7 @@ class Recorder(ReopenMixin):
         self.clock: Clock = clock or SessionClock.start()
         self.L = ChannelState("L")
         self.R = ChannelState("R")
-        self.paused = False
-        self.muted = False
+        self.paused = self.muted = False
         self.markers = 0
         self.warnings: list[str] = []
         self.source = cfg.source
@@ -318,9 +318,7 @@ class Recorder(ReopenMixin):
         self._snap = CaptureSnapshot()
         self._pipes: dict[str, _Pipeline] = {}
         self._sources: dict[str, int] = {}
-        self._w_paused = False
-        self._w_muted = False
-        self._w_cancel = False
+        self._w_paused = self._w_muted = self._w_cancel = False
         self._pending: deque[EncodedChunk] = deque()
         self._failed: list[EncodedChunk] = []
         self._failures = 0
@@ -745,8 +743,8 @@ class Recorder(ReopenMixin):
     def stats_light(self) -> dict[str, Any]:
         snap = self._snap
         return {"chunks": {"L": snap.chunks[0], "R": snap.chunks[1]}, "bytes": snap.bytes_written, "markers": self.markers,
-                "gaps_L": snap.drift["L"]["gap_frames"] if "L" in snap.drift else None,
-                "gaps_R": snap.drift["R"]["gap_frames"] if "R" in snap.drift else None,
+                **{f"gaps_{ch}": snap.drift[ch]["gap_frames"] if ch in snap.drift else None for ch in ("L", "R")},
+                "signal_ms": {"L": snap.signal_ms[0], "R": snap.signal_ms[1]},      # F5.11 (A-32): vai no evento `stop`
                 "drift": dict(snap.drift), "pending": snap.pending, "unsaved": list(snap.unsaved)}
 
     def stats(self) -> dict[str, Any]:
@@ -831,12 +829,14 @@ class Recorder(ReopenMixin):
         level = audio.rms(msg.data)
         silenced = self._w_paused or (self._w_muted and msg.channel == "L")
         snap = self._snap
-        levels, last, blocks = list(snap.levels), list(snap.last_signal), list(snap.blocks)
+        levels, last, blocks, sig = list(snap.levels), list(snap.last_signal), list(snap.blocks), list(snap.signal_ms)
         levels[i] = level
         blocks[i] += 1
         if level > self.cfg.silence_rms and not silenced:
             last[i] = t_rel
-        self._snap = replace(snap, levels=(levels[0], levels[1]), last_signal=(last[0], last[1]), blocks=(blocks[0], blocks[1]))
+            sig[i] += len(msg.data) * 1000 // max(1, pipe.sr_in)       # A-32: "teve som" deixa de existir só em memória
+        self._snap = replace(snap, levels=(levels[0], levels[1]), last_signal=(last[0], last[1]), blocks=(blocks[0], blocks[1]),
+                             signal_ms=(sig[0], sig[1]))
         data = self._silence(len(msg.data)) if silenced else msg.data
         pipe.feed(data, t_rel, silenced)
 

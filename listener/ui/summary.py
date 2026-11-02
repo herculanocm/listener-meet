@@ -9,11 +9,13 @@ com a última escolha; sem chave, apagadas com o aviso. O OK grava a escolha e, 
 a escolha vira o pedido preso ao processamento que o parar enfileirou (`after_job_id`, que `_enqueue_processing` devolve;
 None = o próximo processamento, com o `pipeline.auto_start` desligado). O X e o Esc não pedem nada nem gravam a escolha;
 revisão do L1b: o "Cancelar" do popup também não grava (só o pedido feito, ou o OK sem caixa marcada), e o resultado do
-pedido, ou a falha dele, vai para o aviso do app (`on_message`, R-05)."""
+pedido, ou a falha dele, vai para o aviso do app (`on_message`, R-05).
+F5.11 L5 (U-115, P-04): "Gravação salva com falha" quando a saída ficou sem som ou um canal não abriu (além do pedaço fora
+do banco), pelo `signal_ms` do gravador (`ui/sound_check.py`); o microfone sem som vira aviso na linha dele."""
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget
@@ -26,6 +28,7 @@ from . import llm_ask
 from .common import human_size
 from .icons import set_icon
 from .llm_request import Chooser, RequestBoxes, choose
+from .sound_check import Sound, channel_states, failed
 from .theme import Tone, primary, role, tone
 
 if TYPE_CHECKING:
@@ -35,6 +38,9 @@ log = get_logger("ui.summary")
 
 HEADER_ICON_PX = 32
 SAVED, SAVED_WITH_FAILURE = "Gravação salva", "Gravação salva com falha"
+CHANNEL_NOTES = {("L", Sound.SILENT): "microfone sem som: confira o mudo e o aparelho escolhido",
+                 ("R", Sound.SILENT): "saída sem som: a reunião tocou em outra saída ou outro app?",
+                 ("L", Sound.CLOSED): "o microfone não abriu", ("R", Sound.CLOSED): "a saída não abriu"}     # U-115
 
 
 class SummaryDialog(QDialog):
@@ -49,21 +55,21 @@ class SummaryDialog(QDialog):
         self.on_launch = on_launch                     # `on_launch(True)`: o worker leve, quando o pedido já virou job
         self.on_message = on_message                   # R-05: o resultado do pedido no aviso do app
         self.choose: Chooser = choose                  # U-090: o popup (os testes trocam)
-        self.setWindowTitle(SAVED_WITH_FAILURE if stats.get("unsaved") else SAVED)
-        self.setMinimumWidth(480)
         m = store.get_meeting(meeting_id) or {}
         cs = store.chunk_stats(meeting_id)
+        states = channel_states(stats.get("signal_ms"), cs)          # U-115 (P-04): quem teve som
+        self.failed = failed(states, stats.get("unsaved"))
+        self.setWindowTitle(SAVED_WITH_FAILURE if self.failed else SAVED)
+        self.setMinimumWidth(480)
         self.title_edit = QLineEdit(m.get("title") or "")
         self.title_edit.setPlaceholderText("título da reunião")
         form = QFormLayout(self)
-        form.addRow(self._header(stats.get("unsaved")))
+        form.addRow(self._header(self.failed))
         form.addRow("Título", self.title_edit)
         form.addRow("Duração", QLabel(fmt_mmss(stats.get("duration_s", 0))))
-        for ch in ("L", "R"):
-            c = cs.get(ch)
-            gaps = fmt_mmss((c["gaps"] or 0) / (c["sr"] or 16000)) if c else ""
-            txt = "sem áudio" if not c else f"{c['n']} pedaços · {human_size(c['bytes'] or 0)} · buracos preenchidos: {gaps}"
-            form.addRow(f"Canal {ch}", QLabel(txt))
+        self.channels = {ch: self._channel(ch, cs.get(ch), states) for ch in ("L", "R")}
+        for ch, lab in self.channels.items():
+            form.addRow(f"Canal {ch}", lab)
         markers = store.list_markers(meeting_id)
         self.markers: QListWidget | None = None
         if markers:                                    # U-069: a lista só quando há marcador
@@ -86,6 +92,19 @@ class SummaryDialog(QDialog):
             primary(self, ok)
 
     @staticmethod
+    def _channel(ch: str, c: Mapping[str, Any] | None, states: Mapping[str, Sound] | None) -> QLabel:
+        """A linha do canal: os pedaços, o tamanho e os buracos; sem som ou sem abrir, o aviso (o microfone, só aviso)."""
+        gaps = fmt_mmss((c["gaps"] or 0) / (c["sr"] or 16000)) if c else ""
+        text = "sem áudio" if not c else f"{plural(c['n'], 'pedaço')} · {human_size(c['bytes'] or 0)} · buracos preenchidos: {gaps}"
+        state = states.get(ch) if states is not None else None
+        note = CHANNEL_NOTES.get((ch, state)) if state is not None else None
+        lab = QLabel(text if note is None else note if state == Sound.CLOSED else f"{text} · {note}")
+        if note is not None:
+            tone(lab, Tone.WARNING if ch == "L" and state == Sound.SILENT else Tone.DANGER)
+            lab.setWordWrap(True)
+        return lab
+
+    @staticmethod
     def _warnings(form: QFormLayout, stats: dict[str, Any]) -> None:
         unsaved = stats.get("unsaved") or []
         if unsaved:
@@ -102,15 +121,15 @@ class SummaryDialog(QDialog):
             form.addRow("Avisos", w)
 
     @staticmethod
-    def _header(unsaved: object) -> QHBoxLayout:
-        """U-069: o ícone de sucesso e "Gravação salva" em 20 px; com pedaços não gravados, o de aviso e a falha no título."""
+    def _header(failure: bool) -> QHBoxLayout:
+        """U-069: o ícone de sucesso e "Gravação salva" em 20 px; com falha (U-115), o de aviso e a falha no título."""
         icon = QLabel()
         icon.setFixedSize(HEADER_ICON_PX, HEADER_ICON_PX)
-        if unsaved:
+        if failure:
             set_icon(icon, "warning", Tone.WARNING, HEADER_ICON_PX)
         else:
             set_icon(icon, "success", Tone.SUCCESS, HEADER_ICON_PX)
-        title = QLabel(SAVED_WITH_FAILURE if unsaved else SAVED)
+        title = QLabel(SAVED_WITH_FAILURE if failure else SAVED)
         role(title, "subtitle")
         row = QHBoxLayout()
         row.setSpacing(12)
