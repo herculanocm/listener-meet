@@ -9,7 +9,8 @@ contrastam com o aro nos dois temas da barra. O mesmo desenho, sem selo, é o í
 F5.7 (L3, U-094): com uma reunião sem gravação pendente (o aviso à vista ou sumido sem clique), a dica diz qual, o primeiro
 item do menu, em negrito e padrão, é "Gravar a reunião do Teams…", logo abaixo vem "Não avisar para o Teams" (com o nome
 do que desliga: "Chrome", não "Google Meet no Chrome", R-07) e o clique esquerdo abre o "Antes de gravar" com o app como
-fonte (a cola, `ui/call_watch.py`, liga as duas ações)."""
+fonte (a cola, `ui/call_watch.py`, liga as duas ações).
+F5.12 (U-122): "Sobre o listener-meet…", entre as Configurações e o Sair, abre o Sobre (`ui/about_dialog.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from PySide6.QtCore import QObject, QRectF, Qt
 from PySide6.QtGui import QAction, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from .. import about
 from ..model import AppState
 from . import icons
 from .common import STATE_TONES
@@ -34,6 +36,7 @@ ICON_SIZES = (16, 20, 24, 32, 40, 48, 64)     # o que o Windows pede na bandeja,
 BADGE = 0.56                                  # o diâmetro do selo, na fração do lado do ícone (no canto de baixo à direita)
 CALL_TIP = "listener-meet: reunião no {label} sem gravação"          # F5.7 (U-094)
 CALL_RECORD, CALL_OFF = "Gravar a reunião do {label}…", "Não avisar para o {label}"
+ABOUT_ITEM = f"Sobre o {about.APP_NAME}…"                           # F5.12 (U-122)
 
 
 def icon_color(state: str) -> str:
@@ -112,6 +115,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_history = QAction("Histórico…", self.menu)
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
+        self.act_about = QAction(ABOUT_ITEM, self.menu)              # F5.12 (U-122)
         self.act_quit = QAction("Sair", self.menu)
         self._call_actions()
         for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
@@ -120,6 +124,9 @@ class TrayIcon(QSystemTrayIcon):
         self.menu.addAction(self.act_history)
         self.menu.addAction(self.act_queue)
         self.menu.addAction(self.act_settings)
+        self.menu.addSeparator()
+        self.menu.addAction(self.act_about)
+        self.menu.addSeparator()
         self.menu.addAction(self.act_quit)
         self.queue_tip = ""
         self._state = AppState.IDLE
@@ -133,6 +140,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_history.triggered.connect(self._open_history)
         self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
+        self.act_about.triggered.connect(self._open_about)
         self.act_quit.triggered.connect(controller.quit)
         self.activated.connect(self._activated)
         self.messageClicked.connect(controller.open_last_notified)
@@ -143,6 +151,12 @@ class TrayIcon(QSystemTrayIcon):
 
     def _open_warmup(self) -> None:
         self.controller.open_warmup()
+
+    def _open_about(self) -> None:
+        """F5.12 (U-122): o Sobre, modal, com a pasta do banco e o arquivo de log do app."""
+        from .about_dialog import open_about
+
+        open_about(None, self.controller.store, via="bandeja")
 
     # ---------------------------------------------------------------- F5.7: a reunião sem gravação
     def _call_actions(self) -> None:

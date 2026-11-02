@@ -19,6 +19,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from probe_f512 import f512_shots          # F5.12: só a biblioteca padrão no topo (o Qt entra na chamada)
+
 MINUTES = """## Contexto
 
 Comitê mensal sobre o **orçamento de 2027** e o fluxo de caixa do fundo.
@@ -336,7 +338,7 @@ def _silent_shots(store: Any, shot: Callable[..., None]) -> None:
 
 def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Callable[..., None], app: Any, tmp: Path) -> None:
     """Todas as telas do L4, na ordem: assistente, reunião, Histórico, revisão e ficha, Ao vivo; F5.11, o que falta antes
-    de gravar e o "Avançado"."""
+    de gravar e o "Avançado"; F5.12, as de `scripts/probe_f512.py`."""
     _wizard_shots(platform, shot)
     _setup_shots(store, platform, shot, tmp)
     mid = record_meeting(store, tmp)
@@ -346,6 +348,7 @@ def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Call
     _review_shots(store, mid, shot, tabs_of)
     _live_shots(store, shot)
     _silent_shots(store, shot)
+    f512_shots(store, platform, shot, app)                # F5.12: o Sobre (e, no L2, o apoio e o convite)
 
 
 __all__ = ["furnish", "l4_shots", "record_meeting"]

@@ -14,7 +14,8 @@ o estado em selo (U-075); sem jargão interno na tela (U-076). Um erro de valida
 numa faixa, sem caixa de mensagem (U-072); a marca sai quando o valor do campo muda, também na tabela de preços (revisão da
 F5.4, R-09). O valor salvo que a `SPECS` recusa, num editor tipado, dá lugar ao padrão, gravado ao salvar, com o aviso numa
 faixa no topo da página (R-04). F5.6 L2 (U-092): a página "Prompts" (`ui/settings_prompts.py`), depois da LLM, com as
-instruções de cada tarefa; o Salvar valida e grava as tarefas abertas nela."""
+instruções de cada tarefa; o Salvar valida e grava as tarefas abertas nela. F5.12 (U-122): a página "Sobre", a última, que
+nasce quando aparece (`ui/settings_about.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -35,6 +36,7 @@ from .common import fit_to_screen
 from .components import Badge, InfoBar, expand_ancestors
 from .live_prepare import ModelPreparer, preparer
 from .providers import ProviderTabs
+from .settings_about import AboutPageMixin
 from .settings_editors import SettingEditor, make_editor
 from .settings_general import SUBTITLES, TOAST_SECONDS, GeneralPagesMixin, audio_cost_text, breakable_path
 from .settings_pages import SettingsPage
@@ -97,7 +99,7 @@ def ask_reindex(parent: QWidget | None, text: str, yes: str, no: str) -> bool:
     return box.clickedButton() is accept
 
 
-class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
+class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, AboutPageMixin, QDialog):
     def __init__(self, store: Store, platform: Platform, hotkey_errors: dict[str, str] | None = None,
                  parent: QWidget | None = None, on_launch: Callable[[bool], Any] | None = None, *, recording: bool = False,
                  model_preparer: ModelPreparer | None = None):
@@ -121,7 +123,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
         self.provider_tabs = ProviderTabs(store, on_launch)            # a chave de cada sub-aba vai para a primeira página
         self.hf_token = QLineEdit(store.settings.provider_key(HF_PROVIDER_ID))
         built = (self._keys_page(), self._language_page(), self._capture_page(), self._hotkeys_page(), self._processing_page(),
-                 self._llm_page(), self._prompts_page(), self._live_page(), self._search_page(), self._data_page())
+                 self._llm_page(), self._prompts_page(), self._live_page(), self._search_page(), self._data_page(), self._about_page())
         self.pages: dict[str, SettingsPage] = {page.page_title: page for page in built}
         self._lay_out()
         self.refresh_index_status()
@@ -173,6 +175,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
 
     def _page_changed(self, index: int) -> None:
         self.prompt_page_shown(self.stack.widget(index))
+        self.about_page_shown(self.stack.widget(index))              # F5.12 (U-122): o Sobre nasce ao aparecer
 
     def editor(self, key: str) -> SettingEditor:
         """A-14: o editor de uma chave (`raw()` e `set_raw()`)."""

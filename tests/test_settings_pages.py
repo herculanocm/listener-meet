@@ -32,7 +32,7 @@ def test_settings_open_in_pages_with_navigation_and_one_save(qtbot, store, platf
 
     dlg = _dialog(qtbot, store, platform)
     titles = [KEYS_TITLE, "Idioma e avisos", "Captura", "Atalhos", "Processamento", "LLM", "Prompts", "Ao vivo", "Busca",
-              "Log e banco de dados"]                                    # F5.6 L2 (U-092): "Prompts" depois da LLM
+              "Log e banco de dados", "Sobre"]                           # F5.6 L2 (U-092): "Prompts" depois da LLM; F5.12: "Sobre"
     assert list(dlg.pages) == titles and [dlg.nav.item(i).text() for i in range(dlg.nav.count())] == titles
     assert (dlg.width(), dlg.height()) == (960, 640) and dlg.stack.currentWidget() is dlg.page(KEYS_TITLE)
     dlg.nav.setCurrentRow(titles.index("Busca"))

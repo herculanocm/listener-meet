@@ -3,15 +3,18 @@ célula, pelo `BadgeDelegate`), `EmptyState`, `IconButton` e o `HtmlView`, o `QT
 Quem pinta lê os tokens na hora da pintura (a troca de tema só repinta); os ícones vêm de `ui/icons` (`theme_icon`). O
 `HtmlView` já serve o Histórico e o Ao vivo (o HTML por classes do L1); os outros, as telas passam a usar do L2 ao L4. No
 contraste alto (revisão da F5.4, R-03) a faixa e o selo ficam no fundo da janela, com a borda no tom (`Tokens.edge`).
-F5.11 (A-34): `Collapsible`, o grupo recolhível (o "Avançado" das Configurações), com o chevron que já existe."""
+F5.11 (A-34): `Collapsible`, o grupo recolhível (o "Avançado" das Configurações), com o chevron que já existe.
+F5.12: `LinkLabel`, o link discreto (o Sobre no assistente, o apoio no rodapé do Histórico, o "Já doei" do convite)."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, override
+import html
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QEvent, QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPainter, QTransform
-from PySide6.QtWidgets import (QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton, QStyle, QStyledItemDelegate,
-                               QStyleOptionViewItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle,
+                               QStyledItemDelegate, QStyleOptionViewItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from ..model import MIC_ROOM, MIC_YOU
 from .icons import BUTTON_SIZE, pixmap, screen_dprs, set_icon
@@ -274,5 +277,32 @@ def expand_ancestors(widget: QWidget) -> None:
         parent = parent.parentWidget()
 
 
+class LinkLabel(QLabel):
+    """F5.12: o link discreto, um rótulo com um `<a>` na cor do link da paleta (`accent`, sem cor nova) que emite `clicked`
+    sem o endereço e chama `on_click`, quando dado (ligado a um método: R-06). Com `keyboard`, o Tab chega nele e o Enter o
+    aciona; sem, ele não pega foco (o cartão do convite, que nunca rouba o foco)."""
+    clicked = Signal()
+
+    def __init__(self, text: str, on_click: Callable[[], Any] | None = None, *, keyboard: bool = True, font_role: str = "body",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(f'<a href="link">{html.escape(text)}</a>', parent)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setOpenExternalLinks(False)
+        flags = Qt.TextInteractionFlag.LinksAccessibleByMouse
+        if keyboard:
+            flags |= Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+        self.setTextInteractionFlags(flags)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus if keyboard else Qt.FocusPolicy.NoFocus)
+        self.setAccessibleName(text)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        role(self, font_role)
+        self.linkActivated.connect(self._activated)
+        if on_click is not None:
+            self.clicked.connect(on_click)
+
+    def _activated(self, _href: str) -> None:
+        self.clicked.emit()
+
+
 __all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "Collapsible", "EmptyState", "HtmlView", "IconButton", "InfoBar",
-           "expand_ancestors", "mic_title"]
+           "LinkLabel", "expand_ancestors", "mic_title"]

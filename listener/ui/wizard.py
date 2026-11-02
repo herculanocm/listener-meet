@@ -6,7 +6,8 @@ F5.4 L4 (U-088, A-21): o `QWizard.ModernStyle`, sem a faixa vazia do Aero; no ca
 "Passo n de 6" em legenda (o texto que explicava a página desce para o começo dela); Próximo e Concluir como primários
 (U-056). O cabeçalho é privado do Qt: os rótulos dele são achados pelo texto, a cada troca de página.
 F5.11 (U-113): o assistente conta os passos que mostra: as boas-vindas não são passo, e o "Em cinco passos" dela sai da
-mesma conta do "Passo n de 5"; o token do Hugging Face tem "Testar" (`ui/hf_test.py`), que morre com o assistente."""
+mesma conta do "Passo n de 5"; o token do Hugging Face tem "Testar" (`ui/hf_test.py`), que morre com o assistente.
+F5.12 (U-122): o link "Sobre o listener-meet" nas boas-vindas abre o Sobre, sem pedido de doação (pergunta 4)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,12 +18,15 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QPushButton, QVBoxLayout, QWidget, QWizard, QWizardPage)
 
+from .. import about
 from ..capture.audio import rms
 from ..config import bootstrap
 from ..config.defaults import LOG_LEVELS
 from ..log import attach_file, get_logger
 from ..platform.base import log_id
 from ..store import Store
+from .about_dialog import open_about
+from .components import LinkLabel
 from .devices import REFRESH_MS, refresh_mics
 from .keys import KeysPage, save_wizard_keys
 from .meters import LevelMeter
@@ -58,8 +62,13 @@ class IntroPage(QWizardPage):
         self.setTitle("Bem-vindo ao listener-meet")
         self.text = QLabel("")
         self.text.setWordWrap(True)
+        self.about_link = LinkLabel(f"Sobre o {about.APP_NAME}", self._about)   # F5.12 (U-122): só o Sobre, sem doação
         lay = QVBoxLayout(self)
         lay.addWidget(self.text)
+        lay.addWidget(self.about_link)
+
+    def _about(self) -> None:
+        open_about(self, None, via="assistente")
 
 
 class UserPage(QWizardPage):
