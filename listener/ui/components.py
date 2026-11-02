@@ -2,18 +2,19 @@
 célula, pelo `BadgeDelegate`), `EmptyState`, `IconButton` e o `HtmlView`, o `QTextBrowser` do HTML por classes (A-10).
 Quem pinta lê os tokens na hora da pintura (a troca de tema só repinta); os ícones vêm de `ui/icons` (`theme_icon`). O
 `HtmlView` já serve o Histórico e o Ao vivo (o HTML por classes do L1); os outros, as telas passam a usar do L2 ao L4. No
-contraste alto (revisão da F5.4, R-03) a faixa e o selo ficam no fundo da janela, com a borda no tom (`Tokens.edge`)."""
+contraste alto (revisão da F5.4, R-03) a faixa e o selo ficam no fundo da janela, com a borda no tom (`Tokens.edge`).
+F5.11 (A-34): `Collapsible`, o grupo recolhível (o "Avançado" das Configurações), com o chevron que já existe."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QEvent, QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QPainter, QTransform
 from PySide6.QtWidgets import (QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from ..model import MIC_ROOM, MIC_YOU
-from .icons import set_icon
+from .icons import BUTTON_SIZE, pixmap, screen_dprs, set_icon
 from .style import rounded
 from .theme import PRIMARY, STATUS_TONES, TONE_ROLE, Tone, html_css, qcolor, role, set_kind, surface_tokens, tone
 
@@ -213,4 +214,65 @@ def mic_title(box: QGroupBox, in_room: bool) -> None:
     box.setTitle(MIC_ROOM if in_room else MIC_YOU)
 
 
-__all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "EmptyState", "HtmlView", "IconButton", "InfoBar", "mic_title"]
+class Collapsible(QWidget):
+    """F5.11 (A-34): o grupo recolhível. O cabeçalho é um botão marcável com o chevron (para baixo fechado, para cima aberto,
+    como o Expander do Windows 11); fechado, o corpo (`content`) some, mas o que está nele existe desde a abertura."""
+    toggled = Signal(bool)
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.header = QToolButton(self)
+        self.header.setText(title)
+        self.header.setCheckable(True)
+        self.header.setAutoRaise(True)
+        self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.header.setAccessibleName(title)
+        self.body = QWidget(self)
+        self.content = QVBoxLayout(self.body)
+        self.content.setContentsMargins(0, 0, 0, 0)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.header, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(self.body)
+        self.header.toggled.connect(self._set_open)
+        self._set_open(False)
+
+    def is_open(self) -> bool:
+        return self.header.isChecked()
+
+    def expand(self) -> None:
+        self.header.setChecked(True)
+
+    def _set_open(self, on: bool) -> None:
+        self.body.setVisible(on)
+        self._chevron()
+        self.toggled.emit(on)
+
+    def _chevron(self) -> None:
+        """O chevron no tom do texto, virado para cima com o grupo aberto (a troca de tema o refaz, `changeEvent`)."""
+        dpr = max(screen_dprs())
+        px = pixmap("chevron-down", surface_tokens(self.header).text, BUTTON_SIZE, dpr)
+        if self.header.isChecked():
+            px = px.transformed(QTransform().rotate(180))
+            px.setDevicePixelRatio(dpr)
+        self.header.setIcon(QIcon(px))
+        self.header.setIconSize(QSize(BUTTON_SIZE, BUTTON_SIZE))
+
+    @override
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange, QEvent.Type.StyleChange):
+            self._chevron()
+
+
+def expand_ancestors(widget: QWidget) -> None:
+    """A-34: o campo dentro de um grupo recolhível fechado fica à vista (o erro de validação abre o grupo)."""
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, Collapsible):
+            parent.expand()
+        parent = parent.parentWidget()
+
+
+__all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "Collapsible", "EmptyState", "HtmlView", "IconButton", "InfoBar",
+           "expand_ancestors", "mic_title"]

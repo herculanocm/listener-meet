@@ -30,6 +30,7 @@ class SettingSpec[T]:
     choices: frozenset[T] | None = None  # valores aceitos (taxas de amostragem, níveis de log)
     phase: str = "F1"
     internal: bool = False               # escrita pelo app, não pelo usuário: fora do diálogo de configurações
+    advanced: bool = False               # F5.11 (A-34): no grupo "Avançado" da página, fechado por padrão (segue editável, CP8)
 
     @property
     def default_text(self) -> str:
@@ -135,17 +136,22 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("pipeline.transcriber", "whisper", _NOW, "Transcritor", _text, choices=frozenset(TRANSCRIBERS), phase="F2"),
     SettingSpec("pipeline.whisper_model", "large-v3-turbo", _NOW, "Modelo do Whisper", _text, choices=frozenset(WHISPER_MODELS),
                 phase="F2"),
-    SettingSpec("pipeline.whisper_hq", False, _NOW, "Alta precisão (wav2vec2, mais lento)", _bool, phase="F2"),
+    SettingSpec("pipeline.whisper_hq", False, _NOW, "Alta precisão (wav2vec2, mais lento)", _bool, phase="F2", advanced=True),
     SettingSpec("pipeline.glossary", "", _NOW, "Glossário (termos e nomes, separados por vírgula)", _text, phase="F2"),
-    SettingSpec("pipeline.threshold", 0.60, _NOW, "Limiar de identificação (0,45 a 0,75)", float, low=0.45, high=0.75, phase="F2"),
+    SettingSpec("pipeline.threshold", 0.60, _NOW, "Limiar de identificação (0,45 a 0,75)", float, low=0.45, high=0.75, phase="F2",
+                advanced=True),
     SettingSpec("pipeline.margin", 0.05, _NOW, "Margem entre os dois melhores perfis (0,01 a 0,20)", float, low=0.01, high=0.20,
-                phase="F2"),
-    SettingSpec("pipeline.models_dir", "", _NOW, "Pasta dos modelos (vazio = pasta padrão do sistema)", _text, phase="F2"),
-    SettingSpec("pipeline.torch_threads", _default_threads(), _NOW, "Threads de CPU do processamento", int, low=1, high=64, phase="F2"),
+                phase="F2", advanced=True),
+    SettingSpec("pipeline.models_dir", "", _NOW, "Pasta dos modelos (vazio = pasta padrão do sistema)", _text, phase="F2",
+                advanced=True),
+    SettingSpec("pipeline.torch_threads", _default_threads(), _NOW, "Threads de CPU do processamento", int, low=1, high=64, phase="F2",
+                advanced=True),
     SettingSpec("pipeline.auto_start", True, _NOW, "Processar sozinho ao parar a gravação", _bool, phase="F2"),
     SettingSpec("pipeline.pause_on_record", True, _NOW, "Pausar a fila enquanto grava", _bool, phase="F2"),
-    SettingSpec("pipeline.diar_window_s", 1200, _NOW, "Janela da separação de vozes (s)", int, low=300, high=7200, phase="F2"),
-    SettingSpec("pipeline.whisper_window_s", 600, _NOW, "Janela da transcrição (s)", int, low=60, high=1800, phase="F2"),
+    SettingSpec("pipeline.diar_window_s", 1200, _NOW, "Janela da separação de vozes (s)", int, low=300, high=7200, phase="F2",
+                advanced=True),
+    SettingSpec("pipeline.whisper_window_s", 600, _NOW, "Janela da transcrição (s)", int, low=60, high=1800, phase="F2",
+                advanced=True),
     SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),

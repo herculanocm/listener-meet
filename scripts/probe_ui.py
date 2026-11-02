@@ -17,9 +17,8 @@ tempos     a abertura das janelas (warm-up, Configurações, reunião, Históric
            F5.4 L2: o `fit_to_screen` do warm-up (A-17) traria a janela para a tela, onde o Windows a pintaria (a base não
            tem isso): a sonda o troca pelo mesmo cálculo sem mover (`fit_offscreen`), e o custo dele segue medido. L3: o
            mesmo nas Configurações e na fila (`FITTED`); L4, na reunião e no Histórico.
-cortados   rótulo, botão, aba, cabeçalho de tabela ou título de cartão (L1b) com o texto maior que o espaço; o cortado de
-           propósito, com reticências e o texto inteiro na dica, não conta.
-pequenos   o alvo de clique do Aceite 3: botão, campo e combo abaixo de 32 por 32 px; caixa de seleção abaixo de 24 px.
+cortados e pequenos: em `scripts/probe_cuts.py` (F5.11, A-35: saíram daqui, que passava de 400 linhas; A-16: o `cortados`
+           chega aos combos, às células de tabela e aos rótulos cortados com dica). `layout_report` segue importável daqui.
 """
 from __future__ import annotations
 
@@ -35,12 +34,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from probe_cuts import layout_report
+
 WINDOWS = ("warmup", "configuracoes", "reuniao", "historico", "fila", "revisao")
 FITTED = ("listener.ui.warmup", "listener.ui.settings_min", "listener.ui.queue", "listener.ui.meeting", "listener.ui.history")  # A-17
 ROUNDS, RUNS, TICKS = 7, 3, 300
-TARGET_PX, CHECK_PX = 32, 24          # Aceite 3: botão, campo e combo; caixa de seleção
-CARD_TITLE_INSET = 6                  # a folga à direita do título do cartão (o `TITLE_INSET` de `ui/style.py`)
-ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
 def apply_theme(app: Any, platform: Any, scheme: Any = None) -> bool:
@@ -282,145 +280,4 @@ def run_tempos(script: Path, base: str | None, runs: int, rounds: int, out: Call
     out("tempos", rounds=rounds, runs=runs, best=best, delta_pct=_delta(best.get("atual", {}), best.get("base", {})))
 
 
-# ---------------------------------------------------------------- cortados e pequenos
-def _name(w: Any) -> str:
-    text = ""
-    for attr in ("text", "title", "windowTitle"):
-        fn = getattr(w, attr, None)
-        if callable(fn):
-            text = str(fn() or "")
-            if text:
-                break
-    text = " ".join(text.split())
-    return f"{type(w).__name__}{'#' + w.objectName() if w.objectName() else ''} {text[:48]!r}"
-
-
-def _internal(w: Any) -> bool:
-    """Peças internas do Qt (setas de rolagem das abas, o botão de limpar do campo, o campo de um combo editável)."""
-    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit, QTabBar
-
-    parent = w.parentWidget()
-    return w.objectName().startswith("qt_") or isinstance(parent, QTabBar | QLineEdit | QComboBox | QAbstractSpinBox)
-
-
-def _label_cut(lab: Any) -> dict[str, Any] | None:
-    pix = lab.pixmap()
-    text = lab.text()
-    if (pix is not None and not pix.isNull()) or not text.strip():
-        return None
-    if text.rstrip().endswith(ELLIPSIS) and lab.toolTip():
-        return None                                   # cortado de propósito, inteiro na dica
-    if lab.wordWrap():
-        need = lab.heightForWidth(lab.width())
-        return {"need_h": need, "h": lab.height()} if need > lab.height() + 1 else None
-    need = lab.sizeHint().width()
-    return {"need_w": need, "w": lab.width()} if need > lab.width() + 1 else None
-
-
-def _button_cut(btn: Any) -> dict[str, Any] | None:
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QToolButton
-
-    if not btn.text() or (isinstance(btn, QToolButton) and btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly):
-        return None
-    need = btn.sizeHint().width()
-    return {"need_w": need, "w": btn.width()} if need > btn.width() + 1 else None
-
-
-def _tabs_cut(bar: Any) -> list[dict[str, Any]]:
-    from PySide6.QtWidgets import QStyle
-
-    space = bar.style().pixelMetric(QStyle.PixelMetric.PM_TabBarTabHSpace, None, bar)
-    found = []
-    for i in range(bar.count()):
-        if not bar.isTabVisible(i):
-            continue
-        rect, text = bar.tabRect(i), bar.tabText(i)
-        need = bar.fontMetrics().horizontalAdvance(text) + space
-        if need > rect.width() + 1 or not bar.rect().contains(rect):
-            found.append({"what": f"aba {text!r}", "need_w": need, "w": rect.width(), "inside": bar.rect().contains(rect)})
-    return found
-
-
-def _header_cut(header: Any) -> list[dict[str, Any]]:
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QStyle
-
-    model = header.model()
-    if model is None or header.orientation() != Qt.Orientation.Horizontal:
-        return []
-    style, fm = header.style(), header.fontMetrics()
-    pad = 2 * style.pixelMetric(QStyle.PixelMetric.PM_HeaderMargin, None, header)
-    mark = style.pixelMetric(QStyle.PixelMetric.PM_HeaderMarkSize, None, header)
-    found = []
-    for logical in range(header.count()):
-        if header.isSectionHidden(logical):
-            continue
-        text = str(model.headerData(logical, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or "")
-        need = max(fm.horizontalAdvance(line) for line in text.split("\n")) + pad
-        if header.isSortIndicatorShown() and header.sortIndicatorSection() == logical:
-            need += mark
-        if text and need > header.sectionSize(logical) + 1:
-            found.append({"what": f"cabeçalho {text!r}", "need_w": need, "w": header.sectionSize(logical)})
-    return found
-
-
-def _group_cut(box: Any) -> dict[str, Any] | None:
-    """F5.4 L1b: o título do cartão (o `ThemeStyle` o pinta dentro, `TITLE_INSET` abaixo) no espaço que o grupo tem."""
-    from PySide6.QtWidgets import QStyle, QStyleOptionGroupBox
-
-    if not box.title():
-        return None
-    opt = QStyleOptionGroupBox()
-    box.initStyleOption(opt)
-    label = box.style().subControlRect(QStyle.ComplexControl.CC_GroupBox, opt, QStyle.SubControl.SC_GroupBoxLabel, box)
-    need = label.left() + box.fontMetrics().horizontalAdvance(box.title()) + CARD_TITLE_INSET
-    return {"need_w": need, "w": box.width()} if need > box.width() + 1 else None
-
-
-def _cut(w: Any) -> list[dict[str, Any]]:
-    from PySide6.QtWidgets import QAbstractButton, QGroupBox, QHeaderView, QLabel, QTabBar
-
-    if isinstance(w, QLabel):
-        found = _label_cut(w)
-    elif isinstance(w, QAbstractButton):
-        found = _button_cut(w)
-    elif isinstance(w, QGroupBox):
-        found = _group_cut(w)
-    elif isinstance(w, QTabBar):
-        return [{"widget": _name(w), **item} for item in _tabs_cut(w)]
-    elif isinstance(w, QHeaderView):
-        return [{"widget": _name(w), **item} for item in _header_cut(w)]
-    else:
-        return []
-    return [{"widget": _name(w), **found}] if found else []
-
-
-def _small(w: Any) -> dict[str, Any] | None:
-    from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QComboBox, QLineEdit, QPushButton, QRadioButton, QToolButton
-
-    size = {"w": w.width(), "h": w.height()}
-    if isinstance(w, QCheckBox | QRadioButton):
-        return {"widget": _name(w), "min": f"altura {CHECK_PX}", **size} if w.height() < CHECK_PX else None
-    if isinstance(w, QPushButton | QToolButton):
-        small = w.height() < TARGET_PX or w.width() < TARGET_PX
-        return {"widget": _name(w), "min": f"{TARGET_PX} x {TARGET_PX}", **size} if small else None
-    if isinstance(w, QLineEdit | QComboBox | QAbstractSpinBox):
-        return {"widget": _name(w), "min": f"altura {TARGET_PX}", **size} if w.height() < TARGET_PX else None
-    return None
-
-
-def layout_report(root: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Os `cortados` e os `pequenos` do que está à vista na janela (abas escondidas e janelas fechadas ficam fora)."""
-    from PySide6.QtWidgets import QWidget
-
-    cut: list[dict[str, Any]] = []
-    small: list[dict[str, Any]] = []
-    for w in (root, *root.findChildren(QWidget)):
-        if (w is not root and not w.isVisibleTo(root)) or w.width() <= 0 or _internal(w):
-            continue
-        cut.extend(_cut(w))
-        found = _small(w)
-        if found is not None:
-            small.append(found)
-    return cut, small
+__all__ = ["apply_theme", "fit_offscreen", "layout_report", "measure", "open_ms", "release_theme", "run_tempos"]

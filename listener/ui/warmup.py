@@ -20,7 +20,10 @@ primário com o ícone de gravar (U-066); as fontes com o medidor de cada uma e 
 linha "Opções" (U-067). Os avisos do microfone, do eco e dos modelos do ao vivo viram faixas (U-057); os links vão a métodos,
 não a lambdas que prendam o diálogo (R-06).
 F5.7 L3 (U-094): os presets e a última escolha moram em `ui/warmup_source.py`, com a fonte vinda do aviso de reunião
-(`source_hint`: a linha do app, a faixa no topo e o foco no Gravar) e a saída da captura de tela ao aparecer (D-065)."""
+(`source_hint`: a linha do app, a faixa no topo e o foco no Gravar) e a saída da captura de tela ao aparecer (D-065).
+F5.11 L4: as faixas e o aviso único "Falta configurar" (token, chave da IA e modelos da legenda, com "Configurar",
+"Preparar agora" e "Cancelar") moram em `ui/warmup_notice.py` (U-111, U-112, A-31, A-35); a saída escolhida numa lista no
+molde do painel do widget (U-110, `ui/sources.py`) e o combo do microfone cortado no meio do nome (`ElidedCombo`)."""
 from __future__ import annotations
 
 import functools
@@ -32,7 +35,7 @@ from typing import TYPE_CHECKING, Any, override
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QShowEvent
-from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QVBoxLayout, QWidget)
 
 from ..capture.align import estimate_offset
@@ -45,14 +48,14 @@ from ..log import get_logger
 from ..model import MIC_YOU, OUTPUT_YOU, SourceKind
 from .common import fit_to_screen
 from .components import Card, InfoBar, mic_title
-from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, fill_mic_combo, refresh_mics
+from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, ElidedCombo, fill_mic_combo, refresh_mics
 from .icons import set_icon
-from .keys import missing_keys, missing_keys_text
 from .meters import LevelMeter
 from .sources import SourceTable
 from .tasks import run_task
 from .theme import METRICS, Tone, note, primary
 from .warmup_live import LiveBoxes
+from .warmup_notice import SETUP, Bars, SetupNotice
 from .warmup_source import SourceChoiceMixin
 
 if TYPE_CHECKING:
@@ -65,7 +68,6 @@ MIC_NAME_CHARS = 24                 # U-033: largura do combo do microfone em ca
 DIALOG_MARGIN = 16                  # A-17: o conteúdo cabe em 570 px de altura (notebook a 150 %: 1280 x 672 lógicos)
 SOURCES_MIN_W, SOURCES_MIN_H = 420, 132    # a tabela das fontes: as três colunas à vista e o cabeçalho com três linhas
 AUDIO_STRETCH, MEETING_STRETCH = 5, 4
-LINKED_BARS = frozenset({"keys", "live"})            # as faixas com o link para as Configurações
 
 
 class WarmupDialog(SourceChoiceMixin, QDialog):
@@ -93,8 +95,9 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self._testing = False
         self._pending_source: tuple[str, str] | None = None
         self._devices = platform.list_input_devices()
-        self._bars: dict[str, InfoBar] = {}                 # F5.4 L2: as faixas já montadas (`bar`)
-        self._slots: dict[str, tuple[QBoxLayout, int, int]] = {}
+        self.bars = Bars(self)                              # F5.4 L2 e F5.11: as faixas, montadas só quando têm o que dizer
+        self.bars.link.connect(self._on_setup_link)
+        self._bars, self._slots = self.bars.bars, self.bars.slots
 
         self._build_mic()
         self._build_sources(platform)
@@ -109,39 +112,23 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self._devices_timer.setInterval(REFRESH_MS)
         self._devices_timer.timeout.connect(self._refresh_devices)
         self._silent_ticks = 0
+        self.notice = SetupNotice(store, self.live, self.bars, on_settings, platform.spawn_child, self)    # U-112 (A-31)
         self.live.set_values(None, None)                    # padrão das Configurações; um preset salvo sobrescreve
-        self._update_keys_note()
+        self.live.changed.connect(self._on_live_changed)
+        self.notice.refresh()
         self._restore_last_choice()
         self._apply_hint()                                  # F5.7: o app do aviso por cima da última escolha
         self.mic_combo.currentIndexChanged.connect(self._on_mic_changed)   # só depois de restaurar: um open só
         self._update_src_status()
 
-    # ---------------------------------------------------------------- faixas (F5.4 L2, U-057 e U-066)
+    # ---------------------------------------------------------------- faixas (F5.4 L2, U-057 e U-066; F5.11: `warmup_notice`)
     def bar(self, slot: str) -> InfoBar:
-        """A faixa de um aviso (`mic`, `echo`, `live` ou `keys`), montada só na primeira vez que ele aparece, no lugar guardado
-        em `_slots`: as quatro quase sempre ficam escondidas, e montá-las à toa deixava a abertura mais lenta que o limite do
-        Aceite 5 ([fato, 28/10] ~0,5 ms cada faixa contra ~0,15 de um rótulo)."""
-        bar = self._bars.get(slot)
-        if bar is None:
-            bar = InfoBar("warning")
-            bar.hide()
-            if slot in LINKED_BARS:                         # o aviso com o link para as Configurações
-                bar.label.setTextFormat(Qt.TextFormat.RichText)
-                bar.label.linkActivated.connect(self._open_settings_for_keys if slot == "keys" else self._open_settings_for_live)
-            layout, index, stretch = self._slots[slot]
-            layout.insertWidget(index, bar, stretch)
-            self._bars[slot] = bar
-        return bar
+        """A faixa de um aviso (`mic`, `echo` ou `setup`), montada só na primeira vez que ele aparece ([fato, 28/10] ~0,5 ms
+        cada faixa contra ~0,15 de um rótulo)."""
+        return self.bars.bar(slot)
 
     def _show_bar(self, slot: str, text: str, kind: str = "warning") -> None:
-        """O texto na faixa e a faixa à vista; sem texto, escondida (e nem montada, se ainda não foi)."""
-        if not text and slot not in self._bars:
-            return
-        bar = self.bar(slot)
-        bar.set_kind(kind)
-        bar.label.setText(text)
-        bar.label.setVisible(bool(text))
-        bar.setVisible(bool(text))
+        self.bars.show(slot, text, kind)
 
     @property
     def mic_note(self) -> QLabel:
@@ -152,17 +139,19 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         return self.bar("echo").label
 
     @property
-    def live_note(self) -> QLabel:
-        return self.bar("live").label
+    def setup_note(self) -> QLabel:
+        return self.bar(SETUP).label
 
-    @property
-    def keys_note(self) -> QLabel:
-        return self.bar("keys").label
+    def _on_setup_link(self, link: str) -> None:
+        self.notice.on_link(link)
+
+    def _on_live_changed(self) -> None:
+        self.notice.refresh()                                # os modelos entram na faixa com a legenda pedida
 
     # ---------------------------------------------------------------- montagem (F5.4 L2: U-065 a U-067)
     def _build_mic(self) -> None:
         self.mic_box = Card(MIC_YOU)                     # U-106; com a sala, A-41
-        self.mic_combo = QComboBox()
+        self.mic_combo = ElidedCombo()                   # F5.11 (U-110): cortado no meio do nome, inteiro na dica
         fill_mic_combo(self.mic_combo, self._devices, FOLLOW_ID, self.platform.default_input_device(), follow=True)   # "acompanha" 1º
         # U-033: o nome do dispositivo cabe cortado no combo e inteiro na lista e na dica; com o nome todo ("Grupo de
         # microfones (Tecnologia Intel® Smart Sound para microfones digitais)") a coluna do áudio engolia a da reunião
@@ -221,7 +210,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self.language_combo.setToolTip("Idioma falado: transcrição, legenda ao vivo e o que a IA escrever (padrão nas Configurações)")
         self.room_check = QCheckBox("Sala de reunião presencial (o microfone ouve outras pessoas)")
         self.room_check.toggled.connect(functools.partial(mic_title, self.mic_box))      # A-41: "Microfone: você e a sala"
-        self.live = LiveBoxes(store, functools.partial(self._show_bar, "live"), self)     # F4 e F5.6 (U-091, A-21)
+        self.live = LiveBoxes(store, self)               # F4, F5.6 (U-091, A-21) e F5.11 (U-111)
         self.live_check, self.names_check, self.partial_check = self.live.live_check, self.live.names_check, self.live.partial_check
         self.glossary_edit = QLineEdit()
         self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a IA sugere; edite à vontade)")
@@ -257,14 +246,13 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         options.setSpacing(4)
         options.addWidget(self.room_check)
         options.addLayout(self.live.row())
-        self._slots["live"] = (options, -1, 0)              # U-057: os modelos que faltam numa faixa, com o link
         fl.addRow(QLabel("Opções"))
         fl.addRow(options)
         meet_box.content.addLayout(fl)
         meet_box.content.addStretch(1)
 
     def _build_footer(self) -> None:
-        """U-066: a falta de chave numa faixa no rodapé, ao lado do Gravar (o primário, com o ícone de gravar)."""
+        """U-066: o que falta numa faixa no rodapé, ao lado do Gravar (o primário, com o ícone de gravar)."""
         self.buttons = QDialogButtonBox()
         self.record_btn = self.buttons.addButton("Gravar", QDialogButtonBox.ButtonRole.AcceptRole)
         set_icon(self.record_btn, "record", Tone.ON_ACCENT)
@@ -285,7 +273,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         footer = QHBoxLayout()
         footer.setSpacing(METRICS.card_gap)
         footer.addWidget(self.buttons, 0, Qt.AlignmentFlag.AlignVCenter)
-        self._slots["keys"] = (footer, 0, 1)                # U-037: falta chave ou token? diz antes de gravar, com o link
+        self._slots[SETUP] = (footer, 0, 1)                 # U-112: "Falta configurar", com a ação de cada item
         lay = QVBoxLayout(self)
         lay.setContentsMargins(DIALOG_MARGIN, DIALOG_MARGIN, DIALOG_MARGIN, DIALOG_MARGIN)
         lay.setSpacing(METRICS.card_gap)
@@ -326,7 +314,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self._timer.stop()
         self._devices_timer.stop()
         self._glossary_timer.stop()
-        self.live.disconnect_models()                    # `_shutdown` roda mais de uma vez (aceitar e depois fechar)
+        self.notice.release()                            # `_shutdown` roda mais de uma vez (aceitar e depois fechar)
         self._glossary_seq += 1                            # resposta que chegar depois é descartada
         self.sources.stop()
         self._close_mic()
@@ -527,24 +515,9 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         spec = self.sources.selected_spec()
         self.src_status.setText(f"selecionado: {spec.label or spec.kind}")
 
-    # ---------------------------------------------------------------- ao vivo (F4; as caixas em `ui/warmup_live.py`)
-    def _open_settings_for_live(self, _link: str = "") -> None:
-        self._open_settings_from_glossary()
-        self.live.update_note()
-
     def _open_settings_from_glossary(self, _link: str = "") -> None:
         if self.on_settings is not None:
             self.on_settings()
-
-    # ---------------------------------------------------------------- chaves (U-037)
-    def _update_keys_note(self) -> None:
-        self._show_bar("keys", missing_keys_text(missing_keys(self.store)))
-        self.live.refresh_key()                                     # F5.6 L1b (R-09): o "Resumo parcial" segue a chave
-
-    def _open_settings_for_keys(self, _link: str = "") -> None:
-        if self.on_settings is not None:
-            self.on_settings()
-        self._update_keys_note()
 
     # ---------------------------------------------------------------- resultado
     def meeting_language(self) -> str:

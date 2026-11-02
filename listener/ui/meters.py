@@ -2,12 +2,13 @@
 F5.4 (A-11): as cores são os tokens da janela, lidos na pintura; o cache leva os tokens na chave (a troca de tema refaz).
 F5.4 L2 (U-063): o trilho visível nos dois temas (o traço do controle com 40 % do traço forte: no claro, `stroke` puro some
 sobre o cartão) e as zonas por dBFS, em faixas de cor sem degradê: verde até -18 dBFS, âmbar até -6 e vermelho acima, na
-escala de `common.level_fraction` (piso em -60 dBFS). O pico fica num traço na cor do texto."""
+escala de `common.level_fraction` (piso em -60 dBFS). O pico fica num traço na cor do texto.
+F5.11 (A-30): a pintura saiu para o `MeterPainter`, que a lista das fontes do "Antes de gravar" usa em cada linha."""
 from __future__ import annotations
 
 from typing import override
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QBrush, QLinearGradient, QPainter, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
@@ -38,27 +39,14 @@ def track_color(t: Tokens) -> str:
     return mix(t.stroke, t.stroke_strong, TRACK_MIX)
 
 
-class LevelMeter(QWidget):
-    def __init__(self, parent: QWidget | None = None, height: int = 8):
-        super().__init__(parent)
-        self._fraction = 0.0
-        self._peak = 0.0
+class MeterPainter:
+    """O desenho do medidor num retângulo: o trilho, a barra nas zonas e o traço do pico, com o pincel das zonas e os do
+    trilho e do pico guardados enquanto os tokens e as bordas forem os mesmos."""
+
+    def __init__(self) -> None:
         self._gradient: QLinearGradient | None = None
         self._gradient_key: tuple[int, int, Tokens] | None = None
         self._brushes: tuple[Tokens, QBrush, QBrush] | None = None     # os tokens, o trilho e o pico
-        self.setMinimumHeight(height)
-        self.setMaximumHeight(height)
-        self.setMinimumWidth(60)
-
-    def set_rms(self, rms_value: float) -> None:
-        fraction = level_fraction(rms_value)
-        peak = max(fraction, self._peak * 0.92)
-        if peak < 0.005:
-            peak = 0.0
-        if fraction == self._fraction and peak == self._peak:
-            return                                         # silêncio ou nível igual: nada a repintar
-        self._fraction, self._peak = fraction, peak
-        self.update()
 
     def _gradient_for(self, left: int, right: int, t: Tokens) -> QLinearGradient:
         key = (left, right, t)
@@ -77,23 +65,47 @@ class LevelMeter(QWidget):
             self._brushes = (t, QBrush(qcolor(track_color(t))), QBrush(qcolor(t.text, PEAK_ALPHA)))
         return self._brushes[1], self._brushes[2]
 
-    @override
-    def paintEvent(self, event: QPaintEvent) -> None:
-        t = surface_tokens(self)
-        p = QPainter(self)
+    def paint(self, p: QPainter, r: QRect, fraction: float, peak: float, t: Tokens) -> None:
+        p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect()
         radius = min(3.0, r.height() / 2)
         p.setPen(Qt.PenStyle.NoPen)
-        track, peak = self._track_and_peak(t)
+        track, peak_brush = self._track_and_peak(t)
         p.setBrush(track)
         p.drawRoundedRect(r, radius, radius)
-        if self._fraction > 0:
+        if fraction > 0:
             p.setBrush(self._gradient_for(r.left(), r.right(), t))
-            w = int(r.width() * self._fraction)
+            w = int(r.width() * fraction)
             p.drawRoundedRect(r.left(), r.top(), max(2, w), r.height(), radius, radius)
-        if self._peak > 0:
-            x = r.left() + int(r.width() * self._peak)
-            p.setBrush(peak)
+        if peak > 0:
+            x = r.left() + int(r.width() * peak)
+            p.setBrush(peak_brush)
             p.drawRect(max(r.left(), x - 1), r.top(), 2, r.height())
+        p.restore()
+
+
+class LevelMeter(QWidget):
+    def __init__(self, parent: QWidget | None = None, height: int = 8):
+        super().__init__(parent)
+        self._fraction = 0.0
+        self._peak = 0.0
+        self.painter = MeterPainter()
+        self.setMinimumHeight(height)
+        self.setMaximumHeight(height)
+        self.setMinimumWidth(60)
+
+    def set_rms(self, rms_value: float) -> None:
+        fraction = level_fraction(rms_value)
+        peak = max(fraction, self._peak * 0.92)
+        if peak < 0.005:
+            peak = 0.0
+        if fraction == self._fraction and peak == self._peak:
+            return                                         # silêncio ou nível igual: nada a repintar
+        self._fraction, self._peak = fraction, peak
+        self.update()
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        self.painter.paint(p, self.rect(), self._fraction, self._peak, surface_tokens(self))
         p.end()

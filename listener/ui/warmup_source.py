@@ -168,7 +168,7 @@ class SourceChoiceMixin:
         spec = self.sources.selected_spec()
         pid = self.store.upsert_preset(name.strip(), dev.id if dev else None, dev.name if dev else None,
                                        spec.kind, spec.exe or None, is_in_room=self.room_check.isChecked(),
-                                       live_enabled=self.live_check.isChecked(), live_names=self.names_check.isChecked())
+                                       live_enabled=self.live.wants_live(), live_names=self.names_check.isChecked())
         if self.preset_combo.findData(pid) < 0:
             self.preset_combo.addItem(name.strip(), pid)
         self.preset_combo.setCurrentIndex(self.preset_combo.findData(pid))

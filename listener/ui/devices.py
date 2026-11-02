@@ -4,22 +4,50 @@ o medidor é fechado (o PortAudio só reinicia sem stream aberto), a lista é re
 pelo id (ou o padrão, com aviso); quem chama reabre o medidor. F5.3 (U-045, pergunta 11): no "Antes de gravar" o combo
 começa com "Padrão do Windows (acompanha)" (`follow`), que segue o padrão do Windows também durante a gravação (A-20).
 D-067: quando a lista não pôde ser relida (outro som do app segura o PortAudio) e o medidor do "acompanha" ficou num
-microfone que já não é o padrão, ele reabre no padrão de agora, se este já está na lista (a plataforma abre pelo id)."""
+microfone que já não é o padrão, ele reabre no padrão de agora, se este já está na lista (a plataforma abre pelo id).
+F5.11 (U-110, A-30): `ElidedCombo`, o combo do microfone que corta no meio do nome (o começo e o fim à vista); o nome
+inteiro fica na lista aberta e na dica."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, override
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStylePainter
 
 from ..log import get_logger
 
 if TYPE_CHECKING:
-    from PySide6.QtWidgets import QComboBox
+    from PySide6.QtGui import QPaintEvent
 
     from ..platform.base import AudioDevice, CaptureHandle, Platform
 
 log = get_logger("ui.devices")
 
 REFRESH_MS = 2000
+
+
+class ElidedCombo(QComboBox):
+    """O combo que mostra o item atual cortado no meio do nome quando não cabe (o padrão do Qt corta o fim)."""
+
+    def _option(self) -> QStyleOptionComboBox:
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        field = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxEditField, self)
+        icon = opt.iconSize.width() + 4 if not opt.currentIcon.isNull() else 0
+        opt.currentText = self.fontMetrics().elidedText(opt.currentText, Qt.TextElideMode.ElideMiddle, max(0, field.width() - icon))
+        return opt
+
+    def shown_text(self) -> str:
+        """O texto que o combo pinta agora (o nome cortado no meio, ou inteiro quando cabe)."""
+        return self._option().currentText
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QStylePainter(self)
+        opt = self._option()
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt)
 FOLLOW_ID = ""                      # o dado do item "acompanha" (o microfone pedido é None)
 FOLLOW_TEXT = "Padrão do Windows (acompanha)"
 

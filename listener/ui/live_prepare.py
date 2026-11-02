@@ -7,7 +7,9 @@ Configurações no meio não mata o download nem deixa thread emitindo para um d
 sinal `changed` ao fechar e, reaberto, mostra o progresso em curso); um segundo pedido com o download rodando é recusado.
 Sair do app mata o filho (`shutdown_preparer`). Sem Qt de interface aqui: só `QObject` e sinais.
 F5.1 (A-08): o mesmo preparador baixa também a busca local (`start(..., what="rag")`, `--prepare --what rag`); o estado leva
-`what` ("live" ou "rag") e cada grupo das Configurações mostra o seu; continua um download por vez no app inteiro."""
+`what` ("live" ou "rag") e cada grupo das Configurações mostra o seu; continua um download por vez no app inteiro.
+F5.11 (U-111): o tamanho dos modelos que faltam (`missing_size_mb`, medido em 01/11), para o "Preparar agora" do "Antes de
+gravar"; `at_shutdown` registra outro filho que morre na saída (o teste do token, A-29)."""
 from __future__ import annotations
 
 import threading
@@ -34,6 +36,7 @@ type Spawn = Callable[[list[str], Mapping[str, str] | None], ChildProcess]
 EXIT_WAIT_S = 10.0
 LIVE, RAG = "live", "rag"            # o que o preparo baixa (A-08): os modelos do ao vivo ou a busca local
 WHAT_TEXT = {LIVE: "os modelos do ao vivo", RAG: "a busca local"}
+LIVE_SIZES_MB = {"small": 486, "base": 148}        # F5.11 (U-111): as pastas baixadas, medidas em 01/11
 
 
 def missing_models(store: Store) -> list[str]:
@@ -42,6 +45,11 @@ def missing_models(store: Store) -> list[str]:
         return []
     models_dir = live_models_dir(store.get_setting("pipeline.models_dir"))
     return [m for m in required_models(store.get(SPECS["live.model"])) if not (whisper_model_dir(models_dir, m) / "model.bin").exists()]
+
+
+def missing_size_mb(missing: list[str]) -> int:
+    """O tamanho do download dos modelos que faltam ("Preparar agora", U-111)."""
+    return sum(LIVE_SIZES_MB.get(m, 0) for m in missing)
 
 
 def models_status_text(store: Store) -> str:
@@ -185,6 +193,7 @@ class ModelPreparer(QObject):
 
 
 _shared: dict[str, ModelPreparer] = {}
+_hooks: list[Callable[[], None]] = []
 
 
 def preparer() -> ModelPreparer:
@@ -194,7 +203,18 @@ def preparer() -> ModelPreparer:
     return _shared["p"]
 
 
+def at_shutdown(hook: Callable[[], None]) -> None:
+    """F5.11 (A-29): outro filho de preparo (o teste do token do Hugging Face) morre junto na saída do app."""
+    if hook not in _hooks:
+        _hooks.append(hook)
+
+
 def shutdown_preparer() -> None:
     p = _shared.get("p")
     if p is not None:
         p.shutdown()
+    for hook in _hooks:
+        try:
+            hook()
+        except Exception:                                  # a saída do app segue; o motivo fica no log
+            log.exception("filho de preparo não encerrado na saída")

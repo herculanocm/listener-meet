@@ -43,6 +43,14 @@ def live_prepare_command(db_dir: str | Path | None = None, what: str = "live") -
     return [sys.executable, "-m", "listener", *flags]
 
 
+def hf_check_command(db_dir: str | Path | None = None) -> list[str]:
+    """`--hf-check [--db DIR]` (F5.11, A-29): o teste do token do Hugging Face num filho; o token vai pelo stdin, nunca aqui."""
+    flags = ["--hf-check", *(("--db", str(db_dir)) if db_dir else ())]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *flags]
+    return [sys.executable, "-m", "listener", *flags]
+
+
 def worker_env(torch_threads: int, base: Mapping[str, str] | None = None) -> dict[str, str]:
     """Ambiente do subprocesso: threads limitadas antes de importar torch e CTranslate2 (D-F2-3), sem avisos de symlink e
     sem a telemetria do pyannote, que vem ligada e manda metadados e o IP a `otel.pyannote.ai` (backlog, pergunta 16)."""

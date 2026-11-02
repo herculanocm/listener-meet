@@ -255,7 +255,7 @@ def test_without_a_key_the_partial_box_is_off_until_the_key_arrives(qtbot, store
     box = dlg.partial_check
     assert not box.isEnabled() and box.toolTip() == llm_ask.NO_KEY_TIP and dlg.result_config()[1]["live_partial"] is False
     _provider_ready(store)
-    dlg._update_keys_note()                                                          # a volta das Configurações
+    dlg.notice.on_link("keys")                                                       # a volta das Configurações
     assert box.isEnabled() and dlg.result_config()[1]["live_partial"] is True
     dlg.reject()
 

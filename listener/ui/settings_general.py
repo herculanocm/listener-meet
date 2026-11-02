@@ -5,21 +5,26 @@ e Log e banco de dados. O subtítulo de cada página diz quando o que está nela
 
 `GeneralPagesMixin` é parte do `SettingsDialog`: lê `store`, `platform`, `hotkey_errors`, `audio_capable`, `provider_tabs` e
 `hf_token` dele e registra os editores pelo `_add` dele. F5.7 (U-094): o cartão "Reunião sem gravação" de "Idioma e avisos"
-mora em `ui/settings_detect.py`."""
+mora em `ui/settings_detect.py`.
+F5.11: o "Testar" do token do Hugging Face (U-113, `ui/hf_test.py`), com o resultado no selo e a mensagem ao lado; no
+Processamento, o grupo "Avançado" fechado por padrão (U-120, A-34: limiar, margem, alta precisão, pasta, threads e janelas,
+`SettingSpec.advanced`) e "Escolher…" na pasta dos modelos, que avisa que a pasta nova baixa tudo de novo."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QPushButton, QWidget
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QWidget
 
 from ..config.defaults import CAPTURE_KEYS, HOTKEY_KEYS, LLM_KEYS, PIPELINE_KEYS, SPECS
 from ..config.language import LANGUAGES, SETTING, default_language, label
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
 from ..fmt import plural
+from ..live.client import live_models_dir
 from ..llm.jobconfig import LlmJobConfig
 from ..model import SettingScope
-from .components import InfoBar
+from .components import Badge, InfoBar
+from .hf_test import HfTestControl
 from .keys import KEYS_TITLE, STORAGE_NOTE, hf_state, keys_cards, note
 from .settings_editors import ChoiceEditor, SettingEditor, TextEditor
 from .settings_detect import DetectCardMixin
@@ -49,6 +54,9 @@ SUBTITLES = {
 }
 HOTKEY_OK, HOTKEY_FAILED = "Registrado", "Falhou"                       # U-075
 HOTKEY_W = 240                                              # o campo do atalho, igual em todas as linhas
+MODELS_DIR = "pipeline.models_dir"
+NEW_MODELS_DIR = ("Pasta nova: os modelos (transcrição, vozes, legenda ao vivo e busca local) são baixados de novo nela, no "
+                  "próximo uso; a pasta antiga fica como está.")      # U-120
 
 
 def breakable_path(path: object) -> str:
@@ -83,18 +91,29 @@ class GeneralPagesMixin(DetectCardMixin):
 
     def _keys_page(self) -> SettingsPage:
         page = SettingsPage(KEYS_TITLE, SUBTITLES[KEYS_TITLE])
-        cards, self.hf_badge = keys_cards(self.provider_tabs, self.hf_token)
+        cards, hf = keys_cards(self.provider_tabs, self.hf_token)
+        self.hf_badge: Badge = hf.badge
+        self.hf_detail: QLabel = hf.detail
         for card in cards:
             page.content.addWidget(card)
         page.content.addWidget(note(STORAGE_NOTE))
         page.finish()
         self.hf_token.textChanged.connect(self._hf_changed)
+        parent = self if isinstance(self, QWidget) else None
+        self.hf_test = HfTestControl(self.hf_token, hf.button, self.platform.spawn_child, self.store.base_dir, parent)
+        self.hf_test.shown.connect(self._hf_show)
         return page
 
-    def _hf_changed(self, text: str) -> None:
-        badge, value = hf_state(text)
+    def _hf_changed(self, _text: str) -> None:
+        self._hf_show("", Tone.NEUTRAL, "")
+
+    def _hf_show(self, badge: str, value: Tone, detail: str) -> None:
+        """U-113: o resultado do teste do token no selo, com a mensagem ao lado; sem selo, o do campo (informado ou não)."""
+        if not badge:
+            badge, value = hf_state(self.hf_token.text())
         self.hf_badge.setText(badge)
         self.hf_badge.set_tone(value)
+        self.hf_detail.setText(detail)
 
     def _language_page(self) -> SettingsPage:
         """"Idioma e avisos" (F5.3, A-03): o idioma padrão das reuniões novas e do chat, gravado pelo código (o texto da lista
@@ -146,13 +165,49 @@ class GeneralPagesMixin(DetectCardMixin):
         return page
 
     def _processing_page(self) -> SettingsPage:
+        """U-120 (A-34): o que mexe na identificação e no desempenho fica no "Avançado", fechado; os editores de lá nascem com
+        a página (o Salvar valida e grava todos) e um erro de validação dentro dele o abre (`show_problem`)."""
         page = SettingsPage("Processamento", SUBTITLES["Processamento"], NOW)
         form = page.form()
         for key in PIPELINE_KEYS:
-            self._add(page, form, key)
+            if not SPECS[key].advanced:
+                self._add(page, form, key)
+        self.advanced, advanced = page.group("Avançado")
+        for key in PIPELINE_KEYS:
+            if key == MODELS_DIR:
+                self._models_dir_row(page, advanced)
+            elif SPECS[key].advanced:
+                self._add(page, advanced, key)
         self._transcriber_choice()
         page.finish()
         return page
+
+    def _models_dir_row(self, page: SettingsPage, form: QFormLayout) -> None:
+        """U-120: a pasta dos modelos com "Escolher…"; a pasta padrão à vista no campo vazio e o aviso da pasta nova."""
+        ed = TextEditor(MODELS_DIR, self.store.get_setting(MODELS_DIR))
+        self._editors[MODELS_DIR] = ed
+        self.models_dir = ed.edit
+        self.models_dir.setPlaceholderText(str(live_models_dir("")))
+        browse = QPushButton("Escolher…")
+        browse.clicked.connect(self._browse_models)
+        row = QHBoxLayout()
+        row.addWidget(self.models_dir, 1)
+        row.addWidget(browse)
+        form.addRow(SPECS[MODELS_DIR].label, row)
+        self.models_note = page.add_note(form, NEW_MODELS_DIR)
+        self.models_note.hide()
+        self.models_dir.textChanged.connect(self._models_dir_changed)
+
+    def _models_dir_changed(self, text: str) -> None:
+        saved = self._editors[MODELS_DIR].saved
+        self.models_note.setVisible(text.strip() != saved.strip())
+
+    def _browse_models(self) -> None:
+        parent = self if isinstance(self, QWidget) else None
+        start = self.models_dir.text().strip() or str(live_models_dir(""))
+        chosen = QFileDialog.getExistingDirectory(parent, "Pasta dos modelos", start)
+        if chosen:
+            self.models_dir.setText(chosen)
 
     def _transcriber_choice(self) -> None:
         """F3 item 9: a transcrição pela LLM só com um provedor ativo com chave cujo modelo rápido aceite áudio."""

@@ -14,6 +14,8 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
                                                     stdout (LISTENER_LIVE=fake nos testes)
   --live --prepare [--what live|rag] [--db DIR]     baixa os modelos do ao vivo (small e base, `live`, o padrão) ou o e5-small
                                                     da busca local (`rag`, F5.1), progresso em linhas JSON
+  --hf-check [--db DIR]                             testa o token do Hugging Face lido do stdin (F5.11, A-29): o "Testar"
+                                                    das Chaves de acesso e do assistente; o resultado numa linha JSON
   --downgrade DIR VERSAO                            volta o banco principal até a versão dada (F5.10: só a v9 tem volta),
                                                     com o app fechado; imprime as versões desfeitas numa linha JSON
 """
@@ -216,6 +218,10 @@ def _dispatch(argv: list[str] | None) -> int:
         from .pipeline.worker import main as worker_main
 
         return worker_main([a for a in argv if a != "--worker"])
+    if "--hf-check" in argv:                                 # F5.11 (A-29): o teste do token num filho, como o `--prepare`
+        from .pipeline.hf_check import main as hf_main
+
+        return hf_main([a for a in argv if a != "--hf-check"])
     from .log import setup
 
     setup("INFO")

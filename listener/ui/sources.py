@@ -7,7 +7,12 @@ inteiro" na saída padrão (acompanha) e uma linha "Sistema inteiro" por saída 
 primeira, sempre à vista, quando o padrão de comunicação difere (A-20). As saídas vêm do Core Audio na thread da
 interface, relidas a cada 2 s (só a assinatura, A-19); a escolhida que sai volta a seleção para a padrão.
 F5.4 L2 (U-067): cada linha com o medidor do app (o `LevelMeter`, com as zonas, no lugar da barra de progresso) e o app de
-reunião com o selo "Reunião" na coluna da fonte (no lugar do "●"), pintado pelo `MeetingBadgeDelegate`."""
+reunião com o selo "Reunião" na coluna da fonte (no lugar do "●"), pintado pelo `MeetingBadgeDelegate`.
+F5.11 (U-110, A-30): a tabela virou uma lista no molde do painel do widget: o nome primeiro (cortado no meio) e o tipo na
+linha de baixo, o ✓ na escolhida, "Novo" na saída que chegou com o diálogo aberto e "Reunião" no app de reunião, pelo
+`SourceRowDelegate` (derivado do `DeviceRowDelegate`), com o medidor de cada linha pintado à direita (`MeterPainter`). A API
+fica (`selected_key`, `select_key`, `select_exe`, `selected_spec`, `render_apps`, `refresh_outputs`, os dois sinais); o
+texto inteiro da linha segue no `DisplayRole` (leitor de tela) e na dica."""
 from __future__ import annotations
 
 import functools
@@ -16,30 +21,30 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QFontMetrics, QPainter
-from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QStyleOptionViewItem, QVBoxLayout, QWidget
 
 from ..capture.recorder import SourceSpec
 from ..log import get_logger
 from ..model import SourceKind
 from ..platform.base import Endpoints, PlayingApp
-from .components import BADGE_PAD_X, BADGE_PAD_Y
-from .meters import LevelMeter
-from .style import rounded
-from .theme import Tone, font_for, qcolor, surface_tokens
+from .common import level_fraction
+from .devices_panel import CURRENT_ROLE, DETAIL_ROLE, NAME_ROLE, NEW_ROLE, DeviceRowDelegate
+from .meters import MeterPainter
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
+    from .theme import Tokens
 
 log = get_logger("ui.sources")
 OUTPUTS_MS = 2000
 SYSTEM_TEXT = "Sistema inteiro"
-FOLLOW_TEXT = "saída padrão (acompanha)"
+FOLLOW_NAME = "Saída padrão (acompanha)"
+APP_TEXT = "App"
 MEETING_BADGE = "Reunião"                # U-067: o app de reunião
-MEETING_ROLE = Qt.ItemDataRole.UserRole + 1
-LEVEL_W, METER_H, BADGE_GAP = 96, 6, 8
+MEETING_ROLE, LEVEL_ROLE = Qt.ItemDataRole.UserRole + 5, Qt.ItemDataRole.UserRole + 6    # depois dos papéis do painel
+LEVEL_W, METER_H, BADGE_GAP = 80, 6, 8
 _live_pollers: set[QThread] = set()      # referências até `finished` (sem parent, M-12)
 
 
@@ -52,7 +57,22 @@ class SourceKey:
 
 
 SYSTEM_FOLLOW = SourceKey(SourceKind.SYSTEM)
-type _Row = tuple[SourceKey, str, str, float, bool]       # chave, fonte, janela, pico, app de reunião
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRow:
+    """Uma linha da lista (U-110): o nome primeiro, o tipo embaixo, o pico (o medidor) e as marcas."""
+    key: SourceKey
+    name: str
+    detail: str
+    level: float
+    meeting: bool = False                # o app de reunião: o selo "Reunião"
+    new: bool = False                    # a saída que chegou com o diálogo aberto: o selo "Novo"
+
+    @property
+    def text(self) -> str:
+        """A linha inteira (o leitor de tela e a dica)."""
+        return f"{self.name} · {self.detail}" if self.detail else self.name
 
 
 def levels_by_output(apps: Iterable[PlayingApp]) -> dict[str, float]:
@@ -107,48 +127,24 @@ class _Poller(QThread):
             self._wake.wait(self.interval_s)
 
 
-class MeetingBadgeDelegate(QStyledItemDelegate):
-    """U-067: a fonte com o selo "Reunião" à direita quando o app é de reunião (o texto do item, o que o leitor de tela lê,
-    fica como está; o selo é só desenho)."""
-
-    @override
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
-        if not index.data(MEETING_ROLE):
-            super().paint(painter, option, index)
-            return
-        font = font_for("caption")
-        fm = QFontMetrics(font)
-        width, height = fm.horizontalAdvance(MEETING_BADGE) + 2 * BADGE_PAD_X, fm.height() + 2 * BADGE_PAD_Y
-        opt = QStyleOptionViewItem(option)
-        opt.rect = option.rect.adjusted(0, 0, -(width + BADGE_GAP), 0)
-        super().paint(painter, opt, index)
-        t = surface_tokens(option.widget)
-        pill = QRectF(option.rect.right() - width - 4, option.rect.center().y() - height / 2 + 1, width, height)
-        painter.save()
-        rounded(painter, pill, height / 2, t.info_bg, t.edge(Tone.INFO))
-        painter.setFont(font)
-        painter.setPen(qcolor(t.info))
-        painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), MEETING_BADGE)
-        painter.restore()
-
-    @override
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        size = super().sizeHint(option, index)
-        if not index.data(MEETING_ROLE):
-            return size
-        extra = QFontMetrics(font_for("caption")).horizontalAdvance(MEETING_BADGE) + 2 * BADGE_PAD_X + BADGE_GAP + 4
-        return QSize(size.width() + extra, size.height())
-
-
-class MeterCell(QWidget):
-    """A célula do nível: o medidor fino, centrado na linha (U-067)."""
+class SourceRowDelegate(DeviceRowDelegate):
+    """A-30: a linha do painel do widget com o medidor dela pintado à direita e o selo "Reunião" no app de reunião."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.meter = LevelMeter(height=METER_H)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 0, 8, 0)
-        lay.addWidget(self.meter, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.meter = MeterPainter()
+
+    @override
+    def content_rect(self, painter: QPainter, opt: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex,
+                     t: Tokens) -> QRect:
+        r = super().content_rect(painter, opt, index, t)
+        bar = QRect(r.right() - LEVEL_W + 1, r.center().y() - METER_H // 2, LEVEL_W, METER_H)
+        self.meter.paint(painter, bar, level_fraction(min(1.0, float(index.data(LEVEL_ROLE) or 0.0))), 0.0, t)
+        return r.adjusted(0, 0, -(LEVEL_W + BADGE_GAP), 0)
+
+    @override
+    def badge_text(self, index: QModelIndex | QPersistentModelIndex) -> str:
+        return MEETING_BADGE if index.data(MEETING_ROLE) else super().badge_text(index)
 
 
 class SourceTable(QWidget):
@@ -163,26 +159,21 @@ class SourceTable(QWidget):
         self._endpoints: Endpoints | None = None
         self._poller: _Poller | None = None
         self._got_first = False
-        self.table = QTableWidget(0, 3, self)
-        self.table.setHorizontalHeaderLabels(["Fonte", "Janela ou saída", "Nível"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)     # F5.3: o fim do nome ("(comunicação)") à vista
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(2, LEVEL_W)
-        self.table.setItemDelegateForColumn(0, MeetingBadgeDelegate(self.table))
-        self.table.itemSelectionChanged.connect(self.selection_changed)
+        self.list = QListWidget(self)
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideMiddle)      # F5.3: o fim do nome ("(comunicação)") à vista
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setItemDelegate(SourceRowDelegate(self.list))
+        self.list.setAccessibleName("Saídas e apps que tocam agora")
+        self.list.itemSelectionChanged.connect(self._on_selection)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.table)
-        self._outputs_timer = QTimer(self)                # F5.3 (U-051): saída conectada com a tabela aberta
+        lay.addWidget(self.list)
+        self._outputs_timer = QTimer(self)                # F5.3 (U-051): saída conectada com a lista aberta
         self._outputs_timer.setInterval(OUTPUTS_MS)
         self._outputs_timer.timeout.connect(self.refresh_outputs)
         self._endpoints = self._read_outputs()
+        self._first_outputs = frozenset(e.id for e in self._endpoints.render) if self._endpoints is not None else frozenset()
         self.render_apps([])
 
     def start(self) -> None:
@@ -225,71 +216,70 @@ class SourceTable(QWidget):
             self._got_first = True
             self.first_apps_ready.emit()
 
-    def _rows(self) -> list[_Row]:
+    def _rows(self) -> list[SourceRow]:
+        """U-110: a padrão que acompanha, cada saída ativa (o nome dela primeiro) e cada app que toca."""
         reading = self._endpoints
         default = reading.output(reading.render_default) if reading is not None else None
-        now = f" (agora: {default.name})" if default is not None and default.name else ""
+        now = f" · agora {default.name}" if default is not None and default.name else ""
         levels = levels_by_output(self._apps)              # F5.9 (item 9): o nível de cada saída, pelos apps que tocam nela
-        rows: list[_Row] = [(SYSTEM_FOLLOW, SYSTEM_TEXT, f"{FOLLOW_TEXT}{now}", levels.get(default.id, 0.0) if default else 0.0,
-                             False)]
+        rows = [SourceRow(SYSTEM_FOLLOW, FOLLOW_NAME, f"{SYSTEM_TEXT}{now}", levels.get(default.id, 0.0) if default else 0.0)]
         for e in reading.render if reading is not None else ():
             comm = reading is not None and e.id == reading.render_comm and reading.render_comm != reading.render_default
-            rows.append((SourceKey(SourceKind.SYSTEM, output_id=e.id), SYSTEM_TEXT + (" (comunicação)" if comm else ""),
-                         e.name or e.id, levels.get(e.id, 0.0), False))
-        rows += [(SourceKey(SourceKind.APP, pid=app.pid), app.exe.removesuffix(".exe"), plays_on(app, reading), app.peak,
-                  app.is_meeting_app) for app in self._apps]
+            rows.append(SourceRow(SourceKey(SourceKind.SYSTEM, output_id=e.id), e.name or e.id,
+                                  SYSTEM_TEXT + (" (comunicação)" if comm else ""), levels.get(e.id, 0.0),
+                                  new=e.id not in self._first_outputs))
+        rows += [SourceRow(SourceKey(SourceKind.APP, pid=app.pid), app.exe.removesuffix(".exe"),
+                           " · ".join(p for p in (APP_TEXT, plays_on(app, reading)) if p), app.peak, app.is_meeting_app)
+                 for app in self._apps]
         return rows
 
     def render_apps(self, apps: list[PlayingApp]) -> None:
         selected = self.selected_key()
         self._apps = list(apps)
         rows = self._rows()
-        self.table.setRowCount(len(rows))
+        while self.list.count() > len(rows):
+            self.list.takeItem(self.list.count() - 1)
         for i, row in enumerate(rows):
-            self._set_row(i, *row)
+            self._set_row(i, row)
         if selected is not None and self.select_key(selected):
             return
         if selected is not None and selected.kind == SourceKind.SYSTEM:
             self.select_key(SYSTEM_FOLLOW)                # a saída escolhida saiu: a padrão
             return
-        if self.table.rowCount() > 0 and not self.table.selectedItems():
+        if self.list.count() > 0 and not self.list.selectedItems():
             first_app = len(rows) - len(self._apps)
-            self.table.selectRow(first_app if self._apps and self._apps[0].is_meeting_app else 0)
+            self.list.setCurrentRow(first_app if self._apps and self._apps[0].is_meeting_app else 0)
 
-    def _set_row(self, row: int, key: SourceKey, name: str, title: str, peak: float, meeting: bool) -> None:
-        it = self.table.item(row, 0)
-        if it is None:
-            it = QTableWidgetItem()
-            self.table.setItem(row, 0, it)
-        it.setText(name)
-        it.setData(Qt.ItemDataRole.UserRole, key)
-        it.setData(MEETING_ROLE, meeting)
-        it.setToolTip(f"{name}: app de reunião" if meeting else name)
-        t = self.table.item(row, 1)
-        if t is None:
-            t = QTableWidgetItem()
-            self.table.setItem(row, 1, t)
-        t.setText(title or "")
-        t.setToolTip(title or "")                         # o nome inteiro, cortado ou não
-        cell = self.table.cellWidget(row, 2)
-        if not isinstance(cell, MeterCell):
-            cell = MeterCell()
-            self.table.setCellWidget(row, 2, cell)
-        cell.meter.set_rms(min(1.0, peak))
+    def _set_row(self, i: int, row: SourceRow) -> None:
+        item = self.list.item(i)
+        if item is None:
+            item = QListWidgetItem()
+            self.list.addItem(item)
+        item.setText(row.text)
+        item.setToolTip(f"{row.text}\napp de reunião" if row.meeting else row.text)   # o nome inteiro, cortado ou não
+        for role, value in ((Qt.ItemDataRole.UserRole, row.key), (NAME_ROLE, row.name), (DETAIL_ROLE, row.detail),
+                            (NEW_ROLE, row.new), (MEETING_ROLE, row.meeting), (LEVEL_ROLE, row.level),
+                            (CURRENT_ROLE, item.isSelected())):
+            if item.data(role) != value:
+                item.setData(role, value)
+
+    def _on_selection(self) -> None:
+        """O ✓ e o nome em semibold na escolhida (o `CURRENT_ROLE` do painel), e o aviso de quem segue a escolha."""
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if bool(item.data(CURRENT_ROLE)) != item.isSelected():
+                item.setData(CURRENT_ROLE, item.isSelected())
+        self.selection_changed.emit()
 
     def selected_key(self) -> SourceKey | None:
-        items = self.table.selectedItems()
-        if not items:
-            return None
-        it = self.table.item(items[0].row(), 0)
-        key = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+        items = self.list.selectedItems()
+        key = items[0].data(Qt.ItemDataRole.UserRole) if items else None
         return key if isinstance(key, SourceKey) else None
 
     def select_key(self, key: SourceKey) -> bool:
-        for row in range(self.table.rowCount()):
-            it = self.table.item(row, 0)
-            if it is not None and it.data(Qt.ItemDataRole.UserRole) == key:
-                self.table.selectRow(row)
+        for i in range(self.list.count()):
+            if self.list.item(i).data(Qt.ItemDataRole.UserRole) == key:
+                self.list.setCurrentRow(i)
                 return True
         return False
 

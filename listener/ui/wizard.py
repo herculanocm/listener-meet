@@ -4,7 +4,9 @@ microfone; dica para fixar o ícone da bandeja (U-017).
 
 F5.4 L4 (U-088, A-21): o `QWizard.ModernStyle`, sem a faixa vazia do Aero; no cabeçalho, o título da página em 20 px e
 "Passo n de 6" em legenda (o texto que explicava a página desce para o começo dela); Próximo e Concluir como primários
-(U-056). O cabeçalho é privado do Qt: os rótulos dele são achados pelo texto, a cada troca de página."""
+(U-056). O cabeçalho é privado do Qt: os rótulos dele são achados pelo texto, a cada troca de página.
+F5.11 (U-113): o assistente conta os passos que mostra: as boas-vindas não são passo, e o "Em cinco passos" dela sai da
+mesma conta do "Passo n de 5"; o token do Hugging Face tem "Testar" (`ui/hf_test.py`), que morre com o assistente."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,24 +35,31 @@ log = get_logger("ui.wizard")
 WIZARD_SIZE = (720, 600)          # U-088: cabe a página mais alta (as chaves) a 100 % e a 150 %, dentro do notebook (A-17)
 
 
+COUNT_WORDS = {3: "três", 4: "quatro", 5: "cinco", 6: "seis", 7: "sete"}
+
+
 def step_text(n: int, total: int) -> str:
     return f"Passo {n} de {total}"
+
+
+def intro_text(steps: int) -> str:
+    """O texto das boas-vindas com a conta dos passos que o assistente mostra depois dela (U-113)."""
+    return ("Este app grava suas reuniões (qualquer plataforma) em dois canais, identifica quem fala por perfil de voz e "
+            "gera legenda, resumo e ata. Tudo fica no seu computador, num banco SQLite que você escolhe onde guardar. Nada é "
+            f"apagado automaticamente.\n\nEm {COUNT_WORDS.get(steps, str(steps))} passos: seus dados, a pasta do banco, as "
+            "chaves de acesso (opcional), o arquivo de log e um teste do microfone.\n\nDepois, o app vive no ícone da bandeja. "
+            "No Windows 11 o ícone nasce no menu oculto (seta ao lado do relógio): arraste-o para a barra para ver o estado "
+            "da gravação.")
 
 
 class IntroPage(QWizardPage):
     def __init__(self) -> None:
         super().__init__()
         self.setTitle("Bem-vindo ao listener-meet")
-        lab = QLabel("Este app grava suas reuniões (qualquer plataforma) em dois canais, identifica quem fala por "
-                     "perfil de voz e gera legenda, resumo e ata. Tudo fica no seu computador, num banco SQLite "
-                     "que você escolhe onde guardar. Nada é apagado automaticamente.\n\n"
-                     "Em cinco passos: seus dados, a pasta do banco, as chaves de acesso (opcional), o arquivo de log e "
-                     "um teste do microfone.\n\n"
-                     "Depois, o app vive no ícone da bandeja. No Windows 11 o ícone nasce no menu oculto (seta ao lado "
-                     "do relógio): arraste-o para a barra para ver o estado da gravação.")
-        lab.setWordWrap(True)
+        self.text = QLabel("")
+        self.text.setWordWrap(True)
         lay = QVBoxLayout(self)
-        lay.addWidget(lab)
+        lay.addWidget(self.text)
 
 
 class UserPage(QWizardPage):
@@ -287,12 +296,13 @@ class FirstRunWizard(QWizard):
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)    # U-088: sem a faixa vazia do Aero
         self.setMinimumSize(640, 480)
         self.resize(*WIZARD_SIZE)
-        self.addPage(IntroPage())
+        self.intro_page = IntroPage()
+        self.addPage(self.intro_page)
         self.user_page = UserPage()
         self.addPage(self.user_page)
         self.db_page = DbPage(platform, initial_dir)
         self.addPage(self.db_page)
-        self.keys_page = KeysPage()
+        self.keys_page = KeysPage(platform.spawn_child)
         self.addPage(self.keys_page)
         self.log_page = LogPage()
         self.addPage(self.log_page)
@@ -304,8 +314,10 @@ class FirstRunWizard(QWizard):
         self.currentIdChanged.connect(self._style_header)
 
     def _steps(self) -> None:
-        """U-088: "Passo n de 6" no subtítulo de cada página; o texto que explicava a página vai para o começo dela."""
-        pages = [self.page(i) for i in self.pageIds()]
+        """U-088: "Passo n de N" no subtítulo de cada página; o texto que explicava a página vai para o começo dela. F5.11
+        (U-113): as boas-vindas não contam, e o texto delas diz a mesma conta."""
+        pages = [p for p in (self.page(i) for i in self.pageIds()) if p is not self.intro_page]
+        self.intro_page.text.setText(intro_text(len(pages)))
         for n, page in enumerate(pages, 1):
             text = page.subTitle()
             page.setSubTitle(step_text(n, len(pages)))
@@ -331,6 +343,12 @@ class FirstRunWizard(QWizard):
                 role(label, "subtitle")
             elif label.text() == page.subTitle() and label.property(FONT_PROP) != "caption":
                 note(label)
+
+    @override
+    def done(self, result: int) -> None:
+        """Concluir, cancelar ou fechar: o teste do token em curso morre com o assistente (U-113, A-29)."""
+        self.keys_page.hf_control.close()
+        super().done(result)
 
     @override
     def accept(self) -> None:

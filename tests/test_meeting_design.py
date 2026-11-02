@@ -443,7 +443,7 @@ def test_wizard_is_modern_with_the_step_and_a_20_px_title(qtbot, tmp_path):
     qtbot.addWidget(wiz)
     assert wiz.wizardStyle() == QWizard.WizardStyle.ModernStyle
     pages = [wiz.page(i) for i in wiz.pageIds()]
-    assert [p.subTitle() for p in pages] == [f"Passo {n} de 6" for n in range(1, 7)]
+    assert [p.subTitle() for p in pages] == ["", *(f"Passo {n} de 5" for n in range(1, 6))]       # F5.11 (U-113)
     intro = [lab.text() for lab in wiz.user_page.findChildren(QLabel)]
     assert any(t.startswith("O canal do microfone é sempre você") for t in intro)    # o texto da página desceu para ela
     assert wiz.button(QWizard.WizardButton.NextButton).property(KIND_PROP) == PRIMARY
@@ -451,7 +451,7 @@ def test_wizard_is_modern_with_the_step_and_a_20_px_title(qtbot, tmp_path):
     wiz.next()
     head = [lab for lab in wiz.findChildren(QLabel) if not isinstance(lab.parentWidget(), QWizardPage)]
     title = next(lab for lab in head if lab.text() == "Seus dados")
-    step = next(lab for lab in head if lab.text() == "Passo 2 de 6")
+    step = next(lab for lab in head if lab.text() == "Passo 1 de 5")
     assert title.font().pixelSize() == 20 and step.property("theme_font") == "caption"
 
 

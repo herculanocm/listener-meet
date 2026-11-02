@@ -216,10 +216,11 @@ def test_the_source_rows_say_where_each_app_plays_and_the_level_of_each_output()
 
 
 def test_the_warmup_offers_follow_and_one_row_per_output(qtbot, store, platform):
-    """U-045 e U-051: o microfone começa no "Padrão do Windows (acompanha)" (a gravação recebe None); a tabela de fontes tem
-    "Sistema inteiro: <saída>" por saída ativa, com a de comunicação marcada; a escolha volta pelo `warmup.last_output_id` e
-    a saída que sai devolve a seleção à padrão."""
+    """U-045 e U-051: o microfone começa no "Padrão do Windows (acompanha)" (a gravação recebe None); a lista de fontes tem
+    uma linha por saída ativa, com a de comunicação marcada; a escolha volta pelo `warmup.last_output_id` e a saída que sai
+    devolve a seleção à padrão."""
     from listener.platform.base import PlayingApp
+    from listener.ui.devices_panel import CURRENT_ROLE, DETAIL_ROLE, NAME_ROLE
     from listener.ui.sources import SYSTEM_FOLLOW, SourceKey
     from listener.ui.warmup import WarmupDialog
 
@@ -230,17 +231,16 @@ def test_the_warmup_offers_follow_and_one_row_per_output(qtbot, store, platform)
     dlg.show()
     qtbot.waitExposed(dlg)
     assert dlg.mic_combo.itemText(0) == "Padrão do Windows (acompanha): agora Mic Fake" and dlg.mic_combo.currentData() == ""
-    table = dlg.sources.table
-    rows = [(table.item(r, 0).text(), table.item(r, 1).text()) for r in range(table.rowCount())]
-    assert rows[:4] == [("Sistema inteiro", "saída padrão (acompanha) (agora: Alto-falantes Fake)"),
-                        ("Sistema inteiro", "Alto-falantes Fake"), ("Sistema inteiro", BT_OUT.name),
-                        ("Sistema inteiro (comunicação)", BT_HFP.name)]
+    lst = dlg.sources.list                                                 # F5.11 (U-110): o nome primeiro, o tipo embaixo
+    assert [(lst.item(r).data(NAME_ROLE), lst.item(r).data(DETAIL_ROLE)) for r in range(4)] == [
+        ("Saída padrão (acompanha)", "Sistema inteiro · agora Alto-falantes Fake"), ("Alto-falantes Fake", "Sistema inteiro"),
+        (BT_OUT.name, "Sistema inteiro"), (BT_HFP.name, "Sistema inteiro (comunicação)")]
     qtbot.waitUntil(lambda: len(dlg.sources._apps) == 1, timeout=3000)   # F5.9 (item 9): onde a chamada toca
     full = dlg.sources._rows()
-    assert full[4][2] == f"Reunião · toca em: {BT_HFP.name}, Alto-falantes Fake" and full[4][3] == 0.7
-    assert [round(r[3], 2) for r in full[:4]] == [0.2, 0.2, 0.0, 0.7]      # o nível por saída: a chamada no fone de comunicação
-    assert table.item(4, 1).text() == full[4][2]
-    assert dlg.sources.select_key(SourceKey("system", output_id=BT_OUT.id))
+    assert full[4].detail == f"App · Reunião · toca em: {BT_HFP.name}, Alto-falantes Fake" and full[4].level == 0.7
+    assert [round(r.level, 2) for r in full[:4]] == [0.2, 0.2, 0.0, 0.7]  # o nível por saída: a chamada no fone de comunicação
+    assert lst.item(4).text() == full[4].text and lst.item(4).toolTip().endswith("app de reunião")
+    assert dlg.sources.select_key(SourceKey("system", output_id=BT_OUT.id)) and lst.item(2).data(CURRENT_ROLE)   # o ✓
     cfg, fields = dlg.result_config()
     assert cfg.mic_device is None and cfg.source.output_id == BT_OUT.id and fields["platform"] == "sistema"
     dlg.accept()

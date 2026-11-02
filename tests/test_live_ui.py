@@ -85,30 +85,33 @@ def test_warmup_live_boxes_follow_preset_settings_and_models(qtbot, store, platf
     plain = store.upsert_preset("Sem marca", None, None, "system", None)
     dlg = WarmupDialog(platform, store)
     qtbot.addWidget(dlg)
-    assert dlg.live_check.isChecked() and not dlg.names_check.isChecked() and dlg.names_check.isEnabled()
-    assert "modelos ausentes (small, base)" in dlg.live_note.text()                               # aviso, sem bloquear
+    # F5.11 (U-111): sem os modelos, a legenda vem desmarcada, o pedido fica guardado e a faixa traz "Preparar agora"
+    assert not dlg.live_check.isChecked() and dlg.live.wanted and not dlg.names_check.isChecked()
+    assert "Modelos da legenda ao vivo (634 MB)" in dlg.setup_note.text() and "Preparar agora" in dlg.setup_note.text()
     dlg.preset_combo.setCurrentIndex(dlg.preset_combo.findData(with_flags))
     assert not dlg.live_check.isChecked() and dlg.names_check.isChecked() and not dlg.names_check.isEnabled()
-    assert dlg.live_note.text() == ""                                                            # desligado: nada a avisar
+    assert "Modelos" not in dlg.setup_note.text()                                                # desligado: nada a preparar
     dlg.preset_combo.setCurrentIndex(dlg.preset_combo.findData(plain))
-    assert dlg.live_check.isChecked() and not dlg.names_check.isChecked()                        # nulo = Configurações
+    assert not dlg.live_check.isChecked() and dlg.live.wanted and not dlg.names_check.isChecked()   # nulo = Configurações
     dlg.names_check.setChecked(True)
     _cfg, fields = dlg.result_config()
-    assert fields["live_enabled"] is True and fields["live_names"] is True
+    assert fields["live_enabled"] is False and fields["live_names"] is False                    # sem o token, os nomes não vão
+    assert dlg.names_check.toolTip().startswith("Nomes ao vivo precisa do token")
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Novo", True)))
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
     dlg._save_preset()
     novo = next(p for p in store.list_presets() if p["name"] == "Novo")
     assert (novo["live_enabled"], novo["live_names"]) == (1, 1)
     opened: list[int] = []
-    dlg.on_settings = lambda: opened.append(1)
-    dlg._open_settings_for_live()                                                                # fechou sem preparar: o aviso fica
-    assert opened == [1] and "modelos ausentes" in dlg.live_note.text()
+    dlg.notice.on_settings = lambda: opened.append(1)
+    dlg.setup_note.linkActivated.emit("keys")                                                    # fechou sem configurar: fica
+    assert opened == [1] and "Modelos da legenda ao vivo" in dlg.setup_note.text()
     from listener.ui.live_prepare import preparer
 
     monkeypatch.setenv("LISTENER_LIVE", "fake")                                                  # o download terminou depois
-    preparer().changed.emit({"state": "done"})
-    assert dlg.live_note.text() == ""
+    preparer().changed.emit({"state": "done", "what": "live"})
+    assert "Modelos" not in dlg.setup_note.text() and dlg.live_check.isChecked()                 # a legenda volta ao pedido
+    assert dlg.names_check.isEnabled()
     dlg.reject()
     dlg.reject()                                                                                 # fechar duas vezes não reclama
 

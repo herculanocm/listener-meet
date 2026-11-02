@@ -12,7 +12,9 @@ C++ do PySide, num ciclo que o coletor do Python não vê, e o painel vivia até
 F5.4 L2 (U-064): o microfone (L) e a saída (R) lado a lado, para o painel caber no notebook a 150 % com as linhas em duas (o
 nome do aparelho e, embaixo, em nota, o tipo: microfone, sistema inteiro, app); o atual com a marca de "em uso" no lugar do
 "●", o "novo" num selo e o resultado da troca numa faixa (`InfoBar`: trocando, trocado ou o erro). A linha é pintada pelo
-`DeviceRowDelegate`; o texto da linha (`Row.text`) segue no `DisplayRole` para o leitor de tela e na dica."""
+`DeviceRowDelegate`; o texto da linha (`Row.text`) segue no `DisplayRole` para o leitor de tela e na dica.
+F5.11 (A-30): o delegate tem dois ganchos, a área do texto (`content_rect`) e o selo da linha (`badge_text`), para a lista
+das fontes do "Antes de gravar" pintar o medidor e o selo "Reunião" no mesmo molde."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -167,20 +169,31 @@ class DeviceRowDelegate(QStyledItemDelegate):
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         t = surface_tokens(opt.widget)
-        r = opt.rect.adjusted(self.PAD, 4, -self.PAD, -4)
-        current, new = bool(index.data(CURRENT_ROLE)), bool(index.data(NEW_ROLE))
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)       # contraste alto: o texto do destaque (R-03)
-        name = str(index.data(NAME_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or "")
         painter.save()
+        self._row(painter, self.content_rect(painter, opt, index, t), index, t, selected)
+        painter.restore()
+
+    def content_rect(self, painter: QPainter, opt: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex,
+                     t: Tokens) -> QRect:
+        """A área da marca, do texto e do selo (a lista das fontes pinta o medidor à direita e devolve o resto, A-30)."""
+        return opt.rect.adjusted(self.PAD, 4, -self.PAD, -4)
+
+    def badge_text(self, index: QModelIndex | QPersistentModelIndex) -> str:
+        return NEW_BADGE if index.data(NEW_ROLE) else ""
+
+    def _row(self, painter: QPainter, r: QRect, index: QModelIndex | QPersistentModelIndex, t: Tokens, selected: bool) -> None:
+        current = bool(index.data(CURRENT_ROLE))
+        name = str(index.data(NAME_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or "")
         if current:
             dpr = painter.device().devicePixelRatioF() if painter.device() is not None else 1.0
             mark = icons.pixmap("check", t.on_selected(t.accent, selected), 16, dpr)
             painter.drawPixmap(r.left() + 2, r.top() + (r.height() - 16) // 2, mark)
         text = QRect(r.left() + self.MARK, r.top(), r.width() - self.MARK, r.height())
-        if new:
-            text.setRight(text.right() - self._badge(painter, text, t) - 8)
+        badge = self.badge_text(index)
+        if badge:
+            text.setRight(text.right() - self._badge(painter, text, t, badge) - 8)
         self._lines(painter, text, name, str(index.data(DETAIL_ROLE) or ""), current, t, selected)
-        painter.restore()
 
     @staticmethod
     def _lines(painter: QPainter, r: QRect, name: str, detail: str, current: bool, t: Tokens, selected: bool) -> None:
@@ -200,16 +213,16 @@ class DeviceRowDelegate(QStyledItemDelegate):
                              sub.elidedText(detail, Qt.TextElideMode.ElideRight, r.width()))
 
     @staticmethod
-    def _badge(painter: QPainter, r: QRect, t: Tokens) -> int:
-        """O selo "Novo" no canto direito da linha; devolve a largura dele."""
+    def _badge(painter: QPainter, r: QRect, t: Tokens, text: str = NEW_BADGE) -> int:
+        """O selo ("Novo"; na lista das fontes, também "Reunião") no canto direito da linha; devolve a largura dele."""
         font = font_for("caption")
         fm = QFontMetrics(font)
-        width, height = fm.horizontalAdvance(NEW_BADGE) + 2 * BADGE_PAD_X, fm.height() + 2 * BADGE_PAD_Y
+        width, height = fm.horizontalAdvance(text) + 2 * BADGE_PAD_X, fm.height() + 2 * BADGE_PAD_Y
         pill = QRectF(r.right() - width, r.center().y() - height / 2, width, height)
         rounded(painter, pill, height / 2, t.info_bg, t.edge(Tone.INFO))
         painter.setFont(font)
         painter.setPen(qcolor(t.info))
-        painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), NEW_BADGE)
+        painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), text)
         return int(width)
 
     @override

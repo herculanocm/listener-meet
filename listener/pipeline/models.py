@@ -16,15 +16,14 @@ from typing import Any
 from ..log import get_logger
 from ..platform.common import paths
 from .base import PermanentError, PipelineDeps, ProgressFn
+from .hf_check import DIARIZATION_REPO, EMBEDDING_REPO, GATED_REPOS, INSTALL_HINT, MISSING_TEXT, READY_MARK, classify
 from .types import JobConfig
 
 log = get_logger("pipeline.models")
 
-DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
-EMBEDDING_REPO = "pyannote/wespeaker-voxceleb-resnet34-LM"
-GATED_REPOS = (DIARIZATION_REPO, EMBEDDING_REPO)
-READY_MARK = ".ready"
-INSTALL_HINT = "instale o extra: pip install -e .[pipeline] (faster-whisper, pyannote.audio e torch)"
+__all__ = ["DIARIZATION_REPO", "EMBEDDING_REPO", "GATED_REPOS", "INSTALL_HINT", "READY_MARK", "apply_environment", "classify_error",
+           "deps_key", "disable_hf_symlinks", "download_pyannote", "download_whisper", "hf_home", "models_dir", "prepare_models",
+           "ready_mark", "real_deps", "whisper_dir"]
 
 
 def models_dir(config: JobConfig) -> Path:
@@ -75,21 +74,10 @@ def disable_hf_symlinks() -> None:
 
 
 def classify_error(e: BaseException, repo: str = "") -> PermanentError | None:
-    """Traduz falhas de download e carga em mensagens próprias; None quando é uma falha comum (conta tentativa)."""
-    name = type(e).__name__
-    text = str(e)
-    if isinstance(e, ImportError | ModuleNotFoundError):
-        return PermanentError(f"{INSTALL_HINT} ({text})")
-    if name in ("GatedRepoError",) or "gated" in text.lower() or "403" in text:
-        return PermanentError(f"aceite os termos de uso de {repo or 'cada repositório do pyannote'} no Hugging Face com a conta do token")
-    if name in ("RepositoryNotFoundError", "HfHubHTTPError") and ("401" in text or "Unauthorized" in text or "Invalid" in text):
-        return PermanentError("token do Hugging Face inválido: confira em Configurações, Chaves de acesso")
-    if name in ("LocalEntryNotFoundError", "OfflineModeIsEnabled") or "offline" in text.lower():
-        return PermanentError(f"modelo {repo} ainda não baixado e o modo offline está ativo: ligue a rede e tente de novo")
-    if name in ("ConnectionError", "ConnectTimeout", "ReadTimeout", "MaxRetryError", "NewConnectionError", "URLError") \
-            or "Max retries" in text or "Name or service not known" in text or "getaddrinfo" in text:
-        return PermanentError(f"sem rede para baixar {repo or 'os modelos'}; tente de novo com conexão")
-    return None
+    """Traduz falhas de download e carga em mensagens próprias; None quando é uma falha comum (conta tentativa). F5.11
+    (A-29): as mensagens moram em `pipeline/hf_check.py`, as mesmas do "Testar" do token."""
+    found = classify(e, repo)
+    return PermanentError(found[1]) if found is not None else None
 
 
 def _progress(progress: ProgressFn, message: str, fraction: float) -> None:
@@ -125,8 +113,7 @@ def download_pyannote(config: JobConfig, token: str, progress: ProgressFn) -> No
     if mark.exists():
         return
     if not token:
-        raise PermanentError("token do Hugging Face ausente: informe em Configurações, Chaves de acesso, e aceite os termos dos "
-                             f"repositórios {', '.join(GATED_REPOS)}")
+        raise PermanentError(f"{MISSING_TEXT}, e aceite os termos dos repositórios {', '.join(GATED_REPOS)}")
     try:
         from huggingface_hub import snapshot_download
     except Exception as e:

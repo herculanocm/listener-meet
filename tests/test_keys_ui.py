@@ -23,16 +23,18 @@ def forget_models():
 
 
 def test_missing_keys_and_the_warmup_text(store):
-    from listener.ui.keys import missing_keys, missing_keys_text
+    """F5.11 (U-112): o que falta vira linhas da faixa "Falta configurar", cada uma com a ação dela."""
+    from listener.ui.keys import missing_keys
+    from listener.ui.warmup_notice import KEY_LINE, TOKEN_LINE, setup_text
 
     assert missing_keys(store) == ("hf", "llm")
-    text = missing_keys_text(missing_keys(store))
-    assert text.startswith("Sem o token do Hugging Face") and "sem a chave da LLM" in text and text.endswith(
-        '<a href="settings">Configurar as chaves</a>')
+    text = setup_text(missing_keys(store), [], {})
+    assert text == f"<b>Falta configurar</b><br>{TOKEN_LINE}<br>{KEY_LINE}" and "LLM" not in text
+    assert TOKEN_LINE.endswith('<a href="keys">Configurar</a>') and KEY_LINE.startswith("Chave da IA")
     store.upsert_provider(HF_PROVIDER_ID, "huggingface", api_key="hf_abc")
-    assert missing_keys(store) == ("llm",) and missing_keys_text(("llm",)).startswith("Sem a chave da LLM")
+    assert missing_keys(store) == ("llm",) and setup_text(("llm",), [], {}).endswith(KEY_LINE)
     store.providers.update_provider("gemini", api_key=KEY)
-    assert missing_keys(store) == () and missing_keys_text(()) == ""
+    assert missing_keys(store) == () and setup_text((), [], {}) == ""
     store.providers.set_role("llm", None)                                             # nenhum ativo: falta a LLM
     assert missing_keys(store) == ("llm",)
 
@@ -178,9 +180,10 @@ def test_warmup_warns_before_recording_when_keys_are_missing(qtbot, store, platf
 
     dlg = wu.WarmupDialog(platform, store, on_settings=configure)
     qtbot.addWidget(dlg)
-    assert not dlg.keys_note.isHidden() and "Hugging Face" in dlg.keys_note.text() and "LLM" in dlg.keys_note.text()
-    dlg.keys_note.linkActivated.emit("settings")
-    assert dlg.keys_note.isHidden() and dlg.keys_note.text() == ""                       # nada falta: o aviso some
+    note = dlg.setup_note                                       # F5.11 (U-112): a faixa "Falta configurar"
+    assert not note.isHidden() and "Hugging Face" in note.text() and "Chave da IA" in note.text()
+    note.linkActivated.emit("keys")
+    assert note.isHidden() and note.text() == ""                                         # nada falta: o aviso some
     dlg.reject()
 
 

@@ -8,11 +8,13 @@ GPT ou Claude) com a chave e o "Testar conexão", e o token do Hugging Face, tud
 (`save_wizard_keys`), e a escolhida vira a LLM ativa.
 F5.4 L3 (U-071, U-075): nas Configurações, a página "Chaves de acesso" tem um cartão por provedor (`keys_cards`), cada um
 com a chave, o "Testar conexão" e o estado em selo (Falta a chave, Conectado, Falhou...); o do Hugging Face diz se falta o
-token (`hf_state`). Sem jargão interno na tela (U-076)."""
+token (`hf_state`). Sem jargão interno na tela (U-076).
+F5.11 (U-113): o token do Hugging Face ganha "Testar" (`ui/hf_test.py`), com o token digitado, antes de salvar, no cartão e
+no assistente; o aviso do "Antes de gravar" passou para a faixa "Falta configurar" (`ui/warmup_notice.py`)."""
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QResizeEvent
@@ -27,6 +29,7 @@ from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LOCAL_ID
 from .components import Badge, Card
+from .hf_test import HfTestControl, Spawn
 from .providers import TITLES, test_connection
 from . import theme
 from .tasks import run_task
@@ -99,6 +102,20 @@ def note(text: str, *, links: bool = False) -> QLabel:
     return label
 
 
+def process_spawn(argv: list[str], env: Any = None) -> Any:
+    """O `spawn_child` da plataforma, para o assistente (que nasce antes do banco e não recebe a plataforma na página)."""
+    from ..platform import get_platform
+
+    return get_platform().spawn_child(argv, env)
+
+
+def _with_button(edit: QLineEdit, button: QPushButton) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.addWidget(edit, 1)
+    row.addWidget(button)
+    return row
+
+
 def _state_row(badge: Badge, detail: QLabel | None = None) -> QHBoxLayout:
     """O selo do estado no tamanho do texto e, ao lado, o detalhe (que estica)."""
     badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
@@ -131,21 +148,31 @@ def hf_state(token: str) -> tuple[str, theme.Tone]:
     return (HF_SET, theme.Tone.NEUTRAL) if token.strip() else (HF_MISSING, theme.Tone.WARNING)
 
 
-def keys_cards(tabs: ProviderTabs, hf_token: QLineEdit) -> tuple[list[Card], Badge]:
-    """Os cartões da página: Gemini (o padrão), o Hugging Face e os outros provedores, e o selo do token (quem chama o
-    atualiza quando o token muda). Os campos são os das sub-abas e o do token, só postos aqui: quem grava continua sendo
-    `ProviderTabs.save` e o `_save` do diálogo."""
+class HfWidgets(NamedTuple):
+    """F5.11 (U-113): o selo do token, o "Testar" e a mensagem do resultado ao lado do selo."""
+    badge: Badge
+    button: QPushButton
+    detail: QLabel
+
+
+def keys_cards(tabs: ProviderTabs, hf_token: QLineEdit) -> tuple[list[Card], HfWidgets]:
+    """Os cartões da página: Gemini (o padrão), o Hugging Face e os outros provedores, e o selo do token com o "Testar" (quem
+    chama liga o teste e atualiza o selo quando o token muda). Os campos são os das sub-abas e o do token, só postos aqui:
+    quem grava continua sendo `ProviderTabs.save` e o `_save` do diálogo."""
     hf_token.setPlaceholderText(HF_PLACEHOLDER)
     hf_token.setAccessibleName("Token do Hugging Face")
-    hf_badge = Badge(*hf_state(hf_token.text()))
+    widgets = HfWidgets(Badge(*hf_state(hf_token.text())), QPushButton("Testar"), note(""))
     hf = Card("Hugging Face")
-    hf.content.addWidget(hf_token)
-    hf.content.addLayout(_state_row(hf_badge))
+    row = QHBoxLayout()
+    row.addWidget(hf_token, 1)
+    row.addWidget(widgets.button)
+    hf.content.addLayout(row)
+    hf.content.addLayout(_state_row(widgets.badge, widgets.detail))
     hf.content.addWidget(note(HF_HELP, links=True))
     cards = [_llm_card(tabs, FIRST)] if FIRST in tabs.tab_by_id else []
     cards.append(hf)
     cards += [_llm_card(tabs, pid) for pid in tabs.tab_by_id if pid != FIRST]
-    return cards, hf_badge
+    return cards, widgets
 
 
 def missing_keys(store: Store) -> tuple[str, ...]:
@@ -160,55 +187,49 @@ def missing_keys(store: Store) -> tuple[str, ...]:
     return tuple(out)
 
 
-def missing_keys_text(missing: tuple[str, ...]) -> str:
-    """O aviso do warm-up, vazio quando nada falta; só o link é HTML (o resto é fixo)."""
-    parts = []
-    if "hf" in missing:
-        parts.append("sem o token do Hugging Face, o processamento desta gravação não sai")
-    if "llm" in missing:
-        parts.append("sem a chave da LLM, não sai ata, resumo nem título")
-    if not parts:
-        return ""
-    text = "; ".join(parts)
-    return f'{text[:1].upper()}{text[1:]}. <a href="settings">Configurar as chaves</a>'
-
-
 # ---------------------------------------------------------------- assistente (U-038)
 class KeysPage(QWizardPage):
-    """A página das chaves no assistente: a LLM escolhida com a chave e o "Testar conexão" (a chave digitada, na rede
-    padrão, antes de o banco existir) e o token do Hugging Face. Nada é gravado aqui: o "Concluir" grava tudo."""
+    """A página das chaves no assistente: a IA escolhida com a chave e o "Testar conexão" (a chave digitada, na rede
+    padrão, antes de o banco existir) e o token do Hugging Face com o "Testar" dele (F5.11, U-113: no filho, sem banco, na
+    pasta de modelos padrão). Nada é gravado aqui: o "Concluir" grava tudo."""
 
-    def __init__(self) -> None:
+    def __init__(self, spawn: Spawn | None = None) -> None:
         super().__init__()
         self.setTitle(KEYS_TITLE)
-        self.setSubTitle("A LLM escreve a ata, o resumo e o título; o token do Hugging Face identifica quem fala (sem ele, "
-                         "o processamento não sai).")
+        self.setSubTitle("A IA escreve a ata, o resumo e o título; o token do Hugging Face identifica quem fala (sem ele, "
+                         "o processamento não sai).")                     # F5.11 (U-106): fora das Configurações, "IA"
         self.provider = QComboBox()
         for pid in WIZARD_LLMS:
             self.provider.addItem(f"{TITLES[pid]}, recomendado" if pid == FIRST else TITLES[pid], pid)
         self.key = QLineEdit()
-        self.key.setPlaceholderText("chave de API da LLM escolhida")
+        self.key.setPlaceholderText("chave de API da IA escolhida")
         self.test_btn = QPushButton("Testar conexão")
         self.status = note("")
         self.llm_help = note("", links=True)
         self.hf_token = QLineEdit()
         self.hf_token.setPlaceholderText(HF_PLACEHOLDER)
+        self.hf_test_btn = QPushButton("Testar")
+        self.hf_status = note("")
         self.last_test: ConnectionTest | None = None
-        row = QHBoxLayout()
-        row.addWidget(self.key, 1)
-        row.addWidget(self.test_btn)
         form = QFormLayout(self)
-        form.addRow("LLM", self.provider)
-        form.addRow("Chave", row)
+        form.addRow("IA", self.provider)
+        form.addRow("Chave", _with_button(self.key, self.test_btn))
         form.addRow("", self.status)
         form.addRow("", self.llm_help)
-        form.addRow("Hugging Face", self.hf_token)
+        form.addRow("Hugging Face", _with_button(self.hf_token, self.hf_test_btn))
+        form.addRow("", self.hf_status)
         form.addRow("", note(HF_HELP, links=True))
         form.addRow(note(WIZARD_NOTE))
         self.provider.currentIndexChanged.connect(self._on_provider_changed)      # métodos, nunca lambda com `self`
         self.key.textChanged.connect(self._on_key_edited)
         self.test_btn.clicked.connect(self.run_test)
+        self.hf_control = HfTestControl(self.hf_token, self.hf_test_btn, spawn or process_spawn, None, self)
+        self.hf_control.shown.connect(self._hf_show)
         self._changed()
+
+    def _hf_show(self, badge: str, _value: theme.Tone, detail: str) -> None:
+        """U-113: o resultado do teste do token numa linha ("Conectado: token aceito…"); sem selo, só a mensagem."""
+        self.hf_status.setText(f"{badge}: {detail}" if badge and detail else badge or detail)
 
     def chosen(self) -> str:
         return str(self.provider.currentData())
@@ -271,5 +292,5 @@ def save_wizard_keys(store: Store, provider_id: str, key: str, hf_token: str, te
              "informado" if token else "ausente")
 
 
-__all__ = ["HF_MISSING", "HF_SET", "KEYS_TITLE", "STORAGE_NOTE", "KeysPage", "hf_state", "keys_cards", "missing_keys",
-           "missing_keys_text", "note", "save_wizard_keys"]
+__all__ = ["HF_MISSING", "HF_SET", "KEYS_TITLE", "STORAGE_NOTE", "HfWidgets", "KeysPage", "hf_state", "keys_cards", "missing_keys",
+           "note", "process_spawn", "save_wizard_keys"]

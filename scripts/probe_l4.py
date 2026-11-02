@@ -6,7 +6,9 @@ o Histórico com a busca, as ações abertas e uma conversa (o LLM falso, `LISTE
 do assistente; o Ao vivo com legendas, uma marcada, e o resumo parcial.
 
 `l4_shots(store, platform, shot, tabs_of, app, tmp)` usa o `shot` e o `tabs_of` do `win_probe` (a foto, os `cortados` e os
-`pequenos` de cada tela). Nada aqui sai da máquina: o banco é temporário e o LLM é o falso."""
+`pequenos` de cada tela). Nada aqui sai da máquina: o banco é temporário e o LLM é o falso.
+F5.11 L4: o "Antes de gravar" sem os modelos da legenda (a lista da saída e a faixa "Falta configurar" parada e baixando, com
+o estado do preparador escrito à mão: nada é baixado) e o "Avançado" aberto no Processamento das Configurações."""
 from __future__ import annotations
 
 import json
@@ -278,9 +280,38 @@ def _discard(w: Any) -> None:
     w.deleteLater()
 
 
+def _setup_shots(store: Any, platform: Any, shot: Callable[..., None], tmp: Path) -> None:
+    """F5.11 L4 (U-110 a U-112, U-120): a faixa "Falta configurar" com os modelos que faltam, parada e baixando, e o grupo
+    "Avançado" aberto. O "baixando" é só o estado do preparador (sem filho); a sonda o devolve ao repouso."""
+    from listener.ui.live_prepare import preparer
+    from listener.ui.settings_min import SettingsDialog
+    from listener.ui.warmup import WarmupDialog
+
+    before = store.get_setting("pipeline.models_dir")
+    store.set_setting("pipeline.models_dir", str(tmp / "modelos-vazios"))
+    store.set_setting("live.enabled", True)
+    prep = preparer()
+    for state, name in (({"state": "idle"}, "antes-de-gravar-falta-configurar"),
+                        ({"state": "running", "model": "small", "status": "baixando", "fraction": 0.4},
+                         "antes-de-gravar-baixando")):
+        prep._set(state)
+        dlg = WarmupDialog(platform, store)
+        shot(dlg, name)
+        _discard(dlg)
+    prep._set({"state": "idle"})
+    store.set_setting("pipeline.models_dir", before)
+    sd = SettingsDialog(store, platform, {})
+    sd.nav.setCurrentRow(list(sd.pages).index("Processamento"))
+    sd.advanced.expand()
+    shot(sd, "configuracoes-processamento-avancado")
+    _discard(sd)
+
+
 def l4_shots(store: Any, platform: Any, shot: Callable[..., None], tabs_of: Callable[..., None], app: Any, tmp: Path) -> None:
-    """Todas as telas do L4, na ordem: assistente, reunião, Histórico, revisão e ficha, Ao vivo."""
+    """Todas as telas do L4, na ordem: assistente, reunião, Histórico, revisão e ficha, Ao vivo; F5.11, o que falta antes
+    de gravar e o "Avançado"."""
     _wizard_shots(platform, shot)
+    _setup_shots(store, platform, shot, tmp)
     mid = record_meeting(store, tmp)
     thread = furnish(store, mid)
     _meeting_shots(store, mid, shot, tabs_of, app)

@@ -229,33 +229,35 @@ def test_the_warmup_has_two_columns_the_keys_bar_by_the_record_button_and_fits(q
     from PySide6.QtGui import QGuiApplication
 
     from listener.ui.components import InfoBar
-    from listener.ui.sources import MEETING_ROLE, MeterCell
+    from listener.ui.devices_panel import NAME_ROLE
+    from listener.ui.sources import LEVEL_ROLE, MEETING_ROLE, SourceRowDelegate
     from listener.ui.warmup import WarmupDialog
 
     dlg = WarmupDialog(platform, store)
     qtbot.addWidget(dlg)
     dlg.show()
     qtbot.waitExposed(dlg)
-    keys = dlg.bar("keys")
-    assert isinstance(keys, InfoBar) and keys.isVisibleTo(dlg) and dlg.keys_note is keys.label
+    keys = dlg.bar("setup")                                                               # F5.11: "Falta configurar"
+    assert isinstance(keys, InfoBar) and keys.isVisibleTo(dlg) and dlg.setup_note is keys.label
     bar, record = keys.geometry(), dlg.record_btn.mapTo(dlg, QPoint(0, 0))
     assert bar.right() < record.x() and bar.top() <= record.y() <= bar.bottom()          # U-066: ao lado do Gravar
     assert dlg.record_btn.property(theme.KIND_PROP) == theme.PRIMARY and _icon(dlg.record_btn) == "record:on_accent:16"
     area, frame = (dlg.screen() or QGuiApplication.primaryScreen()).availableGeometry(), dlg.frameGeometry()
     assert area.top() <= frame.top() and frame.bottom() <= area.bottom() and frame.left() >= area.left()      # A-17
     assert frame.right() <= area.right() or dlg.width() == dlg.minimumWidth()      # o offscreen (800 px, fontes falsas): no mínimo
-    table = dlg.sources.table
+    lst = dlg.sources.list
 
     def meeting_rows() -> list[int]:
-        return [r for r in range(table.rowCount()) if table.item(r, 0) is not None and table.item(r, 0).data(MEETING_ROLE)]
+        return [r for r in range(lst.count()) if lst.item(r).data(MEETING_ROLE)]
 
     qtbot.waitUntil(lambda: bool(meeting_rows()), timeout=3000)                            # a primeira lista de apps
     meeting = meeting_rows()
-    assert meeting and table.item(meeting[0], 0).text() == "meeting" and "●" not in table.item(meeting[0], 0).text()   # U-067
-    assert all(isinstance(table.cellWidget(r, 2), MeterCell) for r in range(table.rowCount()))
-    assert set(dlg._bars) == {"keys"}                     # as outras faixas só são montadas quando têm o que dizer
+    assert meeting and lst.item(meeting[0]).data(NAME_ROLE) == "meeting" and "●" not in lst.item(meeting[0]).text()   # U-067
+    assert isinstance(lst.itemDelegate(), SourceRowDelegate)                                # F5.11 (A-30): o medidor pintado
+    assert all(lst.item(r).data(LEVEL_ROLE) is not None for r in range(lst.count()))
+    assert set(dlg._bars) == {"setup"}                    # as outras faixas só são montadas quando têm o que dizer
     dlg._set_echo("")
-    assert set(dlg._bars) == {"keys"}
+    assert set(dlg._bars) == {"setup"}
     dlg._set_echo("Sem eco: o microfone não ouve a saída (correlação 0,10).", "success")
     assert dlg.bar("echo").isVisibleTo(dlg) and dlg.bar("echo").kind == "success" and dlg.echo_label.text().startswith("Sem eco")
     dlg._set_echo("")

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout, QLabel, QProgre
                                QVBoxLayout, QWidget)
 
 from ..model import SettingScope
-from .components import Badge, Card, InfoBar
+from .components import Badge, Card, Collapsible, InfoBar
 from .keys import note as wrap_note
 from .settings_editors import BoolEditor, SettingEditor, TextEditor
 from .theme import METRICS, Tone, note, role
@@ -24,6 +24,15 @@ def pill(badge: Badge) -> Badge:
     """O selo no tamanho do texto: sem esticar na largura nem na altura da linha (U-075)."""
     badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     return badge
+
+
+def _form() -> QFormLayout:
+    form = QFormLayout()
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setVerticalSpacing(METRICS.form_row)
+    form.setHorizontalSpacing(FORM_SPACING)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    return form
 
 
 class SettingsPage(QScrollArea):
@@ -60,13 +69,19 @@ class SettingsPage(QScrollArea):
 
     def form(self, title: str = "") -> QFormLayout:
         """Um cartão com um formulário: os campos de texto esticam; spin, lista e caixa ficam no tamanho deles."""
-        form = QFormLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setVerticalSpacing(METRICS.form_row)
-        form.setHorizontalSpacing(FORM_SPACING)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form = _form()
         self.card(title).content.addLayout(form)
         return form
+
+    def group(self, title: str) -> tuple[Collapsible, QFormLayout]:
+        """F5.11 (A-34): um grupo recolhível, fechado, com um cartão e um formulário dentro (os editores nascem agora)."""
+        group = Collapsible(title)
+        card = Card()
+        form = _form()
+        card.content.addLayout(form)
+        group.content.addWidget(card)
+        self.content.addWidget(group)
+        return group, form
 
     def finish(self) -> None:
         self.content.addStretch(1)

@@ -32,7 +32,7 @@ from ..llm.jobconfig import audio_capable
 from ..log import get_logger
 from . import theme
 from .common import fit_to_screen
-from .components import Badge, InfoBar
+from .components import Badge, InfoBar, expand_ancestors
 from .live_prepare import ModelPreparer, preparer
 from .providers import ProviderTabs
 from .settings_editors import SettingEditor, make_editor
@@ -201,7 +201,9 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
 
     @override
     def done(self, result: int) -> None:
-        """Aceitar, cancelar ou fechar: solta o preparador (o download segue; uma próxima abertura mostra o progresso)."""
+        """Aceitar, cancelar ou fechar: solta o preparador (o download segue; uma próxima abertura mostra o progresso); o
+        teste do token em curso morre (F5.11, A-29)."""
+        self.hf_test.close()
         if self._preparer_connected:
             self._preparer_connected = False
             with suppress(RuntimeError, TypeError):
@@ -270,6 +272,7 @@ class SettingsDialog(GeneralPagesMixin, SearchMixin, PromptsMixin, QDialog):
             if tab is not None:
                 self.provider_tabs.tabs.setCurrentWidget(tab)
             self.reveal_prompt(widget)                       # F5.6 L2: a tarefa do editor de instruções com o erro
+            expand_ancestors(widget)                         # F5.11 (A-34): o erro dentro do "Avançado" abre o grupo
             theme.set_invalid(widget, True)
             self._invalid.append(widget)
             self._watch(widget)
