@@ -76,6 +76,12 @@ inválido só no 401 de verdade; os testes do "Testar" (Cancelar e saída). Conf
 o filho morto no prazo, no Cancelar e na saída, CP3, CP9, CP11, CP15, D-053, F5.6, D-067 e D-076. Em aberto
 (dívidas): desfazer a voz transportada de um reprocessamento (D-078); o `--hf-check` atrás da inspeção TLS da empresa.
 
+## Revisão do diff da F5.12 (02/11)
+Corrigidos em `03b16a0`: R-01, uma doação informada pela bandeja ou pelo Sobre era desfeita pelo cartão à vista;
+R-02, o convite aparecia numa chamada que a F5.7 não vigia (provados). Também: "Fechar" como padrão no Sobre (o Enter
+abria o Pix), o `parse_when` com `OSError`, o interruptor que fecha o cartão e o Enter apertado de verdade nos testes.
+Conferidos sem achado: CP9, CP15 (o e-mail só em `about.py`), D-053, a cópia para suporte sem caminhos, nenhuma rede.
+
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),
 SQL curto na thread da interface, as listas de apps de reunião em `platform.py` e `activity.py`, riscos sem chamador

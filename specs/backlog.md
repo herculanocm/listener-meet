@@ -3,14 +3,15 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (02/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.11 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.438 testes, esquema v9. Nenhum gate medido ainda.
+- Código: F1 a F5.12 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
+  rascunho inicial e F7 é futuro. Suíte de 1.502 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
   apagava a gravação na confirmação do descarte, saiu antes, na D-076.
-- **F5.12 aprovada, em implementação** (02/11, D-079, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja,
-  Configurações e assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128).
+- **F5.12 implementada** (02/11, D-079, D-080, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e
+  assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), em três commits,
+  de `f953bfd` a `03b16a0`, com a revisão do diff corrigida. Falta o dono: a Parte 23 do roteiro.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
@@ -34,7 +35,8 @@ Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Cada item é
 indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem o OK dele. Números em `decisoes.md`
 (Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
 1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
-   com a rede da empresa; nenhum `listener --hf-check` sobrando.
+   com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
+   endereço do PayPal e o convite fora de chamada e fora da tela compartilhada.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",

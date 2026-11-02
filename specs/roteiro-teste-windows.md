@@ -500,6 +500,19 @@ Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19). Os rótulos muda
 - [ ] Telas a 150 %, no claro e no escuro: nada cortado.
 - Devolva: o que estranhou, prints das telas que pareceram erradas e o tempo do "Testar" do token.
 
+## Parte 23 — F5.12: o Sobre e o convite para apoiar (15 min, mais uma reunião real)
+Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19).
+- [ ] Bandeja: "Sobre o listener‑meet…" e "Apoiar o projeto…", com o coração. O Sobre mostra a versão, o repositório,
+      "Este computador" e os créditos; "Copiar informações para suporte" cola só versões, sem caminhos.
+- [ ] Configurações › Sobre (a última página): o mesmo conteúdo e "Mostrar o convite para apoiar de vez em quando".
+      No assistente (só num perfil novo), o link "Sobre o listener‑meet" nas boas-vindas.
+- [ ] "Doar pelo Pix": "Copiar chave" e um Pix de verdade de R$ 0,99 pelo app do banco. "Doar pelo PayPal": o
+      navegador abre na página de enviar dinheiro, com o e-mail copiado (anote se o endereço está certo).
+- [ ] O convite, a partir da 3ª reunião processada: depois de uma reunião processada ou de uma ata pronta, um cartão
+      no canto, sem roubar o foco. Compartilhando a tela no Teams, os outros não o veem. Ele nunca aparece numa
+      chamada, gravando ou com a revisão de falantes aberta; "Agora não" o some por 30 dias.
+- Devolva: se o Pix chegou, se o endereço do PayPal estava certo e prints do convite e do Sobre.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
