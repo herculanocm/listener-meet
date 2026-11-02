@@ -28,7 +28,8 @@ from ..model import SummaryKind
 from .common import clamp_to_screens
 from .components import HtmlView
 from .live_text import (KIND_PREFIX, KIND_TITLE, NOTE_MAX, STATE_TEXT, MarkCaption, MarkItem, Refresh, caption_key, caption_line,
-                        caption_note, clip, hhmm, item_key, item_note, partial_data, partial_html, speaker_parts)
+                        caption_note, caption_who, clip, hhmm, item_key, item_note, partial_data, partial_html, speaker_parts,
+                        you_label)
 from .speech_delegate import FLAG_ROLE, SpeechDelegate, speech_roles
 from .theme import Tone, note, role, tone
 from .widget import LIVE_BADGES, _screen_rects
@@ -51,6 +52,9 @@ class LiveWindow(QWidget):
         self.store = store
         self.meeting_id = meeting_id
         self.partial_auto = partial_auto                 # F5.6 (A-22): o resumo parcial automático desta gravação
+        me, meeting = store.get_me(), store.get_meeting(meeting_id) or {}
+        self.me_id = int(me["id"]) if me else None       # U-108 (A-26): "Você" pela pessoa marcada como você
+        self.in_room = bool(meeting.get("is_in_room"))
         self.on_mark_caption = on_mark_caption
         self.on_mark_item = on_mark_item
         self.on_refresh = on_refresh
@@ -172,7 +176,7 @@ class LiveWindow(QWidget):
         delay = f" · atraso {int(latency) / 1000:.1f} s".replace(".", ",") if latency is not None else ""   # vírgula (U-032)
         tip = f"canal {row.get('channel') or '?'}{delay}"
         item.setToolTip(f"{tip}\nclique: marcador neste instante com o texto da legenda")
-        name, job = speaker_parts(row.get("label"))
+        name, job = speaker_parts(you_label(row, self.me_id, self.in_room))
         color = self.speakers.setdefault(name, len(self.speakers)) if name else None
         speech_roles(item, int(row.get("t_start_ms") or 0), name, job, " ".join(str(row.get("text") or "").split()), color)
         self._paint(item, row)
@@ -180,7 +184,8 @@ class LiveWindow(QWidget):
 
     def _paint(self, item: QListWidgetItem, row: Mapping[str, Any]) -> None:
         marked = caption_key(row) in self.marked_captions
-        item.setText(("⚑ " if marked else "") + caption_line(row))     # o texto para o leitor de tela (e os testes)
+        shown = {**row, "label": you_label(row, self.me_id, self.in_room)}   # U-108: "Você" na tela; a nota leva o nome
+        item.setText(("⚑ " if marked else "") + caption_line(shown))   # o texto para o leitor de tela (e os testes)
         item.setData(FLAG_ROLE, marked)                       # F5.4 L4: a bandeira no destaque do tema, desenhada
 
     @property
@@ -338,4 +343,4 @@ class LiveWindow(QWidget):
 
 
 __all__ = ["KIND_PREFIX", "NOTE_MAX", "LiveWindow", "MarkCaption", "MarkItem", "Refresh", "caption_key", "caption_line", "caption_note",
-           "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html"]
+           "caption_who", "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html"]

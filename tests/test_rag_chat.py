@@ -234,7 +234,7 @@ def test_global_chat_end_to_end_streaming_follow_up_records_rating_and_html(stor
     assert chat_global.rate_answer(store, ans.message_id, 1) and store.chat.get(ans.message_id)["rating"] == 1
     assert not chat_global.rate_answer(store, ans.question_id, 1) and not chat_global.rate_answer(store, 99999, 0)
     page = chat_global.thread_html(store, ans.thread_id)
-    assert page.count("<b>Você:</b>") == 2 and page.count("<b>LLM:</b>") == 2 and f"listener://open?m={a}&amp;t=" in page
+    assert page.count("<b>Você:</b>") == 2 and page.count("<b>Resposta:</b>") == 2 and f"listener://open?m={a}&amp;t=" in page
     assert "Citação certa: sim" in page and "Citação certa? " in page
     link = chat_global.rate_link(ans.message_id, None)
     assert chat_global.parse_rate_link(link) == (ans.message_id, None)

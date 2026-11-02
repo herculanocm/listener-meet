@@ -171,7 +171,7 @@ def test_the_open_meeting_shows_the_language_and_asks_before_reprocessing(qtbot,
     from listener.ui.meeting_language import RECORDING_TIP, change_question
 
     mid = _processed(platform, store, "pt")
-    assert "sem chave de LLM" in change_question(store, mid, "en")
+    assert "sem chave da IA" in change_question(store, mid, "en")
     _provider_ready(store)
     launched: list[bool] = []
     win = MeetingWindow(store, mid, on_launch=launched.append)
@@ -273,7 +273,7 @@ def test_the_open_meeting_offers_to_undo_and_then_the_other_language_again(qtbot
     bar.action.trigger()                                                                # desistiu antes de rodar
     text, button = asked[-1]
     assert button == "Desfazer a troca" and text.startswith("Desfazer a troca para Inglês (en)?") and "Tempo estimado" not in text
-    assert "a LLM não refaz nada" in text and "desfeita" in win.message.text()
+    assert "a IA não refaz nada" in text and "desfeita" in win.message.text()
     assert bar.text == "Idioma: pt-BR" and bar.action.text() == "Trocar para Inglês (en)…" and not reprocess.active_jobs(store, mid)
 
 

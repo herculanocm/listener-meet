@@ -7,11 +7,16 @@ import html
 import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..llm.prompts.common import stamp
 
+if TYPE_CHECKING:
+    from ..capture.recorder import Recorder
+    from ..store import Store
+
 NOTE_MAX = 300                    # nota do marcador criado de uma legenda ou de um item do parcial
+YOU = "Você"
 KIND_PREFIX = {"decisions": "Decisão", "actions": "Ação"}
 KIND_TITLE = {"decisions": "Possíveis decisões", "actions": "Possíveis ações"}
 STATE_TEXT = {"off": "legenda ao vivo desligada nesta gravação", "unavailable": "legenda ao vivo indisponível nesta gravação",
@@ -98,11 +103,29 @@ def hhmm(iso: str | None) -> str:
         return "?"
 
 
+def you_label(row: Mapping[str, Any], me_id: int | None, in_room: bool) -> str | None:
+    """U-108 (A-26): na tela, "Você" pela pessoa marcada como você; com os nomes desligados, o canal L fora da sala
+    presencial também. A nota do marcador, a ata e o que vai à LLM levam o rótulo gravado (o nome)."""
+    pid = row.get("person_id")
+    if (me_id is not None and pid is not None and int(pid) == me_id) or (
+            row.get("label") is None and str(row.get("channel") or "") == "L" and not in_room):
+        return YOU
+    return row.get("label")
+
+
+def caption_who(row: Mapping[str, Any], store: Store, rec: Recorder | None) -> str | None:
+    """O rótulo da legenda no widget (U-108): a pessoa do usuário e a sala da reunião que grava, lidas na hora."""
+    me = store.get_me()
+    meeting = store.get_meeting(rec.meeting_id) if rec is not None else None
+    return you_label(row, int(me["id"]) if me else None, bool((meeting or {}).get("is_in_room")))
+
+
 def speaker_parts(label: str | None) -> tuple[str, str]:
     """F5.4 L4 (U-081): o rótulo "Nome — Cargo" da legenda em nome e cargo (o cargo vazio quando não há)."""
     name, _sep, role = str(label or "").partition(" — ")
     return name.strip(), role.strip()
 
 
-__all__ = ["KIND_PREFIX", "KIND_TITLE", "NOTE_MAX", "STATE_TEXT", "MarkCaption", "MarkItem", "Refresh", "caption_key", "caption_line",
-           "caption_note", "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html", "speaker_parts"]
+__all__ = ["KIND_PREFIX", "KIND_TITLE", "NOTE_MAX", "STATE_TEXT", "YOU", "MarkCaption", "MarkItem", "Refresh", "caption_key",
+           "caption_line", "caption_note", "caption_who", "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html",
+           "speaker_parts", "you_label"]

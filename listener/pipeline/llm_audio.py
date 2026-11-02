@@ -145,7 +145,7 @@ def llm_transcriber(store: Store) -> LLMAudioTranscriber:
 
     cfg = LlmJobConfig.from_store(store)
     if not cfg.ready:
-        raise PermanentError("transcrição pela LLM: nenhum provedor ativo com modelo nas Configurações (LLM)")
+        raise PermanentError("transcrição pela IA: nenhum provedor ativo com modelo nas Configurações (LLM)")
 
     def factory() -> LLMProvider:
         return build_provider(store, cfg.provider_id)[0]

@@ -71,7 +71,7 @@ def test_reindex_estimate_counts_tokens_cost_and_minutes(store):
     empty = store.create_meeting("sem trechos", None, None, None)
     store.finish_meeting(empty, 1000)
     _pipeline_job(store, empty)
-    assert "1 reunião(ões) ainda sem trechos" in index.reindex_estimate(store).text()
+    assert "1 reunião ainda sem trechos" in index.reindex_estimate(store).text()
     store.providers.update_provider("gemini", api_key="")
     blocked = index.reindex_estimate(store)
     assert not blocked.ready and "sem chave" in blocked.reason and blocked.model_key == MODEL
@@ -105,7 +105,7 @@ def test_settings_search_group_completes_and_reindexes_with_confirmation(qtbot, 
     dlg.complete_btn.click()                                                              # só a reunião com trecho sem vetor
     pending = {int(j["meeting_id"]): json.loads(j["params_json"]) for j in store.jobs.active(kinds=("index",))}
     assert set(pending) == {b} and pending[b]["force"] is True and pending[b]["reason"] == "reindex" and launched == [True]
-    assert "1 reunião(ões) na fila do índice" in dlg.index_status.text() and store.rag.get_model(MODEL)["backfill"] == 0
+    assert "1 reunião na fila do índice" in dlg.index_status.text() and store.rag.get_model(MODEL)["backfill"] == 0
     answer["value"] = False
     assert dlg.reindex_all() == 0 and len(store.jobs.active(kinds=("index",))) == 1                 # Cancelar: nada
     assert "Refazer o índice de todas as reuniões processadas" in asked[2] and "|Reindexar|Cancelar" in asked[2]
@@ -145,11 +145,11 @@ def test_completing_says_that_meetings_without_chunks_also_get_vectors(qtbot, st
     dlg = SettingsDialog(store, platform, {}, on_launch=lambda _light: None)
     qtbot.addWidget(dlg)
     assert dlg.complete_index() == 1 and len(asked) == 1 and "nenhum trecho sem vetor do modelo ativo" in asked[0]
-    assert "1 reunião(ões) ainda sem trechos, que também recebem vetores" in asked[0] and "por palavra" not in asked[0]
+    assert "1 reunião ainda sem trechos, que também recebem vetores" in asked[0] and "por palavra" not in asked[0]
     job = store.jobs.active(kinds=("index",))[0]
     assert int(job["meeting_id"]) == empty and json.loads(job["params_json"])["force"] is True   # os vetores dela vêm
     store.providers.update_provider("gemini", api_key="")                                # sem embeddings: só o índice por palavra
-    assert "1 reunião(ões) ainda sem trechos (entram com o índice por palavra)" in index.reindex_estimate(store).text()
+    assert "1 reunião ainda sem trechos (entram com o índice por palavra)" in index.reindex_estimate(store).text()
 
 
 def test_changing_the_embedder_offers_reindexing_now_or_later(qtbot, store, platform, monkeypatch):

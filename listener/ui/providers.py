@@ -264,7 +264,7 @@ class ProviderTab(QWidget):
         self.last_models = tuple(result)
         self.store.providers.update_provider(self.pid, models_json=models_cache(self.last_models))
         self._fill_models([m.id for m in self.last_models])
-        self.status.setText(f"{len(self.last_models)} modelo(s) listados")
+        self.status.setText(f"{len(self.last_models)} {'modelo listado' if len(self.last_models) == 1 else 'modelos listados'}")
 
     def test_via_worker(self) -> None:
         from ..pipeline.llm_steps import enqueue_test_job

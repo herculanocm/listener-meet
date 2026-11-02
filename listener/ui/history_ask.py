@@ -20,6 +20,7 @@ from PySide6.QtCore import QPoint, QThread, QUrl
 from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton, QTextBrowser, QWidget
 
 from ..config.defaults import SPECS
+from ..fmt import plural
 from ..llm.costs import fmt_usd
 from ..log import get_logger
 from ..model import ChatRole
@@ -47,7 +48,7 @@ def suggestions(store: Store) -> list[str]:
     """U-096: uma contagem com uma pessoa (a primeira cadastrada que não é você), as ações atrasadas por dono e o custo."""
     other = next((p for p in store.people.list_people() if not p.get("is_me")), None)
     first = [f"Quantas reuniões tive com {other['name']} este mês?"] if other is not None else []
-    return [*first, "Quais ações estão atrasadas, por dono?", "Quanto gastei com a LLM por mês?"]
+    return [*first, "Quais ações estão atrasadas, por dono?", "Quanto gastei com a IA por mês?"]
 
 
 def ask_link(question: str) -> str:
@@ -67,15 +68,14 @@ def empty_html(store: Store) -> str:
 
 
 def done_text(ans: agent.AgentAnswer) -> str:
-    """A linha de estado da resposta: citações com link, consultas e rodadas, a busca, o custo e onde parou."""
+    """A linha de estado da resposta: citações com link, consultas e rodadas, o custo e onde parou (o tipo de busca fica no
+    "Como cheguei aqui", fora da vista: U-106 da F5.11)."""
     steps = ans.trace
-    searched = [i for r in steps.get("rodadas") or () for i in r.get("itens") or () if i.get("tipo") == "busca" and i.get("status") == "ok"]
-    how = ("busca híbrida" if all(i.get("hibrida") for i in searched) else "busca por palavras") if searched else ""
     cost = fmt_usd(ans.cost_usd) if ans.cost_usd is not None else ("sem preço cadastrado" if steps.get("sem_preco") else "")
     stop = str(steps.get("parou") or "")
-    rounds = f"{steps.get('consultas', 0)} consulta(s) em {len(steps.get('rodadas') or ())} rodada(s)"
+    rounds = f"{plural(int(steps.get('consultas', 0)), 'consulta')} em {plural(len(steps.get('rodadas') or ()), 'rodada')}"
     guard = f"parou: {trace.STOPS[stop]}" if stop != "resposta" and stop in trace.STOPS else ""
-    parts = [f"{ans.linked} citação(ões) com link", rounds, how, cost, guard, "interrompida" if ans.cancelled else ""]
+    parts = [f"{plural(ans.linked, 'citação', 'citações')} com link", rounds, cost, guard, "interrompida" if ans.cancelled else ""]
     return " · ".join(p for p in parts if p)
 
 
@@ -166,7 +166,7 @@ class AskMixin:
         if not text or self.chat_task is not None:
             return
         if self.store.providers.active_with_key("llm") is None:
-            self._chat_warning("Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso.")
+            self._chat_warning("Nenhum provedor de IA ativo com chave: informe a chave em Configurações, Chaves de acesso.")
             return
         self.question.clear()
         self._partial = ""
@@ -208,7 +208,7 @@ class AskMixin:
 
     def _render_partial(self) -> None:
         partial = html.escape(self._partial).replace("\n", "<br>") or "…"
-        self.chat_view.setHtml(f"{self._base_html}<p><b>LLM:</b> {partial}</p>")
+        self.chat_view.setHtml(f"{self._base_html}<p><b>Resposta:</b> {partial}</p>")
         self.chat_view.moveCursor(self.chat_view.textCursor().MoveOperation.End)
 
     def _on_chat_done(self, result: Any) -> None:
@@ -236,7 +236,7 @@ class AskMixin:
             self._load_threads(select=ans.thread_id)
         self._render_thread()
         if ans.error:
-            self._chat_warning(f"A LLM falhou: {ans.error}")
+            self._chat_warning(f"A IA falhou: {ans.error}")
         elif ans.cancelled and ans.message_id is None:
             self._chat_status("Pergunta cancelada.")
         else:

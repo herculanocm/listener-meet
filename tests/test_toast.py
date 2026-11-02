@@ -387,7 +387,7 @@ def test_identity_only_warns_that_the_names_are_ready(qtbot, qapp, tmp_path, clo
     monkeypatch.setattr(c, "open_review", lambda _mid: None)
     try:
         c._on_job_done(llm)                                                                # F5.6 (A-06): sem pedido, nada espera
-        assert "LLM concluída" in c.notices[-1].text and _ask(store, mid, ["minutes"], mode="names") is None   # o pedido espera
+        assert "IA concluída" in c.notices[-1].text and _ask(store, mid, ["minutes"], mode="names") is None   # o pedido espera
         c._on_job_done(llm)
         n = c.notices[-1]
         assert (n.text, n.kind, n.action) == (f"Planejamento 2027: {IDENTITY_READY}", NoticeKind.READY, NoticeAction(Target.MEETING, mid))

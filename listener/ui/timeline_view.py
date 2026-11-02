@@ -25,6 +25,7 @@ from PySide6.QtGui import (QBrush, QHelpEvent, QMouseEvent, QPainter, QPaintEven
                            QWheelEvent)
 from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QToolTip, QVBoxLayout, QWidget
 
+from ..fmt import plural
 from ..llm.prompts.common import stamp
 from ..pipeline.review import PLAY_LEAD_MS
 from ..rag.export import fmt_duration
@@ -381,8 +382,8 @@ class TimelineTab(QWidget):
                         *(a if b is None else b for a, b in spans)])
         lanes = build_lanes(rows, int(me["id"]) if me else None)
         self.view.set_data(rows, lanes, markers, [(a, duration if b is None else b) for a, b in spans], duration)
-        self.note.setText(f"{len(lanes)} falante(s), {len(rows)} fala(s). Clique para ouvir daquele ponto; Ctrl + roda do mouse "
-                          f"amplia até {ZOOM_MAX:.0f} vezes." if rows else CLICK_TEXT if duration > 0 else "")
+        self.note.setText(f"{plural(len(lanes), 'falante')}, {plural(len(rows), 'fala')}. Clique para ouvir daquele ponto; "
+                          f"Ctrl + roda do mouse amplia até {ZOOM_MAX:.0f} vezes." if rows else CLICK_TEXT if duration > 0 else "")
 
     def set_cursor(self, t_ms: int | None) -> None:
         self.view.set_cursor(t_ms)

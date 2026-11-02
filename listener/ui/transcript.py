@@ -45,7 +45,7 @@ from .common import copy_rich
 from .components import EmptyState
 from .speech_delegate import COLOR_ROLE, ROLE_ROLE, SPEAKER_ROLE, STAMP_ROLE, TEXT_ROLE, SpeechDelegate
 from .theme import Tokens, Tone, qcolor, tokens
-from .timeline import build_lanes, lane_of_rows
+from .timeline import YOU, build_lanes, lane_of_rows
 from .transcript_footer import TranscriptFooterMixin
 
 if TYPE_CHECKING:
@@ -73,7 +73,8 @@ def playing_brush(t: Tokens) -> QBrush:
 
 
 class SegmentsModel(QAbstractListModel):
-    """As falas (com o nome da tela, U-035) e a cor de cada uma (o índice da faixa do falante, U-081)."""
+    """As falas (com o nome da tela, U-035) e a cor de cada uma (o índice da faixa do falante, U-081). F5.11 (U-108, A-26): a
+    pessoa marcada como você aparece como "Você", sem cargo; o nome segue na ata, na exportação, na citação e na LLM."""
 
     def __init__(self, rows: list[review.TranscriptRow], parent: Any = None, *, me_id: int | None = None):
         super().__init__(parent)
@@ -99,8 +100,11 @@ class SegmentsModel(QAbstractListModel):
         if not index.isValid() or index.row() >= len(self.rows):
             return None
         row = self.rows[index.row()]
-        if role == Qt.ItemDataRole.DisplayRole:
-            return row.line
+        if role in (Qt.ItemDataRole.DisplayRole, SPEAKER_ROLE, ROLE_ROLE):
+            name, job = (YOU, "") if self.me_id is not None and row.person_id == self.me_id else (row.name, row.role)
+            if role != Qt.ItemDataRole.DisplayRole:
+                return name if role == SPEAKER_ROLE else job
+            return f"[{row.stamp}] {f'{name} — {job}' if job else name}: {row.shown_text}"
         if role == Qt.ItemDataRole.ToolTipRole:
             span = f"{row.t_start_ms / 1000:.1f} a {row.t_end_ms / 1000:.1f} s".replace(".", ",")
             return f"canal {row.channel} · {span} · clique para ouvir daqui"

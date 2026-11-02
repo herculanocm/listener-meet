@@ -106,7 +106,7 @@ def _shown(key: str, value: str | None) -> str:
         return "(oculto)"
     spec = SPECS.get(key)
     if any(h in low for h in FREE_TEXT_HINTS) and (spec is None or isinstance(spec.default, str)):   # o `_enabled` é bool
-        return f"(texto com {len(value)} caractere(s))"
+        return f"(texto com {len(value)} {'caractere' if len(value) == 1 else 'caracteres'})"
     if any(h in low for h in DEVICE_NAME_HINTS) or value.startswith("name:"):
         return "(nome de aparelho)"
     value = safe_url(value)

@@ -3,20 +3,22 @@ A troca automática do microfone e da saída a partir da leitura do Core Audio (
 (R-04), a saída de comunicação como pista do "sem sinal" (A-20) e a linha de alerta por prioridade: a saúde dos canais, o
 banco parado, o aviso dos dispositivos e o banco lento (A-21). F5.4 L2 (U-060): cada alerta tem um tipo (`kind`: `info`,
 `success`, `warning` ou `error`, os da `InfoBar`), que o widget mostra no ícone e na cor da linha. Nomes de aparelho só
-na tela (A-22)."""
+na tela (A-22). F5.11 (U-116, A-33): os textos curtos, em constantes (a sonda do widget usa as mesmas), cabem inteiros nas
+duas linhas do alerta (`tests/test_recording_alerts_text.py` mede cada um); o plural de verdade (U-109)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..capture.recorder import Recorder, SourceSpec
+from ..fmt import plural
 from ..model import DeviceReason, Health, LostReason, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints
 
 ACTION_USE, ACTION_DEVICES, ACTION_OUTPUTS, ACTION_ROOM = "use", "devices", "outputs", "room"
 DEVICES_BUTTON = "Dispositivos…"
 ROOM_BUTTON = "Marcar como sala"                                                                                      # F5.9 (item 7)
-ECHO_TEXT = "o microfone novo ouve a reunião: use fone ou marque a sala"
+ECHO_TEXT = "o microfone ouve a reunião: use fone ou marque a sala"
 ECHO_TIP = "Marcar como sala liga 'Sala de reunião' nesta gravação: a identificação final trata o canal do microfone como a sala."
 GONE_TEXT = {"L": "microfone escolhido saiu: gravando no padrão do Windows", "R": "saída escolhida saiu: gravando a saída padrão"}
 BACK_TEXT = {"L": "microfone escolhido voltou", "R": "saída escolhida voltou"}
@@ -24,6 +26,17 @@ LOST_TEXT = {"L": "microfone desconectado; tentando reabrir…", "R": "saída de
 NEVER_OPENED_TEXT = {"L": "microfone não iniciou; tentando de novo…", "R": "saída não iniciou; tentando de novo…"}   # F5.9 (item 2)
 APP_LEFT_TEXT = "saída desconectada (o app saiu); tentando reabrir…"                                                 # F5.9 (item 1)
 FALLBACK_TEXT = "app sem loopback: gravando o sistema inteiro"                                                       # F5.9 (item 4)
+NO_SIGNAL_TEXT = "saída sem sinal: a reunião está tocando em outro app?"
+NO_SIGNAL_COMM_TEXT = "saída sem sinal: a chamada pode estar em {name}"    # o aparelho de comunicação (A-20); inteiro na dica
+MIC_SILENT_TEXT = "microfone sem sinal há mais de {seconds}s"
+
+
+def db_stuck_text(seconds: int, chunks: int) -> str:
+    return f"banco não responde há {seconds}s; {plural(chunks, 'pedaço retido', 'pedaços retidos')} em memória"
+
+
+def db_slow_text(chunks: int) -> str:
+    return f"banco lento: {plural(chunks, 'pedaço')} na fila"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,19 +114,18 @@ def alert_line(rec: Recorder, health: Mapping[str, str], notice: Alert | None, c
         if health.get(st.name) == Health.LOST:
             return Alert(lost_text(st.name, st.lost_reason), DEVICES_BUTTON, ACTION_DEVICES, kind="error")
     if health.get("R") == Health.ALERT:
-        text = (f"saída sem sinal: a chamada pode estar em {comm.name} (comunicação)" if comm is not None
-                else "saída sem sinal: a reunião está tocando em outro app?")
-        return Alert(text, DEVICES_BUTTON, ACTION_DEVICES)
+        text = NO_SIGNAL_COMM_TEXT.format(name=comm.name) if comm is not None else NO_SIGNAL_TEXT
+        return Alert(text, DEVICES_BUTTON, ACTION_DEVICES, tip=f"{text} (comunicação)" if comm is not None else "")
     if health.get("L") == Health.ALERT:
-        return Alert(f"microfone sem sinal há mais de {int(rec.cfg.l_alert_seconds)}s", DEVICES_BUTTON, ACTION_DEVICES)
+        return Alert(MIC_SILENT_TEXT.format(seconds=int(rec.cfg.l_alert_seconds)), DEVICES_BUTTON, ACTION_DEVICES)
     db = health.get("db", Health.OK)
     if db == Health.ALERT:
         since = int(rec.elapsed() - (snap.pending_since or rec.elapsed()))
-        return Alert(f"banco não responde há {since}s; {snap.pending} pedaço(s) retido(s) em memória", kind="error")
+        return Alert(db_stuck_text(since, snap.pending), kind="error")
     if rec.source.fallback_exe:                           # F5.9 (item 4): abaixo da saúde, acima do aviso dos dispositivos
         return Alert(FALLBACK_TEXT, DEVICES_BUTTON, ACTION_DEVICES)
     if notice is not None:
         return notice
     if db == Health.WARN:
-        return Alert(f"banco lento: {snap.pending} pedaço(s) na fila")
+        return Alert(db_slow_text(snap.pending))
     return None

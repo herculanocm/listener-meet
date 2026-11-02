@@ -174,7 +174,7 @@ def real_deps(config: JobConfig, token: str, store: Any = None) -> PipelineDeps:
     def transcriber() -> Any:
         if config.transcriber == "llm":
             if store is None:
-                raise PermanentError("transcrição pela LLM precisa do banco (provedor ativo)")
+                raise PermanentError("transcrição pela IA precisa do banco (provedor ativo)")
             from .llm_audio import llm_transcriber
 
             return llm_transcriber(store)

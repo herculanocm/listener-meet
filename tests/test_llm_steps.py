@@ -318,7 +318,7 @@ def test_decision_source_and_accept_llm(platform, store):
     c = store.segments.get_cluster(with_llm.cluster_id)
     assert c["status"] == "confirmado" and c["person_id"] == ana and c["decision_source"] == DecisionSource.USER_LLM
     assert c["llm_name"] == "Ana"                                                                            # a sugestão fica (mede o G3)
-    with pytest.raises(ValueError, match="sugestão da LLM"):
+    with pytest.raises(ValueError, match="sugestão pelo contexto"):
         review.accept_llm(store, other.cluster_id)
     review.confirm(store, other.cluster_id, bia)
     assert store.segments.get_cluster(other.cluster_id)["decision_source"] == DecisionSource.USER

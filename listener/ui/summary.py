@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, override
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget
 
 from ..capture.clock import fmt_mmss
+from ..fmt import plural
 from ..log import get_logger
 from ..pipeline.llm_requests import Species
 from . import llm_ask
@@ -74,7 +75,7 @@ class SummaryDialog(QDialog):
         self._warnings(form, stats)
         sizes = store.db_sizes()
         form.addRow("Banco", QLabel(f"texto {human_size(sizes['main'])} · áudio {human_size(sizes['audio'])} "
-                                    f"em {len(sizes.get('audio_files', {}))} arquivo(s)"))
+                                    f"em {plural(len(sizes.get('audio_files', {})), 'arquivo')}"))
         self.boxes = RequestBoxes(store)               # U-089: o pedido ao parar
         form.addRow("Depois de processar", self.boxes)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
@@ -88,7 +89,8 @@ class SummaryDialog(QDialog):
     def _warnings(form: QFormLayout, stats: dict[str, Any]) -> None:
         unsaved = stats.get("unsaved") or []
         if unsaved:
-            lab = QLabel(f"{len(unsaved)} pedaço(s) não foram gravados no banco ({', '.join(unsaved)}); a reunião ficou "
+            lab = QLabel(f"{plural(len(unsaved), 'pedaço não foi gravado', 'pedaços não foram gravados')} no banco "
+                         f"({', '.join(unsaved)}); a reunião ficou "
                          "marcada como interrompida. Veja o log.")
             tone(lab, Tone.DANGER)
             lab.setWordWrap(True)

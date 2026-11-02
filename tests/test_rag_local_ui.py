@@ -189,6 +189,7 @@ def _controller(qapp: Any, platform: Any, store: Store, monkeypatch: pytest.Monk
     monkeypatch.setattr(ctl, "prewarm_audio", lambda: None)                  # nada de PortAudio aqui
     monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr("listener.ui.controller.confirm_discard", lambda *_a: True)      # F5.11 (U-107): "Descartar"
     launched: list[bool] = []
 
     def launch(light: bool = False) -> bool:

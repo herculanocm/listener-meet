@@ -218,7 +218,7 @@ def test_live_window_loads_reads_by_increment_and_marks(qtbot, store):
     _caption(store, mid, 5000, "fala do meio", None, "L")
     win.on_caption({"type": "caption"})
     assert [r["text"] for r in win.captions] == ["primeira fala", "fala do meio", "segunda fala"]
-    assert win.list.item(1).text() == "[00:05] fala do meio"
+    assert win.list.item(1).text() == "[00:05] Você: fala do meio"       # F5.11 (U-108, A-26): sem nome, o L fora da sala
     win._caption_clicked(win.list.item(0))
     assert len(marks) == 1 and marks[0]["t_start_ms"] == 2000
     from listener.ui.live import caption_key

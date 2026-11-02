@@ -149,7 +149,7 @@ def build_provider(store: Store, provider_id: str | None = None, *, role: str = 
     `local` (F5.1) lê a pasta de modelos daqui; os outros, a rede (proxy e certificado)."""
     row = store.providers.get(provider_id) if provider_id else store.providers.active_provider(role)
     if row is None:
-        raise ProviderUnavailableError("nenhum provedor de LLM ativo: escolha um nas Configurações (LLM)")
+        raise ProviderUnavailableError("nenhum provedor de IA ativo: escolha um nas Configurações (LLM)")
     if str(row["kind"]) == ProviderKind.LOCAL:
         provider = provider_from_row(row, models_dir=store.get_setting("pipeline.models_dir"))
     else:

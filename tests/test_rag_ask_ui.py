@@ -72,8 +72,8 @@ def test_the_ask_with_progress_the_collapsed_trace_copy_sql_and_view_data(qtbot,
     ans = _ask(qtbot, page)
     assert ans.error is None and "Consultando a base…" in seen and "Consultando a base… rodada 1 · 1 consulta" in seen
     assert "escrevendo a resposta…" in seen and page.chat_status.text() == (
-        f"1 citação(ões) com link · 1 consulta(s) em 1 rodada(s) · {page.chat_status.text().split(' · ')[-1]}")
-    assert page.btn_stop.text() == "Cancelar" and not page.btn_stop.isEnabled()
+        f"1 citação com link · 1 consulta em 1 rodada · {page.chat_status.text().split(' · ')[-1]}")
+    assert page.btn_stop.text() == "Parar" and not page.btn_stop.isEnabled()                   # F5.11 (U-107)
     shown = page.chat_view.toPlainText()
     assert "▸ Como cheguei aqui (1 consulta · " in shown and "SELECT" not in shown
     page._chat_link(QUrl(trace.link("trace", ans.message_id)))                       # abre

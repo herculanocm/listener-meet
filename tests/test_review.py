@@ -174,7 +174,7 @@ def test_transcript_tab_lists_and_click_plays_from_first_word(qtbot, platform, s
     assert len(outputs.opened[0].frames) == (3000 - 1450) * 16                            # do ponto até o fim da reunião
     store._x("DELETE FROM segments WHERE meeting_id = ?", (mid,))
     dlg.reload()
-    assert dlg.model.rowCount() == 0 and dlg.status.text().startswith("0 fala(s)")
+    assert dlg.model.rowCount() == 0 and dlg.status.text().startswith("0 falas")
 
 
 def test_controller_opens_review_when_clusters_exist_and_on_done(qtbot, qapp, platform, store, monkeypatch):

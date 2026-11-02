@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from ..fmt import plural
 from ..model import JobKind, step_task
 from .live_prepare import LIVE, RAG
 
@@ -128,6 +129,15 @@ def job_error_text(job: Mapping[str, Any]) -> str | None:
     return f"erro {where}{tail}; veja o motivo na fila."
 
 
+def startup_texts(interrupted: int, missing: Sequence[str], waiting: int) -> tuple[str, str, str]:
+    """Os avisos da abertura, com o plural de verdade (U-109 da F5.11): as gravações interrompidas, os arquivos de áudio fora
+    da pasta do banco e as reuniões que esperam a revisão (vazio quando não há)."""
+    return (f"{plural(interrupted, 'gravação interrompida', 'gravações interrompidas')} na última execução; os pedaços foram "
+            "preservados." if interrupted else "",
+            f"{'Arquivo' if len(missing) == 1 else 'Arquivos'} de áudio fora da pasta do banco: {', '.join(missing)}" if missing else "",
+            f"{plural(waiting, 'reunião processada espera', 'reuniões processadas esperam')} a revisão de falantes." if waiting else "")
+
+
 def download_text(state: Mapping[str, Any]) -> tuple[NoticeKind, str] | None:
     """O fim e o erro do preparo de modelos, do ao vivo ou da busca local (A-11); None para o resto (o progresso)."""
     what = RAG if state.get("what") == RAG else LIVE
@@ -141,4 +151,5 @@ def download_text(state: Mapping[str, Any]) -> tuple[NoticeKind, str] | None:
 
 
 __all__ = ["CHAT_FAILED", "CHAT_READY", "CRASH_SHORT", "HISTORY_FAILED", "HISTORY_READY", "IDENTITY_READY", "MAX_PER_MINUTE",
-           "Notice", "NoticeAction", "NoticeKind", "NoticeMeta", "RateLimit", "Target", "download_text", "job_error_text"]
+           "Notice", "NoticeAction", "NoticeKind", "NoticeMeta", "RateLimit", "Target", "download_text", "job_error_text",
+           "startup_texts"]

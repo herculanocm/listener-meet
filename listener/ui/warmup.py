@@ -42,9 +42,9 @@ from ..config.defaults import SPECS
 from ..config.language import LANGUAGES, default_language, label
 from ..llm.glossary_task import GlossaryResult, match_people_locally, merge_glossary, request_glossary, split_names
 from ..log import get_logger
-from ..model import SourceKind
+from ..model import MIC_YOU, OUTPUT_YOU, SourceKind
 from .common import fit_to_screen
-from .components import Card, InfoBar
+from .components import Card, InfoBar, mic_title
 from .devices import FOLLOW_ID, FOLLOW_TEXT, REFRESH_MS, fill_mic_combo, refresh_mics
 from .icons import set_icon
 from .keys import missing_keys, missing_keys_text
@@ -161,7 +161,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
 
     # ---------------------------------------------------------------- montagem (F5.4 L2: U-065 a U-067)
     def _build_mic(self) -> None:
-        self.mic_box = Card("Microfone (canal L: você)")
+        self.mic_box = Card(MIC_YOU)                     # U-106; com a sala, A-41
         self.mic_combo = QComboBox()
         fill_mic_combo(self.mic_combo, self._devices, FOLLOW_ID, self.platform.default_input_device(), follow=True)   # "acompanha" 1º
         # U-033: o nome do dispositivo cabe cortado no combo e inteiro na lista e na dica; com o nome todo ("Grupo de
@@ -189,7 +189,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self._slots["mic"] = (ml, -1, 0)                   # U-057: o aviso do microfone numa faixa, embaixo
 
     def _build_sources(self, platform: Platform) -> None:
-        self.src_box = Card("Saída (canal R: quem você ouve)")      # U-067: o app de reunião vem em selo na tabela
+        self.src_box = Card(OUTPUT_YOU)                  # U-106; U-067: o app de reunião vem em selo na tabela
         self.sources = SourceTable(platform)
         self.sources.setMinimumSize(SOURCES_MIN_W, SOURCES_MIN_H)
         self.sources.selection_changed.connect(self._update_src_status)
@@ -218,13 +218,13 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         for code in LANGUAGES:
             self.language_combo.addItem(label(code), code)
         self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(default_language(store))))
-        self.language_combo.setToolTip("O idioma falado na reunião: vale para a transcrição, a legenda ao vivo e tudo o que a LLM "
-                                       "escrever (o padrão fica nas Configurações, Idioma e avisos).")
+        self.language_combo.setToolTip("Idioma falado: transcrição, legenda ao vivo e o que a IA escrever (padrão nas Configurações)")
         self.room_check = QCheckBox("Sala de reunião presencial (o microfone ouve outras pessoas)")
+        self.room_check.toggled.connect(functools.partial(mic_title, self.mic_box))      # A-41: "Microfone: você e a sala"
         self.live = LiveBoxes(store, functools.partial(self._show_bar, "live"), self)     # F4 e F5.6 (U-091, A-21)
         self.live_check, self.names_check, self.partial_check = self.live.live_check, self.live.names_check, self.live.partial_check
         self.glossary_edit = QLineEdit()
-        self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a LLM sugere; edite à vontade)")
+        self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a IA sugere; edite à vontade)")
         self.glossary_status = QLabel("")
         note(self.glossary_status)
         self.glossary_status.setOpenExternalLinks(False)
@@ -344,7 +344,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self._glossary_seq += 1
         self._glossary_inflight = True
         self.glossary_requests += 1
-        self.glossary_status.setText("pedindo termos prováveis à LLM…")
+        self.glossary_status.setText("pedindo termos prováveis à IA…")
         stop = threading.Event()                           # a saída do app cancela a chamada presa na rede (R8-04)
         run_task(functools.partial(request_glossary, self.store, title or None, participants or None,
                                    language=self.meeting_language(), should_stop=stop.is_set),
@@ -369,15 +369,14 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
             self.glossary_status.setText(f"glossário indisponível: {result}")
             return
         self.glossary_result = result
-        if result.error:
-            text = result.error
-            if text.startswith("sem chave"):
-                text = 'sem chave de LLM: <a href="settings">configurar as chaves</a>'
-            self.glossary_status.setText(text)
+        if result.error:                                   # sem chave, o link para as chaves
+            no_key = result.error.startswith("sem chave")
+            self.glossary_status.setText('sem chave da IA: <a href="settings">configurar as chaves</a>' if no_key else result.error)
             return
         self.glossary_edit.setText(merge_glossary(result.terms, self.glossary_edit.text()))
-        people = f"; {len(result.people)} participante(s) com ficha" if result.people else ""
-        self.glossary_status.setText(f"{len(result.terms)} termo(s) sugeridos pela LLM{people}")
+        n, k = len(result.terms), len(result.people)       # U-109: o plural de verdade
+        people = f"; {k} {'participante com ficha' if k == 1 else 'participantes com ficha'}" if k else ""
+        self.glossary_status.setText(f"{n} {'termo sugerido' if n == 1 else 'termos sugeridos'} pela IA{people}")
 
     # ---------------------------------------------------------------- mic
     def _on_mic_changed(self, _index: int) -> None:

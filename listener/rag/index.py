@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 
 from ..llm import local_embed
+from ..fmt import plural
 from ..log import get_logger
 from ..model import ActionStatus, LlmCallStatus, SummaryKind
 from ..pipeline import review
@@ -466,7 +467,7 @@ def _checked(raw: np.ndarray, n: int, dim: int) -> np.ndarray:
     """Uma linha por trecho, na dimensão do modelo (a do `model_key`); senão é erro do provedor, não vetor errado no banco."""
     mat = np.asarray(raw, np.float32)
     if mat.ndim != 2 or mat.shape != (n, dim):
-        raise ValueError(f"o provedor devolveu {mat.shape} para {n} trecho(s) em {dim} dimensões")
+        raise ValueError(f"o provedor devolveu {mat.shape} para {plural(n, 'trecho')} em {dim} dimensões")
     return mat
 
 
@@ -593,11 +594,10 @@ class ReindexEstimate:
                     f"{'reunião' if self.meetings == 1 else 'reuniões'} · ≈ {_n(self.tokens)} tokens · {cost} · ≈ {minutes} min"
                     + ("" if self.measured else " (pela estimativa de 2 s por lote)"))
         if self.without_chunks and self.ready:          # completar e reindexar pedem os vetores delas também (`force`, R8-05)
-            base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos, que também recebem vetores"
-            if not self.local:                          # R10-07: o local não tem custo a saber
-                base += " (o custo delas só se sabe depois do corte em trechos)"
+            base += f"; mais {plural(self.without_chunks, 'reunião', 'reuniões')} ainda sem trechos, que também recebem vetores"
+            base += "" if self.local else " (o custo delas só se sabe depois do corte em trechos)"   # R10-07: o local, sem custo
         elif self.without_chunks:
-            base += f"; mais {self.without_chunks} reunião(ões) ainda sem trechos (entram com o índice por palavra)"
+            base += f"; mais {plural(self.without_chunks, 'reunião', 'reuniões')} ainda sem trechos (entram com o índice por palavra)"
         return base
 
 

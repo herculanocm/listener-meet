@@ -110,7 +110,7 @@ def test_run_chat_records_history_and_cost_and_panel_plays_citation(qtbot, platf
     panel.question.setText("quem falou primeiro?")
     panel.ask()
     qtbot.waitUntil(lambda: bool(panel.answers), timeout=5000)
-    assert "citação(ões) clicável(is)" in panel.status.text() and "US$" in panel.status.text() and panel.task is None
+    assert "1 citação clicável" in panel.status.text() and "US$" in panel.status.text() and panel.task is None
     from PySide6.QtCore import QUrl
 
     seg = next(c.segment_id for c in panel.answers[0].citations if c.segment_id is not None)

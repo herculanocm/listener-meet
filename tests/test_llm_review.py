@@ -80,7 +80,7 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     dlg = ReviewDialog(store, mid, on_launch=launched.append)
     qtbot.addWidget(dlg)
     dlg.show()
-    assert "custo da LLM: US$" in dlg.cost.text() and dlg.tabs.count() == 6 and "para confirmar" in dlg.header.text()
+    assert "custo US$" in dlg.cost.text() and dlg.tabs.count() == 6 and "para confirmar" in dlg.header.text()
     llm_item = next(i for i in dlg.items if i.has_llm)
     other = next(i for i in dlg.items if not i.has_llm)
     assert "pelo contexto: Ana (0,80)" in dlg.list.item([i.cluster_id for i in dlg.items].index(llm_item.cluster_id)).text()
@@ -124,7 +124,7 @@ def test_review_dialog_l_key_tabs_edits_regenerate_and_cost(qtbot, platform, sto
     job = store.jobs.get(job_id)
     assert job["kind"] == JobKind.LLM and json.loads(job["params_json"])["tasks"] == ["minutes"] and launched == [True]
     assert json.loads(job["params_json"])["parent_job_id"] == parent and dlg.regenerated == [job_id]
-    assert not minutes_tab.btn_regen.isEnabled() and not dlg.title_tab.btn_regen.isEnabled() and "LLM em andamento" in dlg.cost.text()
+    assert not minutes_tab.btn_regen.isEnabled() and not dlg.title_tab.btn_regen.isEnabled() and "IA em andamento" in dlg.cost.text()
     assert dlg.regenerate(JobStep.TITLE) is None and "em andamento" in dlg.header.text()                      # já há job ativo
     _runner, status, _fake = _run_llm(store)
     assert status == JobStatus.DONE
@@ -156,14 +156,15 @@ def test_transcript_tab_toggles_revised_and_original(qtbot, platform, store):
     dlg = TranscriptTab(store, mid)
     qtbot.addWidget(dlg)
     first = dlg.model.data(dlg.model.index(0), 0)
-    assert first.endswith("Bom dia Ana tudo bem.") and "revisada(s) pela LLM; mostrando a revisada" in dlg.status.text()
+    assert first.endswith("Bom dia Ana tudo bem.") and "revisadas pela IA: mostrando a transcrição revisada" in dlg.status.text()
     dlg.toggle.setChecked(False)
-    assert dlg.model.data(dlg.model.index(0), 0).endswith(": bom dia Ana tudo bem") and "mostrando a original" in dlg.status.text()
+    assert dlg.model.data(dlg.model.index(0), 0).endswith(": bom dia Ana tudo bem")
+    assert "mostrando a transcrição original" in dlg.status.text()
     rows = review.transcript_rows(store, mid, prefer_llm=False)
     assert rows[0].text == "bom dia Ana tudo bem" and rows[0].text_llm == "Bom dia Ana tudo bem." and rows[0].shown_text == rows[0].text
     store._x("UPDATE segments SET text_llm = NULL WHERE meeting_id = ?", (mid,))
     dlg.toggle.setChecked(True)
-    assert not dlg.toggle.isEnabled() and "0 revisada(s)" in dlg.status.text()
+    assert dlg.toggle.isHidden() and "da transcrição original" in dlg.status.text()        # U-117: sem revisada, sem caixa
 
 
 def test_reload_never_overwrites_unsaved_edits(qtbot, platform, store):
@@ -310,12 +311,12 @@ def test_queue_texts_and_notification_for_llm_jobs(store):
     store.jobs.claim(pid=1, kinds=("llm",))
     store.jobs.set_progress(jid, "minutes", 0.25, {"llm": {"cost_usd": 0.1234, "done": ["identify"], "calls": 1, "skipped": {}}})
     texts = job_row_texts(store.jobs.get(jid), store.get_meeting(mid), "{}")
-    assert list(texts[2:5]) == ["LLM", "rodando", "LLM: ata (2 de 4)"] and texts[6] == "sem estimativa" and texts[7] == "custo US$ 0,12"
+    assert list(texts[2:5]) == ["IA", "rodando", "IA: ata (2 de 4)"] and texts[6] == "sem estimativa" and texts[7] == "custo US$ 0,12"
     store.jobs.finish(jid, JobStatus.DONE, timings={"llm": {"cost_usd": 0.32, "done": ["identify", "minutes", "executive", "title"]}})
     job = store.jobs.get(jid)
-    assert job_row_texts(job, None, "{}")[4] == "LLM: ata (4 de 4)" and llm_done_text(dict(job)) == "ata pronta · US$ 0,32"
-    assert llm_done_text({"timings_json": json.dumps({"llm": {"done": ["title"], "cost_usd": 0}})}) == "LLM concluída."
-    assert llm_done_text({"timings_json": None}) == "LLM sem tarefas novas."
+    assert job_row_texts(job, None, "{}")[4] == "IA: ata (4 de 4)" and llm_done_text(dict(job)) == "ata pronta · US$ 0,32"
+    assert llm_done_text({"timings_json": json.dumps({"llm": {"done": ["title"], "cost_usd": 0}})}) == "IA concluída."
+    assert llm_done_text({"timings_json": None}) == "IA sem tarefas novas."
     skipped = {"llm": {"cost_usd": 0.1, "done": ["minutes"], "skipped": {"executive": "estimado US$ 2,00", "revise": "estimado"}}}
     text = llm_done_text({"timings_json": json.dumps(skipped)})                                     # R3-13: tarefas puladas pelo alerta
     assert text == "ata pronta · US$ 0,10; acima do alerta de custo, não gerado: resumo executivo, transcrição revisada (gere pela revisão)"

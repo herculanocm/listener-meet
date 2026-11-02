@@ -249,7 +249,7 @@ def test_the_alert_line_puts_the_channels_first(platform, store, recorder_factor
     assert alert_line(rec, {**ok, "db": Health.ALERT}, novo, None).text.startswith("banco não responde")  # type: ignore[union-attr]
     assert alert_line(rec, {**ok, "db": Health.WARN}, novo, None) == novo                       # o aviso antes do banco lento
     quiet = alert_line(rec, {**ok, "R": Health.ALERT}, novo, BT_HFP)
-    assert quiet is not None and BT_HFP.name in quiet.text and "(comunicação)" in quiet.text
+    assert quiet is not None and BT_HFP.name in quiet.text and "(comunicação)" in quiet.tip            # F5.11 (U-116): na dica
     assert (quiet.button, quiet.action) == ("Dispositivos…", ACTION_DEVICES)
     rec.stop()
 

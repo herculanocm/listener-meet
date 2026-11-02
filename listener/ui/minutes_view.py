@@ -49,7 +49,7 @@ EMPTY: dict[str, tuple[str, str]] = {SummaryKind.MINUTES: ("Ata ainda não gerad
 INDEXED_KINDS = frozenset({SummaryKind.MINUTES, SummaryKind.EXECUTIVE})   # F5: o pré-resumo não entra na busca
 STALE_MARK = "gerados antes do reprocessamento"
 NEWER_NOTICE = ("Chegou uma versão nova enquanto você editava: \"Salvar edição\" grava o seu texto sobre a versão nova (o texto "
-                "da LLM fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
+                "da IA fica guardado como original); \"Recarregar\" mostra a nova e descarta o que não foi salvo.")
 HEADING_GAP = 12                 # px lógicos antes de cada título da leitura (o primeiro, colado no topo)
 STAMP = r"\[(\d{2,}):(\d{2})\]"     # A-24: o `[mm:ss]` da ata (`llm.render`), minutos com dois algarismos ou mais
 PLAY_LINK = "listener://play?t="

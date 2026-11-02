@@ -41,7 +41,7 @@ def test_the_widget_grows_up_with_the_alert_and_keeps_its_bottom(qtbot):
     assert w.height() == 146 and w.y() + w.height() == bottom and grew == [146]           # +40, a borda de baixo no lugar
     w.show_alert("saída sem sinal: a reunião está tocando em outro app?", "Dispositivos…", "devices")
     assert grew == [146]                                                                  # o mesmo alerta: nada muda
-    w.show_alert("banco lento: 3 pedaço(s) na fila")                                      # sem botão: a mesma altura
+    w.show_alert("banco lento: 3 pedaços na fila")                                      # sem botão: a mesma altura
     assert w.height() == 146 and not w.alert_btn.isVisibleTo(w) and grew == [146]
     w.show_alert(None)
     assert w.height() == 106 and w.y() + w.height() == bottom and grew == [146, 106]

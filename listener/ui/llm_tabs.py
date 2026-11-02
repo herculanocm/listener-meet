@@ -33,6 +33,7 @@ from PySide6.QtGui import QAction, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from ..config import prompts as prompt_settings
+from ..fmt import plural
 from ..llm.costs import fmt_usd
 from ..log import get_logger
 from ..model import JobKind, JobStatus, JobStep, SummaryKind
@@ -73,10 +74,10 @@ def request_llm_step(store: Store, meeting_id: int, step: JobStep) -> tuple[int 
     if step in REQUEST_ONLY:
         return None, llm_requests.NOTHING
     if llm_job_active(store, meeting_id):
-        return None, "Já há um job de LLM em andamento para esta reunião; espere terminar."
+        return None, "Já há um pedido à IA em andamento nesta reunião; espere terminar."
     job_id = enqueue_llm_job(store, meeting_id, [step])
     if job_id is None:
-        return None, "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso."
+        return None, "Nenhum provedor de IA ativo com chave: informe a chave em Configurações, Chaves de acesso."
     return job_id, f"{step_label(step)}: gerando pela fila (3 a 5 s para começar)…"
 
 
@@ -98,7 +99,7 @@ def cost_badge(store: Store, meeting_id: int) -> str:
     total, missing = store.llm_calls.cost_for_meeting(meeting_id)
     if total is None:
         return ""
-    return f"custo da LLM: {fmt_usd(total)}" + (" (parte sem preço cadastrado)" if missing else "")
+    return f"custo {fmt_usd(total)}" + (" (parte sem preço cadastrado)" if missing else "")
 
 
 def llm_done_text(job: dict[str, Any]) -> str:
@@ -108,7 +109,7 @@ def llm_done_text(job: dict[str, Any]) -> str:
     except ValueError:
         llm = {}
     done = [str(s) for s in llm.get("done") or []]
-    what = "ata pronta" if "minutes" in done else ("LLM concluída" if done else "LLM sem tarefas novas")
+    what = "ata pronta" if "minutes" in done else ("IA concluída" if done else "IA sem tarefas novas")
     cost = llm.get("cost_usd")
     base = f"{what} · {fmt_usd(float(cost))}" if cost else what
     skipped = [step_label(s) for s in llm.get("skipped") or {}]
@@ -134,7 +135,7 @@ class TitleTab(QWidget):
         self.title = QLineEdit()
         self.suggestion = QLabel("")
         self.suggestion.setWordWrap(True)
-        self.btn_use = QPushButton("Usar sugestão da LLM")
+        self.btn_use = QPushButton("Usar a sugestão da IA")
         self.btn_save = QPushButton("Salvar título")
         self.btn_regen = QPushButton("Gerar de novo")
         self.btn_use.clicked.connect(self.use_suggestion)
@@ -148,7 +149,7 @@ class TitleTab(QWidget):
             row.addWidget(b)
         row.addStretch(1)
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Título da reunião (o seu; a sugestão da LLM fica guardada à parte):"))
+        lay.addWidget(QLabel("Título da reunião (o seu; a sugestão da IA fica guardada à parte):"))
         lay.addWidget(self.title)
         lay.addWidget(self.suggestion)
         lay.addLayout(row)
@@ -191,7 +192,7 @@ class TitleTab(QWidget):
         if not self.title.hasFocus() and not self.title.isModified():         # título digitado e não salvo fica (R3-01)
             self.title.setText(str(m.get("title") or ""))
         llm = m.get("title_llm")
-        self.suggestion.setText(f"Sugestão da LLM: {llm}" if llm else "Sugestão da LLM: ainda não gerada")
+        self.suggestion.setText(f"Sugestão da IA: {llm}" if llm else "Sugestão da IA: ainda não gerada")
         self.btn_use.setEnabled(bool(llm))
         self.btn_regen.setEnabled(not busy)
         if self.compact:                                                     # sem título seu, a sugestão aparece apagada
@@ -280,9 +281,9 @@ class LlmTabsGroup(QObject):
         badge = cost_badge(self.store, self.meeting_id)
         parts = [badge] if badge else []
         if busy:
-            parts.append("LLM em andamento")
+            parts.append("IA em andamento")
         elif info.get("status") == "erro" and info.get("error"):
-            parts.append(f"última LLM falhou: {info['error']}")
+            parts.append(f"o último pedido à IA falhou: {info['error']}")
         self.cost.setText(" · ".join(parts))
         return busy
 
@@ -298,7 +299,8 @@ class LlmTabsGroup(QObject):
             log.debug("reunião %s: estado da ata adiada: %s", self.meeting_id, e)
             waiting, changed = None, False
         if waiting is not None and self.store.summaries.current(self.meeting_id, SummaryKind.MINUTES) is None:
-            ata.set_extra(f"A ata espera a identificação de {waiting.pending} voz(es): confirme em \"Revisar falantes…\" ou "
+            ata.set_extra(f"A ata espera a identificação de {plural(waiting.pending, 'voz', 'vozes')}: confirme em \"Revisar "
+                          "falantes…\" ou "
                           "gere agora com as vozes que faltam sem nome.", "Gerar ata mesmo assim", self.release_now)
         elif changed:
             ata.set_extra("Os nomes mudaram depois desta ata.", "Atualizar a ata com os nomes", self.refresh_names)

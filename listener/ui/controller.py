@@ -88,13 +88,13 @@ from ..platform.common import process
 from .call_sensor import abandon
 from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
-from .live import LiveWindow, caption_key, caption_note, item_key, item_note
+from .live import LiveWindow, caption_key, caption_note, caption_who, item_key, item_note
 from .live_prepare import RAG, preparer, shutdown_preparer
 from .llm_tabs import llm_done_text
 from .meeting import MeetingWindow
 from .meeting_delete import MeetingDeleter
 from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HISTORY_READY, IDENTITY_READY, Notice, NoticeAction,
-                      NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text)
+                      NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text, startup_texts)
 from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
 from .recording_devices import RecordingDevices
@@ -107,7 +107,7 @@ from .toast import ToastManager
 from .tray import TrayIcon
 from .warmup import WarmupDialog
 from .widget import MarkerPopup, RecordingWidget
-from .widget_parts import save_widget_pos, widget_prefs
+from .widget_parts import confirm_discard, save_widget_pos, widget_prefs
 
 if TYPE_CHECKING:
     from ..platform.base import Platform
@@ -304,9 +304,9 @@ class Controller(QObject):
             self.tray = TrayIcon(self)
             self.tray.show()
             if interrupted:
-                self.notify(f"{interrupted} gravação(ões) interrompida(s) na última execução; os pedaços foram preservados.")
+                self.notify(startup_texts(interrupted, (), 0)[0])
             if missing:
-                self._notify_as(NoticeKind.ERROR, "Arquivo(s) de áudio ausente(s) na pasta do banco: " + ", ".join(missing))
+                self._notify_as(NoticeKind.ERROR, startup_texts(0, missing, 0)[1])
             if self.first_run:
                 self.notify(TRAY_TIP)
         self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
@@ -316,7 +316,7 @@ class Controller(QObject):
         self._seen_ended = {_error_key(j) for j in recent if j["status"] in ENDED_BADLY}
         waiting = self.store.meetings.list_by_status(MeetingStatus.PROCESSED)
         if waiting:
-            self.notify(f"{len(waiting)} reunião(ões) processada(s) aguardando revisão de falantes.")
+            self.notify(startup_texts(0, (), len(waiting))[2])
         self._clear_lease()                                   # um app que caiu gravando não pode deixar a fila presa
         self._scrub_orphan_people()
         self._enqueue_leftovers()
@@ -805,10 +805,7 @@ class Controller(QObject):
     def cancel_recording(self) -> None:
         if not self.recorder or self.state == AppState.SAVING:
             return
-        r = QMessageBox.question(self.widget, "Cancelar gravação", "Descartar esta gravação? Isso apaga o áudio gravado até agora.",
-                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                 QMessageBox.StandardButton.No)      # D-076: o Enter fica com o "Não" (sem padrão, apagava)
-        if r != QMessageBox.StandardButton.Yes or not self.recorder:
+        if not confirm_discard(self.widget) or not self.recorder:    # U-107: "Descartar" e "Continuar gravando" (o Enter, D-076)
             return
         rec = self.recorder
         self._timer.stop()
@@ -1555,7 +1552,7 @@ class Controller(QObject):
 
     def _on_caption_ui(self, msg: object) -> None:
         if self.widget is not None and isinstance(msg, dict):
-            self.widget.set_caption(msg.get("label"), str(msg.get("text") or ""))
+            self.widget.set_caption(caption_who(msg, self.store, self.recorder), str(msg.get("text") or ""))   # U-108
 
     def _on_live_state_ui(self, _state: object) -> None:
         if self.widget is not None:

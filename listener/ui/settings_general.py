@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, 
 from ..config.defaults import CAPTURE_KEYS, HOTKEY_KEYS, LLM_KEYS, PIPELINE_KEYS, SPECS
 from ..config.language import LANGUAGES, SETTING, default_language, label
 from ..llm.costs import AUDIO_TOKENS_PER_SECOND, fmt_usd, price_for
+from ..fmt import plural
 from ..llm.jobconfig import LlmJobConfig
 from ..model import SettingScope
 from .components import InfoBar
@@ -190,7 +191,7 @@ class GeneralPagesMixin(DetectCardMixin):
         self._add(page, form, "log.level")
         db = page.card("Banco de dados")
         db.content.addWidget(note(f"Pasta: {breakable_path(self.store.base_dir)} (esquema v{self.store.schema_version()}; "
-                                  f"{len(self.store.audio_files())} arquivo(s) de áudio, um por mês)"))
+                                  f"{plural(len(self.store.audio_files()), 'arquivo')} de áudio, um por mês)"))
         synced = self.platform.synced_folder_name(self.store.base_dir)
         if synced:
             db.content.addWidget(InfoBar("warning", f"Esta pasta está dentro do {synced}: o banco sairá da máquina pela "

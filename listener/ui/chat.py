@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
+from ..fmt import plural
 from ..llm import chat_task
 from ..llm.costs import fmt_usd
 from ..log import get_logger
@@ -113,7 +114,7 @@ class ChatPanel(QWidget):
     def _render_partial(self) -> None:
         """Histórico + pergunta + resposta parcial como texto escapado; as citações viram links só no `reload()` final."""
         partial = html.escape(self._partial).replace("\n", "<br>") or "…"
-        self.view.setHtml(f"{self._base_html}<p><b>LLM:</b> {partial}</p>")
+        self.view.setHtml(f"{self._base_html}<p><b>Resposta:</b> {partial}</p>")
         self.view.moveCursor(self.view.textCursor().MoveOperation.End)
 
     def _on_done(self, result: Any) -> None:
@@ -134,7 +135,7 @@ class ChatPanel(QWidget):
         else:
             cites = sum(1 for c in result.citations if c.segment_id is not None)
             cost = f" · {fmt_usd(result.cost_usd)}" if result.cost_usd is not None else ""
-            self.status.setText(f"{cites} citação(ões) clicável(is){cost}")
+            self.status.setText(f"{plural(cites, 'citação clicável', 'citações clicáveis')}{cost}")
         if result.error or not result.cancelled:
             self._answered_away(not result.error)
 

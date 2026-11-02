@@ -65,8 +65,8 @@ TASKS_AFTER_MEETING: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.TITLE, Job
 TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE)         # P7: ata antiga fica, com aviso
 REQUEST_ONLY: frozenset[JobStep] = frozenset({JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY})   # F5.6: só a pedido
 STALE_TRANSCRIPT = "a transcrição mudou ou está vazia: gere de novo pela revisão"
-NO_PROVIDER = "sem provedor de LLM com chave: ata não gerada (Configurações, Chaves de acesso)"
-NO_SPEECH = "a reunião não tem falas: nada para a LLM"
+NO_PROVIDER = "sem provedor de IA com chave: ata não gerada (Configurações, Chaves de acesso)"
+NO_SPEECH = "a reunião não tem falas: nada para a IA"
 PENDING = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
 WINDOW_SHARE = 0.6
 BLOCK_SHARE = 0.4
@@ -421,7 +421,7 @@ class LlmJobRunner(BaseJobRunner):
             parent = self.store.segments.current_job_id(self.meeting_id)
         if any(t != JobStep.TEST for t in self.tasks):
             if parent is None:
-                raise ProviderUnavailableError("a reunião ainda não foi processada: sem transcrição para a LLM")
+                raise ProviderUnavailableError("a reunião ainda não foi processada: sem transcrição para a IA")
             # R3-02: antes de qualquer chamada paga, o job pai tem de ser o vigente e ter falas (um retry depois de
             # reprocessar rodaria sobre segmentos apagados e gravaria uma ata vazia); erro permanente, sem contar tentativa
             if (int(parent) != self.store.segments.current_job_id(self.meeting_id)
@@ -433,7 +433,7 @@ class LlmJobRunner(BaseJobRunner):
         if not self.config.ready:
             self.config = LlmJobConfig.from_store(self.store)
         if not self.config.ready:
-            raise ProviderUnavailableError("nenhum provedor de LLM ativo com modelo: escolha um nas Configurações (LLM)")
+            raise ProviderUnavailableError("nenhum provedor de IA ativo com modelo: escolha um nas Configurações (LLM)")
         redact.GLOBAL.add(self.store.providers.key(self.config.provider_id))
         if not self.tasks:
             raise ProviderUnavailableError("job llm sem tarefas")

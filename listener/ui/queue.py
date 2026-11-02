@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel, QPushB
                                QWidget)
 
 from ..config.defaults import SPECS
+from ..fmt import plural
 from ..llm.types import LLM_JOB_TASKS
 from ..log import get_logger
 from ..model import LIGHT_JOB_KINDS, JobKind, JobStatus
@@ -59,10 +60,10 @@ STATUS_BADGES: dict[str, Tone] = {JobStatus.PENDING: Tone.NEUTRAL, JobStatus.RUN
 BUTTON_HELP: dict[str, str] = {                     # a Ajuda (A-09), com o nome que cada botão tem na tela
     "Pausar fila": "nada novo começa, e o que está rodando para no próximo ponto seguro e fica pausado. O botão vira "
                    "\"Retomar fila\", que continua de onde parou.",
-    "Cancelar": "cancela o item selecionado: na fila, sai na hora; rodando, para no próximo ponto seguro. A gravação e o que a "
-                "reunião já tinha pronto ficam.",
+    "Cancelar processamento": "cancela o item selecionado: na fila, sai na hora; rodando, para no próximo ponto seguro. A "
+                              "gravação e o que a reunião já tinha pronto ficam.",
     "Tentar de novo": "põe de volta na fila um item com erro ou cancelado, aproveitando o que já tinha ficado pronto quando dá. "
-                      "Num item da LLM vale a configuração atual (provedor e modelo).",
+                      "Num item da IA vale a configuração atual (provedor e modelo).",
     "Reprocessar": "processa de novo, do começo, a reunião selecionada. A versão atual vale até a nova ficar pronta, e os nomes "
                    "confirmados passam para ela; se a reunião já está sendo processada, nada é duplicado.",
     "Revisar falantes": "abre a revisão de quem fala na reunião selecionada.",
@@ -132,7 +133,7 @@ class QueueDialog(QDialog):
     def _buttons(self) -> QHBoxLayout:
         """A fileira de ações da seleção e, à direita, a "Ajuda" (A-09) e o "Fechar" (U-077: na mesma linha)."""
         self.btn_pause = QPushButton("Pausar fila")
-        self.btn_cancel = QPushButton("Cancelar")
+        self.btn_cancel = QPushButton("Cancelar processamento")   # U-107
         self.btn_retry = QPushButton("Tentar de novo")
         self.btn_reprocess = QPushButton("Reprocessar")
         self.btn_review = QPushButton("Revisar falantes")
@@ -203,8 +204,8 @@ class QueueDialog(QDialog):
         paused = self.store.get(SPECS["pipeline.paused_manual"])
         self.btn_pause.setText("Retomar fila" if paused else "Pausar fila")
         summary_jobs = self.store.jobs.summary(exclude_kinds=INDEX_KINDS)
-        self.status_label.setText(("fila pausada pelo usuário · " if paused else "") + f"{summary_jobs['active']} ativo(s), "
-                                  f"{summary_jobs['pending']} pendente(s), {summary_jobs['errors']} com erro")
+        self.status_label.setText(("fila pausada pelo usuário · " if paused else "") + f"{plural(summary_jobs['active'], 'ativo')}, "
+                                  f"{plural(summary_jobs['pending'], 'pendente')}, {summary_jobs['errors']} com erro")
 
     def _fill_row(self, row: int, texts: tuple[str, ...], job_id: int | None, progress: float | None, times_tip: str) -> None:
         """Uma linha: o id do job em toda célula (a seleção age por ele), a dica de "Enviado" e, na "%", a fração e o estado

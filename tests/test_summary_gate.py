@@ -263,7 +263,7 @@ def test_the_minutes_tab_offers_generate_now_and_refresh_only_what_exists(qtbot,
     ata = group.text_tabs[str(SummaryKind.MINUTES)]
     qtbot.addWidget(ata)
     group.reload()
-    assert ata.btn_extra.text() == "Gerar ata mesmo assim" and "espera a identificação de 2 voz(es)" in ata.notice.text()
+    assert ata.btn_extra.text() == "Gerar ata mesmo assim" and "espera a identificação de 2 vozes" in ata.notice.text()
     assert not ata.btn_extra.isHidden()
     ata.btn_extra.click()                                                                     # gera já, com as vozes sem nome
     assert summary_gate.deferred(store, mid) is None and len(_llm_jobs(store, mid)) == 2

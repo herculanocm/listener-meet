@@ -205,6 +205,7 @@ def test_controller_partial_timer_interval_manual_budget_and_cancel(qtbot, qapp,
     monkeypatch.setenv("LISTENER_LIVE", "fake")                      # o filho silencioso da plataforma simulada basta aqui
     monkeypatch.setenv("LISTENER_LLM", "fake")
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr("listener.ui.controller.confirm_discard", lambda *_a: True)      # F5.11 (U-107): "Descartar"
     store.set_setting("live.enabled", True)
     store.set_setting("live.partial", True)                          # F5.6 (P-06): o automático só com a caixa
     c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)

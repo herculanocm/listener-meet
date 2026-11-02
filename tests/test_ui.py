@@ -160,7 +160,7 @@ def test_warmup_long_microphone_name_leaves_room_for_the_sources(qtbot, store, p
     monkeypatch.setattr(platform, "list_input_devices", lambda: [AudioDevice("fake-mic-0", name, "fake", 1, 16000, index=0)])
     store.set_setting("warmup.last_mic_device_id", "fake-mic-0")                # o nome longo escolhido (F5.3: sem escolha, "acompanha")
     dlg = opened()
-    boxes = {g.title().split(" (")[0]: g for g in dlg.findChildren(QGroupBox)}
+    boxes = {g.title().split(" (")[0].split(":")[0]: g for g in dlg.findChildren(QGroupBox)}
     mic, out, meeting = boxes["Microfone"], boxes["Saída"], boxes["Reunião"]
     assert mic.x() == out.x() and mic.width() == out.width() and mic.geometry().bottom() < out.y()   # a coluna do áudio
     assert meeting.x() > out.geometry().right() and meeting.y() == mic.y()                          # a da reunião, ao lado
@@ -400,7 +400,7 @@ def test_queue_dialog_lists_jobs_and_acts_on_selection(qtbot, store):
     dlg.table.selectRow(0)
     rep = dlg.reprocess_selected()
     assert rep is not None and store.jobs.get(rep)["kind"] == JobKind.REPROCESS and dlg.table.rowCount() == 3
-    assert "pendente(s)" in dlg.status_label.text() and f"job {rep}" in dlg.message.text() and launched[-1] == 1
+    assert "pendente" in dlg.status_label.text() and f"job {rep}" in dlg.message.text() and launched[-1] == 1
 
 
 def ctl_specs():
@@ -496,6 +496,6 @@ def test_light_worker_is_launched_during_recording_and_heavy_is_not(qtbot, qapp,
         store.jobs.claim(pid=5, kinds=("llm",))
         store.jobs.finish(int(llm_job["id"]), __import__("listener.model", fromlist=["JobStatus"]).JobStatus.DONE)
         c._poll_queue()
-        assert notes == ["antiga: LLM sem tarefas novas."] and opened == []              # sem timings: sem ata nem custo
+        assert notes == ["antiga: IA sem tarefas novas."] and opened == []              # sem timings: sem ata nem custo
     finally:
         c.emergency_stop()

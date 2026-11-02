@@ -16,6 +16,7 @@ from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
                                QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from ..fmt import plural
 from ..model import ActionStatus
 from ..rag.export import fmt_date
 from .components import BadgeDelegate, EmptyState
@@ -182,7 +183,7 @@ class ActionsTab(QWidget):
         self.newer = False
         self.btn_reload.setVisible(False)
         self._page(bool(view))
-        self.note.setText(f"{len(view)} ação(ões); edite o texto na própria célula e o estado na coluna Estado." if view
+        self.note.setText(f"{plural(len(view), 'ação', 'ações')}; edite o texto na própria célula e o estado na coluna Estado." if view
                           else "nenhuma ação na ata")
 
     def _cell_clicked(self, row: int, col: int) -> None:

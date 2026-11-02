@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 log = get_logger("pipeline.llm_requests")
 
-NO_KEY = "Nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso."
+NO_KEY = "Nenhum provedor de IA ativo com chave: informe a chave em Configurações, Chaves de acesso."
 NOTHING = "Nada a pedir: só ata, executivo e pré-resumo saem a pedido."
 GONE = "Esta reunião não existe mais."
 CONCLUDED = "concluída"                 # o `profile_confirm` do "Concluir" da revisão (`pipeline/review.finish`)

@@ -137,7 +137,7 @@ def test_warmup_glossary_debounce_stale_and_no_key(qtbot, store, platform, monke
     dlg.participants_edit.editingFinished.emit()
     dlg.participants_edit.editingFinished.emit()                                                           # dois eventos: um pedido
     qtbot.waitUntil(lambda: dlg.glossary_edit.text() != "", timeout=3000)
-    assert dlg.glossary_requests == 2 and "FIDC" in dlg.glossary_edit.text() and "termo(s) sugeridos" in dlg.glossary_status.text()
+    assert dlg.glossary_requests == 2 and "FIDC" in dlg.glossary_edit.text() and "termos sugeridos" in dlg.glossary_status.text()
     dlg.glossary_edit.setText(dlg.glossary_edit.text() + ", Cetip")                                        # edição do usuário
     _cfg, fields = dlg.result_config()
     assert fields["glossary"].endswith("Cetip") and fields["expected_people_json"] == json.dumps([rodrigo])

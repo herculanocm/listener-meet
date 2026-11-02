@@ -96,6 +96,7 @@ def test_cancel_kills_the_child_before_deleting_and_a_crash_gets_one_retry(qtbot
     monkeypatch.setenv("LISTENER_LIVE", "fake")
     store.set_setting("live.enabled", True)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr("listener.ui.controller.confirm_discard", lambda *_a: True)      # F5.11 (U-107): "Descartar"
     c = _controller(qapp, platform, store, monkeypatch)
     notes: list[str] = []
     monkeypatch.setattr(c, "notify", notes.append)

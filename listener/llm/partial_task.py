@@ -51,7 +51,7 @@ MAX_CAPTION_CHARS = 600
 MAX_OUTPUT_TOKENS = 2048
 TIMEOUT_S = 60.0
 POLL_S = 0.2
-NO_PROVIDER = ("sem provedor de LLM com chave: o resumo parcial fica de fora (Configurações, Chaves de acesso); as legendas "
+NO_PROVIDER = ("sem provedor de IA com chave: o resumo parcial fica de fora (Configurações, Chaves de acesso); as legendas "
                "seguem")
 HEADINGS = {"pt": ("Possíveis decisões", "Possíveis ações", "dono"), "en": ("Possible decisions", "Possible actions", "owner"),
             "es": ("Posibles decisiones", "Posibles acciones", "responsable")}
@@ -90,7 +90,7 @@ def budget(store: Store, meeting_id: int) -> tuple[float, float]:
 
 
 def budget_text(spent: float, limit: float) -> str:
-    return (f"resumo parcial parado nesta reunião: o custo de LLM chegou a {fmt_usd(spent)}, metade do alerta de "
+    return (f"resumo parcial parado nesta reunião: o custo da IA chegou a {fmt_usd(spent)}, metade do alerta de "
             f"{fmt_usd(limit / PARTIAL_BUDGET_SHARE)}; o resto fica para a ata")
 
 

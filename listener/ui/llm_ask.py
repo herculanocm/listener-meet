@@ -38,10 +38,10 @@ if TYPE_CHECKING:
 log = get_logger("ui.llm_ask")
 
 LAST_CHOICE = SPECS["llm.ask_last"].key
-NO_KEY_TIP = "Sem chave de LLM: informe a chave em Configurações, Chaves de acesso."
+NO_KEY_TIP = "Sem chave da IA: informe a chave em Configurações, Chaves de acesso."
 NOT_RUN = "A identificação das vozes ainda não rodou."
 RERUN = "A identificação das vozes roda de novo depois do reprocessamento."
-NO_SPEECH_TIP = "Esta reunião não tem falas: nada para a LLM."
+NO_SPEECH_TIP = "Esta reunião não tem falas: nada para a IA."
 ASK_FAILED = "O pedido de ata e resumo falhou; peça de novo pela reunião."
 AGAIN_WITH_NAMES = ("A ata pedida para quando todos tiverem nome ainda sai de novo, com os nomes: gerar agora é uma segunda chamada "
                     "da ata, fora deste custo.")
@@ -55,7 +55,7 @@ TITLES = {frozenset({Species.MINUTES}): "Gerar ata e ações", frozenset({Specie
           frozenset(Species): "Gerar ata, ações e resumo"}
 OUTCOME_TEXT = {Outcome.QUEUED: "gerando pela fila (3 a 5 s para começar)…", Outcome.WAITING: "sai quando todas as vozes tiverem nome.",
                 Outcome.BOUND: "sai quando o processamento da reunião terminar.", Outcome.NEXT: "sai quando a reunião for processada.",
-                Outcome.NO_KEY: "pedido guardado; sai quando houver uma chave de LLM (Configurações, Chaves de acesso)."}
+                Outcome.NO_KEY: "pedido guardado; sai quando houver uma chave da IA (Configurações, Chaves de acesso)."}
 STEP_SPECIES = {str(step): sp for sp, steps in SPECIES_TASKS.items() for step in steps}
 
 

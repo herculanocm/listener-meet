@@ -10,7 +10,7 @@ F5.4 L2, no tema (claro ou escuro, como o resto do app; sem folha de estilo):
   da legenda e +40 com o alerta, no máximo 170 (Aceite 4); ao crescer, a borda de baixo fica onde estava e `height_changed`
   avisa quem empilha os avisos. O alerta fica numa linha embaixo, com o ícone e a cor do tipo, cortado sem alargar.
 - U-061: botões só de ícone, 36 x 32, com o nome no `text()` e no `accessibleName` e o atalho na dica; Parar em vermelho;
-  Cancelar afastado, na ponta. U-063: medidores com trilho e zonas (`ui/meters.py`); o fundo é um caminho em cache (5 Hz).
+  Descartar afastado, na ponta. U-063: medidores com trilho e zonas (`ui/meters.py`); o fundo é um caminho em cache (5 Hz).
 - U-062: o mudo é o microfone cortado, no botão ligado (preenchido em destaque, como a alternância do Windows 11); L, R e
   o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h."""
 from __future__ import annotations
@@ -130,11 +130,11 @@ class RecordingWidget(QWidget):
         self.btn_devices = self._btn("headphones", "Dispositivos",
                                      "Dispositivos: trocar o microfone e a saída gravada sem parar", "", self.devices_clicked)
         self.btn_stop = self._btn("stop", "Parar e salvar", "Parar e salvar", "stop", self.stop_clicked, Tone.DANGER)
-        self.btn_cancel = self._btn("close", "Cancelar e descartar", "Cancelar e descartar a gravação", "", self.cancel_clicked)
+        self.btn_cancel = self._btn("delete", "Descartar gravação", "Descartar a gravação: pergunta antes", "", self.cancel_clicked)
 
     def _build_alert(self) -> None:
         self.alert_icon = icon_label("warning", Tone.WARNING)
-        self.alert_label = ElidedLabel()                  # F5.3: o nome de um aparelho não alarga o widget
+        self.alert_label = ElidedLabel(lines=2)           # F5.3: não alarga o widget; F5.11 (U-116): em até duas linhas
         self.alert_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.alert_label.setFixedHeight(max(ALERT_H, self.alert_label.fontMetrics().height() + 4))
         note(self.alert_label, Tone.WARNING)
@@ -286,13 +286,13 @@ class RecordingWidget(QWidget):
                 self._last_health[ch] = h
                 self.style_changes += 1
                 set_icon(lab, health_icon(ch, h), HEALTH_TONES.get(h, Tone.DISABLED), ICON_PX)
-                text = f"canal {ch} ({CHANNEL_NAMES[ch]}): {HEALTH_TEXT.get(h, h)}"
+                text = f"{CHANNEL_NAMES[ch]} · {HEALTH_TEXT.get(h, h)}"            # U-106: o canal na dica, sem "canal L"
                 lab.setToolTip(text)
                 lab.setAccessibleName(text)
         text = str(markers) if markers else ""
         if self.markers_label.text() != text:
             self.markers_label.setText(text)
-            self.markers_label.setToolTip(f"{markers} marcador(es)")
+            self.markers_label.setToolTip(f"{markers} {'marcador' if markers == 1 else 'marcadores'}")
             self.markers_label.setVisible(bool(text))
             self.markers_icon.setVisible(bool(text))
 

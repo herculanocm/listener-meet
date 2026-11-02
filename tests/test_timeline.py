@@ -163,7 +163,7 @@ def test_timeline_tab_lanes_click_plays_the_exact_point_and_markers_150_ms_befor
         assert win.tabs.currentWidget() is tab and [ln.label for ln in view.lanes] == ["Bia", "Ana"]     # Bia fala mais
         assert view.duration_ms == 300_000 and view.pauses == [(262_000, 280_000)]
         assert view.markers == [(70_000, "auditoria <b>sexta</b> & cia")]
-        assert tab.note.text().startswith("2 falante(s), 6 fala(s)")
+        assert tab.note.text().startswith("2 falantes, 6 falas")
         y = view._lane_top(1) + 5                                                   # a faixa da Ana
         x = view.x_of(45_000)
         qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(round(x), y))

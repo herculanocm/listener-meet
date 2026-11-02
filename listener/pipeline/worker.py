@@ -86,7 +86,7 @@ def run_llm_job(store: Store, job: Any) -> JobStatus:
     try:
         from .llm_steps import LlmJobRunner
     except ImportError as e:
-        store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=f"camada de LLM indisponível nesta versão ({e})", count_attempt=False)
+        store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=f"camada de IA indisponível nesta versão ({e})", count_attempt=False)
         return JobStatus.ERROR
     return LlmJobRunner(store, job).run()
 

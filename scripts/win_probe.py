@@ -97,11 +97,11 @@ def widget_shots(p, shot) -> None:
     """F5.4 L2 (U-060 a U-063): o widget em cada estado (gravando; pausado e mudo, com o ao vivo; salvando; a hora passando
     de 1 h) e em cada tipo de alerta, com o nome do microfone padrão desta máquina no "novo"; o maior de todos (a legenda e
     o alerta) confere os 170 px do Aceite 4."""
+    from listener.ui.recording_alerts import BACK_TEXT, DEVICES_BUTTON, LOST_TEXT, NO_SIGNAL_TEXT, db_stuck_text
     from listener.ui.widget import RecordingWidget
 
     reading = p.audio_endpoints(refresh_names=True)
-    mic = reading.mic(reading.capture_default) if reading is not None else None
-    mic_name = mic.name if mic is not None else "Fone de ouvido (Hands-Free)"
+    mic_name = getattr(reading.mic(reading.capture_default) if reading is not None else None, "name", "Fone de ouvido (Hands-Free)")
     keys = {"pause": "ctrl+alt+shift+p", "mark": "ctrl+alt+shift+m", "mute": "ctrl+alt+shift+u", "stop": "ctrl+alt+shift+s"}
     lively = {"L": 0.12, "R": 0.4}
     states = (("widget-gravando", False, 65, lively, OK_HEALTH, (False, False, 2), None, None),
@@ -109,14 +109,14 @@ def widget_shots(p, shot) -> None:
               ("widget-mudo-ao-vivo", True, 3725, {"R": 0.9}, {**OK_HEALTH, "L": "muted"}, (False, True, 1), "skipping", None),
               ("widget-salvando", False, 3725, {}, OK_HEALTH, (False, False, 4), None, None),
               ("widget-alerta-erro", False, 125, {"R": 0.05}, {**OK_HEALTH, "L": "lost"}, (False, False, 0), None,
-               ("microfone desconectado; tentando reabrir…", "Dispositivos…", "error")),
+               (LOST_TEXT["L"], DEVICES_BUTTON, "error")),                         # F5.11 (A-33): os textos do app
               ("widget-alerta-aviso", False, 125, {"L": 0.1}, {**OK_HEALTH, "R": "alert"}, (False, False, 0), None,
-               ("saída sem sinal: a reunião está tocando em outro app?", "Dispositivos…", "warning")),
+               (NO_SIGNAL_TEXT, DEVICES_BUTTON, "warning")),
               ("widget-alerta-info", False, 125, lively, OK_HEALTH, (False, False, 0), None, (f"novo: {mic_name}", "Usar", "info")),
               ("widget-alerta-sucesso", False, 125, lively, OK_HEALTH, (False, False, 0), None,
-               ("microfone escolhido voltou", "Dispositivos…", "success")),
+               (BACK_TEXT["L"], DEVICES_BUTTON, "success")),
               ("widget-maximo", True, 36125, {"L": 0.3, "R": 0.95}, {**OK_HEALTH, "R": "warn"}, (False, True, 12), "crashed",
-               ("banco não responde há 12s; 3 pedaço(s) retido(s) em memória", "", "error")))
+               (db_stuck_text(12, 3), "", "error")))
     for name, live_line, elapsed, levels, health, (paused, muted, markers), live, alert in states:
         rw = RecordingWidget(live_line=live_line, shortcuts=keys)
         rw.update_state(elapsed, levels, health, paused, muted, markers, saving=name == "widget-salvando")

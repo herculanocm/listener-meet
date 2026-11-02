@@ -246,7 +246,7 @@ def test_queue_dialog_shows_index_as_one_aggregated_row_and_retries_by_class(qtb
     assert dlg.table.rowCount() == 2                                                                 # o llm e a linha agregada
     last = [dlg.table.item(1, c).text() for c in range(8)]
     assert [last[0], *last[2:6]] == ["Índice: 2 reuniões", "índice", "rodando", "índice: vetores", "40 %"]
-    assert "pendente(s)" in dlg.status_label.text() and "0 ativo(s)" in dlg.status_label.text()       # o rodapé sem os `index`
+    assert "pendentes" in dlg.status_label.text() and "0 ativos" in dlg.status_label.text()       # o rodapé sem os `index`
     dlg.table.selectRow(1)
     assert dlg.selected_job_id() is None
     dlg.retry_selected()

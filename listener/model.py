@@ -148,9 +148,10 @@ class JobStep(StrEnum):
 AI = "IA"
 BY_VOICE = "pela voz"
 BY_CONTEXT = "pelo contexto"
-LLM_STEP_PREFIX = "LLM: "            # A-28: o prefixo das tarefas da LLM na fila, só aqui (o L3 da F5.11 troca pelo da IA)
+MIC_YOU, MIC_ROOM, OUTPUT_YOU = "Microfone: você", "Microfone: você e a sala", "Saída: quem você ouve"     # e A-41: a sala
+LLM_STEP_PREFIX = f"{AI}: "          # A-28: o prefixo das tarefas da IA na fila ("IA: ata"), só aqui
 JOB_STEP_LABELS: dict[str, str] = {
-    JobStep.DOWNLOAD: "baixando modelo…", JobStep.WAITING: "aguardando fim da gravação", JobStep.DIARIZE: "separando vozes",
+    JobStep.DOWNLOAD: "baixando modelo…", JobStep.WAITING: "espera a gravação", JobStep.DIARIZE: "separando vozes",
     JobStep.EMBED: "extraindo vozes", JobStep.MATCH: "casando perfis", JobStep.TRANSCRIBE_R: "transcrevendo a reunião",
     JobStep.TRANSCRIBE_L: "transcrevendo o microfone", JobStep.SEGMENTS: "montando as falas",
     **{step: LLM_STEP_PREFIX + task for step, task in ((JobStep.IDENTIFY, "identidade por contexto"), (JobStep.MINUTES, "ata"),
@@ -174,7 +175,7 @@ LLM_STEPS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXE
 # F5.3 (U-047, A-09): os textos da fila e da Ajuda dela, para quem usa o app (sem jargão); o teste exige todo tipo, estado e
 # etapa. A ordem das etapas vem dos próprios runners (`ui/queue_help.py`), não daqui.
 JOB_KIND_LABELS: dict[str, str] = {JobKind.MEETING: "processar", JobKind.REPROCESS: "reprocessar", JobKind.EMBED_RANGE: "perfil de trecho",
-                                   JobKind.LLM: "LLM", JobKind.INDEX: "índice"}
+                                   JobKind.LLM: AI, JobKind.INDEX: "índice"}
 JOB_KIND_HELP: dict[str, str] = {
     JobKind.MEETING: "transforma a gravação em falas com o nome de quem fala: separa as vozes, reconhece quem já tem perfil e "
                      "escreve o que cada um disse. Começa sozinho quando você para a gravação, roda neste computador com "
@@ -183,7 +184,7 @@ JOB_KIND_HELP: dict[str, str] = {
                        "continua valendo até o fim, e os nomes que você já confirmou passam para a nova. As etapas são as mesmas "
                        "de \"processar\".",
     JobKind.EMBED_RANGE: "vai criar um perfil de voz a partir de um trecho que você escolher. F6: ainda não roda.",
-    JobKind.LLM: "a inteligência artificial escolhida nas Configurações (a LLM) escreve a partir da transcrição: quem é cada voz "
+    JobKind.LLM: "a inteligência artificial (IA) escolhida nas Configurações escreve a partir da transcrição: quem é cada voz "
                  "ainda sem nome, a ata, o resumo executivo, o pré-resumo, o título e a transcrição revisada. Usa a internet e a "
                  "sua chave de acesso; o custo aparece em \"Detalhe\". Cada item faz só as tarefas pedidas.",
     JobKind.INDEX: "prepara a reunião para a busca do Histórico: primeiro os trechos (a busca por palavra já funciona), depois "

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QPushButton
 
 from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS
+from ..fmt import plural
 from ..llm import local_embed
 from ..model import SettingScope
 from .keys import note
@@ -210,7 +211,7 @@ class SearchMixin:
         if n:
             self._launch_light()
         self.refresh_index_status()
-        self.index_status.setText(self.index_status.text() + f"\n{n} reunião(ões) na fila do índice.")
+        self.index_status.setText(self.index_status.text() + f"\n{plural(n, 'reunião', 'reuniões')} na fila do índice.")
         return n
 
     def reindex_all(self) -> int:

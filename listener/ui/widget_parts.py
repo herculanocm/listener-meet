@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QPoint, QRectF, Qt, Signal
-from PySide6.QtGui import QCursor, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import QCursor, QFontMetrics, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QWidget
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
-from ..model import Health
+from ..model import MIC_YOU, OUTPUT_YOU, Health
 from .icons import set_icon
 from .theme import Tone, note, qcolor, surface_tokens
 
@@ -26,7 +26,7 @@ log = get_logger("ui.widget")
 DEFAULT_SIZE = (320, 96)
 CLICK_SLOP_PX = 6
 ICON_PX = 16
-CHANNEL_NAMES = {"L": "microfone", "R": "saída"}
+CHANNEL_NAMES = {"L": MIC_YOU, "R": OUTPUT_YOU}       # U-106 (F5.11): no widget, só os ícones; o nome na dica
 CHANNEL_ICONS = {"L": "mic", "R": "speaker"}
 # U-062: o ícone do canal muda de forma com o estado (o silêncio curto, WARN, só muda a cor: o medidor vazio já diz)
 HEALTH_ICONS: dict[str, dict[str, str]] = {
@@ -38,6 +38,33 @@ HEALTH_ICONS: dict[str, dict[str, str]] = {
 def health_icon(channel: str, health: str) -> str:
     """O ícone do canal no estado dele (U-062)."""
     return HEALTH_ICONS[channel].get(health, CHANNEL_ICONS[channel])
+
+
+def wrap_elided(text: str, fm: QFontMetrics, width: int, lines: int) -> str:
+    """U-116 (A-33): o texto em até `lines` linhas na largura; o que não cabe sai do fim, palavra a palavra, com reticências."""
+    box, flags, limit = QRect(0, 0, width, 10_000), int(Qt.TextFlag.TextWordWrap), lines * fm.lineSpacing()
+    if fm.boundingRect(box, flags, text).height() <= limit:
+        return text
+    words = text.split()
+    while len(words) > 1 and fm.boundingRect(box, flags, " ".join(words) + "…").height() > limit:
+        words.pop()
+    return fm.elidedText(" ".join(words) + "…", Qt.TextElideMode.ElideRight, width * lines)
+
+
+def confirm_discard(parent: QWidget | None) -> bool:
+    """U-107 (F5.11): a confirmação de descartar a gravação diz "Descartar" e "Continuar gravando", e o Enter fica com o
+    "Continuar gravando" (D-076: sem padrão, a caixa do Qt atendia o Enter com o "Sim" e apagava). True = descartar."""
+    box = QMessageBox(QMessageBox.Icon.Question, "Descartar gravação", "Descartar esta gravação? Isso apaga o áudio gravado até "
+                      "agora.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent)
+    discard = box.button(QMessageBox.StandardButton.Yes)
+    discard.setText("Descartar")
+    box.button(QMessageBox.StandardButton.No).setText("Continuar gravando")
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    try:
+        box.exec()
+        return box.clickedButton() is discard
+    finally:
+        box.deleteLater()
 
 
 def caption_text(label: str | None, text: str) -> str:
@@ -60,12 +87,15 @@ def shortcut_text(combo: str) -> str:
 class ElidedLabel(QLabel):
     """Uma linha cortada com reticências na largura disponível (não alarga o widget), o texto inteiro no tooltip (a legenda
     do F4 e, F5.3, a linha de alerta com o nome de um aparelho). Em texto puro (revisão da F5.4): um nome de aparelho ou uma
-    legenda com "<b>" aparece como foi escrito, sem virar texto formatado."""
+    legenda com "<b>" aparece como foi escrito, sem virar texto formatado. F5.11 (U-116, A-33): `lines` > 1 quebra a linha
+    e corta só o que não cabe nelas (o alerta do widget, em até duas)."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, lines: int = 1):
         super().__init__(parent)
         self.full_text = ""
+        self.lines = lines
         self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(lines > 1)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
     def set_full_text(self, text: str, tip: str = "") -> None:
@@ -74,7 +104,11 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        self.setText(self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, max(20, self.width())))
+        width = max(20, self.width())
+        if self.lines == 1:
+            self.setText(self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, width))
+        else:
+            self.setText(wrap_elided(self.full_text, self.fontMetrics(), width, self.lines))
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -211,5 +245,5 @@ def widget_prefs(store: Store) -> dict[str, Any]:
 
 
 __all__ = ["CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "CaptionLine", "ElidedLabel", "MarkerPopup",
-           "caption_text", "channel_letter", "clock_text", "hbox", "health_icon", "icon_label", "save_widget_pos",
-           "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs"]
+           "caption_text", "channel_letter", "clock_text", "confirm_discard", "hbox", "health_icon", "icon_label", "save_widget_pos",
+           "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]

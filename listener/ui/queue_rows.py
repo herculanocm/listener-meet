@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ..llm.costs import fmt_usd
 from ..model import JOB_KIND_LABELS, JOB_STEP_LABELS, JobKind, JobStatus
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
+from ..rag.export import fmt_datetime
 
 if TYPE_CHECKING:
     from ..store.jobs import JobRow
@@ -89,7 +90,7 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, ll
     """Texto das colunas de um job, na ordem de `COLUMNS` (separado do widget para o teste e para o tooltip da bandeja).
     `llm_latency_s`: latência média das chamadas (`llm_calls`) para estimar o que falta num job `llm` (F3 item 16)."""
     title = (meeting or {}).get("title") or f"reunião {job['meeting_id']}"
-    started = str((meeting or {}).get("started_at") or "")[:16].replace("T", " ")
+    started = fmt_datetime((meeting or {}).get("started_at"))           # U-109 (A-27): dd/mm/aaaa, não o ISO
     status = str(job["status"])
     step = str(job.get("step") or "")
     duration_ms = (meeting or {}).get("duration_ms") or 0

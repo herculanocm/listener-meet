@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
+from ..fmt import plural
 from ..llm.prompts.common import stamp
 from ..model import SummaryKind
 from .components import Card, EmptyState
@@ -71,7 +72,7 @@ class MarkersTab(QWidget):
         if 0 <= current < self.list.count():
             self.list.setCurrentRow(current)
         self._page(bool(markers))
-        self.note.setText(f"{len(markers)} marcador(es); clique num para ouvir deste ponto." if markers
+        self.note.setText(f"{plural(len(markers), 'marcador', 'marcadores')}; clique num para ouvir deste ponto." if markers
                           else "Nenhum marcador nesta reunião.")
         self.note.setVisible(bool(markers))                  # sem marcador, o estado vazio já diz (como na linha do tempo, U-034)
 

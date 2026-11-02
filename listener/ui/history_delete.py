@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 SHOWN_MAX = 10                       # A-41: as reuniões listadas na confirmação; o resto vira "e mais N"
 TITLE_SHOWN = 90                     # caracteres do título na confirmação (o inteiro fica na dica)
 GOES = ("Sai de vez, sem lixeira: o áudio, as falas, as vozes, a ata, os resumos, as ações, o histórico de edições, os trechos "
-        "da busca, as conversas da reunião e os eventos. O custo das chamadas à LLM continua no total do mês, sem a reunião.")
+        "da busca, as conversas da reunião e os eventos. O custo das chamadas à IA continua no total do mês, sem a reunião.")
 STAYS = ("Ficam os perfis de voz e as fichas das pessoas. Nas conversas de “Perguntar às reuniões”, a citação vira "
          "“reunião excluída”.")
 BUTTON_TIP = "Exclui as reuniões selecionadas, com o áudio e tudo o que saiu delas (pede confirmação)"

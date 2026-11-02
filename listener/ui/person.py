@@ -15,7 +15,7 @@ from .theme import DANGER, Tone, primary, set_kind, tone
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_LEN = {"name": 120, "role": 120, "company": 120, "email": 254}
-EMAIL_NOTE = "O e-mail fica só neste computador: não vai para a LLM nem para a busca."
+EMAIL_NOTE = "O e-mail fica só neste computador: não vai para a IA nem para a busca."
 DELETE = 2                                         # código de `exec()` quando o usuário pede "Apagar pessoa…"
 DELETE_GAP = 48                                    # U-087: px lógicos, no mínimo, entre o apagar e o Salvar
 

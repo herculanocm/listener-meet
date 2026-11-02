@@ -49,6 +49,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QContextMenuEvent, QGuiApplicati
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QSizePolicy,
                                QStackedWidget, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from ..fmt import plural
 from ..log import get_logger
 from ..model import ActionStatus
 from ..rag import search as rag_search
@@ -425,7 +426,8 @@ class HistoryPage(AskMixin, QWidget):
         self.model.sort(header.sortIndicatorSection(), header.sortIndicatorOrder())
         self.coverage.setText(coverage)
         filt = self.filters_text()
-        self.list_note.setText(f"{len(lines)} reunião(ões)" + (f" ({filt})" if filt else "") + "; Enter ou duplo clique abre a reunião.")
+        self.list_note.setText(plural(len(lines), "reunião", "reuniões") + (f" ({filt})" if filt else "")
+                               + "; Enter ou duplo clique abre a reunião.")
 
     def _meeting_activated(self, index: QModelIndex) -> None:
         mid = self.model.data(self.model.index(index.row(), 0), Qt.ItemDataRole.UserRole)
@@ -503,11 +505,8 @@ class HistoryPage(AskMixin, QWidget):
         self.results.verticalScrollBar().setValue(scroll if result.query == self.search.text().strip() else 0)
         self.stack.setCurrentWidget(self.results)
         meetings = len({h.meeting_id for h in result.hits})
-        found = f"{len(result.hits)} trecho(s) em {meetings} reunião(ões)"
-        if result.hybrid:
-            self._set_badge("busca híbrida", Tone.SUCCESS, found)
-        else:
-            self._set_badge(f"busca por palavras: {friendly_reason(result.reason)}", Tone.WARNING, found)
+        found = f"{plural(len(result.hits), 'trecho')} em {plural(meetings, 'reunião', 'reuniões')}"   # U-109
+        self._set_badge("" if result.hybrid else f"busca por palavras: {friendly_reason(result.reason)}", Tone.WARNING, found)   # U-106
         filt = self.filters_text()
         self.list_note.setText("Clique num trecho para abrir a reunião naquele ponto e ouvir; no título, para abrir a reunião."
                                + (f" Filtros: {filt}." if filt else ""))
@@ -578,7 +577,8 @@ class HistoryPage(AskMixin, QWidget):
                 self.action_table.setItem(r, c, item)
         overdue = sum(1 for line in lines if line.overdue)
         filt = self.filters_text()
-        self.actions_note.setText((f"{len(lines)} ação(ões) aberta(s)" + (f", {overdue} atrasada(s)" if overdue else "")
+        late = f", {plural(overdue, 'atrasada')}" if overdue else ""
+        self.actions_note.setText((plural(len(lines), "ação aberta", "ações abertas") + late
                                    + (f" ({filt})" if filt else "")) if lines else "Nenhuma ação aberta" + (f" ({filt})." if filt else "."))
         self.btn_done.setEnabled(bool(lines))
         self.btn_open_action.setEnabled(bool(lines))

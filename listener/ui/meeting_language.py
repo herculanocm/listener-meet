@@ -44,7 +44,7 @@ log = get_logger("ui.meeting")
 
 TITLE = "Idioma da reunião"
 RECORDING_TIP = "Desabilitado durante a gravação: troque depois de parar."
-UNDO_TIP = "Desfaz a troca ainda não aplicada: a reunião fica como está, sem reprocessar e sem custo da LLM."
+UNDO_TIP = "Desfaz a troca ainda não aplicada: a reunião fica como está, sem reprocessar e sem custo da IA."
 UNDO_BUTTON = "Desfazer a troca"
 REPROCESS_TIP = "Processa de novo a reunião, no mesmo idioma; pergunta antes, com o tempo e o custo"
 ICON_PX = 32
@@ -114,13 +114,13 @@ def change_question(store: Store, meeting_id: int, target: str | None) -> str:
     eta = fmt_remaining(remaining_seconds(None, 0.0, duration / 1000 if duration else None, store.get_setting("pipeline.rtf_json"),
                                           kind=str(JobKind.REPROCESS)))
     if store.providers.active_with_key("llm") is None:
-        llm = "sem chave de LLM, nada é refeito agora (Configurações, Chaves de acesso)"
+        llm = "sem chave da IA, nada é refeito agora (Configurações, Chaves de acesso)"
     else:
         cost = fmt_usd(estimate_meeting_usd(store, meeting_id))
         llm = f"refaz o título, a identificação das vozes e a transcrição revisada (custo estimado: {cost})"
     return (f"Reprocessar esta reunião{f' em {label(target)}' if target else ''}?\n\n"
             f"Tempo estimado: {eta} (refaz a separação de vozes e a transcrição).\n"
-            f"LLM: {llm}.\n"
+            f"IA: {llm}.\n"
             "A ata, o resumo e as ações ficam como estão, marcados como desatualizados, até serem gerados de novo: marque "
             "abaixo para pedir junto com o reprocessamento (o pedido pergunta antes, com o custo). Nada se apaga.")
 
@@ -132,7 +132,7 @@ def undo_question(store: Store, meeting_id: int) -> str:
     asked = f" para {label(running[1])}" if running is not None else ""
     return (f"Desfazer a troca{asked}?\n\n"
             f"A reunião continua em {label(current)}, como está: o reprocessamento pedido para a troca sai da fila (ou para "
-            "entre as janelas, se já começou), um processamento que já estava na fila segue como antes e a LLM não refaz "
+            "entre as janelas, se já começou), um processamento que já estava na fila segue como antes e a IA não refaz "
             "nada por causa dela.")
 
 

@@ -43,7 +43,7 @@ def test_the_settings_log_hides_secrets_names_and_url_credentials(store, caplog)
         store.set_setting("llm.glossary_enabled", "0")
         store.set_setting("llm.proxy_url", "http://joao:s3nh4@proxy.local:8080")
         store.providers.update_provider("gemini", api_key="AIza-SEGREDO", base_url="https://joao:s3nh4@api.local/v1")
-    assert "Zuleica" not in caplog.text and "pipeline.glossary: (padrão) -> (texto com 18 caractere(s))" in caplog.text
+    assert "Zuleica" not in caplog.text and "pipeline.glossary: (padrão) -> (texto com 18 caracteres)" in caplog.text
     assert "llm.glossary_enabled: (padrão) -> 0" in caplog.text
     assert "joao" not in caplog.text and "s3nh4" not in caplog.text and "AIza-SEGREDO" not in caplog.text
     assert "-> http://***@proxy.local:8080" in caplog.text and "base_url = 'https://***@api.local/v1'" in caplog.text

@@ -52,6 +52,8 @@ log = get_logger("rag.agent")
 WINDOW_SHARE = 0.6               # o contexto das rodadas até 60 % da janela do modelo; acima, as antigas viram uma linha
 SQL_OUTPUT_TOKENS = 4096
 ANSWER_OUTPUT_TOKENS = 2048
+# F5.11 (CP11, fora de escopo): o que vai à LLM não muda com o vocabulário da tela ("IA" no `trace.STOPS`)
+PROMPT_STOPS: dict[str, str] = {**trace.STOPS, "resposta": "a LLM teve o que precisava", "erro": "a LLM falhou"}
 type Progress = Callable[[dict[str, Any]], None]
 type Emit = Callable[[str], None]
 
@@ -286,7 +288,7 @@ class _Run:
     def _answer_request(self, targets: dict[str, Target]) -> Request:
         """O pedido da resposta com os resultados como estão; só quando ele não cabe em 60 % da janela do modelo da resposta,
         as rodadas viram uma linha, das mais antigas para as mais novas."""
-        note = trace.STOPS.get(self.stop or "", "")
+        note = PROMPT_STOPS.get(self.stop or "", "")
         stop = note if self.stop == "resposta" else f"pararam por {note}: diga isso na resposta e o que faltou"
         while True:
             ctx = RagAnswerCtx(self.history, now_text(self.now), self.label, self.question, ar.legend(targets), ar.rounds_text(self.rounds),
@@ -345,7 +347,7 @@ def _check(store: Store, thread_id: int | None, question: str) -> str:
     if not question:
         raise ValueError("escreva uma pergunta")
     if store.providers.active_with_key("llm") is None:
-        raise ValueError("nenhum provedor de LLM ativo com chave: informe a chave em Configurações, Chaves de acesso")
+        raise ValueError("nenhum provedor de IA ativo com chave: informe a chave em Configurações, Chaves de acesso")
     if thread_id is not None and store.chat.get_thread(thread_id) is None:
         raise ValueError("esta conversa não existe mais: comece uma nova")
     return question

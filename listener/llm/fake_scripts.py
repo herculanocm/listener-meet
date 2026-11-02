@@ -157,7 +157,8 @@ def partial(req: Request) -> dict[str, Any]:
         decisions.append({"text": f"Decidido: {lines[0].text}"[:300], "caption_id": lines[0].segment_id})
         owner = lines[-1].speaker if lines[-1].speaker not in ("Participante",) else None
         actions.append({"text": f"Retomar: {lines[-1].text}"[:300], "caption_id": lines[-1].segment_id, "owner": owner})
-    summary = (str(previous.get("summary") or "") + f" Parcial simulado com {len(lines)} legenda(s) nova(s).").strip()
+    news = f"{len(lines)} {'legenda nova' if len(lines) == 1 else 'legendas novas'}"
+    summary = (str(previous.get("summary") or "") + f" Parcial simulado com {news}.").strip()
     return {"summary": summary[-1000:], "decisions": decisions[-15:], "actions": actions[-15:]}
 
 
@@ -182,7 +183,8 @@ def rag_chat(req: Request) -> str:
         end = heads[i + 1].start() if i + 1 < len(heads) else len(excerpts)
         lines = parse_lines(excerpts[head.end():end])
         cites.append(f"{head.group(1)} {lines[0].stamp}" if lines else head.group(1))
-    return (f"Resposta simulada sobre {len(heads)} reunião(ões) [{'; '.join(cites)}]; ver também [{heads[0].group(1)}] "
+    return (f"Resposta simulada sobre {len(heads)} {'reunião' if len(heads) == 1 else 'reuniões'} [{'; '.join(cites)}]; ver também "
+            f"[{heads[0].group(1)}] "
             "e [R99 00:00].")
 
 

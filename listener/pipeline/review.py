@@ -357,7 +357,7 @@ def accept_llm(store: Store, cluster_id: int, author: str = "usuario") -> int:
     if c.get("llm_name"):
         log.info("voz %s da reunião %s: sugestão da LLM aceita (nome novo)", c["cluster"], c["meeting_id"])
         return new_person(store, cluster_id, str(c["llm_name"]), author=author, source=DecisionSource.USER_LLM)
-    raise ValueError("esta voz não tem sugestão da LLM")
+    raise ValueError("esta voz não tem sugestão pelo contexto")
 
 
 def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:

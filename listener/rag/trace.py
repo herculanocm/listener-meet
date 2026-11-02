@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
 VERSION = 1
 STOPS: dict[str, str] = {
-    "resposta": "a LLM teve o que precisava", "exaustao": "três rodadas seguidas sem informação nova",
+    "resposta": "a IA teve o que precisava", "exaustao": "três rodadas seguidas sem informação nova",
     "custo": "a guarda de custo", "tempo": "a guarda de tempo", "rodadas": "a guarda de rodadas", "janela": "o contexto do modelo encheu",
-    "cancelada": "você cancelou", "erro": "a LLM falhou",
+    "cancelada": "você cancelou", "erro": "a IA falhou",
 }
 
 

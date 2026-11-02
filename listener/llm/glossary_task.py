@@ -115,7 +115,7 @@ def request_glossary(store: Store, title: str | None, participants: str | None, 
     if not store.get(SPECS["llm.glossary_enabled"]):
         return GlossaryResult((), tuple(resolved))
     if store.providers.active_with_key("llm") is None:
-        return GlossaryResult((), tuple(resolved), error="sem chave de LLM: informe em Configurações, Chaves de acesso")
+        return GlossaryResult((), tuple(resolved), error="sem chave da IA: informe em Configurações, Chaves de acesso")
     cfg = LlmJobConfig.from_store(store)
     known = tuple(Person(int(p["id"]), str(p["name"]), str(p.get("role") or ""), str(p.get("company") or "")) for p in people)
     fixed = str(store.get(SPECS["pipeline.glossary"]))

@@ -26,7 +26,7 @@ from PySide6.QtGui import QFontMetrics, QPainter
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QStyle, QStyledItemDelegate, QStyleOptionViewItem, QVBoxLayout, QWidget)
 
-from ..model import SourceKind
+from ..model import MIC_YOU, OUTPUT_YOU, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints
 from . import icons
 from .components import BADGE_PAD_X, BADGE_PAD_Y, InfoBar
@@ -237,9 +237,9 @@ class DevicesPanel(QDialog):
         self.mics.itemActivated.connect(self._on_mic_item)              # Enter pelo teclado
         self.outputs.itemClicked.connect(self._on_output_item)
         self.outputs.itemActivated.connect(self._on_output_item)
-        mic_box = QGroupBox("Microfone (canal L: você)")
+        mic_box = QGroupBox(MIC_YOU)                         # U-106
         QVBoxLayout(mic_box).addWidget(self.mics)
-        out_box = QGroupBox("Saída gravada (canal R: quem você ouve)")
+        out_box = QGroupBox(OUTPUT_YOU)
         QVBoxLayout(out_box).addWidget(self.outputs)
         self.notes = QLabel("")
         self.notes.setWordWrap(True)

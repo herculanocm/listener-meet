@@ -199,7 +199,7 @@ def test_history_lists_filters_searches_and_opens_at_the_hit(qtbot, store, monke
     page._search_now()
     qtbot.waitUntil(lambda: page.result is not None, timeout=5000)
     res = page.result
-    assert res.hybrid and page.stack.currentWidget() is page.results and "busca híbrida" in page.badge.text()
+    assert res.hybrid and page.stack.currentWidget() is page.results and page.badge.isHidden()                       # U-106: sem o selo
     body = results_html(res)
     assert "<script>" not in body and "&lt;script&gt;" in body and "&lt;b&gt;Títulão&lt;/b&gt;" in body and "<b>auditoria</b>" in body
     hit = next(h for h in res.hits if h.meeting_id == a and h.t_start_ms is not None)
@@ -284,7 +284,7 @@ def test_history_global_chat_with_the_fake_rating_citation_link_and_warnings(qtb
     qtbot.waitUntil(lambda: bool(page.answers) and page.chat_task is None, timeout=10000)
     ans = page.answers[0]
     assert ans.error is None and page.thread_id == ans.thread_id and page.threads.currentData() == ans.thread_id
-    assert "citação(ões) com link" in page.chat_status.text() and "busca híbrida" in page.chat_status.text()
+    assert "com link" in page.chat_status.text() and "busca" not in page.chat_status.text()            # U-106
     assert "Citação certa?" in page.chat_view.toPlainText()
     page._chat_link(QUrl(chat_global.rate_link(ans.message_id, 1)))                 # U-027: grava e redesenha
     assert store.chat.get(ans.message_id)["rating"] == 1 and "Citação certa: sim" in page.chat_view.toPlainText()
@@ -311,7 +311,7 @@ def test_history_global_chat_with_the_fake_rating_citation_link_and_warnings(qtb
     store.providers.set_active("gemini", llm=False)
     page.question.setText("e agora?")
     page.ask()
-    assert page.chat_task is None and "Nenhum provedor de LLM ativo com chave" in page.chat_status.text()
+    assert page.chat_task is None and "Nenhum provedor de IA ativo com chave" in page.chat_status.text()
 
 
 def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, platform, store, monkeypatch):

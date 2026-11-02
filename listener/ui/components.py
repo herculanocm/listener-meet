@@ -12,6 +12,7 @@ from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
+from ..model import MIC_ROOM, MIC_YOU
 from .icons import set_icon
 from .style import rounded
 from .theme import PRIMARY, STATUS_TONES, TONE_ROLE, Tone, html_css, qcolor, role, set_kind, surface_tokens, tone
@@ -206,4 +207,10 @@ class HtmlView(QTextBrowser):
         bar.setValue(position)
 
 
-__all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "EmptyState", "HtmlView", "IconButton", "InfoBar"]
+def mic_title(box: QGroupBox, in_room: bool) -> None:
+    """U-106 (A-41): o cartão do microfone diz "Microfone: você" ou, com a sala presencial, "Microfone: você e a sala" (o
+    microfone ouve outras pessoas)."""
+    box.setTitle(MIC_ROOM if in_room else MIC_YOU)
+
+
+__all__ = ["INFO_KINDS", "Badge", "BadgeDelegate", "Card", "EmptyState", "HtmlView", "IconButton", "InfoBar", "mic_title"]

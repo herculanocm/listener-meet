@@ -645,7 +645,7 @@ class Recorder(ReopenMixin):
         status = MeetingStatus.RECORDED
         if snap.unsaved:
             status = MeetingStatus.INTERRUPTED
-            msg = f"{len(snap.unsaved)} pedaço(s) não gravado(s) no banco: {', '.join(snap.unsaved)}"
+            msg = f"{len(snap.unsaved)} pedaço{'s' if len(snap.unsaved) > 1 else ''} sem gravar no banco: {', '.join(snap.unsaved)}"
             self.warnings.append(msg)
             log.error("reunião %s: %s (%s)", self.meeting_id, msg, snap.db_error)
             self.sink.add_event(self.meeting_id, round(end_rel * 1000), EventType.ERROR,
