@@ -36,7 +36,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
 (Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
 1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
    com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
-   endereço do PayPal e o convite fora de chamada e fora da tela compartilhada.
+   endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
+   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",

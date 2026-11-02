@@ -294,6 +294,13 @@ class MeetingsModel(QAbstractTableModel):
         self.lines = list(lines)
         self.endResetModel()
 
+    def meeting_at(self, row: int) -> int | None:
+        """A reunião da linha, para a seleção sobreviver à recarga do Histórico aberto; None fora da lista."""
+        return self.lines[row].meeting_id if 0 <= row < len(self.lines) else None
+
+    def row_of(self, meeting_id: int | None) -> int | None:
+        return next((row for row, line in enumerate(self.lines) if line.meeting_id == meeting_id), None)
+
 
 __all__ = ["ACTION_COLUMNS", "DUE_COL", "HIT_SCHEME", "KIND_TAB", "MEETING_COLUMNS", "MEETING_SCHEME", "PERIODS", "STATUS_TEXT",
            "STATUS_TONES", "ActionLine", "MeetingLine", "MeetingsModel", "coverage_text", "fmt_int", "friendly_reason", "hit_link",

@@ -412,9 +412,12 @@ class HistoryPage(AskMixin, QWidget):
             self.list_note.setText(f"Não consegui carregar as reuniões: {result}")
             return
         lines, coverage = result
+        keep = self.model.meeting_at(self.table.currentIndex().row())     # a recarga com a janela aberta mantém a seleção
         self.model.replace(lines)
         header = self.table.horizontalHeader()
         self.model.sort(header.sortIndicatorSection(), header.sortIndicatorOrder())
+        if (row := self.model.row_of(keep)) is not None:
+            self.table.selectRow(row)
         self.coverage.setText(coverage)
         filt = self.filters_text()
         self.list_note.setText(plural(len(lines), "reunião", "reuniões") + (f" ({filt})" if filt else "")

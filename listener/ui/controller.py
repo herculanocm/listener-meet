@@ -543,11 +543,11 @@ class Controller(QObject):
 
     def on_edited(self, meeting_id: int, reason: str = "edit", *, now: bool = False) -> None:
         """Uma edição que muda a busca (falantes, título, ata, executivo, ações): o `index` da reunião entra na fila já, com
-        "não antes de" agora + 30 s renovado a cada edição (espera durável no job: sobrevive ao app fechar, R5-07); `now` tira
-        a espera ("Concluir", fechar a revisão). O worker leve sobe agora e espera o job vencer. Com os vetores automáticos
-        desligados o `index` entra do mesmo jeito: os trechos e o FTS são locais e grátis."""
+        "não antes de" agora + 30 s renovado a cada edição (espera durável no job, R5-07); `now` tira a espera ("Concluir",
+        fechar a revisão). O worker leve sobe e espera o job vencer; sem os vetores automáticos, o `index` entra igual."""
         from ..rag.index import EDIT_DELAY_S, enqueue_index
 
+        self._history_changed()
         delay = 0.0 if now else (EDIT_DELAY_S if self.index_delay_s is None else self.index_delay_s)
         try:
             enqueue_index(self.store, meeting_id, reason, delay_s=delay)
@@ -559,6 +559,11 @@ class Controller(QObject):
         else:
             self._index_edited.add(meeting_id)
         self.launch_worker(light=True)
+
+    def _history_changed(self) -> None:
+        """O Histórico aberto relê a lista quando uma reunião muda (revisão, título, processamento): antes, só ao reabrir."""
+        if self._history is not None and self._history.isVisible():
+            self._history.page.reload_meetings()
 
     def _run_task(self, fn: Callable[[], Any], on_done: Callable[[Any], None]) -> None:
         run_task(fn, self.store, on_done)
@@ -1135,6 +1140,7 @@ class Controller(QObject):
 
     def _on_job_done(self, job: Any) -> None:
         mid = int(job["meeting_id"])
+        self._history_changed()
         if str(job.get("kind")) in INDEX_KINDS:
             # F5A-05: o índice não avisa nem abre a revisão; só recarrega a reunião aberta (sem roubar o foco nem rolar)
             log.debug("reunião %s: índice concluído (job %s)", mid, job["id"])
