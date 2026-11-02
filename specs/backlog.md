@@ -2,17 +2,20 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (01/11/2026, Windows nativo; tudo commitado; o push é do dono)
+## Onde paramos (02/11/2026, Windows nativo; tudo commitado; o push é do dono)
 - Código: F1 a F5.11 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
   rascunho inicial e F7 é futuro. Suíte de 1.438 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
   apagava a gravação na confirmação do descarte, saiu antes, na D-076.
+- **F5.12 em rascunho** (02/11, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e assistente) e o
+  convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), com 7 perguntas no padrão; falta a
+  aprovação do dono. A pergunta 1 é da CP15 (o e-mail de doação e o nome do autor no código).
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
-- O `.exe` que vale para as Partes 19 e 21 é o de 31/10, 09:19, já com a F5.10.
+- O `.exe` que vale para as Partes 19 a 22 é o de 02/11, 00:22, já com a F5.11 (541 s, 892 MB, sonda `--probe` ok).
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra

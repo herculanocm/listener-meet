@@ -8,7 +8,8 @@ U-040 do segundo teste (D-055); U-041 a U-043 do brainstorm de 27/10, aprovadas 
 U-044 a U-051 aprovadas (D-060) e implementadas na F5.3, quatro delas pedidas pelo dono; U-052 a U-088 da F5.4
 (design das telas), aprovadas antes de escritas (D-061) e implementadas em 28/10, com U-014 e U-034 a U-036; U-089 a
 U-093 da F5.6 (ata a pedido, prompts, excluir reunião), pedidas pelo dono e aprovadas (D-063); U-098 a U-120 da
-crítica de UX de 01/11 (F5.11), aprovadas (D-077) e implementadas em 02/11.
+crítica de UX de 01/11 (F5.11), aprovadas (D-077) e implementadas em 02/11; U-121 a U-128 do Sobre e do convite para
+apoiar (F5.12), propostas.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -131,3 +132,11 @@ Tamanho-alvo: 3 KB.
 | U-118 | Bandeira fora do rótulo da linha do tempo; duração no player antes de tocar | Reunião | implementada (F5.11, 02/11) |
 | U-119 | Títulos da ata abaixo do título da janela | Reunião | implementada (F5.11, 02/11) |
 | U-120 | Escolher a pasta dos modelos; grupo "Avançado" no Processamento | Config. | implementada (F5.11, 02/11) |
+| U-121 | Diálogo "Sobre": marca, versão, frase, MIT, autor e repositório, apoio, este computador e créditos | Sobre | proposta (F5.12) |
+| U-122 | O Sobre na bandeja, na última página das Configurações e nas boas-vindas do assistente | Bandeja, Config., assistente | proposta (F5.12) |
+| U-123 | "Apoiar o projeto…" com um coração novo na bandeja, no Sobre e na página Sobre | Bandeja, Sobre | proposta (F5.12) |
+| U-124 | Doar pelo Pix: a chave com "Copiar chave", R$ 0,99 e três passos | Apoio | proposta (F5.12) |
+| U-125 | Doar pelo PayPal: o e-mail com "Copiar e-mail", US$ 0,20 e "Abrir o PayPal" | Apoio | proposta (F5.12) |
+| U-126 | O convite: cartão no canto, sem foco e fora da captura, com o que o app já guardou | Convite | proposta (F5.12) |
+| U-127 | Quando o convite aparece: depois de valor entregue, com o app parado, no máximo um a cada 30 dias; desligável | Convite, Config. | proposta (F5.12) |
+| U-128 | "Apoiar o listener-meet" discreto no rodapé do Histórico | Histórico | proposta (F5.12) |
