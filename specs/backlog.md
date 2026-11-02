@@ -15,13 +15,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.13 implementada** (02/11, D-082, D-083, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de
   tarefas abre o Histórico, com a instância única (o item 17), o Jump List, a dica de fixar e os atalhos no menu da
   bandeja (U-129 a U-133), em quatro commits, de `42505ad` a `49f6b19`, com a revisão do diff corrigida. A versão passou
-  a 0.6.0 (D-081), e o `.exe` 0.6.0 ainda não foi gerado. Falta o dono: a Parte 24 do roteiro.
+  a 0.6.0 (D-081). Falta o dono: a Parte 24 do roteiro.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
-- O `.exe` que vale para as Partes 19 a 23 é o 0.5.0 de 02/11, 11:43 (`2a48e9f`: a F5.12, a correção do Histórico e a
-  D-081; 473 s, 892 MB, sonda `--probe` ok com o commit). Para compartilhar, o
-  `build\exe\listener-meet-0.5.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+- O `.exe` que vale para as Partes 19 a 24 é o 0.6.0 de 02/11, 17:07 (`2e59b4b`: a F5.13; 441 s, 892 MB, com o
+  QtNetwork; sonda `--probe` ok com o commit). Para compartilhar, o `build\exe\listener-meet-0.6.0-win64.zip` (351 MB,
+  a pasta inteira; D-081: `build_exe.py --zip`).
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
@@ -44,7 +44,7 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
    com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
    endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
    aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
-   `.exe` 0.5.0 diz "versão 0.5.0 · 2a48e9f" (a versão do produto no arquivo e a sonda já conferidas).
+   `.exe` 0.6.0 diz "versão 0.6.0 · 2e59b4b" (a versão do produto no arquivo e a sonda já conferidas).
    F5.13 (Parte 24, pelo `.exe` 0.6.0): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
    atalhos no menu da bandeja.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
