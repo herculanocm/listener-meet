@@ -9,9 +9,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
   apagava a gravação na confirmação do descarte, saiu antes, na D-076.
-- **F5.12 em rascunho** (02/11, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e assistente) e o
-  convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), com 7 perguntas no padrão; falta a
-  aprovação do dono. A pergunta 1 é da CP15 (o e-mail de doação e o nome do autor no código).
+- **F5.12 aprovada, em implementação** (02/11, D-079, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja,
+  Configurações e assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128).
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
