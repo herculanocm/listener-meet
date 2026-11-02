@@ -82,6 +82,16 @@ R-02, o convite aparecia numa chamada que a F5.7 não vigia (provados). Também:
 abria o Pix), o `parse_when` com `OSError`, o interruptor que fecha o cartão e o Enter apertado de verdade nos testes.
 Conferidos sem achado: CP9, CP15 (o e-mail só em `about.py`), D-053, a cópia para suporte sem caminhos, nenhuma rede.
 
+## Revisão do diff da F5.13 (02/11)
+Corrigidos em `49f6b19`: R-01, no "Sair" de verdade o processo novo não recebia o "fechando" (o `rec.stop()` síncrono e
+o `emergency_stop` prendiam o laço com o canal aberto; provado): o canal fecha no começo da saída e, sem canal, o
+processo novo tenta a trava de novo até 5 s; R-02 [chute], o "Gravar…" do Jump List sem o `bring_to_front`. Também: o
+teste do modal que não abria diálogo e o comentário do `removeServer`, que só é seguro com trava de verdade. Aceito
+(D-083): no `.exe`, o log do processo novo não vai a lugar nenhum. Conferidos sem achado: as vtables, os GUIDs e a
+PROPVARIANT do Jump List, o DACL do pipe, a trava (o handle, o acesso negado, o nome ocupado), os 256 bytes e o JSON
+inválido sem o conteúdo no log, os filhos e as sondas fora da trava, CP15 e D-053. Os seis desvios declarados (D-083)
+não são defeito.
+
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),
 SQL curto na thread da interface, as listas de apps de reunião em `platform.py` e `activity.py`, riscos sem chamador

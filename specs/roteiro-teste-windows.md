@@ -514,6 +514,22 @@ Antes: reinicie o app (ou gere o `.exe` de novo pela Parte 19).
       chamada, gravando ou com a revisão de falantes aberta; "Agora não" o some por 30 dias.
 - Devolva: se o Pix chegou, se o endereço do PayPal estava certo e prints do convite e do Sobre.
 
+## Parte 24 — F5.13: o listener-meet na barra de tarefas (15 min, pelo `.exe`)
+Antes: gere o `.exe` de novo pela Parte 19 e feche o app, se estiver rodando.
+- [ ] Fixar: abra o `listener-meet.exe`, espere uns 5 s, clique com o botão direito no ícone dele na barra de tarefas
+      e escolha "Fixar na barra de tarefas". Num perfil novo, a última página do assistente traz essa dica.
+- [ ] Com o app parado, um clique no ícone fixado abre o Histórico na frente das outras janelas. Com o app rodando,
+      o mesmo clique traz o Histórico dele para a frente, e a bandeja segue com um ícone só.
+- [ ] O clique direito no ícone fixado mostra, em "Tarefas": Gravar…, Histórico, Fila de processamento e
+      Configurações. Cada uma abre a sua tela, com o app parado e com ele rodando; "Gravar…" faz o mesmo que o clique
+      esquerdo na bandeja. Se as tarefas faltarem no ícone fixado, anote: é o risco da spec.
+- [ ] Abra o `.exe` duas vezes seguidas, rápido: um app só e um ícone só na bandeja.
+- [ ] Gravando, um clique no ícone fixado abre o Histórico, e a gravação segue.
+- [ ] O menu da bandeja mostra os atalhos na coluna da direita, como Ctrl+Alt+Shift+H ao lado de "Histórico…".
+      Troque um atalho nas Configurações e veja o menu mudar.
+- Devolva: quanto tempo leva do clique no ícone fixado ao Histórico (com o app parado e rodando), se as tarefas
+  apareceram no ícone fixado e um print do clique direito nele.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.

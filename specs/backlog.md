@@ -3,8 +3,8 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (02/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.12 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.509 testes, esquema v9. Nenhum gate medido ainda.
+- Código: F1 a F5.13 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
+  rascunho inicial e F7 é futuro. Suíte de 1.565 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
@@ -12,9 +12,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.12 implementada** (02/11, D-079, D-080, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e
   assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), em três commits,
   de `f953bfd` a `03b16a0`, com a revisão do diff corrigida. Falta o dono: a Parte 23 do roteiro.
-- **F5.13 aprovada** (02/11, D-082, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de tarefas abre o
-  Histórico, com a instância única (o item 17), o Jump List e os atalhos no menu da bandeja (U-129 a U-133). Em
-  implementação.
+- **F5.13 implementada** (02/11, D-082, D-083, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de
+  tarefas abre o Histórico, com a instância única (o item 17), o Jump List, a dica de fixar e os atalhos no menu da
+  bandeja (U-129 a U-133), em quatro commits, de `42505ad` a `49f6b19`, com a revisão do diff corrigida. A versão passou
+  a 0.6.0 (D-081), e o `.exe` 0.6.0 ainda não foi gerado. Falta o dono: a Parte 24 do roteiro.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
@@ -44,6 +45,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
    endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
    aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
    `.exe` 0.5.0 diz "versão 0.5.0 · 2a48e9f" (a versão do produto no arquivo e a sonda já conferidas).
+   F5.13 (Parte 24, pelo `.exe` 0.6.0): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
+   atalhos no menu da bandeja.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",
@@ -83,7 +86,7 @@ As respondidas (2 a 4, 11 a 16 e 18) saíram daqui: o registro está em `decisoe
    encerrado": foi o terminal dele que se fechou? (sim aos dois; se não, investigar o antivírus/EDR).
 10. Além das janelas pretas (D-056) e da revisão (U-039), alguma outra janela ainda sobe por cima? (nenhuma).
 17. F5.8: a trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo banco: entrou na
-    F5.13 (U-129), aprovada.
+    F5.13 (U-129), implementada; falta a Parte 24.
 19. A pasta do banco do teste de 26/10 (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 daquele dia, fora da
     Lixeira e sem nenhum processo da LLM nela; os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`. Foi
     você ou outra ferramenta? (sim, por fora do app; se não, investigar).

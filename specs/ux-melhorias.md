@@ -10,7 +10,7 @@ U-044 a U-051 aprovadas (D-060) e implementadas na F5.3, quatro delas pedidas pe
 U-093 da F5.6 (ata a pedido, prompts, excluir reunião), pedidas pelo dono e aprovadas (D-063); U-098 a U-120 da
 crítica de UX de 01/11 (F5.11), aprovadas (D-077) e implementadas em 02/11; U-121 a U-128 do Sobre e do convite para
 apoiar (F5.12), aprovadas (D-079) e implementadas em 02/11; U-129 a U-133 da barra de tarefas (F5.13), aprovadas
-(D-082) em 02/11.
+(D-082) e implementadas em 02/11.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -141,8 +141,8 @@ Tamanho-alvo: 3 KB.
 | U-126 | O convite: cartão no canto, sem foco e fora da captura, com o que o app já guardou | Convite | implementada (F5.12, 02/11) |
 | U-127 | Quando o convite aparece: depois de valor entregue, com o app parado, no máximo um a cada 30 dias; desligável | Convite, Config. | implementada (F5.12, 02/11) |
 | U-128 | "Apoiar o listener-meet" discreto no rodapé do Histórico | Histórico | implementada (F5.12, 02/11) |
-| U-129 | Uma instância só: abrir o app já rodando entrega o pedido ao que roda, sem segundo app | Barra de tarefas | aprovada (F5.13, D-082) |
-| U-130 | O clique no ícone fixado abre o Histórico, com o app rodando ou parado | Barra de tarefas | aprovada (F5.13, D-082) |
-| U-131 | Jump List no ícone da barra: Gravar…, Histórico, Fila de processamento e Configurações | Barra de tarefas | aprovada (F5.13, D-082) |
-| U-132 | A última página do assistente ensina a fixar o app na barra de tarefas | Assistente | aprovada (F5.13, D-082) |
-| U-133 | O menu da bandeja mostra o atalho global ao lado de cada item que tem um | Bandeja | aprovada (F5.13, D-082) |
+| U-129 | Uma instância só: abrir o app já rodando entrega o pedido ao que roda, sem segundo app | Barra de tarefas | implementada (F5.13, 02/11) |
+| U-130 | O clique no ícone fixado abre o Histórico, com o app rodando ou parado | Barra de tarefas | implementada (F5.13, 02/11) |
+| U-131 | Jump List no ícone da barra: Gravar…, Histórico, Fila de processamento e Configurações | Barra de tarefas | implementada (F5.13, 02/11) |
+| U-132 | A última página do assistente ensina a fixar o app na barra de tarefas | Assistente | implementada (F5.13, 02/11) |
+| U-133 | O menu da bandeja mostra o atalho global ao lado de cada item que tem um | Bandeja | implementada (F5.13, 02/11) |
