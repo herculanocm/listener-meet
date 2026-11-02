@@ -18,13 +18,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))     # o pacote d
 
 
 class _Handover:
-    """O que o `deliver` usa da plataforma (a falsa inteira custaria o import do numpy e dos fakes a cada processo)."""
+    """O que o `deliver` usa da plataforma (a falsa inteira custaria o import do numpy e dos fakes a cada processo); a trava
+    é sempre do servidor do teste."""
 
     def __init__(self) -> None:
         self.handovers = 0
 
     def hand_over_foreground(self) -> None:
         self.handovers += 1
+
+    def claim_instance(self, _name: str) -> bool:
+        return False
 
 
 def request(name: str, target: str) -> dict[str, object]:

@@ -183,6 +183,7 @@ class Controller(QObject):
     partial_state = Signal(object)       # F4 L5: {"state": idle | running | done | error | stopped, "meeting_id", "message"}
     _live_message = Signal(object, object)   # (cliente, mensagem): da thread `live-read` para a da interface
     _notice_requested = Signal(str, object)  # F5.3 (A-10): (texto, NoticeMeta ou None) de outra thread para a da interface
+    leaving = Signal()                   # F5.13 (R-01): a saída começou ("Sair" confirmado, parada de emergência): o canal fecha
 
     def __init__(self, app: QApplication, platform: Platform, store: Store, first_run: bool = False,
                  clock_factory: Callable[[], Clock] | None = None):
@@ -839,6 +840,7 @@ class Controller(QObject):
 
     def emergency_stop(self) -> None:
         """Logoff, desligamento ou `quit()` por fora: para e salva sem diálogo (M-05); o resumo fica para a próxima vez."""
+        self.leaving.emit()                              # F5.13 (R-01): o canal do pedido fecha antes da parada
         rec = self.recorder
         if rec is not None and not rec.stopped:
             log.warning("encerramento durante a gravação %s: parando sem diálogo", rec.meeting_id)
@@ -1832,10 +1834,11 @@ class Controller(QObject):
                 self.recorder.cfg.apply_live(self.store)
 
     def quit(self) -> None:
+        if self.recorder and QMessageBox.question(self.widget, "Sair", "Há uma gravação em andamento. Parar e salvar antes de "
+                                                  "sair?") != QMessageBox.StandardButton.Yes:
+            return
+        self.leaving.emit()                              # F5.13 (R-01): antes do `rec.stop()` e do `app.quit()`
         if self.recorder:
-            r = QMessageBox.question(self.widget, "Sair", "Há uma gravação em andamento. Parar e salvar antes de sair?")
-            if r != QMessageBox.StandardButton.Yes:
-                return
             self._quitting = True
             rec = self.recorder
             self._timer.stop()

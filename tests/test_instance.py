@@ -1,9 +1,10 @@
 """F5.13 (L1, Aceite 1 e 2): a instância única. O nome do canal (sem o nome do usuário), a linha do pedido e as recusas e
-o comando do `--open`; o servidor de verdade (um nome por teste) com o "segundo processo" numa thread: os quatro pedidos
+o comando do `--open`; o servidor de verdade (um nome por teste) com o "segundo processo" à parte: os quatro pedidos
 entregues, a linha acima de 256 bytes, o JSON inválido, o valor desconhecido e a linha que não termina sem abrir nada, o
-"fechando" com o app saindo, o diálogo modal que só vem à frente e, sem resposta, a mensagem e a saída; o pedido no
-controlador (o caminho do clique no aviso e o do clique esquerdo na bandeja); dois processos de verdade pelo `run` (o
-segundo entrega o pedido e sai com 0); e os filhos e os diagnósticos, que despacham sem pedir a trava."""
+"fechando" de uma conexão lida com o app saindo, e o diálogo modal que só vem à frente, antes e depois do controlador; o
+pedido no controlador (o caminho do clique no aviso e o do clique esquerdo na bandeja); dois processos de verdade pelo `run`
+(o segundo entrega o pedido e sai com 0); e os filhos e os diagnósticos, que despacham sem pedir a trava. A saída e a
+espera pela trava sem canal (R-01, R-02) estão em `tests/test_instance_exit.py`."""
 from __future__ import annotations
 
 import json
@@ -11,7 +12,6 @@ import logging
 import os
 import subprocess
 import sys
-import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -72,10 +72,11 @@ def test_anything_else_is_refused_with_a_reason_that_does_not_carry_the_line(lin
 
 
 def test_the_new_process_says_closing_or_no_reply_and_nothing_on_ok():
-    from listener.ui.instance import CLOSING_TEXT, NO_REPLY_TEXT, refusal_text
+    from listener.ui.instance import CLAIMED, CLOSING_TEXT, LOCKED, NO_REPLY_TEXT, refusal_text
 
-    assert refusal_text("ok") is None
-    assert refusal_text("fechando") == CLOSING_TEXT == "O listener-meet está fechando. Abra de novo em alguns segundos."
+    assert refusal_text("ok") is None and refusal_text(CLAIMED) is None            # a trava pega na espera: vira o app
+    assert refusal_text("fechando") == refusal_text(LOCKED) == CLOSING_TEXT         # R-01: a trava presa sem canal
+    assert CLOSING_TEXT == "O listener-meet está fechando. Abra de novo em alguns segundos."
     assert refusal_text(None) == refusal_text("outra coisa") == NO_REPLY_TEXT
     assert NO_REPLY_TEXT == ("O listener-meet já está aberto, mas não respondeu. Espere um pouco ou feche-o pelo Gerenciador "
                              "de Tarefas.")
@@ -181,13 +182,16 @@ def record_front(platform: Any, monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 def stub_controller() -> Any:
     """O mínimo do controlador que o canal usa (um QObject: o contexto do `QTimer` do `open_later`), anotando o que abriria."""
-    from PySide6.QtCore import QObject
+    from PySide6.QtCore import QObject, Signal
 
     class StubController(QObject):
+        leaving = Signal()
+
         def __init__(self) -> None:
             super().__init__()
             self.quitting = False
             self.tray = None
+            self.widget = None                                       # R-02: o que o "record" traz à frente gravando
             self.opened: list[Any] = []
 
         def open_target(self, action: Any) -> None:
@@ -242,13 +246,22 @@ def test_a_line_that_never_ends_is_closed_after_the_wait(qtbot, channel, monkeyp
     assert channel.stub.opened == [] and "sem a linha inteira em 300 ms" in caplog.text
 
 
-def test_the_app_quitting_answers_closing_and_opens_nothing(qtbot, channel):
-    from listener.ui.instance import CLOSING_TEXT, refusal_text
+def test_a_request_read_while_the_app_leaves_gets_closing_and_opens_nothing(qtbot, controller):
+    """Uma conexão aceita antes de o canal fechar e lida já com o app saindo (no logoff, o laço gira uma vez depois da parada
+    de emergência): "fechando", e nada abre. O "Sair" e a parada fecham o canal antes (`tests/test_instance_exit.py`)."""
+    from listener.ui.instance import REPLY_CLOSING, InstanceServer
 
-    channel.stub.quitting = True
-    out = client(qtbot, "request", channel.server.name, "queue")
-    qtbot.wait(50)
-    assert out["reply"] == "fechando" and refusal_text(out["reply"]) == CLOSING_TEXT and channel.stub.opened == []
+    server = InstanceServer(unique_name(), controller.platform)
+    server.attach(controller)
+    controller._quitting = True                                       # o que a parada de emergência acende
+    try:
+        assert server.answer(OpenTarget.QUEUE) == REPLY_CLOSING
+        qtbot.wait(50)
+        assert controller._queue_dialog is None and controller._history is None
+    finally:
+        controller._quitting = False
+        server.close()
+        server.deleteLater()
 
 
 def test_with_a_modal_dialog_open_only_it_comes_to_the_front(qtbot, channel, monkeypatch):
@@ -268,37 +281,32 @@ def test_with_a_modal_dialog_open_only_it_comes_to_the_front(qtbot, channel, mon
         dlg.close()
 
 
-def test_before_the_controller_a_request_only_brings_the_modal_forward(qtbot, channel, monkeypatch):
-    """Sem `attach` (o assistente da primeira vez, o banco que não abre) e sem diálogo: "ok" e nada abre."""
+def test_before_the_controller_only_an_open_dialog_comes_forward(qtbot, channel, monkeypatch):
+    """Sem `attach` (o assistente da primeira vez, o banco que não abre): sem diálogo aberto, "ok" e nada abre; com um (o
+    assistente), só ele vem à frente."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QDialog
+
     from listener.ui.instance import InstanceServer
 
     fronted = record_front(channel.platform, monkeypatch)
     early = InstanceServer(unique_name(), channel.platform)
     assert early.listen()
+    dlg = QDialog()
+    dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+    qtbot.addWidget(dlg)
     try:
         assert client(qtbot, "request", early.name, "queue")["reply"] == "ok"
         qtbot.wait(50)
         assert fronted == [] and channel.stub.opened == []
+        dlg.show()
+        assert client(qtbot, "request", early.name, "history")["reply"] == "ok"
+        qtbot.wait(50)
+        assert fronted == [int(dlg.winId())] and channel.stub.opened == []
     finally:
+        dlg.close()
         early.close()
         early.deleteLater()
-
-
-def test_without_a_reply_the_new_process_shows_the_message_and_leaves(qapp, tmp_path, monkeypatch, caplog):
-    from listener.ui import instance
-
-    platform = FakePlatform(tmp_path)
-    platform.instance_free = False                                   # a trava é de outro, que não responde (nem existe)
-    shown: list[str] = []
-    monkeypatch.setattr(instance, "show_refusal", lambda _app, _platform, text: shown.append(text))
-    monkeypatch.setattr(instance, "CLIENT_TIMEOUT_S", 0.4)
-    t0 = time.monotonic()
-    with caplog.at_level(logging.INFO, logger="listener.ui.instance"):
-        assert instance.claim(qapp, platform, OpenTarget.QUEUE) is None
-    assert 0.3 <= time.monotonic() - t0 < 3
-    assert shown == [instance.NO_REPLY_TEXT] and platform.handovers == 1
-    assert platform.claims == [instance.channel_name(platform.config_dir())]
-    assert "não respondeu" in caplog.text and "(queue)" in caplog.text and str(tmp_path) not in caplog.text
 
 
 def test_the_first_process_takes_the_lock_and_opens_the_channel(qapp, tmp_path):

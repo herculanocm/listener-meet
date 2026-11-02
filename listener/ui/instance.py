@@ -2,20 +2,24 @@
 do assistente, `claim` pede a trava à plataforma (`claim_instance`; no Windows, um mutex da sessão) com o nome do canal:
 "listener-meet-" e os 12 primeiros hex do sha256 da pasta de configuração (o nome do usuário que ela traz nunca vai no
 nome). Quem pega abre o canal, um `QLocalServer` só do usuário (`UserAccessOption`; o `removeServer` antes do `listen` limpa
-o arquivo de uma queda fora do Windows, e a trava garante que ninguém mais o usa), e segue; quem não pega passa o foco
+o arquivo de uma queda fora do Windows, onde ele faz algo: isso só é seguro com trava de verdade, e nas outras plataformas,
+até a F7, a base sempre pega a trava e ele apagaria o soquete de um app aberto), e segue; quem não pega passa o foco
 adiante (`hand_over_foreground`), entrega o pedido e sai com 0, sem abrir um segundo app.
 
 Protocolo: uma linha JSON de até 256 bytes, `{"open": X}` com X em `OpenTarget`; a resposta, "ok" ou "fechando" (o app
-saindo). Qualquer outra coisa é ignorada com uma linha de log e sem resposta. O cliente bloqueia até 5 s no total, tentando
-conectar enquanto o servidor não existe (o app que tem a trava pode estar abrindo); com "fechando", a mensagem do passo 3
-da spec; sem resposta, a do passo 4.
+saindo). Qualquer outra coisa é ignorada com uma linha de log e sem resposta. O app fecha o canal no começo da saída (R-01:
+o "Sair" confirmado e a parada de emergência, pelo `Controller.leaving`). O cliente bloqueia até 5 s no total: sem canal,
+tenta a trava de novo a cada volta, e se o app já saiu ele a pega e vira o app, com o pedido dele; com a trava presa sem
+canal até o prazo (o app saindo) ou com "fechando", a mensagem do passo 3 da spec; conectou e ninguém respondeu (o app
+travado, ou ainda abrindo), a do passo 4.
 
 Até o controlador existir (o assistente, o banco que não abre), o pedido só traz à frente o diálogo modal aberto. Depois
 (`attach`): com o app saindo, "fechando"; com um diálogo modal aberto, só ele vem à frente; senão a ação sai no próximo giro
 do laço (as Configurações e o "Antes de gravar" seguram o laço no `exec`, e a resposta não espera por eles): "history",
 "queue" e "settings" pelo caminho do clique no aviso (`Controller.open_target`, que traz a janela à frente pela
-plataforma) e "record" pelo do clique esquerdo na bandeja (`TrayIcon.left_click`, com a reunião pendente da F5.7). Log sem
-caminho e sem nome (D-053): o alvo, o motivo da recusa e o tempo."""
+plataforma) e "record" pelo do clique esquerdo na bandeja (`TrayIcon.left_click`, com a reunião pendente da F5.7), com a
+janela que ele abrir trazida à frente do mesmo jeito (R-02). Log sem caminho e sem nome (D-053): o alvo, o motivo da recusa
+e o tempo."""
 from __future__ import annotations
 
 import functools
@@ -44,8 +48,10 @@ APP_NAME = "listener-meet"
 NAME_PREFIX, NAME_HEX = f"{APP_NAME}-", 12
 MAX_LINE = 256                         # bytes da linha do pedido, sem o fim de linha
 REPLY_OK, REPLY_CLOSING = "ok", "fechando"
-CLIENT_TIMEOUT_S = 5.0                 # o processo novo desiste depois disto (o passo 4 da spec)
-RETRY_S = 0.05                         # entre as tentativas de conectar enquanto o servidor não existe
+REPLIES = frozenset({REPLY_OK, REPLY_CLOSING})
+CLAIMED, LOCKED = "trava livre", "trava presa"   # o desfecho da espera sem canal (nunca uma resposta: só as de `REPLIES` valem)
+CLIENT_TIMEOUT_S = 5.0                 # o processo novo desiste depois disto (os passos 3 e 4 da spec)
+RETRY_S = 0.05                         # entre as tentativas, enquanto não há canal (o app abrindo ou saindo)
 READ_TIMEOUT_MS = 2000                 # o servidor fecha a conexão que não mandou a linha inteira nisto
 VALUES = frozenset(str(t) for t in OpenTarget)
 CLOSING_TEXT = "O listener-meet está fechando. Abra de novo em alguns segundos."
@@ -78,26 +84,16 @@ def parse_request(line: bytes) -> OpenTarget:
 
 
 def refusal_text(reply: str | None) -> str | None:
-    """A mensagem do processo novo: nenhuma com "ok"; a do passo 3 com "fechando"; a do passo 4 com o resto (sem resposta)."""
-    if reply == REPLY_OK:
+    """A mensagem do processo novo: nenhuma com "ok" (ou com a trava pega na espera); a do passo 3 com "fechando" ou com a
+    trava presa sem canal até o prazo (o app saindo); a do passo 4 com o resto (conectou e ninguém respondeu)."""
+    if reply in (REPLY_OK, CLAIMED):
         return None
-    return CLOSING_TEXT if reply == REPLY_CLOSING else NO_REPLY_TEXT
+    return CLOSING_TEXT if reply in (REPLY_CLOSING, LOCKED) else NO_REPLY_TEXT
 
 
 # ---------------------------------------------------------------- o processo novo
 def _left_ms(deadline: float) -> int:
     return max(0, int((deadline - time.monotonic()) * 1000))
-
-
-def _connect(sock: QLocalSocket, name: str, deadline: float) -> bool:
-    while True:
-        sock.connectToServer(name)
-        if sock.waitForConnected(_left_ms(deadline)):
-            return True
-        sock.abort()
-        if time.monotonic() + RETRY_S >= deadline:
-            return False
-        time.sleep(RETRY_S)                              # o servidor ainda não existe: o app que tem a trava está abrindo
 
 
 def _reply(sock: QLocalSocket, deadline: float) -> str | None:
@@ -111,35 +107,53 @@ def _reply(sock: QLocalSocket, deadline: float) -> str | None:
     return line.decode("utf-8", "replace").strip() if newline else None
 
 
-def send_request(name: str, target: OpenTarget, timeout_s: float | None = None) -> str | None:
-    """Conecta, manda a linha e espera a resposta, tudo em até `timeout_s` (padrão: 5 s); None quando nada voltou (o outro
-    travado, ainda abrindo ou saindo, ou a linha recusada)."""
-    deadline = time.monotonic() + (CLIENT_TIMEOUT_S if timeout_s is None else timeout_s)
-    sock = QLocalSocket()
-    try:
-        if not _connect(sock, name, deadline):
-            return None
-        sock.write(request_line(target))
-        if not sock.waitForBytesWritten(_left_ms(deadline)):
-            return None
-        return _reply(sock, deadline)
-    finally:
-        sock.abort()
+def _ask(sock: QLocalSocket, target: OpenTarget, deadline: float) -> str | None:
+    """A linha do pedido e a resposta dela; None quando a conexão caiu antes ou o prazo venceu."""
+    sock.write(request_line(target))
+    if not sock.waitForBytesWritten(_left_ms(deadline)):
+        return None
+    reply = _reply(sock, deadline)
+    return reply if reply in REPLIES else None           # fora do protocolo vale como nenhuma
+
+
+def _exchange(platform: Platform, name: str, target: OpenTarget, deadline: float) -> str | None:
+    """Até o prazo, conecta e pede; sem canal (ou com a conexão caída sem resposta), tenta a trava de novo, porque o app pode
+    ter saído. Devolve a resposta, `CLAIMED` (a trava ficou livre: este processo vira o app), `LOCKED` (a trava seguiu presa
+    sem canal: o app saindo) ou None (conectou e ninguém respondeu no prazo: o app travado)."""
+    while True:
+        sock = QLocalSocket()
+        sock.connectToServer(name)
+        connected = sock.waitForConnected(_left_ms(deadline))
+        try:
+            reply = _ask(sock, target, deadline) if connected else None
+            if reply is not None:
+                return reply
+            if connected and sock.state() == QLocalSocket.LocalSocketState.ConnectedState:
+                return None
+        finally:
+            sock.abort()
+        if platform.claim_instance(name):                # o handle de cada tentativa perdida fecha na plataforma
+            return CLAIMED
+        if time.monotonic() + RETRY_S >= deadline:
+            return None if connected else LOCKED
+        time.sleep(RETRY_S)
 
 
 def deliver(platform: Platform, name: str, target: OpenTarget) -> str | None:
-    """O processo que não pegou a trava: passa o foco adiante e entrega o pedido; devolve a resposta (None: nenhuma)."""
+    """O processo que não pegou a trava: passa o foco adiante e entrega o pedido; devolve o desfecho de `_exchange`."""
     platform.hand_over_foreground()
     t0 = time.perf_counter()
-    reply = send_request(name, target)
+    outcome = _exchange(platform, name, target, time.monotonic() + CLIENT_TIMEOUT_S)
     ms = (time.perf_counter() - t0) * 1000
-    if reply == REPLY_OK:
+    if outcome == REPLY_OK:
         log.info("outra instância já roda: pedido entregue (%s) em %.0f ms", target, ms)
-    elif reply == REPLY_CLOSING:
+    elif outcome == CLAIMED:
+        log.info("a outra instância saiu na espera: este processo abre o app (%s), depois de %.0f ms", target, ms)
+    elif outcome in (REPLY_CLOSING, LOCKED):
         log.info("outra instância já roda e está fechando: pedido não entregue (%s)", target)
     else:
         log.warning("outra instância já roda e não respondeu em %.0f ms: pedido não entregue (%s)", ms, target)
-    return reply
+    return outcome
 
 
 def show_refusal(app: QApplication, platform: Platform, text: str) -> None:
@@ -160,29 +174,47 @@ def show_refusal(app: QApplication, platform: Platform, text: str) -> None:
 
 
 def claim(app: QApplication, platform: Platform, target: OpenTarget | None) -> InstanceServer | None:
-    """U-129: a trava e o canal aberto (quem pega segue com eles) ou o pedido entregue ao app que já roda (None: este processo
-    sai com 0). Sem `--open`, o pedido é o Histórico (U-130: o clique no ícone fixado)."""
+    """U-129: a trava e o canal aberto (quem pega segue com eles, também se pegou na espera, R-01) ou o pedido entregue ao app
+    que já roda (None: este processo sai com 0). Sem `--open`, o pedido é o Histórico (U-130: o clique no ícone fixado)."""
     name = channel_name(platform.config_dir())
-    if platform.claim_instance(name):
-        server = InstanceServer(name, platform, parent=app)
-        server.listen()
-        return server
-    text = refusal_text(deliver(platform, name, target or OpenTarget.HISTORY))
-    if text is not None:
-        show_refusal(app, platform, text)
-    return None
+    if not platform.claim_instance(name):
+        outcome = deliver(platform, name, target or OpenTarget.HISTORY)
+        if outcome != CLAIMED:
+            if (text := refusal_text(outcome)) is not None:
+                show_refusal(app, platform, text)
+            return None
+    server = InstanceServer(name, platform, parent=app)
+    server.listen()
+    return server
 
 
 # ---------------------------------------------------------------- o app que tem a trava
+def bring_forward(platform: Platform, win: QWidget) -> None:
+    """A janela à frente, também pela plataforma (o app está em segundo plano quando o pedido chega)."""
+    win.raise_()
+    win.activateWindow()
+    with suppress(Exception):
+        platform.bring_to_front(int(win.winId()))
+
+
+def _front_opened(controller: Controller) -> None:
+    """R-02 (o passo 5 da spec): o que o "record" abriu vem à frente, como as outras telas: o diálogo modal (o "Antes de
+    gravar", também o da reunião pendente da F5.7) ou, gravando, o widget. Roda dentro do `exec` do diálogo."""
+    win = QApplication.activeModalWidget() or controller.widget
+    if win is not None and win.isVisible():
+        bring_forward(controller.platform, win)
+
+
 def open_target(controller: Controller, target: OpenTarget) -> None:
     """O pedido no controlador: "history", "queue" e "settings" pelo caminho do clique no aviso (abre e traz à frente pela
     plataforma); "record" pelo do clique esquerdo na bandeja (o "Antes de gravar", o da reunião pendente da F5.7 ou o widget
-    da gravação em curso); sem bandeja, o "Antes de gravar"."""
+    da gravação em curso), trazido à frente no primeiro giro do laço (R-02); sem bandeja, o "Antes de gravar"."""
     from .notices import NoticeAction, Target
 
     if controller.quitting:
         return
     if target == OpenTarget.RECORD:
+        QTimer.singleShot(0, controller, functools.partial(_front_opened, controller))
         if controller.tray is not None:
             controller.tray.left_click()
         else:
@@ -215,8 +247,10 @@ class InstanceServer(QObject):
         self.server.close()
 
     def attach(self, controller: Controller) -> None:
-        """Depois do `controller.start()`: os pedidos vão ao controlador (antes, só o diálogo modal aberto vem à frente)."""
+        """Depois do `controller.start()`: os pedidos vão ao controlador (antes, só o diálogo modal aberto vem à frente), e o
+        canal fecha no começo da saída (R-01: o processo novo não espera o salvar da gravação nem a parada)."""
         self._controller = controller
+        controller.leaving.connect(self.close)
 
     def open_later(self, target: OpenTarget) -> None:
         """A tela no próximo giro do laço, pelo controlador: a do pedido e a da abertura (U-130: o Histórico ou a do `--open`)."""
@@ -232,17 +266,11 @@ class InstanceServer(QObject):
         modal = QApplication.activeModalWidget()
         if modal is not None:
             log.info("pedido recebido: %s (só o diálogo aberto vem à frente)", target)
-            self._front(modal)
+            bring_forward(self._platform, modal)
         else:
             log.info("pedido recebido: %s", target)
             self.open_later(target)
         return REPLY_OK
-
-    def _front(self, win: QWidget) -> None:
-        win.raise_()
-        win.activateWindow()
-        with suppress(Exception):
-            self._platform.bring_to_front(int(win.winId()))
 
     def _accept(self) -> None:
         while self.server.hasPendingConnections():
