@@ -4,8 +4,10 @@ que passava de 400 linhas (F5.11, A-35). Não fazem parte do produto.
 cortados   rótulo, botão, aba, cabeçalho de tabela ou título de cartão (L1b) com o texto maior que o espaço. F5.11 (A-16):
            também o combo, a célula de tabela à vista e o rótulo cortado com reticências e o texto inteiro na dica (antes,
            "de propósito", não contava: o alerta do widget e a etapa da fila cortavam assim). Ficam de fora o corte no meio
-           com o texto inteiro na dica (o nome de um aparelho, U-110, que corta assim por desenho) e a legenda do widget (a
-           última fala numa linha; a inteira fica na janela Ao vivo).
+           com o texto inteiro na dica (o nome de um aparelho, U-110, que corta assim por desenho), a célula cortada com o
+           texto inteiro na dica e a legenda do widget (a última fala numa linha; a inteira fica na janela Ao vivo). O botão
+           é medido pelo que ele mostra (o texto, o ícone, as margens e a seta só com menu): o `sizeHint` do estilo do Windows
+           tem a largura mínima de botão (80 px) e acusava o "⋯" da reunião, inteiro na tela.
 pequenos   o alvo de clique do Aceite 3: botão, campo e combo abaixo de 32 por 32 px; caixa de seleção abaixo de 24 px."""
 from __future__ import annotations
 
@@ -67,13 +69,31 @@ def _label_cut(lab: Any) -> dict[str, Any] | None:
     return {"need_w": need, "w": lab.width()} if need > lab.width() + 1 else None
 
 
+def _button_need(btn: Any) -> int:
+    """A largura que o conteúdo do `QPushButton` pede: o texto, o ícone, a seta (só com menu) e as margens do estilo; o
+    botão que mede a si mesmo (o `KeyButton` da revisão, com o selo da tecla), a caixa e o botão de ferramenta respondem
+    pelo `sizeHint` (eles não têm a largura mínima do botão)."""
+    from PySide6.QtWidgets import QPushButton, QStyle
+
+    custom = any("sizeHint" in vars(k) for k in type(btn).__mro__ if not k.__module__.startswith(("PySide6", "builtins")))
+    if custom or not isinstance(btn, QPushButton):
+        return int(btn.sizeHint().width())
+    style = btn.style()
+    menu = getattr(btn, "menu", None)
+    arrow = style.pixelMetric(QStyle.PixelMetric.PM_MenuButtonIndicator, None, btn) if callable(menu) and menu() else 0
+    icon = btn.iconSize().width() + 4 if not btn.icon().isNull() else 0
+    pad = 2 * (style.pixelMetric(QStyle.PixelMetric.PM_ButtonMargin, None, btn) +
+               style.pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth, None, btn))
+    return int(btn.fontMetrics().horizontalAdvance(btn.text().replace("&", "")) + icon + arrow + pad)
+
+
 def _button_cut(btn: Any) -> dict[str, Any] | None:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QToolButton
 
     if not btn.text() or (isinstance(btn, QToolButton) and btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly):
         return None
-    need = btn.sizeHint().width()
+    need = _button_need(btn)
     return {"need_w": need, "w": btn.width()} if need > btn.width() + 1 else None
 
 
@@ -93,8 +113,17 @@ def _combo_cut(combo: Any) -> dict[str, Any] | None:
     return {"need_w": need, "w": field.width()} if need > field.width() + 1 else None
 
 
+def _plain(tip: str) -> str:
+    """A dica sem o HTML (o `convertFromPlainText` do Histórico põe o título num parágrafo)."""
+    from PySide6 import QtGui
+
+    text = QtGui.QTextDocumentFragment.fromHtml(tip).toPlainText() if QtGui.Qt.mightBeRichText(tip) else tip
+    return " ".join(text.split())
+
+
 def _cells_cut(view: Any) -> list[dict[str, Any]]:
-    """A-16: as células à vista de uma tabela cujo texto não cabe na coluna (o corte no meio com a dica inteira fica)."""
+    """A-16: as células à vista de uma tabela cujo texto não cabe na coluna e não está inteiro na dica (a célula de texto
+    livre, cortada com a dica inteira, não conta)."""
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QStyle
 
@@ -111,8 +140,8 @@ def _cells_cut(view: Any) -> list[dict[str, Any]]:
             if not text or view.isColumnHidden(col) or not area.intersects(rect):
                 continue
             need = max(fm.horizontalAdvance(line) for line in text.split("\n")) + pad
-            tip = str(model.data(index, Qt.ItemDataRole.ToolTipRole) or "")
-            if need > rect.width() + 1 and not (view.textElideMode() == Qt.TextElideMode.ElideMiddle and tip == text):
+            tip = _plain(str(model.data(index, Qt.ItemDataRole.ToolTipRole) or ""))
+            if need > rect.width() + 1 and " ".join(text.split()) not in tip:
                 found.append({"what": f"célula {row},{col} {text[:32]!r}", "need_w": need, "w": rect.width()})
     return found
 

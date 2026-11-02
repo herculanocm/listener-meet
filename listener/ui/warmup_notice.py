@@ -21,7 +21,7 @@ from PySide6.QtWidgets import QBoxLayout
 
 from .components import InfoBar
 from .keys import missing_keys
-from .live_prepare import LIVE, missing_models, missing_size_mb, preparer
+from .live_prepare import LIVE, USER_CANCELED, missing_models, missing_size_mb, preparer
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -32,7 +32,7 @@ SETUP = "setup"                                   # a faixa do rodapé
 LINKED_BARS = frozenset({SETUP})                  # as faixas com links
 HEAD = "Falta configurar"
 CONFIGURE, PREPARE, CANCEL = '<a href="keys">Configurar</a>', '<a href="prepare">Preparar agora</a>', '<a href="cancel">Cancelar</a>'
-CANCELED = "download cancelado"
+CANCELED = USER_CANCELED
 RECORD_STOPS = "“Gravar” interrompe o download."
 TOKEN_LINE = f"Token do Hugging Face: sem ele, o processamento não sai. {CONFIGURE}"
 KEY_LINE = f"Chave da IA: sem ela, não sai ata, resumo nem título. {CONFIGURE}"

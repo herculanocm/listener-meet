@@ -89,7 +89,7 @@ from .call_sensor import abandon
 from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
 from .live import LiveWindow, caption_key, caption_note, caption_who, item_key, item_note
-from .live_prepare import RAG, preparer, shutdown_preparer
+from .live_prepare import RAG, USER_CANCELED, preparer, shutdown_preparer
 from .llm_tabs import llm_done_text
 from .meeting import MeetingWindow
 from .meeting_delete import MeetingDeleter
@@ -521,11 +521,11 @@ class Controller(QObject):
         """A-12: o preparo da busca local terminou; com o local ativo e pronto e algo a indexar, "Reindexar agora/Depois" com os
         minutos (Q3: a varredura não completa sozinha). A pergunta sai no próximo giro do laço: as Configurações abertas já
         mostram "pronta" antes dela (e ela sai sobre elas). F5.3 (A-11): o fim e o erro do download, do ao vivo e da busca,
-        avisam com o clique nas Configurações; a interrupção pela gravação não (o começo da gravação já avisou)."""
+        avisam com o clique nas Configurações; a interrupção pela gravação e o Cancelar do usuário não (R-01 da F5.11)."""
         st = dict(state or {})
         if self._quitting:
             return
-        found = download_text(st) if st.get("message") != PREPARE_INTERRUPTED else None
+        found = download_text(st) if st.get("message") not in (PREPARE_INTERRUPTED, USER_CANCELED) else None
         if found is not None:
             kind, text = found
             self._notify_as(kind, text, NoticeAction(Target.SETTINGS))
@@ -983,7 +983,7 @@ class Controller(QObject):
         if alert is None:
             w.show_alert(None)
         else:
-            w.show_alert(alert.text, alert.button, alert.action, alert.tip, alert.kind)
+            w.show_alert(alert.text, alert.button, alert.action, alert.tip, alert.kind, alert.middle)
 
     # ---------------------------------------------------------------- fila de processamento (F2)
     def _write_lease(self, rec: Recorder) -> None:

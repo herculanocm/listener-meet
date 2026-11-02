@@ -48,6 +48,7 @@ class Alert:
     action: str = ""
     tip: str = ""
     kind: str = "warning"
+    middle: bool = False         # F5.11: o nome de um aparelho corta no meio (o começo e o fim à vista), inteiro na dica
 
 
 # ---------------------------------------------------------------- decisões (sem Qt)

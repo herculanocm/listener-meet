@@ -112,7 +112,7 @@ def widget_shots(p, shot) -> None:
                (LOST_TEXT["L"], DEVICES_BUTTON, "error")),                         # F5.11 (A-33): os textos do app
               ("widget-alerta-aviso", False, 125, {"L": 0.1}, {**OK_HEALTH, "R": "alert"}, (False, False, 0), None,
                (NO_SIGNAL_TEXT, DEVICES_BUTTON, "warning")),
-              ("widget-alerta-info", False, 125, lively, OK_HEALTH, (False, False, 0), None, (f"novo: {mic_name}", "Usar", "info")),
+              ("widget-alerta-info", False, 125, lively, OK_HEALTH, (False, False, 0), None, (f"novo: {mic_name}", "Usar", "info", True)),
               ("widget-alerta-sucesso", False, 125, lively, OK_HEALTH, (False, False, 0), None,
                (BACK_TEXT["L"], DEVICES_BUTTON, "success")),
               ("widget-maximo", True, 36125, {"L": 0.3, "R": 0.95}, {**OK_HEALTH, "R": "warn"}, (False, True, 12), "crashed",
@@ -125,8 +125,8 @@ def widget_shots(p, shot) -> None:
         if live_line:
             rw.set_caption("Ana — CFO", "vamos fechar o orçamento de 2027 hoje, com o corte de oito por cento em todas as áreas")
         if alert is not None:
-            text, button, kind = alert
-            rw.show_alert(text, button, "devices", kind=kind)
+            text, button, kind, *middle = alert                   # F5.11: o aparelho novo corta no meio, como no app
+            rw.show_alert(text, button, "devices", kind=kind, middle=bool(middle))
         shot(rw, name)
         discard(rw)
 

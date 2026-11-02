@@ -37,6 +37,7 @@ EXIT_WAIT_S = 10.0
 LIVE, RAG = "live", "rag"            # o que o preparo baixa (A-08): os modelos do ao vivo ou a busca local
 WHAT_TEXT = {LIVE: "os modelos do ao vivo", RAG: "a busca local"}
 LIVE_SIZES_MB = {"small": 486, "base": 148}        # F5.11 (U-111): as pastas baixadas, medidas em 01/11
+USER_CANCELED = "download cancelado"               # F5.11 (R-01): o Cancelar da faixa; não é erro (nem aviso)
 
 
 def missing_models(store: Store) -> list[str]:

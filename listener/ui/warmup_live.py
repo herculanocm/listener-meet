@@ -13,7 +13,9 @@ de 400 linhas: as caixas "Legenda ao vivo", "Nomes ao vivo" e "Resumo parcial", 
 - F5.11 (U-111): sem os modelos da legenda, "Legenda ao vivo" vem desmarcada (o pedido, `wanted`, fica guardado: o preset
   salvo e a faixa "Falta configurar" o usam) e volta ao pedido quando o download termina, se o usuário não mexeu nela;
   "Nomes ao vivo" fica apagada, com o motivo na dica, sem o token do Hugging Face ou sem os modelos de voz, e não vai ligada
-  para a gravação. O aviso dos modelos passou para a faixa do rodapé (`ui/warmup_notice.py`).
+  para a gravação. O aviso dos modelos passou para a faixa do rodapé (`ui/warmup_notice.py`). Caixa apagada nunca aparece
+  marcada (os nomes e o parcial, como o rodapé da transcrição): o pedido do preset ou das Configurações fica guardado por
+  dentro (`names_wanted`, `partial_wanted`) e volta quando a caixa acende.
 Sinais ligados a métodos (R-06)."""
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ NAMES_TIP = "Nome e cargo de quem tem perfil de voz na legenda (carrega o modelo
 PARTIAL_TIP = ("Resumo da reunião pela LLM durante a gravação, no intervalo das Configurações (Ao vivo); tem custo. Desmarcada, "
                "\"Atualizar resumo agora\" na janela ao vivo continua.")
 PARTIAL_OFF_TIP = "O resumo parcial sai das legendas: ligue a legenda ao vivo."
+NAMES_OFF_TIP = "Os nomes saem na legenda: ligue a legenda ao vivo."
 NAMES_NEED_HF = "Nomes ao vivo precisa do token do Hugging Face (Configurações, Chaves de acesso)."
 NAMES_NEED_VOICES = "Nomes ao vivo precisa dos modelos de voz, que chegam com o primeiro processamento com o token."
 
@@ -61,6 +64,8 @@ class LiveBoxes(QObject):
         super().__init__(parent)
         self.store = store
         self.wanted = False
+        self.names_wanted = False                            # o pedido dos nomes (preset, Configurações ou o clique)
+        self.partial_wanted = bool(store.get(SPECS["live.partial"]))     # P-06: o padrão das Configurações
         self.names_off = ""                                  # U-111: o motivo dos nomes apagados (vazio = saem)
         self._touched = False                                # o usuário mexeu na legenda: o download não a muda
         self.live_check = QCheckBox("Legenda ao vivo")
@@ -68,10 +73,11 @@ class LiveBoxes(QObject):
         self.names_check = QCheckBox("Nomes ao vivo")
         self.names_check.setToolTip(NAMES_TIP)
         self.partial_check = QCheckBox("Resumo parcial")
-        self.partial_check.setChecked(bool(store.get(SPECS["live.partial"])))       # P-06: o padrão das Configurações
         self.key = has_key(store)                                                    # R-09: sem chave, o parcial não sai
         self.live_check.toggled.connect(self.toggled)
         self.live_check.clicked.connect(self._clicked)        # só o clique do usuário (o `setChecked` não emite)
+        self.names_check.toggled.connect(self._names_toggled)       # a marca com a caixa acesa é o pedido
+        self.partial_check.toggled.connect(self._partial_toggled)
 
     def row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -87,11 +93,19 @@ class LiveBoxes(QObject):
         self.wanted = bool(self.store.get(SPECS["live.enabled"]) if enabled is None else enabled)
         self._touched = False
         self.live_check.setChecked(self.wanted and not missing_models(self.store))
-        self.names_check.setChecked(bool(self.store.get(SPECS["live.names"]) if names is None else names))
+        self.names_wanted = bool(self.store.get(SPECS["live.names"]) if names is None else names)
         self.toggled(self.live_check.isChecked())
 
     def _clicked(self, _checked: bool) -> None:
         self._touched = True
+
+    def _names_toggled(self, checked: bool) -> None:
+        if self.names_check.isEnabled():
+            self.names_wanted = checked
+
+    def _partial_toggled(self, checked: bool) -> None:
+        if self.partial_check.isEnabled():
+            self.partial_wanted = checked
 
     def wants_live(self) -> bool:
         """A legenda pedida: a caixa ou, sem o usuário mexer, o pedido que veio desmarcado só pela falta dos modelos (os
@@ -109,9 +123,12 @@ class LiveBoxes(QObject):
         self.changed.emit()
 
     def _names_state(self, on: bool) -> None:
+        """Os nomes acesos só com a legenda e o que eles precisam; apagados, desmarcados, com o motivo na dica."""
         self.names_off = names_reason(self.store)
-        self.names_check.setEnabled(on and not self.names_off)
-        self.names_check.setToolTip(self.names_off or NAMES_TIP)
+        lit = on and not self.names_off
+        self.names_check.setEnabled(lit)
+        self.names_check.setChecked(lit and self.names_wanted)
+        self.names_check.setToolTip(self.names_off or (NAMES_TIP if on else NAMES_OFF_TIP))
 
     def refresh_key(self) -> None:
         """A chave e o token podem ter chegado pelas Configurações com o diálogo aberto (o link da faixa)."""
@@ -122,14 +139,15 @@ class LiveBoxes(QObject):
     def _partial_state(self) -> None:
         on = self.live_check.isChecked()
         self.partial_check.setEnabled(on and self.key)
+        self.partial_check.setChecked(on and self.key and self.partial_wanted)
         self.partial_check.setToolTip(NO_KEY_TIP if not self.key else PARTIAL_TIP if on else PARTIAL_OFF_TIP)
 
     def fields(self) -> dict[str, bool]:
         """O que vai para o controlador (CP6): a legenda, os nomes (só quando saem, U-111) e o parcial (só com a legenda e a
         chave, A-21, R-09)."""
         live = self.live_check.isChecked()
-        return {"live_enabled": live, "live_names": self.names_check.isChecked() and not self.names_off,
-                "live_partial": live and self.key and self.partial_check.isChecked()}
+        return {"live_enabled": live, "live_names": self.names_check.isEnabled() and self.names_check.isChecked(),
+                "live_partial": self.partial_check.isEnabled() and self.partial_check.isChecked()}
 
 
 __all__ = ["NAMES_NEED_HF", "NAMES_NEED_VOICES", "PARTIAL_TIP", "LiveBoxes", "names_reason"]

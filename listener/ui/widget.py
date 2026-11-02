@@ -43,8 +43,7 @@ METER_PX = 6
 LIVE_BADGES: dict[str, tuple[str, Tone]] = {
     "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
     "degraded": ("legenda atrasada", Tone.WARNING), "skipping": ("legenda atrasada", Tone.WARNING),
-    "crashed": ("ao vivo parou", Tone.DANGER),
-}
+    "crashed": ("ao vivo parou", Tone.DANGER)}
 def _screen_rects() -> list[tuple[int, int, int, int]]:
     out = []
     for s in QGuiApplication.screens():
@@ -78,7 +77,7 @@ class RecordingWidget(QWidget):
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
         self._last_health: dict[str, str] = {}
-        self._last_alert: tuple[str | None, str, str, str, str] = (None, "", "", "", "")
+        self._last_alert: tuple[str | None, str, str, str, str, bool] = (None, "", "", "", "", False)
         self._alert_action = ""
         self._last_live: tuple[str, str] | None = None
         self._path: QPainterPath | None = None
@@ -349,11 +348,12 @@ class RecordingWidget(QWidget):
         line = caption_text(label, text)
         self.caption_line.set_full_text(line, f"{line}\n\n(clique para abrir a janela Ao vivo)")
 
-    def show_alert(self, text: str | None, button: str = "", action: str = "", tip: str = "", kind: str = "warning") -> None:
+    def show_alert(self, text: str | None, button: str = "", action: str = "", tip: str = "", kind: str = "warning",
+                   middle: bool = False) -> None:
         """A linha de alerta embaixo (só muda quando o alerta muda, M-12), com o ícone e a cor do tipo (`info`, `success`,
         `warning`, `error`); `button` é o rótulo do botão e `action` o que o clique emite em `alert_clicked` (F5.3, A-21);
-        sem rótulo, sem botão. A altura do widget acompanha (A-16)."""
-        key = (text, button, action, tip, kind)
+        sem rótulo, sem botão. A altura do widget acompanha (A-16). F5.11: o texto inteiro na dica; `middle` corta no meio."""
+        key = (text, button, action, tip, kind, middle)
         if key == self._last_alert:
             return
         self._last_alert = key
@@ -362,7 +362,7 @@ class RecordingWidget(QWidget):
             value, icon = INFO_KINDS.get(kind, INFO_KINDS["warning"])
             set_icon(self.alert_icon, icon, value, ICON_PX)
             tone(self.alert_label, value)
-            self.alert_label.set_full_text(text, tip or text)
+            self.alert_label.set_full_text(text, f"{text}\n{tip}" if tip else text, middle)
             self.alert_btn.setText(button)
             self.alert_btn.setToolTip(tip)
             self.alert_icon.show()

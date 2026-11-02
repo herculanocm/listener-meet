@@ -11,7 +11,8 @@ None = o próximo processamento, com o `pipeline.auto_start` desligado). O X e o
 revisão do L1b: o "Cancelar" do popup também não grava (só o pedido feito, ou o OK sem caixa marcada), e o resultado do
 pedido, ou a falha dele, vai para o aviso do app (`on_message`, R-05).
 F5.11 L5 (U-115, P-04): "Gravação salva com falha" quando a saída ficou sem som ou um canal não abriu (além do pedaço fora
-do banco), pelo `signal_ms` do gravador (`ui/sound_check.py`); o microfone sem som vira aviso na linha dele."""
+do banco), pelo `signal_ms` do gravador (`ui/sound_check.py`); o microfone sem som vira aviso na linha dele. Na sala
+presencial, a saída muda é aviso e o microfone sem som é a falha. As linhas dizem "Microfone" e "Saída" (U-106)."""
 from __future__ import annotations
 
 import functools
@@ -28,7 +29,7 @@ from . import llm_ask
 from .common import human_size
 from .icons import set_icon
 from .llm_request import Chooser, RequestBoxes, choose
-from .sound_check import Sound, channel_states, failed
+from .sound_check import Sound, channel_fails, channel_states, failed
 from .theme import Tone, primary, role, tone
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ SAVED, SAVED_WITH_FAILURE = "Gravação salva", "Gravação salva com falha"
 CHANNEL_NOTES = {("L", Sound.SILENT): "microfone sem som: confira o mudo e o aparelho escolhido",
                  ("R", Sound.SILENT): "saída sem som: a reunião tocou em outra saída ou outro app?",
                  ("L", Sound.CLOSED): "o microfone não abriu", ("R", Sound.CLOSED): "a saída não abriu"}     # U-115
+ROOM_SILENT_OUTPUT = "saída sem som: normal na sala presencial sem ninguém remoto"
+CHANNEL_TITLES = {"L": "Microfone", "R": "Saída"}             # U-106: o canal pelo que ele grava
 
 
 class SummaryDialog(QDialog):
@@ -58,7 +61,8 @@ class SummaryDialog(QDialog):
         m = store.get_meeting(meeting_id) or {}
         cs = store.chunk_stats(meeting_id)
         states = channel_states(stats.get("signal_ms"), cs)          # U-115 (P-04): quem teve som
-        self.failed = failed(states, stats.get("unsaved"))
+        in_room = bool(m.get("is_in_room"))
+        self.failed = failed(states, stats.get("unsaved"), in_room)
         self.setWindowTitle(SAVED_WITH_FAILURE if self.failed else SAVED)
         self.setMinimumWidth(480)
         self.title_edit = QLineEdit(m.get("title") or "")
@@ -67,9 +71,9 @@ class SummaryDialog(QDialog):
         form.addRow(self._header(self.failed))
         form.addRow("Título", self.title_edit)
         form.addRow("Duração", QLabel(fmt_mmss(stats.get("duration_s", 0))))
-        self.channels = {ch: self._channel(ch, cs.get(ch), states) for ch in ("L", "R")}
+        self.channels = {ch: self._channel(ch, cs.get(ch), states, in_room) for ch in ("L", "R")}
         for ch, lab in self.channels.items():
-            form.addRow(f"Canal {ch}", lab)
+            form.addRow(CHANNEL_TITLES[ch], lab)
         markers = store.list_markers(meeting_id)
         self.markers: QListWidget | None = None
         if markers:                                    # U-069: a lista só quando há marcador
@@ -92,15 +96,18 @@ class SummaryDialog(QDialog):
             primary(self, ok)
 
     @staticmethod
-    def _channel(ch: str, c: Mapping[str, Any] | None, states: Mapping[str, Sound] | None) -> QLabel:
-        """A linha do canal: os pedaços, o tamanho e os buracos; sem som ou sem abrir, o aviso (o microfone, só aviso)."""
+    def _channel(ch: str, c: Mapping[str, Any] | None, states: Mapping[str, Sound] | None, in_room: bool) -> QLabel:
+        """A linha do canal: os pedaços, o tamanho e os buracos; sem som ou sem abrir, o motivo, em vermelho quando é a falha
+        e em âmbar quando é só aviso (o microfone fora da sala, a saída na sala)."""
         gaps = fmt_mmss((c["gaps"] or 0) / (c["sr"] or 16000)) if c else ""
         text = "sem áudio" if not c else f"{plural(c['n'], 'pedaço')} · {human_size(c['bytes'] or 0)} · buracos preenchidos: {gaps}"
         state = states.get(ch) if states is not None else None
         note = CHANNEL_NOTES.get((ch, state)) if state is not None else None
+        if in_room and (ch, state) == ("R", Sound.SILENT):
+            note = ROOM_SILENT_OUTPUT
         lab = QLabel(text if note is None else note if state == Sound.CLOSED else f"{text} · {note}")
-        if note is not None:
-            tone(lab, Tone.WARNING if ch == "L" and state == Sound.SILENT else Tone.DANGER)
+        if note is not None and state is not None:
+            tone(lab, Tone.DANGER if channel_fails(ch, state, in_room) else Tone.WARNING)
             lab.setWordWrap(True)
         return lab
 

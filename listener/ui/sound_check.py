@@ -3,7 +3,9 @@ evento `stop` (o tempo com sinal acima do limiar de silêncio) e dos pedaços gr
 não abriu). Sem Qt: o resumo da gravação e a reunião aberta usam as mesmas regras.
 
 - U-115 (P-04): "Gravação salva com falha" só quando a saída ficou sem som ou um canal não abriu (e, como antes, com
-  pedaço não gravado no banco); o microfone sem som vira aviso na linha dele.
+  pedaço não gravado no banco); o microfone sem som vira aviso na linha dele. Na sala presencial (decisão da orquestradora,
+  por delegação), é o contrário: a saída muda é aviso (sem ninguém remoto, ela fica muda de propósito) e o microfone sem
+  som, que grava a sala, é a falha.
 - U-114: a reunião processada sem fala abre na Transcrição dizendo qual canal ficou sem som e qual fonte estava escolhida;
   a de antes desta entrega (o `stop` sem `signal_ms`) mostra o texto genérico."""
 from __future__ import annotations
@@ -43,11 +45,16 @@ def channel_states(signal_ms: Mapping[str, Any] | None, chunks: Mapping[str, Any
     return out
 
 
-def failed(states: Mapping[str, Sound] | None, unsaved: object) -> bool:
-    """P-04: a falha do resumo (a saída sem som, um canal que não abriu ou pedaço fora do banco)."""
+def channel_fails(ch: str, state: Sound, in_room: bool = False) -> bool:
+    """O canal que não abriu falha sempre; sem som, falha a saída fora da sala e o microfone na sala presencial."""
+    return state == Sound.CLOSED or (state == Sound.SILENT and ch == ("L" if in_room else "R"))
+
+
+def failed(states: Mapping[str, Sound] | None, unsaved: object, in_room: bool = False) -> bool:
+    """P-04: a falha do resumo (um canal que falha, `channel_fails`, ou pedaço fora do banco)."""
     if unsaved:
         return True
-    return states is not None and (states["R"] != Sound.OK or states["L"] == Sound.CLOSED)
+    return states is not None and any(channel_fails(ch, state, in_room) for ch, state in states.items())
 
 
 def source_text(events: Iterable[Mapping[str, Any]]) -> str:
@@ -82,4 +89,5 @@ def no_speech_text(store: Store, meeting_id: int) -> str:
     return reason(states, source_text(events)) if states is not None else GENERIC
 
 
-__all__ = ["GENERIC", "NO_SOUND_MS", "Sound", "channel_states", "failed", "no_speech_text", "reason", "source_text"]
+__all__ = ["GENERIC", "NO_SOUND_MS", "Sound", "channel_fails", "channel_states", "failed", "no_speech_text", "reason",
+           "source_text"]

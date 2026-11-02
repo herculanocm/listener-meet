@@ -159,41 +159,44 @@ def test_the_minutes_stamps_play_the_nearest_speech_only_inside_the_duration(qtb
     assert [r.t_ms for r in m.player.requests][2:] == [199_850]
 
 
-# ---------------------------------------------------------------- U-105 e A-38: as teclas, por tipo de foco
-def test_space_and_arrows_reach_the_player_only_outside_widgets_that_use_them(qtbot, store, players, monkeypatch):
+# ---------------------------------------------------------------- U-105, A-38 e R-02: as teclas, do foco de abertura ao Tab
+def test_space_and_arrows_reach_the_player_from_the_opening_focus_and_never_from_widgets_that_use_them(qtbot, store, players,
+                                                                                                      monkeypatch):
+    """R-02 (revisão da F5.11): a reunião abre com o foco na lista de falas, onde Espaço, ← e → são do player; em cada parada
+    do Tab, quem usa a tecla (campo, botão, caixa, combo, tabela, abas) fica com ela."""
     from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLineEdit, QTabBar
+
+    from listener.ui.meeting_keys import OWN_KEYS, bar_keys
 
     m = _window(qtbot, store, players)
     win = m.win
     seen: list[str] = []
     for name in ("toggle", "back", "forward"):
         monkeypatch.setattr(win.bar, name, lambda _n=name: seen.append(_n))
-    win.transcript.on_space = win.bar.toggle
+    win.transcript.player_keys = bar_keys(win.bar)
     assert win.bar.time.text() == "00:00 / 05:00"                                    # U-118: a duração antes de tocar
-    win.setFocus()                                                                   # a janela, sem widget que use a tecla
+    view = win.transcript.view
+    assert win.focusWidget() is view                                                 # o foco de abertura: a lista, não o título
     for key in (Qt.Key.Key_Space, Qt.Key.Key_Right, Qt.Key.Key_Left):
-        qtbot.keyClick(win, key)
-    qtbot.keyClick(win, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)          # com modificador: não é do player
+        qtbot.keyClick(view, key)
+    qtbot.keyClick(view, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)        # com modificador: não é do player
     assert seen == ["toggle", "forward", "back"]
-    title = win.llm.title_tab.title                                                  # campo de texto: a tecla é dele
-    title.setFocus()
-    qtbot.keyClick(title, Qt.Key.Key_Space)
-    qtbot.keyClick(title, Qt.Key.Key_Left)
-    assert title.text().endswith(" ") and seen == ["toggle", "forward", "back"]
-    qtbot.keyClick(title, Qt.Key.Key_Escape)
-    button = win.btn_more                                                            # botão: o Espaço o aperta
-    button.setFocus()
-    for key in (Qt.Key.Key_Space, Qt.Key.Key_Right):
-        qtbot.keyClick(button, key)
-    assert win.more_menu.isVisible() and seen == ["toggle", "forward", "back"]
-    win.more_menu.close()
+    stops: list[Any] = []
+    while len(stops) < 40:                                                           # as paradas do Tab, até voltar à lista
+        qtbot.keyClick(win.focusWidget(), Qt.Key.Key_Tab)
+        if win.focusWidget() is view:
+            break
+        stops.append(win.focusWidget())
+    assert win.focusWidget() is view and any(isinstance(w, QLineEdit) for w in stops)   # o título é uma parada do Tab
+    for stop in (w for w in stops if isinstance(w, OWN_KEYS) and not isinstance(w, QTabBar)):
+        qtbot.keyClick(stop, Qt.Key.Key_Right)
+        assert seen == ["toggle", "forward", "back"], type(stop).__name__            # quem usa a tecla fica com ela
     tab_bar, before = win.tabs.tabBar(), win.tabs.currentIndex()                      # abas: as setas trocam de aba
     tab_bar.setFocus()
-    qtbot.keyClick(tab_bar, Qt.Key.Key_Right)
-    qtbot.keyClick(tab_bar, Qt.Key.Key_Space)
-    assert win.tabs.currentIndex() == before + 1 and seen == ["toggle", "forward", "back"]
+    qtbot.keyClick(tab_bar, Qt.Key.Key_Left)
+    assert win.tabs.currentIndex() == before - 1 and seen == ["toggle", "forward", "back"]
     win.show_tab("transcricao")                                                      # P-06: na lista, o Espaço pausa e retoma
-    view = win.transcript.view
     view.setFocus()
     view.setCurrentIndex(win.transcript.model.index(1))
     qtbot.keyClick(view, Qt.Key.Key_Space)

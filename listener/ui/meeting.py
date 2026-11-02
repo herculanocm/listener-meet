@@ -37,7 +37,7 @@ from .chat import ChatPanel
 from .common import clamp_to_screens, fit_to_screen, keep_until_destroyed
 from .llm_tabs import LlmTabsGroup
 from .meeting_header import MeetingHeaderMixin
-from .meeting_keys import player_key
+from .meeting_keys import bar_keys, player_key
 from .meeting_parts import MarkersTab, SummaryTab
 from .player_bar import PlayerBar
 from .sound_check import no_speech_text
@@ -91,7 +91,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         m = store.get_meeting(meeting_id) or {}
         self.bar = PlayerBar(player, meeting_id, title=self.title_text, start=self.transcript.current_play_from,
                              duration_ms=m.get("duration_ms"), keys=True) if player else None
-        self.transcript.on_space = self.bar.toggle if self.bar is not None else None     # P-06: o Espaço na lista
+        self.transcript.player_keys = bar_keys(self.bar) if self.bar is not None else {}    # P-06 e R-02: na lista
         self.follower = self._follow(player)
 
         lay = QVBoxLayout(self)
@@ -115,6 +115,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         if silent:
             self.transcript.set_empty_text(silent)
         self.tabs.setCurrentWidget(self.transcript if self.transcript.model.rowCount() or silent else pages[0])
+        self.focus_content()
         keep_until_destroyed(self)                       # R-06: a coleta de ciclos não a apaga antes do Qt
 
     def _request_pages(self) -> tuple[QWidget, QWidget, QWidget]:
@@ -254,17 +255,31 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         if not self._restoring and self.isVisible():
             self._save_timer.start()
 
+    def focus_content(self) -> None:
+        """R-02 (F5.11): o foco nasce no conteúdo da aba (a lista de falas, a leitura da ata), não no título: o Espaço é do
+        player, não de um campo de texto."""
+        page = self.tabs.currentWidget()
+        target = self.transcript.view if page is self.transcript else next(
+            (w for w in page.findChildren(QWidget) if w.focusPolicy() & Qt.FocusPolicy.TabFocus and not w.isHidden()), page)
+        target.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _save_title(self) -> None:
+        """A-22: o título mexido grava ao fechar e na saída; o banco que já não responde vai para o log e o resto segue."""
+        try:
+            self.llm.title_tab.save_if_changed()
+        except Exception:                                # o fechar e a saída seguem; o motivo fica no log
+            log.warning("reunião %s: o título mexido não gravou", self.meeting_id, exc_info=True)
+
     def shutdown(self) -> None:
         """Saída do app: o título mexido grava (A-22); o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32);
         o .docx em curso termina."""
-        with suppress(Exception):                        # o banco pode já não responder: a saída segue
-            self.llm.title_tab.save_if_changed()
+        self._save_title()
         self.chat.shutdown()
         self.docx.shutdown()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.llm.title_tab.save_if_changed()             # A-22: fechar com o título mexido grava
+        self._save_title()                               # A-22: fechar com o título mexido grava
         self._save_timer.stop()
         self.save_geometry()
         self.chat.close_panel()

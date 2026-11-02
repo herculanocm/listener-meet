@@ -174,6 +174,8 @@ class ActionsTab(QWidget):
                     elif c == WHEN_COL and self.play is not None and WHEN_RE.fullmatch(str(value)):
                         item.setData(TONE_ROLE, Tone.ACCENT.value)          # U-104: o tempo que toca, na cor do link
                         item.setToolTip("Toca a fala deste momento")
+                    elif c == 0:
+                        item.setToolTip(str(value))                         # F5.11: o texto livre inteiro na dica
                     if c != 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table.setItem(r, c, item)

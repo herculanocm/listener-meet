@@ -250,7 +250,7 @@ class DevicesPanel(QDialog):
         self.mics.itemActivated.connect(self._on_mic_item)              # Enter pelo teclado
         self.outputs.itemClicked.connect(self._on_output_item)
         self.outputs.itemActivated.connect(self._on_output_item)
-        mic_box = QGroupBox(MIC_YOU)                         # U-106
+        self.mic_box = mic_box = QGroupBox(MIC_YOU)          # U-106; com a sala presencial, "você e a sala" (A-41)
         QVBoxLayout(mic_box).addWidget(self.mics)
         out_box = QGroupBox(OUTPUT_YOU)
         QVBoxLayout(out_box).addWidget(self.outputs)

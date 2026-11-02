@@ -99,3 +99,23 @@ def test_a_processed_meeting_without_speech_opens_on_the_transcript_saying_why(q
     qtbot.addWidget(generic)
     assert generic.tabs.currentWidget() is generic.transcript and generic.transcript.empty.label.text() == GENERIC
     generic.close()
+
+
+def test_in_an_in_person_room_the_silent_output_is_a_warning_and_the_silent_mic_fails(qtbot, store):
+    """A decisão da orquestradora (rodada final da F5.11): na sala presencial sem ninguém remoto, a saída fica muda de
+    propósito; a falha fica para o microfone sem som e o canal que não abriu. As linhas dizem "Microfone" e "Saída" (U-106)."""
+    from listener.ui.sound_check import channel_fails
+    from listener.ui.summary import ROOM_SILENT_OUTPUT, SAVED, SAVED_WITH_FAILURE, SummaryDialog
+
+    assert not channel_fails("R", Sound.SILENT, in_room=True) and channel_fails("L", Sound.SILENT, in_room=True)
+    assert channel_fails("R", Sound.CLOSED, in_room=True) and not failed({"L": Sound.OK, "R": Sound.SILENT}, None, in_room=True)
+    mid = _silent_meeting(store, None)
+    store.meetings.set_in_room(mid, True)
+    quiet_output = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": [], "signal_ms": {"L": 800, "R": 0}})
+    qtbot.addWidget(quiet_output)
+    assert quiet_output.windowTitle() == SAVED and ROOM_SILENT_OUTPUT in quiet_output.channels["R"].text()
+    form = quiet_output.layout()
+    assert [form.labelForField(quiet_output.channels[ch]).text() for ch in ("L", "R")] == ["Microfone", "Saída"]
+    quiet_mic = SummaryDialog(store, mid, {"duration_s": 1.0, "warnings": [], "signal_ms": {"L": 0, "R": 800}})
+    qtbot.addWidget(quiet_mic)
+    assert quiet_mic.windowTitle() == SAVED_WITH_FAILURE

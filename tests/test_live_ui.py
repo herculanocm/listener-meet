@@ -89,11 +89,12 @@ def test_warmup_live_boxes_follow_preset_settings_and_models(qtbot, store, platf
     assert not dlg.live_check.isChecked() and dlg.live.wanted and not dlg.names_check.isChecked()
     assert "Modelos da legenda ao vivo (634 MB)" in dlg.setup_note.text() and "Preparar agora" in dlg.setup_note.text()
     dlg.preset_combo.setCurrentIndex(dlg.preset_combo.findData(with_flags))
-    assert not dlg.live_check.isChecked() and dlg.names_check.isChecked() and not dlg.names_check.isEnabled()
+    assert not dlg.live_check.isChecked() and dlg.live.names_wanted and not dlg.names_check.isEnabled()
+    assert not dlg.names_check.isChecked()                                                       # apagada, nunca marcada
     assert "Modelos" not in dlg.setup_note.text()                                                # desligado: nada a preparar
     dlg.preset_combo.setCurrentIndex(dlg.preset_combo.findData(plain))
     assert not dlg.live_check.isChecked() and dlg.live.wanted and not dlg.names_check.isChecked()   # nulo = Configurações
-    dlg.names_check.setChecked(True)
+    dlg.live.names_wanted = True                                                                 # o pedido guardado por dentro
     _cfg, fields = dlg.result_config()
     assert fields["live_enabled"] is False and fields["live_names"] is False                    # sem o token, os nomes não vão
     assert dlg.names_check.toolTip().startswith("Nomes ao vivo precisa do token")

@@ -570,8 +570,8 @@ class HistoryPage(AskMixin, QWidget):
             for c, text in enumerate(line.texts()):
                 item = QTableWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, line.action_id)
-                if c == 3:
-                    item.setToolTip("Enter ou duplo clique abre a reunião na evidência da ação")
+                if c in (0, 3):                                  # F5.11: o texto livre inteiro na dica (a ação, a reunião)
+                    item.setToolTip(text if c == 0 else f"{text}\nEnter ou duplo clique abre a reunião na evidência da ação")
                 if line.overdue and c == DUE_COL:
                     item.setData(TONE_ROLE, OVERDUE_TONE.value)      # U-080: o selo vermelho, no tom do tema (A-05)
                 self.action_table.setItem(r, c, item)

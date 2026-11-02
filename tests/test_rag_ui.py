@@ -131,10 +131,9 @@ def test_meeting_window_opens_at_a_point_exports_and_stops_its_sound_on_close(qt
     assert plain == f'"Concordo, e o contrato com o cedente vence." — Bia, Orçamento 2027 ({day}) [01:40]'
     assert QGuiApplication.clipboard().mimeData().text() == plain and QGuiApplication.clipboard().mimeData().hasHtml()
     # título no cabeçalho: grava com revisão e reindexa a busca
-    title = win.llm.title_tab
-    title.title.setText("Orçamento revisto")
-    title.title.setModified(True)                                                     # como o usuário digitando
-    title.title.editingFinished.emit()                                               # F5.11 (A-22): o Enter ou a saída do campo
+    (title := win.llm.title_tab.title).setText("Orçamento revisto")
+    title.setModified(True)                                                           # como o usuário digitando
+    title.editingFinished.emit()                                                     # F5.11 (A-22): o Enter ou a saída do campo
     assert store.get_meeting(mid)["title"] == "Orçamento revisto" and edited == [(mid, "edit")]
     assert win.windowTitle().startswith("Orçamento revisto")
     assert store._q("SELECT COUNT(*) FROM revisions WHERE entity = 'meeting' AND field = 'title'")[0][0] == 1

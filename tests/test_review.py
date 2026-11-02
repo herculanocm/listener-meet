@@ -288,3 +288,7 @@ def test_ignoring_or_merging_a_confirmed_voice_into_nobody_unlearns_it(platform,
     assert all(s["person_id"] is None for s in store.segments.list_segments(mid) if s["cluster_id"] == second)   # sem o nome
     rev = store._q("SELECT after FROM revisions WHERE entity = 'voice_profile' AND field = 'invalidado' ORDER BY id")
     assert [r["after"] for r in rev] == [ClusterStatus.IGNORED, f"cluster {nobody}"]
+    merged = store.segments.get_cluster(second)                                           # revisão: a voz perde a pessoa,
+    assert merged["person_id"] is None and merged["status"] == ClusterStatus.UNNAMED      # como no "Ignorar"
+    review.confirm(store, second, ana)                                                    # e confirmar de novo ensina de novo
+    assert _samples(store, ana)[0] == 2

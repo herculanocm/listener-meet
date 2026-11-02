@@ -40,11 +40,17 @@ def health_icon(channel: str, health: str) -> str:
     return HEALTH_ICONS[channel].get(health, CHANNEL_ICONS[channel])
 
 
-def wrap_elided(text: str, fm: QFontMetrics, width: int, lines: int) -> str:
-    """U-116 (A-33): o texto em até `lines` linhas na largura; o que não cabe sai do fim, palavra a palavra, com reticências."""
+def wrap_elided(text: str, fm: QFontMetrics, width: int, lines: int, middle: bool = False) -> str:
+    """U-116 (A-33): o texto em até `lines` linhas na largura; o que não cabe sai do fim, palavra a palavra, com reticências.
+    F5.11: `middle` corta no meio (o nome de um aparelho: o começo e o fim à vista, como no `ElidedCombo`)."""
     box, flags, limit = QRect(0, 0, width, 10_000), int(Qt.TextFlag.TextWordWrap), lines * fm.lineSpacing()
     if fm.boundingRect(box, flags, text).height() <= limit:
         return text
+    if middle:
+        for room in range(width * lines, 0, -max(4, fm.averageCharWidth())):
+            shown = fm.elidedText(text, Qt.TextElideMode.ElideMiddle, room)
+            if fm.boundingRect(box, flags, shown).height() <= limit:
+                return shown
     words = text.split()
     while len(words) > 1 and fm.boundingRect(box, flags, " ".join(words) + "…").height() > limit:
         words.pop()
@@ -94,12 +100,13 @@ class ElidedLabel(QLabel):
         super().__init__(parent)
         self.full_text = ""
         self.lines = lines
+        self.middle = False
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setWordWrap(lines > 1)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
-    def set_full_text(self, text: str, tip: str = "") -> None:
-        self.full_text = text
+    def set_full_text(self, text: str, tip: str = "", middle: bool = False) -> None:
+        self.full_text, self.middle = text, middle
         self.setToolTip(tip or text)
         self._elide()
 
@@ -108,7 +115,7 @@ class ElidedLabel(QLabel):
         if self.lines == 1:
             self.setText(self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, width))
         else:
-            self.setText(wrap_elided(self.full_text, self.fontMetrics(), width, self.lines))
+            self.setText(wrap_elided(self.full_text, self.fontMetrics(), width, self.lines, self.middle))
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:

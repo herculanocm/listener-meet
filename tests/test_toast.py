@@ -405,8 +405,8 @@ def test_downloads_warn_when_done_or_failed_and_open_the_settings(qtbot, control
     opened: list[dict[str, Any]] = []
     monkeypatch.setattr(c, "open_settings", lambda **kw: opened.append(kw))
     for state in ({"state": "running", "what": "live", "fraction": 0.5}, {"state": "done", "what": "live"},
-                  {"state": "error", "what": "rag", "message": "e5: HTTP 404."},
-                  {"state": "error", "what": "live", "message": ctl.PREPARE_INTERRUPTED}):   # a gravação já avisou
+                  {"state": "error", "what": "rag", "message": "e5: HTTP 404."},     # a gravação já avisou; R-01: o Cancelar
+                  *({"state": "error", "what": "live", "message": m} for m in (ctl.PREPARE_INTERRUPTED, ctl.USER_CANCELED))):
         prep.changed.emit(state)
     assert [(n.kind, n.text) for n in c.notices] == [
         (NoticeKind.READY, "Download concluído: os modelos do ao vivo estão prontos."),

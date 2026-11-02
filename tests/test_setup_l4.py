@@ -122,11 +122,28 @@ def test_settings_tests_the_typed_token_before_saving_and_cancels_when_it_change
     qtbot.waitUntil(lambda: dlg.hf_badge.text() == "Falta aceitar os termos", timeout=5000)
     assert "wespeaker-voxceleb-resnet34-LM" in dlg.hf_detail.text() and "pyannote/" not in dlg.hf_detail.text()
     spawn.target = _silent
-    button.click()                                                                        # o Cancelar mata o filho
-    assert dlg.hf_test.testing
+    button.click()                                                                        # um teste preso: o filho não responde
+    assert dlg.hf_test.testing and button.text() == hf_test.CANCEL_TEXT
+    button.click()                                                                        # o Cancelar, pelo botão, mata o filho
+    assert not dlg.hf_test.testing and spawn.children[-1].killed and dlg.hf_badge.text() == "Informado"
+    button.click()
     dlg.hf_token.setText("hf_outro")                                                      # mexer no token também cancela
     assert not dlg.hf_test.testing and spawn.children[-1].killed and dlg.hf_badge.text() == "Informado"
     dlg.reject()
+
+
+def test_the_token_child_dies_when_the_app_quits(qtbot, monkeypatch):
+    """A-29: a saída do app (`shutdown_preparer`) mata o teste em curso pelo gancho que ele registrou (`at_shutdown`)."""
+    from listener.ui import hf_test, live_prepare
+
+    monkeypatch.setattr(live_prepare, "_shared", {})                                      # o preparador e o teste desta prova
+    monkeypatch.setattr(live_prepare, "_hooks", [])
+    monkeypatch.setattr(hf_test, "_shared", {})
+    spawn = Spawner(_silent)
+    tester = hf_test.hf_tester()
+    assert tester.start("hf_x", spawn) and tester.running
+    live_prepare.shutdown_preparer()
+    assert spawn.children[0].killed and not tester.running and not tester.start("hf_x", spawn)
 
 
 def test_the_deadline_kills_the_child_and_says_no_answer(qtbot, monkeypatch):

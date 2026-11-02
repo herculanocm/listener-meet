@@ -164,7 +164,7 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
         self.played: deque[tuple[int, int]] = deque(maxlen=100)   # (t0, fim da fala) pedidos: instrumentação dos testes
         self.followed: deque[int] = deque(maxlen=100)     # instrumentação dos testes: as falas que o destaque trouxe à vista
         self.prefer_llm = True
-        self.on_space: Callable[[], Any] | None = None     # P-06 (F5.11): o Espaço na lista pausa e retoma (a barra)
+        self.player_keys: dict[int, Callable[[], Any]] = {}   # P-06 e R-02 (F5.11): Espaço, ← e → na lista vão à barra
         self.playing_ms: int | None = None                # U-025: onde o som desta reunião está (None: parado)
         self._user_scroll_at = float("-inf")
         me = store.get_me()
@@ -289,8 +289,8 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
         elif watched is self.__dict__.get("view") and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
             if event.key() in NAV_KEYS:
                 self.user_scrolled()
-            elif event.key() == Qt.Key.Key_Space and self.on_space is not None:
-                self.on_space()                                  # P-06: o Espaço pausa e retoma; o Enter toca a fala
+            elif event.key() in self.player_keys and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier:
+                self.player_keys[event.key()]()                  # P-06: o Espaço pausa e retoma, ← e → voltam e avançam
                 return True
             elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                 index = self.view.currentIndex()

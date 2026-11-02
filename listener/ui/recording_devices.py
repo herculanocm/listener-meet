@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QMessageBox
@@ -26,6 +26,7 @@ from ..log import get_logger
 from ..model import DeviceReason, EventType, SourceKind
 from ..platform.base import AudioDevice, Endpoint, Endpoints, log_id
 from .common import clamp_to_screens
+from .components import mic_title
 from .devices_panel import (MIC_FOLLOW, OTHER_APP, OUT_FOLLOW, DevicesPanel, PanelView, is_hands_free, mic_rows, output_rows,
                             panel_notes)
 # F5.9 (L1a): as decisões sem Qt e a linha de alerta moram em `recording_alerts.py`; reexportadas aqui para quem as importa
@@ -53,8 +54,10 @@ def endpoint_device(ep: Endpoint) -> AudioDevice:
 
 # ---------------------------------------------------------------- a gravação
 class RoomStore(Protocol):
-    """F5.9 (item 7, pergunta 2): quem liga "Sala de reunião" na reunião em curso (o `MeetingsRepo` do banco)."""
+    """F5.9 (item 7, pergunta 2): quem liga "Sala de reunião" na reunião em curso (o `MeetingsRepo` do banco); F5.11 (A-41):
+    e quem diz se ela está ligada (o painel diz "Microfone: você e a sala")."""
     def set_in_room(self, meeting_id: int, in_room: bool) -> bool: ...
+    def get_meeting(self, meeting_id: int) -> Any: ...
 
 
 class RecordingDevices(QObject):
@@ -200,9 +203,10 @@ class RecordingDevices(QObject):
         hands_free = "\nHands-Free: o fone vai para o perfil de chamada (som mono)." if is_hands_free(ep.name) else ""
         if ep.id == self.recorder.mic_open_id:
             return Alert(f"novo: {ep.name or ep.id} (gravando nele)", DEVICES_BUTTON, ACTION_OUTPUTS,
-                         "Mostra as saídas do mesmo aparelho." + hands_free, kind="info")
+                         "Mostra as saídas do mesmo aparelho." + hands_free, kind="info", middle=True)
         return Alert(f"novo: {ep.name or ep.id}", "Usar", ACTION_USE,
-                     "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho." + hands_free, kind="info")
+                     "Usar troca o microfone para ele e mostra as saídas do mesmo aparelho." + hands_free, kind="info",
+                     middle=True)
 
     def _follow(self, reading: Endpoints) -> None:
         rec = self.recorder
@@ -332,6 +336,8 @@ class RecordingDevices(QObject):
     def _refresh_panel(self) -> None:
         if self.panel is not None:
             self.panel.show_view(self.view())
+            meeting = self.rooms.get_meeting(self.recorder.meeting_id) if self.rooms is not None else None
+            mic_title(self.panel.mic_box, bool((meeting or {}).get("is_in_room")))       # A-41: com a sala, "você e a sala"
 
     def choose_mic(self, key: str) -> DeviceSwitch:
         """Uma linha do microfone no painel: "acompanha" ou um aparelho (pelo id)."""

@@ -71,9 +71,8 @@ def classify(e: BaseException, repo: str = "") -> tuple[Status, str] | None:
         return Status.UNAVAILABLE, f"{INSTALL_HINT} ({text})"
     if name == "GatedRepoError" or "gated" in text.lower() or "403" in text:
         return Status.GATED, gated_text(repo)
-    if name in ("RepositoryNotFoundError", "HfHubHTTPError", "HTTPError") and ("401" in text or "Unauthorized" in text
-                                                                               or "Invalid" in text):
-        return Status.INVALID, INVALID_TEXT
+    if name in ("RepositoryNotFoundError", "HfHubHTTPError", "HTTPError") and ("401" in text or "Unauthorized" in text):
+        return Status.INVALID, INVALID_TEXT              # só o 401 de verdade: o resto conta tentativa no worker
     if name in ("LocalEntryNotFoundError", "OfflineModeIsEnabled") or "offline" in text.lower():
         return Status.OFFLINE, offline_text(repo)
     if name in NETWORK_ERRORS or "Max retries" in text or "Name or service not known" in text or "getaddrinfo" in text:

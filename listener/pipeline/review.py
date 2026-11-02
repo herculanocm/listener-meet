@@ -115,8 +115,7 @@ class TranscriptRow:
 
     @property
     def stamp(self) -> str:
-        s = max(0, self.t_start_ms // 1000)
-        return f"{s // 60:02d}:{s % 60:02d}"
+        return f"{(s := max(0, self.t_start_ms // 1000)) // 60:02d}:{s % 60:02d}"
 
     @property
     def shown_text(self) -> str:
@@ -156,10 +155,8 @@ def review_items(store: Store, meeting_id: int) -> list[ReviewItem]:
 
 def _evidence(store: Store, raw: str | None) -> tuple[tuple[int, str, int], ...]:
     """Evidências da LLM com o minuto vindo de `segments.t_start_ms` (nunca do texto da LLM)."""
-    if not raw:
-        return ()
     try:
-        items = json.loads(raw)
+        items = json.loads(raw) if raw else []
     except ValueError:
         return ()
     out: list[tuple[int, str, int]] = []
@@ -287,8 +284,8 @@ def decision_source_for(c: ClusterRow, pid: int) -> DecisionSource:
 
 def confirm(store: Store, cluster_id: int, person_id: int | None = None, author: str = "usuario",
             source: DecisionSource | None = None) -> int:
-    """Enter no card (sugestão do pyannote) ou "outra pessoa" (`person_id`); devolve a pessoa confirmada. Num card `sem_nome`
-    só com sugestão da LLM, Enter aceita a LLM (F3A-43). `source` registra o que foi aceito (`decision_source`)."""
+    """A pessoa da voz (a sugestão pela voz, ou `person_id`: "Outra pessoa…"); sem candidato pela voz, aceita a sugestão pelo
+    contexto (F3A-43; na tela, U-098: "É Rodrigo, pelo contexto"). `source`: o que foi aceito (`decision_source`)."""
     c = store.segments.get_cluster(cluster_id)
     if c is None:
         raise ValueError(f"cluster {cluster_id} não existe")
@@ -392,6 +389,8 @@ def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "us
         else:                                                                  # P-03: numa voz sem pessoa, sai do perfil
             _unlearn(store, c, f"cluster {into_cluster_id}", author)               # e as falas seguem o alvo, sem nome
             store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
+            if str(c["status"]) == ClusterStatus.CONFIRMED:                        # a confirmada perde a pessoa, como no "Ignorar"
+                store.segments.update_cluster(cluster_id, status=ClusterStatus.UNNAMED, person_id=None)   # (a sugestão fica)
     log.info("voz %s mesclada na voz %s da reunião %s (%s)", c["cluster"], target["cluster"], c["meeting_id"],
              f"confirmada como pessoa {pid}" if pid is not None else "o alvo ainda não tem pessoa")
 

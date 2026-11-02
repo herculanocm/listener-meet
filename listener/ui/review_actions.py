@@ -7,7 +7,7 @@ confirmação faz (U-101), conforme o estado da voz selecionada, com o nome e se
 | --- | --- | --- |
 | sugestão pela voz (a confirmar; sem nome "parecida com"; ignorada com candidato) | "É Ana" | "É Rodrigo, pelo contexto" |
 | automática (acima do limiar, a LLM não sugere: CP11) | "Confirmar Ana" | apagado |
-| sem candidato pela voz | "Escolher pessoa…" (a lista de "Outra pessoa") | "É Rodrigo, pelo contexto" |
+| sem candidato pela voz | "Escolher pessoa…" (a lista de "Outra pessoa…") | "É Rodrigo, pelo contexto" |
 | confirmada | "É Ana", apagado | apagado |
 | mesclada | "É a mesma que a Voz 3", apagado | apagado |
 
@@ -109,8 +109,8 @@ class ReviewActionsMixin(PersonActionsMixin):
         """A coluna das ações, de largura fixa, com o "Mais"; a linha do U-101 (`self.learn`) o diálogo põe embaixo."""
         self.btn_confirm = KeyButton(CHOOSE_TEXT, "Enter")
         self.btn_llm = KeyButton(NO_CONTEXT, "L")
-        self.btn_other = KeyButton("Outra pessoa", "O")
-        self.btn_new = KeyButton("Nova pessoa", "N")
+        self.btn_other = KeyButton("Outra pessoa…", "O")             # F5.11: abre uma escolha
+        self.btn_new = KeyButton("Nova pessoa…", "N")
         self.btn_more = KeyButton("Mais", "")                              # sem tecla: o texto à esquerda e a seta
         self.btn_more.setMenu(self._more_menu())
         self.btn_more.setToolTip(MORE_TIP)
