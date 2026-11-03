@@ -1,13 +1,37 @@
 # listener-meet
 
-Gravador pessoal de reuniões para Windows (Teams, Meet, Zoom ou qualquer app): identifica quem fala por
-perfil de voz, transcreve, gera legenda, resumo e ata com uma LLM, e guarda tudo numa base consultável.
+Gravador de reuniões para Windows, de código aberto (MIT). Grava Teams, Meet, Zoom ou qualquer app, sem bot na
+chamada e sem ligar nada na plataforma. Identifica quem fala por perfil de voz, transcreve na sua máquina e gera a ata
+com a LLM que você escolher (Gemini ou Claude). Tudo fica num banco SQLite no seu computador.
 
-Este repositório segue **Spec-Driven Development**: nenhum código existe sem uma spec aprovada pelo dono.
+![A ata de uma reunião de exemplo: cada decisão leva ao minuto da fala que a sustenta](docs/tela-ata.png)
 
-- Pessoas e LLMs: comecem por [AGENTS.md](AGENTS.md).
-- O que o sistema é: [ARCHITECTURE.md](ARCHITECTURE.md).
-- O que o dono quer: [specs/00-handoff-v4.md](specs/00-handoff-v4.md) (documento mestre).
+## O que ele faz
+- **Dois canais.** O seu microfone e o áudio do app da reunião são gravados separados. Se você entra numa chamada e
+  esquece de gravar, o app avisa.
+- **Quem falou.** A diarização é do pyannote, e cada pessoa ganha um perfil de voz que melhora a cada confirmação: você
+  confirma uma vez e, nas próximas reuniões, ele reconhece a voz.
+- **Transcrição local.** Whisper (faster-whisper) só com CPU, sem placa de vídeo, e legenda ao vivo durante a chamada.
+- **Ata com evidência.** Decisões, ações (com dono e prazo) e destaques. Cada item aponta o trecho e o minuto da fala
+  que o sustenta, e o item sem citação válida fica marcado como sem evidência.
+- **Perguntar às reuniões.** Perguntas sobre todas as reuniões, respondidas com links para a reunião e o minuto. A
+  busca é por palavra e por sentido (a busca local, depois de baixada, não custa nada nem precisa de rede).
+- **LLM que você escolhe.** Gemini, Claude ou GPT: trocar é configuração. Os prompts, os esquemas da ata e a validação
+  das respostas são do projeto, não do provedor.
+
+## Seus dados
+- Áudio, transcrições, perfis de voz e configurações ficam no SQLite do app, numa pasta que você escolhe. O áudio fica
+  em FLAC, num arquivo por mês.
+- Por padrão, só o texto da reunião vai para a LLM escolhida; o áudio só sai se você ligar a opção.
+- Nada é apagado sozinho: só você apaga.
+- As chaves de API ficam no banco, em texto aberto: mantenha a pasta do banco fora do OneDrive e do git.
+- Grave só com o consentimento de quem participa da reunião.
+
+## O que você precisa
+- Windows 11, onde o app é desenvolvido e testado. Linux e macOS estão no plano (F7).
+- Python 3.12 e uma CPU comum; a legenda ao vivo liga sozinha com 8 núcleos ou mais.
+- O token gratuito do Hugging Face, para o pyannote identificar quem fala, e a chave da LLM, para a ata. O assistente
+  da primeira abertura mostra onde conseguir os dois.
 
 ## Rodar (Windows)
 
@@ -21,15 +45,36 @@ py -3.12 -m venv .venv
 
 Sem a stack de ML (só captura, fila e LLM): `pip install -e .[dev,win32,llm]`; a busca local e o .docx (F5.1) pedem
 também `[local,docx]` (o lock já traz os dois), e a busca local se baixa em Configurações › Busca (135 MB). Para
-atualizar o lock, o comando está no
-cabeçalho de `requirements/windows.txt` (ele usa o próprio lock como restrição: versão nova só entra de propósito).
+atualizar o lock, o comando está no cabeçalho de `requirements/windows.txt` (ele usa o próprio lock como restrição:
+versão nova só entra de propósito).
 
-Na primeira vez abre o assistente (seus dados, pasta do banco, teste do microfone). Depois: ícone na bandeja,
-`Ctrl+Alt+Shift+R` abre o warm-up e `Ctrl+Alt+Shift+H` o Histórico (busca, ações abertas e perguntas sobre todas
-as reuniões, F5; a reunião aberta tem a linha do tempo por falante e salva .docx, F5.1), Gravar mostra o widget flutuante (pausar, marcador com nota, mudo global,
-parar, cancelar). O log fica no arquivo escolhido na primeira inicialização (nível editável nas Configurações). Flags de desenvolvimento para o gate G1: `--selftest` (grava alguns segundos sem interface)
-e `--check <pasta do banco>` (relatório de continuidade de cada gravação; mais o ao vivo, F4, e o índice da busca, F5).
+Na primeira vez abre o assistente (seus dados, pasta do banco, chaves e teste do microfone). Depois: ícone na bandeja,
+`Ctrl+Alt+Shift+R` abre o "Antes de gravar" e `Ctrl+Alt+Shift+H` o Histórico (busca, ações abertas e perguntas sobre
+todas as reuniões; a reunião aberta tem a linha do tempo por falante e salva .docx). Gravar mostra o widget flutuante
+(pausar, marcador com nota, mudo global, parar, cancelar). O log fica no arquivo escolhido na primeira abertura, com o
+nível editável nas Configurações. Para o desenvolvimento: `--selftest` (grava alguns segundos sem interface) e
+`--check <pasta do banco>` (relatório de continuidade de cada gravação, do ao vivo e do índice da busca).
 
-Testes (qualquer sistema, com plataforma simulada): `python -m pytest -q` roda a parte rápida e `python -m pytest -q
---tudo` a suíte inteira (antes de commitar, e no CI); lint e tipos: `ruff check .` e `mypy`. No Linux a captura precisa de `libportaudio2`. O áudio fica em um arquivo por mês
-(`listener-audio-AAAA-MM.db`) ao lado de `listener.db`. Licença MIT.
+## Como contribuir
+Este repositório segue **Spec-Driven Development**: nenhum código existe sem uma spec aprovada pelo dono. Comece por
+uma issue com o problema ou a ideia; a mudança vira uma spec em `specs/features/` (o modelo está em `specs/README.md`)
+e o código vem depois da aprovação.
+
+- Pessoas e LLMs: comecem por [AGENTS.md](AGENTS.md) (a ordem de leitura e as cláusulas do projeto).
+- O que o sistema é: [ARCHITECTURE.md](ARCHITECTURE.md).
+- O que o dono quer: [specs/00-handoff-v4.md](specs/00-handoff-v4.md) (o documento mestre).
+- O estado e o que fazer agora: [specs/backlog.md](specs/backlog.md).
+
+Frentes abertas para quem quiser ajudar:
+- **Linux e macOS** (F7): o que depende do sistema operacional fica em `listener/platform/<os>/`.
+- **Tradução da interface**: hoje os textos são fixos em português.
+- **Testes de verdade** em outras máquinas, microfones e apps de reunião; o passo a passo está em
+  `specs/roteiro-teste-windows.md`.
+- **Outros provedores** de LLM e de busca por sentido: a camada em `listener/llm/` é agnóstica.
+
+Testes (qualquer sistema, com a plataforma simulada): `python -m pytest -q` roda a parte rápida e `python -m pytest -q
+--tudo` a suíte inteira (antes de commitar, e no CI); lint e tipos: `ruff check .` e `mypy`. No Linux, a captura
+precisa da `libportaudio2`.
+
+## Licença
+MIT ([LICENSE](LICENSE)).
