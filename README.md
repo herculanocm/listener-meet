@@ -19,6 +19,16 @@ com a LLM que você escolher (Gemini ou Claude). Tudo fica num banco SQLite no s
 - **LLM que você escolhe.** Gemini, Claude ou GPT: trocar é configuração. Os prompts, os esquemas da ata e a validação
   das respostas são do projeto, não do provedor.
 
+## Apoie o listener-meet
+O listener-meet é gratuito, de código aberto e feito por uma pessoa só. Se ele te poupa tempo, um gesto simbólico ajuda
+a manter tudo funcionando e a trazer novidades:
+
+- **Pix:** R$ 0,99, ou o valor que você quiser, para a chave `herculanocm@outlook.com`.
+- **PayPal:** US$ 0,20 para `herculanocm@outlook.com`, pelo "Enviar dinheiro" do PayPal.
+
+O app traz o mesmo convite em "Apoiar o listener-meet", no Sobre e no rodapé do Histórico. Uma estrela no repositório e
+indicar o projeto a quem vive em reunião também ajudam. Obrigado de verdade!
+
 ## Seus dados
 - Áudio, transcrições, perfis de voz e configurações ficam no SQLite do app, numa pasta que você escolhe. O áudio fica
   em FLAC, num arquivo por mês.
@@ -54,6 +64,23 @@ todas as reuniões; a reunião aberta tem a linha do tempo por falante e salva .
 (pausar, marcador com nota, mudo global, parar, cancelar). O log fica no arquivo escolhido na primeira abertura, com o
 nível editável nas Configurações. Para o desenvolvimento: `--selftest` (grava alguns segundos sem interface) e
 `--check <pasta do banco>` (relatório de continuidade de cada gravação, do ao vivo e do índice da busca).
+
+## Gerar o executável e o zip (Windows)
+O executável sai numa pasta, sem console (PyInstaller `--onedir --windowed`), e não num arquivo único, que se
+descompactaria a cada abertura e deixaria o app mais lento (D-069).
+
+```powershell
+# uma vez, e de novo sempre que o lock do app mudar: as ferramentas de build (o app nunca as importa)
+.venv\Scripts\python.exe -m pip install -r requirements\build-windows.txt
+# ~7 min, sem rede; com --zip, o build recusa se houver mudança sem commit
+.venv\Scripts\python.exe scripts\build_exe.py --zip
+```
+
+- O app fica em `build\exe\dist\listener-meet\listener-meet.exe`. Sem o `--zip`, o build sai só com a pasta.
+- Para compartilhar, use o `build\exe\listener-meet-<versão>-win64.zip`, com a pasta inteira (~350 MB): o `.exe`
+  sozinho não roda.
+- Feche o app antes: com ele ou um worker aberto, o build recusa e a pasta antiga fica intacta.
+- A versão vem de `listener/__init__.py`, e o commit do build aparece no Sobre (D-081).
 
 ## Como contribuir
 Este repositório segue **Spec-Driven Development**: nenhum código existe sem uma spec aprovada pelo dono. Comece por
