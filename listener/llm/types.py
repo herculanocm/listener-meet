@@ -136,22 +136,31 @@ class Request:
                        self.timeout_s, self.cache_prefix)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Usage:
+    """Sem `slots`: as chamadas de uma soma (`parts`) moram fora dos campos, e assim a igualdade e o JSON gravado
+    (`store.core.json_default`, pelo `asdict`) seguem só com os tokens (a revisão de 03/11)."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
     audio_tokens: int = 0
     cache_write_tokens: int = 0    # parte de `input_tokens` gravada no cache (a Anthropic cobra 1,25 vez a entrada, F3.1 R3-10)
-    parts: tuple[Usage, ...] = field(default=(), compare=False, repr=False)   # as chamadas de uma soma (o preço vai por chamada)
+
+    @property
+    def parts(self) -> tuple[Usage, ...]:
+        """As chamadas somadas (o reenvio e o fallback); vazio fora de uma soma. O pedido longo do Haiku 5.5 se cobra por
+        chamada (`costs.cost_usd`)."""
+        calls: tuple[Usage, ...] = self.__dict__.get("_parts", ())
+        return calls
 
     def __add__(self, other: Usage) -> Usage:
-        """Os tokens somados; as chamadas ficam em `parts` (o reenvio e o fallback), porque o pedido longo do Haiku 5.5 se
-        cobra por chamada (`costs.cost_usd`, a revisão de 03/11)."""
-        parts = tuple(u for u in (*(self.parts or (self,)), *(other.parts or (other,))) if u != Usage())
-        return Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
-                     self.cached_tokens + other.cached_tokens, self.audio_tokens + other.audio_tokens,
-                     self.cache_write_tokens + other.cache_write_tokens, parts)
+        total = Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
+                      self.cached_tokens + other.cached_tokens, self.audio_tokens + other.audio_tokens,
+                      self.cache_write_tokens + other.cache_write_tokens)
+        calls = tuple(u for u in (*(self.parts or (self,)), *(other.parts or (other,))) if u != Usage())
+        object.__setattr__(total, "_parts", calls)        # congelado: o atributo fora dos campos só se grava assim
+        return total
 
 
 @dataclass(frozen=True, slots=True)
