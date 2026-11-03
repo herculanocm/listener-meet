@@ -16,6 +16,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   tarefas abre o Histórico, com a instância única (o item 17), o Jump List, a dica de fixar e os atalhos no menu da
   bandeja (U-129 a U-133), em quatro commits, de `42505ad` a `49f6b19`, com a revisão do diff corrigida. A versão passou
   a 0.6.0 (D-081). Falta o dono: a Parte 24 do roteiro.
+- **F5.14 aprovada** (02/11, D-084, `features/F5.14-claude-anthropic.md`): o Claude (Anthropic) como alternativa ao
+  Gemini em todo trabalho de LLM: o adaptador na API de hoje, os padrões Haiku 5.5 e Opus 5.5, as sementes de preço, o
+  aviso com o nome do provedor e a sonda `llm_probe.py` (U-134, U-135). Em implementação.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado.
