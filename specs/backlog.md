@@ -80,7 +80,7 @@ Concluídos: checkout, venv e suíte no Windows (25/10; pelo lock desde 26/10, D
 chaves (o Gemini 3 passou no "Testar conexão" em 26/10, D-055; o pyannote diarizou a reunião 8 com o token em 30/10).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-As respondidas (2 a 4, 11 a 16 e 18) saíram daqui: o registro está em `decisoes.md`, nas specs e no git.
+As respondidas (2 a 4, 11 a 16, 18 e 20) saíram daqui: o registro está em `decisoes.md`, nas specs e no git.
 1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
    (aceitar e medir na Parte 6; a alternativa é o `sentencepiece`, dependência nova).
 5. `AGENTS.md`: "Testes: `python -m pytest -q` (a rápida); antes de commitar, `--tudo` (D-050)" (sim).
@@ -97,8 +97,6 @@ As respondidas (2 a 4, 11 a 16 e 18) saíram daqui: o registro está em `decisoe
 19. A pasta do banco do teste de 26/10 (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 daquele dia, fora da
     Lixeira e sem nenhum processo da LLM nela; os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`. Foi
     você ou outra ferramenta? (sim, por fora do app; se não, investigar).
-20. CI: a célula `llm` do `ci.yml` passa a rodar também os testes da F5.14 com o SDK real (hoje roda só
-    `test_llm_adapters.py` e `test_llm_core.py`; o `--tudo` local já os roda)? (sim; mudança de CI pede o seu OK).
 
 ## Bloqueios que só o dono destrava
 | # | O quê | Destrava |
