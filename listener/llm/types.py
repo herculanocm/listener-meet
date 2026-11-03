@@ -143,11 +143,15 @@ class Usage:
     cached_tokens: int = 0
     audio_tokens: int = 0
     cache_write_tokens: int = 0    # parte de `input_tokens` gravada no cache (a Anthropic cobra 1,25 vez a entrada, F3.1 R3-10)
+    parts: tuple[Usage, ...] = field(default=(), compare=False, repr=False)   # as chamadas de uma soma (o preço vai por chamada)
 
     def __add__(self, other: Usage) -> Usage:
+        """Os tokens somados; as chamadas ficam em `parts` (o reenvio e o fallback), porque o pedido longo do Haiku 5.5 se
+        cobra por chamada (`costs.cost_usd`, a revisão de 03/11)."""
+        parts = tuple(u for u in (*(self.parts or (self,)), *(other.parts or (other,))) if u != Usage())
         return Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
                      self.cached_tokens + other.cached_tokens, self.audio_tokens + other.audio_tokens,
-                     self.cache_write_tokens + other.cache_write_tokens)
+                     self.cache_write_tokens + other.cache_write_tokens, parts)
 
 
 @dataclass(frozen=True, slots=True)

@@ -285,6 +285,20 @@ def test_seeds_family_prices_and_the_long_haiku_prompt():
     assert costs.price_for(rows, "anthropic", "claude-opus-5-5").long_prompt is None
 
 
+def test_the_long_prompt_rule_is_per_call_in_a_summed_usage():
+    """Revisão de 03/11: o reenvio e o fallback somam o uso das chamadas, e o pedido longo do Haiku 5.5 se cobra por chamada:
+    duas de 60 mil tokens não viram uma de 120 mil, 5 vezes mais cara."""
+    haiku = costs.price_for(list(costs.PRICE_SEEDS), "anthropic", "claude-haiku-5-5")
+    one = (60_000 * 0.10 + 500 * 0.50) / 1e6
+    resent = Usage(60_000, 500) + Usage(60_000, 500)                                    # como o `RetryingProvider` soma
+    assert resent == Usage(120_000, 1000)                                               # os tokens seguem somados
+    assert costs.cost_usd(resent, haiku) == pytest.approx(2 * one)
+    mixed = sum((Usage(60_000, 500), Usage(120_000, 500)), Usage())                     # como o fallback soma as partes
+    assert len(mixed.parts) == 2
+    assert costs.cost_usd(mixed, haiku) == pytest.approx(one + 5 * (120_000 * 0.10 + 500 * 0.50) / 1e6)
+    assert costs.cost_usd(Usage(120_000, 1000), haiku) == pytest.approx(5 * (120_000 * 0.10 + 1000 * 0.50) / 1e6)
+
+
 def test_seeds_and_new_claude_defaults_on_a_v9_database_with_an_edited_price(tmp_path: Path):
     db = tmp_path / "db"
     with Store(db) as s:

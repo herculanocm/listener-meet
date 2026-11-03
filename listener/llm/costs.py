@@ -92,16 +92,23 @@ def _row_for(rows: list[Price], provider: str, model_id: str) -> Price | None:
 
 def cost_usd(usage: Usage, price: Price | None) -> float | None:
     """Entrada simples, lida do cache, gravada no cache (`CACHE_WRITE_FACTOR` vezes a entrada, R3-10), áudio e saída. F5.14:
-    com `long_prompt`, a entrada inteira (`input_tokens` já soma o cache) acima do limiar multiplica o custo todo."""
+    com `long_prompt`, a entrada inteira (`input_tokens` já soma o cache) acima do limiar multiplica o custo todo, por chamada:
+    um uso somado (o reenvio, o fallback) soma o custo de cada uma (`Usage.parts`, a revisão de 03/11)."""
     if price is None:
         return None
+    if price.long_prompt is not None and usage.parts:
+        return round(sum(_call_cost(part, price) for part in usage.parts), 6)
+    return round(_call_cost(usage, price), 6)
+
+
+def _call_cost(usage: Usage, price: Price) -> float:
     plain_input = max(0, usage.input_tokens - usage.cached_tokens - usage.audio_tokens - usage.cache_write_tokens)
     total = (plain_input * price.input_usd_m + usage.cached_tokens * price.cached_usd_m + usage.output_tokens * price.output_usd_m
              + usage.cache_write_tokens * price.input_usd_m * CACHE_WRITE_FACTOR
              + usage.audio_tokens * (price.audio_usd_m or price.input_usd_m)) / 1_000_000
     if price.long_prompt is not None and usage.input_tokens > price.long_prompt[0]:
         total *= price.long_prompt[1]
-    return round(total, 6)
+    return total
 
 
 def estimate_cost(input_tokens: int, output_tokens: int, price: Price | None, audio_tokens: int = 0) -> float | None:
