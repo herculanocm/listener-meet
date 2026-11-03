@@ -2,9 +2,9 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (02/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.13 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.565 testes, esquema v9. Nenhum gate medido ainda.
+## Onde paramos (03/11/2026, Windows nativo; tudo commitado; o push é do dono)
+- Código: F1 a F5.14 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
+  rascunho inicial e F7 é futuro. Suíte de 1.599 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
   crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
   crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
@@ -16,15 +16,18 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   tarefas abre o Histórico, com a instância única (o item 17), o Jump List, a dica de fixar e os atalhos no menu da
   bandeja (U-129 a U-133), em quatro commits, de `42505ad` a `49f6b19`, com a revisão do diff corrigida. A versão passou
   a 0.6.0 (D-081). Falta o dono: a Parte 24 do roteiro.
-- **F5.14 aprovada** (02/11, D-084, `features/F5.14-claude-anthropic.md`): o Claude (Anthropic) como alternativa ao
-  Gemini em todo trabalho de LLM: o adaptador na API de hoje, os padrões Haiku 5.5 e Opus 5.5, as sementes de preço, o
-  aviso com o nome do provedor e a sonda `llm_probe.py` (U-134, U-135). Em implementação.
+- **F5.14 implementada** (02 e 03/11, D-084, D-085, `features/F5.14-claude-anthropic.md`): o Claude (Anthropic) como
+  alternativa ao Gemini em todo trabalho de LLM: o adaptador na API de hoje, os padrões Haiku 5.5 e Opus 5.5, as
+  sementes de preço, o aviso com o nome do provedor e a sonda `llm_probe.py` (U-134, U-135), em quatro commits, de
+  `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081). Falta o dono: a Parte 25 do
+  roteiro, com a chave da Anthropic.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
-  transporte simulado.
+  transporte simulado (o Claude espera a Parte 25).
 - O `.exe` que vale para as Partes 19 a 24 é o 0.6.0 de 02/11, 17:07 (`2e59b4b`: a F5.13; 441 s, 892 MB, com o
   QtNetwork; sonda `--probe` ok com o commit). Para compartilhar, o `build\exe\listener-meet-0.6.0-win64.zip` (351 MB,
-  a pasta inteira; D-081: `build_exe.py --zip`).
+  a pasta inteira; D-081: `build_exe.py --zip`). O `.exe` 0.7.0, com a F5.14, ainda não foi gerado; a Parte 25 roda
+  também pelo venv.
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
@@ -49,7 +52,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
    aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
    `.exe` 0.6.0 diz "versão 0.6.0 · 2e59b4b" (a versão do produto no arquivo e a sonda já conferidas).
    F5.13 (Parte 24, pelo `.exe` 0.6.0): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
-   atalhos no menu da bandeja.
+   atalhos no menu da bandeja. F5.14 (Parte 25, com a chave da Anthropic e o seu OK): a sonda real, o "Testar conexão"
+   na rede da empresa e uma reunião de 15 min com o Claude, com o custo contra o console.
 2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
 3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
    (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",
@@ -93,6 +97,8 @@ As respondidas (2 a 4, 11 a 16 e 18) saíram daqui: o registro está em `decisoe
 19. A pasta do banco do teste de 26/10 (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 daquele dia, fora da
     Lixeira e sem nenhum processo da LLM nela; os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`. Foi
     você ou outra ferramenta? (sim, por fora do app; se não, investigar).
+20. CI: a célula `llm` do `ci.yml` passa a rodar também os testes da F5.14 com o SDK real (hoje roda só
+    `test_llm_adapters.py` e `test_llm_core.py`; o `--tudo` local já os roda)? (sim; mudança de CI pede o seu OK).
 
 ## Bloqueios que só o dono destrava
 | # | O quê | Destrava |
@@ -115,6 +121,9 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
   assistente diz "cinco passos" e mostra seis.
 - F5.10 (D-075): o `--downgrade` com o app aberto faz o chat falhar até reabrir (nada se perde); a `memory_rss` do
   Windows mede o working set, que o sistema pode encolher, e o teto da consulta mediria menos que o real.
+- Instável sob carga, fora da F5.14: `test_call_watch.py::test_the_app_exits_with_code_0_with_the_sensor_stuck_in_the_audio_system`
+  falhou 1 vez na suíte do L2 da F5.14 (faltou "não parou em 1000 ms" no log) e passou nas 3 rodadas sozinho e na suíte
+  seguinte.
 - F5.9, das revisões: `test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info` é instável
   na suíte inteira (3 falhas em 7; 9/9 isolado); o `pyproject` não liga o `C901` (o limite de complexidade 10 é só
   convenção); o nativo do proctap cai no sistema inteiro calado em caminhos de falha (`is_process_specific()` diz

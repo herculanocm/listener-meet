@@ -92,6 +92,22 @@ PROPVARIANT do Jump List, o DACL do pipe, a trava (o handle, o acesso negado, o 
 inválido sem o conteúdo no log, os filhos e as sondas fora da trava, CP15 e D-053. Os seis desvios declarados (D-083)
 não são defeito.
 
+## Revisão do diff da F5.14 (03/11)
+Corrigidos em `7a2032e`: R-01, provado: a recusa no streaming virava resposta vazia gravada como OK nos três chats, e a
+pergunta seguinte mandava um bloco só com espaço, que a API recusa; agora a recusa vira `RefusalError`, e o pedido nunca
+leva mensagem em branco nem começa por resposta. R-02, provado: o reenvio da resposta cortada quase não crescia nas
+tarefas pequenas; agora cresce ao menos 8.192 tokens. R-03: o `xhigh` no Opus 4.6 e no Sonnet 4.6 vira `high`.
+Conferidos sem achado:
+- a forma do pedido por família contra a API (nenhum 5.5 com ferramenta forçada nem `budget_tokens`) e os 10 esquemas
+  depois do `provider_schema`;
+- o SDK 2.3.0: o `stream` com `betas` e `fallbacks`, o `count_tokens` com `output_config` e o evento `error` como
+  `APIStatusError` 200;
+- a soma das partes do fallback; o `translate_error` e o `_status_of` com os erros do Gemini e da OpenAI; o
+  `ssl.create_default_context` do PEM;
+- as sementes ao abrir: idempotentes; com o banco travado, o app abre em ~5,5 s e grava na abertura seguinte;
+- a chave e o conteúdo fora do log e da sonda, as conexões Qt (D-062) e o laço do worker (D-058).
+Os doze desvios declarados (D-085) não são defeito.
+
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),
 SQL curto na thread da interface, as listas de apps de reunião em `platform.py` e `activity.py`, riscos sem chamador

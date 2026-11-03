@@ -44,8 +44,10 @@ dentro do event loop que os criou: cada `asyncio.run()` cria e fecha o seu.
 ## Saída estruturada e validação (`llm/schema.py`)
 Um só esquema JSON por tarefa, escrito no subconjunto estrito aceito pelos três SDKs: `additionalProperties: false`,
 todas as chaves em `required`, nulo como união `["string", "null"]`, sem `format`, `minLength` nem `pattern`. Tradução:
-Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI formato `json_schema` estrito; Anthropic uso
-de ferramenta com `input_schema` e `tool_choice` forçado (resposta em `content[].input`). Validação sempre do projeto
+Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI formato `json_schema` estrito; Anthropic, por
+família (F5.14): `output_config.format` com o esquema sem as chaves de `PROVIDER_SOFT_KEYS`, e ferramenta forçada com
+`input_schema` (resposta em `content[].input`) só nas que não aceitam a saída estruturada (Opus 4.7 e 4.6, Sonnet 4.6,
+4.5 e 4; o Opus 5.5 e o Sonnet 5.5 recusam a ferramenta forçada). Validação sempre do projeto
 (~120 linhas): `type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho;
 dataclass `frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte
 (pydantic vem com os SDKs, mas não entra no WSL nem no CI base). O hash do esquema (`schema_hash`) vai para `llm_calls`,
@@ -60,7 +62,10 @@ trocado pelo nome do idioma em português ("português do Brasil", "inglês"); g
 traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version` gravam `"minutes/2.0"`; mudar o texto do prompt sobe a
 versão (regra de revisão de diff) e a cópia congelada `tests/data/prompts_ptbr.json` é gerada de novo.
 Classe por tarefa (`TASK_CLASS`): rápido = glossary, title, pre_summary, revise, transcribe, chat; forte = identify,
-minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de pensamento zero), `LOW` no forte.
+minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de pensamento zero), `LOW` no forte. No
+Claude (F5.14), o pensamento adaptativo com o esforço `low` (NONE), `medium` (LOW) ou `high` (HIGH), trocável por classe
+nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga do pensamento; nas famílias antigas, o
+`budget_tokens`.
 
 ## Esquemas (resumo; o dicionário completo fica no módulo da tarefa)
 - `identify`: por cluster `{cluster, person_id | null, new_name | null, confidence 0..1, evidence: [{segment_id,
@@ -104,7 +109,8 @@ provedor ativo, e a sub-aba diz isso.
 Tabela `llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at)` com sementes do
 projeto por família, editável na sub-aba; custo = `input × p_in + cached × p_cached + cache_write × p_in × 1,25 + output
 × p_out + audio × p_audio` (a escrita no cache da Anthropic custa 1,25 vez a entrada); sem linha de preço, custo nulo e
-"sem preço cadastrado" na tela. Estimativa prévia por tarefa a partir de
+"sem preço cadastrado" na tela. F5.14: o Haiku 5.5 com pedido acima de 100 mil tokens custa 5 vezes (regra da família,
+sem coluna); as sementes que faltam entram no banco ao abrir, sem tocar no preço editado. Estimativa prévia por tarefa a partir de
 `count_tokens` ou caracteres ÷ 3,5. Projeção [chute]: reunião de 2 h ≈ US$ 0,30 a 0,50 (rápido nas leves, forte na
 ata); 3 h ≈ US$ 0,50 a 0,80. Pedido e resposta completos comprimidos (`zlib`) em `llm_calls` quando `llm.store_payloads`
 estiver ligado (padrão sim, P-N4).
@@ -114,9 +120,12 @@ estiver ligado (padrão sim, P-N4).
 `AudioPart.seconds` estima a duração pelo tamanho e tipo. Gemini e Anthropic recebem o esquema inteiro; a OpenAI, sem as
 chaves que o modo estrito dela pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`: `schema.provider_schema`); a
 validação do projeto usa o esquema inteiro. anthropic 2.x: `messages.create` não aceita `temperature`, `top_p` nem `top_k`
-(não são enviados); pensamento estendido só sem ferramenta forçada; `Authorization: Bearer`; openai 3.x e anthropic 2.x
-usam `httpx2` (o `http_client` próprio só entra com proxy ou PEM configurados). google-genai 2.33: timeout em ms,
-`retry_options.attempts = 1`, `response_json_schema`, `thinking_budget = 0` no rápido (não no Pro, que não desliga),
+(não são enviados); F5.14: `complete()` pelo `messages.stream(...).get_final_message()`, a recusa (`refusal`) vira erro
+permanente com a categoria, `model_context_window_exceeded` vira "grande demais" e o fallback do servidor (beta, nos
+modelos que o aceitam) soma o uso das partes; `Authorization: Bearer`; openai 3.x e anthropic 2.x
+usam `httpx2` (o `http_client` próprio só entra com proxy ou PEM configurados; com o PEM, o contexto TLS sai de
+`ssl.create_default_context(cafile=…)`, F5.14; sem ele, no Windows, o httpx2 já usa o `truststore.SSLContext`).
+google-genai 2.33: timeout em ms, `retry_options.attempts = 1`, `response_json_schema`, `thinking_budget = 0` no rápido (não no Pro, que não desliga),
 `client.aio.aclose()`. OpenAI: `input_audio` só wav e mp3 (o `LLMAudioTranscriber` manda WAV em fatias de 5 min fora do
 Gemini); `reasoning.effort` e sem `temperature` nas famílias que raciocinam. `title` lê o pré-resumo quando já existe, senão
 o `context` da ata, senão as primeiras falas. Erros traduzidos pela forma (`status_code`/`code`, nome da classe,

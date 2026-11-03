@@ -530,6 +530,28 @@ Antes: gere o `.exe` de novo pela Parte 19 e feche o app, se estiver rodando.
 - Devolva: quanto tempo leva do clique no ícone fixado ao Histórico (com o app parado e rodando), se as tarefas
   apareceram no ícone fixado e um print do clique direito nele.
 
+## Parte 25 — F5.14: o Claude no lugar do Gemini (40 min, com a chave da Anthropic e uma reunião de verdade)
+Antes: uma chave com crédito em console.anthropic.com e o seu OK para gastar até ~US$ 1 nesta parte [chute]. O texto da
+reunião vai para a Anthropic (LGPD, Riscos da F5.14): use uma reunião que pode sair da máquina. O app desta parte é o
+do venv do checkout ou o `.exe` 0.7.0 gerado de novo (`scripts\build_exe.py --zip`, a Parte 19).
+- [ ] A sonda, sem abrir o app: no checkout, `.venv\Scripts\python.exe scripts\llm_probe.py anthropic --real` e cole a
+      chave quando ela pedir (não aparece na tela nem fica gravada). Os 10 esquemas saem "ok", com custo total de até
+      US$ 0,30 [chute]. Se algum sair com erro, pare aqui e mande a saída.
+- [ ] Configurações › Chaves de acesso: cole a chave no cartão do Claude e clique em "Testar conexão", na rede da
+      empresa: "Conectado", com o `claude-haiku-5-5`.
+- [ ] Configurações › LLM: "Ativo para texto" = Claude (Anthropic). Sob o "Ativo para embeddings", que fica como está,
+      aparece "O Claude não faz busca por sentido…". A sub-aba do Claude mostra rápido `claude-haiku-5-5`, forte
+      `claude-opus-5-5`, o aviso com "Anthropic" e os preços novos. Salve.
+- [ ] Grave uma reunião de 15 min ou mais e, ao parar, peça ata, resumo e ações: tudo sai sem erro na fila, com o
+      título e a transcrição revisada. Anote o tempo da ata e o custo que a fila mostra.
+- [ ] No chat da reunião, uma pergunta: a resposta cita `[mm:ss]` clicável.
+- [ ] Histórico › Perguntar à base: 3 das 15 perguntas do G5.10 respondidas com citações.
+- [ ] Ao vivo: o resumo parcial aparece durante a gravação.
+- [ ] No dia seguinte, compare o gasto do mês na sub-aba com o console da Anthropic (Usage): até 20 % de diferença.
+- [ ] Para voltar ao Gemini: "Ativo para texto" = Gemini; nada mais muda.
+- Devolva: a saída da sonda, o tempo e o custo da ata, o gasto contra o console e o texto de qualquer erro da fila
+  (a chave nunca aparece nele).
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
