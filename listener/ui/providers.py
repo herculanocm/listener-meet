@@ -10,7 +10,10 @@ acesso", o primeiro das Configurações (`ui/keys.py`); a sub-aba diz onde e gua
 F5.4 L3: o estado da chave em selo (`key_badge`, U-075: Falta a chave, Não testada, Chave nova, Testando, Conectado, Falhou)
 com o detalhe em nota (`key_status`); a tabela de preços com o cabeçalho inteiro, à esquerda e sem número de linha (U-076,
 U-058); o aviso do envio numa faixa (U-057); sem jargão interno na tela; `validation_problem` devolve o campo do erro para a
-página marcá-lo (U-072). Revisão da F5.4 (R-05): "Conectado" só para a chave que passou no último teste (`_record_test`)."""
+página marcá-lo (U-072). Revisão da F5.4 (R-05): "Conectado" só para a chave que passou no último teste (`_record_test`).
+F5.14: o aviso do envio nomeia o provedor (U-134); com o Claude ativo para texto, uma nota sob o "Ativo para embeddings"
+diz que a busca por sentido segue com o escolhido ali (U-135), e o "Modelo de embeddings" do Claude diz o porquê na dica;
+os Parâmetros mostram um exemplo que o provedor lê."""
 from __future__ import annotations
 
 import functools
@@ -23,15 +26,15 @@ from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QHeaderView,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..llm.adapters_common import friendly_error
-from ..llm.aio import run_async
 from ..llm.costs import fmt_usd
 from ..llm.models_table import DEFAULT_EMBED_MODELS, DEFAULT_MODELS, PROVIDER_CAPABILITIES
-from ..llm.registry import NetworkConfig, load_provider
+from ..llm.registry import NetworkConfig
 from ..llm.types import Capability, ConnectionTest, ModelInfo, ProviderKind
 from ..log import get_logger
 from ..store.core import _now
 from ..store.providers import LLM_KINDS, LOCAL_ID
 from .components import Badge, InfoBar
+from .provider_calls import list_models, models_cache, test_connection
 from .tasks import run_task
 from .theme import METRICS, Tone, note
 
@@ -51,33 +54,15 @@ NO_KEY, NOT_TESTED, KEY_NEW, TESTING, CONNECTED, FAILED = ("Falta a chave", "Nã
                                                           "Falhou")
 KEY_EDITED = "Testar confere antes de salvar"
 type KeyState = tuple[str, Tone, str]                 # o selo, o tom dele e o detalhe
-SEND_WARNING = "O texto da reunião (transcrição, marcadores e nomes) é enviado ao provedor escolhido. Áudio só sai com a opção ligada."
-
-
-def test_connection(kind: str, api_key: str, model: str, net: NetworkConfig) -> ConnectionTest:
-    """Roda numa `Task`: cliente criado e fechado dentro do `run_async()` (contrato "Decoradores e registro")."""
-    async def go() -> ConnectionTest:
-        provider = load_provider(kind, api_key, net)
-        try:
-            return await provider.test_connection(model)
-        finally:
-            await provider.aclose()
-    return run_async(go())
-
-
-def list_models(kind: str, api_key: str, net: NetworkConfig) -> tuple[ModelInfo, ...]:
-    async def go() -> tuple[ModelInfo, ...]:
-        provider = load_provider(kind, api_key, net)
-        try:
-            return await provider.list_models()
-        finally:
-            await provider.aclose()
-    return run_async(go())
-
-
-def models_cache(infos: tuple[ModelInfo, ...]) -> list[dict[str, Any]]:
-    return [{"id": m.id, "display_name": m.display_name, "input_limit": m.input_limit, "output_limit": m.output_limit,
-             "capabilities": sorted(str(c) for c in m.capabilities)} for m in infos]
+SENT = "O texto da reunião (transcrição, marcadores e nomes) vai para"
+SEND_WARNING = {"gemini": f"{SENT} o Google (Gemini). Áudio só sai com a opção ligada.",            # U-134: o provedor pelo nome
+                "openai": f"{SENT} a OpenAI (GPT). Áudio só sai com a opção ligada.",
+                "anthropic": f"{SENT} a Anthropic (Claude). O Claude não recebe áudio."}
+SEND_ANY = f"{SENT} o provedor escolhido. Áudio só sai com a opção ligada."
+PARAMS_EXAMPLE = {"gemini": '{"top_p": 0.9}', "openai": '{"service_tier": "flex"}', "anthropic": '{"effort_strong": "high"}'}
+CLAUDE_ID = "anthropic"
+NO_EMBED_TIP = "A Anthropic não oferece embeddings: a busca por sentido usa o ativo para embeddings."
+CLAUDE_SEARCH = "O Claude não faz busca por sentido: ela segue com o escolhido aqui."                # U-135
 
 
 class ProviderTab(QWidget):
@@ -103,8 +88,10 @@ class ProviderTab(QWidget):
         self.strong.setCurrentText(str(row.get("strong_model") or defaults[1]))
         self.embed_model = QLineEdit(str(row.get("model") or DEFAULT_EMBED_MODELS.get(self.kind, "")))
         self.embed_model.setEnabled(Capability.EMBEDDINGS in PROVIDER_CAPABILITIES[self.kind])
+        if not self.embed_model.isEnabled():
+            self.embed_model.setToolTip(NO_EMBED_TIP)                                     # F5.14: o porquê, na dica
         self.params = QLineEdit(str(row.get("params") or ""))
-        self.params.setPlaceholderText('JSON opcional, ex.: {"top_p": 0.9}')
+        self.params.setPlaceholderText(f"JSON opcional, ex.: {PARAMS_EXAMPLE.get(self.pid, '{}')}")   # F5.14: uma chave que ele lê
         self.btn_models = QPushButton("Listar modelos")
         self.btn_test = QPushButton("Testar conexão")
         self.btn_worker = QPushButton("Testar pelo worker")
@@ -127,7 +114,7 @@ class ProviderTab(QWidget):
         self._fill_prices()
         self.month = QLabel("")
         self.refresh_month()
-        warn = InfoBar("warning", SEND_WARNING)                                          # U-057: o aviso numa faixa
+        warn = InfoBar("warning", SEND_WARNING.get(self.pid, SEND_ANY))                  # U-057: o aviso numa faixa
         form = QFormLayout()
         where = QLabel(KEY_ELSEWHERE)
         where.setWordWrap(True)
@@ -363,12 +350,22 @@ class ProviderTabs(QWidget):
             tab = ProviderTab(store, row, on_launch)
             self.tab_by_id[str(row["id"])] = tab
             self.tabs.addTab(tab, TITLES.get(str(row["id"]), str(row["id"])))
-        form = QFormLayout()
-        form.addRow("Ativo para texto", self.active_llm)
-        form.addRow("Ativo para embeddings", self.active_embed)
+        self.search_note = QLabel(CLAUDE_SEARCH)                     # U-135: só enquanto o Claude for o ativo para texto
+        self.search_note.setWordWrap(True)
+        note(self.search_note)
+        self.form = QFormLayout()
+        self.form.addRow("Ativo para texto", self.active_llm)
+        self.form.addRow("Ativo para embeddings", self.active_embed)
+        self.form.addRow("", self.search_note)
+        self.active_llm.currentIndexChanged.connect(self._llm_changed)          # método, nunca lambda com `self` (D-062)
+        self._llm_changed(self.active_llm.currentIndex())
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
+        lay.addLayout(self.form)
         lay.addWidget(self.tabs)
+
+    def _llm_changed(self, _index: int) -> None:
+        """U-135: a nota da busca por sentido aparece (a linha inteira) só com o Claude ativo para texto."""
+        self.form.setRowVisible(self.search_note, self.active_llm.currentData() == CLAUDE_ID)
 
     def validation_problem(self) -> tuple[str, QWidget] | None:
         """O primeiro erro das sub-abas, com o campo (U-072)."""

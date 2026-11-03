@@ -10,7 +10,8 @@ F5.4 L3 (U-071, U-075): nas Configurações, a página "Chaves de acesso" tem um
 com a chave, o "Testar conexão" e o estado em selo (Falta a chave, Conectado, Falhou...); o do Hugging Face diz se falta o
 token (`hf_state`). Sem jargão interno na tela (U-076).
 F5.11 (U-113): o token do Hugging Face ganha "Testar" (`ui/hf_test.py`), com o token digitado, antes de salvar, no cartão e
-no assistente; o aviso do "Antes de gravar" passou para a faixa "Falta configurar" (`ui/warmup_notice.py`)."""
+no assistente; o aviso do "Antes de gravar" passou para a faixa "Falta configurar" (`ui/warmup_notice.py`).
+F5.14 (U-134): o assistente diz numa linha própria que o texto das reuniões vai para a IA escolhida."""
 from __future__ import annotations
 
 import functools
@@ -62,6 +63,7 @@ WIZARD_HELP = {"gemini": LLM_HELP["gemini"],
                              "fica na busca local, sem custo (prepare em Configurações, Busca, 135 MB).")}
 WIZARD_NOTE = ("Tudo opcional: pule e cole depois em Configurações, Chaves de acesso. Ficam no banco do app, em texto "
                "aberto.")                     # F5.4 L4: sem o jargão interno (U-076) também no assistente
+WIZARD_SEND = "O texto das reuniões vai para a IA escolhida."                     # F5.14 (U-134)
 STORAGE_NOTE = ("Ficam no banco do app, em texto aberto: mantenha a pasta do banco fora do OneDrive e do git. Qual LLM faz o "
                 "quê fica na página LLM.")
 HF_MISSING, HF_SET = "Falta o token", "Informado"   # U-075: o token não tem teste aqui; o selo diz só se foi informado
@@ -216,6 +218,7 @@ class KeysPage(QWizardPage):
         form.addRow("Chave", _with_button(self.key, self.test_btn))
         form.addRow("", self.status)
         form.addRow("", self.llm_help)
+        form.addRow("", note(WIZARD_SEND))
         form.addRow("Hugging Face", _with_button(self.hf_token, self.hf_test_btn))
         form.addRow("", self.hf_status)
         form.addRow("", note(HF_HELP, links=True))
