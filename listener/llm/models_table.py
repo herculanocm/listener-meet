@@ -40,12 +40,13 @@ class Family:
     thinking: str = ""                # F5.14, só o Claude: `THINK_ADAPTIVE` ou `THINK_BUDGET`
     fallback: bool = False            # F5.14: aceita `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`)
     long_prompt: tuple[int, float] | None = None      # F5.14: (limiar de tokens de entrada, fator sobre o custo inteiro)
+    xhigh: bool = True                # F5.14 (R-03): aceita o esforço `xhigh` (chegou com o Opus 4.7; os 4.6 vão até `max` sem ele)
 
 
 def _claude(prefix: str, display: str, window: int, output: int, price_ref: str, json_style: str, thinking: str, *,
-            fallback: bool = False, long_prompt: tuple[int, float] | None = None) -> Family:
+            fallback: bool = False, long_prompt: tuple[int, float] | None = None, xhigh: bool = True) -> Family:
     return Family(A, prefix, display, window, output, CLAUDE, price_ref, True, json_style=json_style, thinking=thinking,
-                  fallback=fallback, long_prompt=long_prompt)
+                  fallback=fallback, long_prompt=long_prompt, xhigh=xhigh)
 
 
 F, T, AD, BU = JSON_FORMAT, JSON_TOOL, THINK_ADAPTIVE, THINK_BUDGET
@@ -58,13 +59,13 @@ CLAUDE_FAMILIES: tuple[Family, ...] = (
     _claude("claude-opus-5", "Claude Opus 5", M1, K128, "claude-opus-5", F, AD, fallback=True),
     _claude("claude-opus-4-8", "Claude Opus 4.8", M1, K128, "claude-opus-5", F, AD),
     _claude("claude-opus-4-7", "Claude Opus 4.7", M1, K128, "claude-opus-5", T, AD),
-    _claude("claude-opus-4-6", "Claude Opus 4.6", M1, K128, "claude-opus-5", T, AD),
+    _claude("claude-opus-4-6", "Claude Opus 4.6", M1, K128, "claude-opus-5", T, AD, xhigh=False),
     _claude("claude-opus-4-5", "Claude Opus 4.5", K200, K64, "claude-opus-5", F, BU),
     _claude("claude-opus-4-1", "Claude Opus 4.1", K200, K32, "claude-opus-4-1", F, BU),
     _claude("claude-opus-4", "Claude Opus 4", K200, K32, "claude-opus-4-1", T, BU),
     _claude("claude-sonnet-5-5", "Claude Sonnet 5.5", M1, K128, "claude-sonnet-5-5", F, AD, fallback=True),
     _claude("claude-sonnet-5", "Claude Sonnet 5", M1, K128, "claude-sonnet-5-5", F, AD),
-    _claude("claude-sonnet-4-6", "Claude Sonnet 4.6", M1, K128, "claude-sonnet-4-6", T, AD),
+    _claude("claude-sonnet-4-6", "Claude Sonnet 4.6", M1, K128, "claude-sonnet-4-6", T, AD, xhigh=False),
     _claude("claude-sonnet-4-5", "Claude Sonnet 4.5", K200, K64, "claude-sonnet-4-5", T, BU),
     _claude("claude-sonnet-4", "Claude Sonnet 4", K200, K64, "claude-sonnet-4-5", T, BU),
     _claude("claude-haiku-5-5", "Claude Haiku 5.5", M1, K128, "claude-haiku-5-5", F, AD, long_prompt=HAIKU_LONG),

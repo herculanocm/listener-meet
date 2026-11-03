@@ -224,7 +224,7 @@ def test_fallback_only_where_accepted_can_be_turned_off_and_sums_the_parts(caplo
     assert price is not None and price.model == "claude-opus-5"                   # o custo sai pelo modelo que respondeu
 
 
-def test_the_chat_stream_carries_thinking_and_a_refusal_ends_blocked(caplog: pytest.LogCaptureFixture):
+def test_the_chat_stream_carries_thinking_and_a_refusal_raises_at_the_end(caplog: pytest.LogCaptureFixture):
     start = SimpleNamespace(type="message_start", message=SimpleNamespace(usage=_usage(50, 1), model="claude-opus-5-5", id="m2"))
     think = SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="thinking_delta", thinking="pensando"))
     text = SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="parte"))
@@ -232,15 +232,18 @@ def test_the_chat_stream_carries_thinking_and_a_refusal_ends_blocked(caplog: pyt
                           usage=SimpleNamespace(output_tokens=9))
     stub = ClaudeStub(events=[start, think, text, end])
     provider = AnthropicProvider("k", client=stub)
+    parts: list[str] = []
 
     async def consume() -> Any:
         s = provider.stream(_req("claude-opus-5-5", None, task=LlmTask.CHAT))
-        return [p async for p in s], s.result
+        async for p in s:                                            # o que chegou antes da recusa chega ao chat
+            parts.append(p)  # noqa: PERF401  (a recusa levanta no fim: uma compreensão perderia o que chegou)
+        return s.result
 
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
-        parts, result = run(consume())
+    with caplog.at_level(logging.WARNING, logger=LOGGER), pytest.raises(RefusalError) as e:
+        run(consume())
     kw = stub.calls[0][1]
-    assert parts == ["parte"] and result.finish == "blocked" and result.usage.output_tokens == 9
+    assert parts == ["parte"] and str(e.value) == "o Claude recusou esta tarefa (bio)" and e.value.permanent   # R-01: ao fim, erro
     assert kw["stream"] is True and kw["thinking"] == {"type": "adaptive"} and kw["output_config"] == {"effort": "low"}
     assert "fallbacks" not in kw and "o Claude recusou chat em claude-opus-5-5 (bio)" in caplog.text
 

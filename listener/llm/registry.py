@@ -42,6 +42,9 @@ FIX_PROMPT = ("A resposta anterior não seguiu o esquema JSON exigido: {error}. 
 
 
 CLIENT_TIMEOUT_S = 600.0             # teto do cliente; cada chamada leva o seu (`Request.timeout_s`, F3.1 R3-03)
+# F5.14 (R-02): o reenvio da resposta cortada cresce ao menos isto: nas tarefas pequenas, o dobro do teto quase não passava da
+# folga fixa do pensamento (o título do Claude ia de 2.176 para 2.304 tokens enviados)
+GROW_MIN = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,9 +168,9 @@ class RetryingProvider:
     """Decorador sobre qualquer `LLMProvider`: `asyncio.timeout(req.timeout_s)` por tentativa; 429, 5xx, rede e timeout
     repetem até 3 vezes com 1, 3 e 9 s (jitter de 30 %) ou o `Retry-After`; "request too large" e erros permanentes não
     repetem; com esquema, valida a resposta e reenvia uma vez com a mensagem de erro quando o JSON não vale. Resposta cortada
-    no teto de saída (`finish == "length"`) reenvia uma vez com o teto dobrado até o limite do modelo, senão erro claro
-    (F3.1 R3-07). F5 (F5A-13): `embed` ganha a mesma retentativa, com o timeout dos embeddings (`EMBED_TIMEOUT_S`) por
-    tentativa."""
+    no teto de saída (`finish == "length"`) reenvia uma vez com o teto dobrado (ao menos `GROW_MIN` a mais, F5.14) até o
+    limite do modelo, senão erro claro (F3.1 R3-07). F5 (F5A-13): `embed` ganha a mesma retentativa, com o timeout dos
+    embeddings (`EMBED_TIMEOUT_S`) por tentativa."""
 
     def __init__(self, inner: LLMProvider, *, attempts: int = 3, delays: Sequence[float] = RETRY_DELAYS, jitter: float = RETRY_JITTER,
                  sleep: Sleep | None = None, rand: Callable[[], float] = random.random, resend_on_invalid: bool = True):
@@ -208,22 +211,25 @@ class RetryingProvider:
                 raise BadResponseError(f"{OFF_SCHEMA} após reenvio: {e2}", text=comp2.text) from e2
 
     async def _grown(self, req: Request, first: Completion) -> tuple[Request, Completion]:
-        """Reenvio único com o dobro de `max_output_tokens`, sem passar do limite de saída do modelo (modelo fora da tabela:
-        só o dobro); cortada de novo, ou já no limite, vira `BadResponseError` em vez de JSON truncado. O limite vale também
-        para o teto efetivamente enviado (a folga de raciocínio da OpenAI já pode tê-lo levado lá): saída cortada no
-        limite do modelo não se reenvia. O `usage` devolvido soma as duas tentativas (as duas foram pagas)."""
+        """Reenvio único com o teto da resposta dobrado e ao menos `GROW_MIN` maior (F5.14, R-02: o adaptador soma a folga do
+        pensamento, fixa, por cima), sem passar do limite de saída do modelo (modelo fora da tabela: sem limite daqui);
+        cortada de novo, ou já no limite, vira `BadResponseError` em vez de JSON truncado. O limite vale também para o teto
+        efetivamente enviado (a folga de raciocínio já pode tê-lo levado lá): saída cortada no limite do modelo não se
+        reenvia. Os números das mensagens são o teto da resposta, sem a folga. O `usage` soma as duas tentativas (pagas)."""
+        grown = max(req.max_output_tokens * 2, req.max_output_tokens + GROW_MIN)
         known = models_table.family_for(self.kind, req.model) is not None
-        limit = models_table.model_info(self.kind, req.model).output_limit if known else req.max_output_tokens * 2
-        bigger = min(req.max_output_tokens * 2, limit)
-        cut = f"resposta cortada no teto de {req.max_output_tokens} tokens de saída de {req.model}"
+        limit = models_table.model_info(self.kind, req.model).output_limit if known else grown
+        bigger = min(grown, limit)
+        cut = f"resposta de {req.model} cortada no teto da resposta, {req.max_output_tokens} tokens (sem a folga do pensamento)"
         if bigger <= req.max_output_tokens or (known and first.usage.output_tokens >= limit):
             raise BadResponseError(f"{cut}, que já é o limite do modelo: use um modelo com saída maior")
         self.grown += 1
-        log.info("%s: %s em %s; reenviando uma vez com %d", self.id, cut, req.task, bigger)
+        log.info("%s: %s em %s; reenviando uma vez com o teto da resposta em %d", self.id, cut, req.task, bigger)
         req = replace(req, max_output_tokens=bigger)
         comp = await self._with_retries(req)
         if comp.finish == "length":
-            raise BadResponseError(f"resposta cortada mesmo com {bigger} tokens de saída de {req.model}", text=comp.text)
+            raise BadResponseError(f"resposta de {req.model} cortada mesmo com o teto da resposta em {bigger} tokens (sem a folga do "
+                                   "pensamento)", text=comp.text)
         return req, replace(comp, usage=first.usage + comp.usage)
 
     async def _with_retries(self, req: Request) -> Completion:

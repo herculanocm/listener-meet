@@ -308,8 +308,9 @@ def test_provider_contract_with_doubles(name: str):
 
 
 def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
-    """R3-07: `status = "incomplete"` por `max_output_tokens` reenvia uma vez com o teto dobrado (até o limite do modelo);
-    cortada de novo, erro claro "resposta cortada"; modelos com raciocínio da OpenAI ganham folga de saída."""
+    """R3-07: `status = "incomplete"` por `max_output_tokens` reenvia uma vez com o teto dobrado, ao menos 8.192 a mais (F5.14,
+    R-02), até o limite do modelo; cortada de novo, erro claro "resposta cortada"; modelos com raciocínio da OpenAI ganham
+    folga de saída."""
     from listener.llm.base import BadResponseError
     from listener.llm.openai import OpenAIProvider
 
@@ -330,10 +331,10 @@ def test_cut_response_resends_once_with_bigger_ceiling_and_reasoning_headroom():
     req = dataclasses.replace(_req(model="gpt-4.1-mini"), max_output_tokens=2000)
     comp = run(rp.complete(req))
     assert comp.data == PAYLOAD and rp.grown == 1 and rp.resends == 0 and comp.usage.input_tokens == 20     # as duas pagas
-    assert [kw["max_output_tokens"] for _, kw in stub.calls] == [2000, 4000]
+    assert [kw["max_output_tokens"] for _, kw in stub.calls] == [2000, 2000 + 8192]          # F5.14 (R-02): ao menos +8.192
     stub.calls.clear()
     cut_below["n"] = 10**9                                                                   # sempre cortada
-    with pytest.raises(BadResponseError, match="cortada mesmo com 4000"):
+    with pytest.raises(BadResponseError, match="cortada mesmo com o teto da resposta em 10192 tokens"):
         run(rp.complete(req))
     assert len(stub.calls) == 2
     stub.calls.clear()

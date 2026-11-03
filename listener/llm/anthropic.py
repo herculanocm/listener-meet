@@ -8,7 +8,8 @@ modelo é o que respondeu e o uso é a soma das partes (`usage.iterations`), com
 no prefixo estável; `messages.count_tokens`; `models.list` traz `max_input_tokens`; sem embeddings nem áudio nativo
 [fato]; sem `temperature`, `top_p` nem `top_k` (a 2.x não os aceita [fato, medido com o SDK 2.3.0]). Cliente por event loop
 com `max_retries = 0` e timeout explícito; `stream()` (o chat) pelos eventos brutos (`content_block_delta`,
-`message_delta`), com o esquema e o pensamento do pedido e sem fallback. O SDK é importado só dentro dos métodos."""
+`message_delta`), com o esquema e o pensamento do pedido e sem fallback; a recusa nele também vira `RefusalError`, ao fim
+dos eventos (revisão do diff, R-01). O SDK é importado só dentro dos métodos."""
 from __future__ import annotations
 
 import asyncio
@@ -200,6 +201,8 @@ class AnthropicProvider:
                         self._stream_end(req, ev, state)
             except Exception as e:
                 raise translate_error(e, self.id) from e
+            if "refused" in state:                    # R-01: ao fim dos eventos, como no `complete()`: o chat vai ao erro
+                raise RefusalError(f"o Claude recusou esta tarefa ({state['refused']})", category=state["refused"])
 
         def finish(text: str) -> Completion:
             return Completion(text, None, Usage(state["in"], state["out"], state["cached"], 0, state["write"]), str(state["model"]),
@@ -208,14 +211,15 @@ class AnthropicProvider:
         return LlmStream(chunks(), finish)
 
     def _stream_end(self, req: Request, ev: Any, state: dict[str, Any]) -> None:
-        """O `message_delta` do streaming: a saída acumulada e o motivo do fim; a recusa fica `blocked` e vai ao log."""
+        """O `message_delta` do streaming: a saída acumulada e o motivo do fim; a recusa vai ao log e fica marcada (`refused`,
+        com a categoria) para virar `RefusalError` ao fim dos eventos (R-01: nunca uma resposta vazia gravada como certa)."""
         state["out"] = int(getattr(getattr(ev, "usage", None), "output_tokens", 0) or 0)
         delta = getattr(ev, "delta", None)
         stop = getattr(delta, "stop_reason", None)
         if stop:
             state["finish"] = FINISH.get(str(stop), "unknown")
             if str(stop) == "refusal":
-                self._log_refusal(req, str(state["model"]), getattr(delta, "stop_details", None))
+                state["refused"] = self._log_refusal(req, str(state["model"]), getattr(delta, "stop_details", None))
 
     async def embed(self, texts: Sequence[str], *, model: str, dim: int | None, task: EmbedTask) -> Embeddings:
         del texts, model, dim, task
