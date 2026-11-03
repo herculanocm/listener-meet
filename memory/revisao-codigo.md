@@ -107,6 +107,11 @@ Conferidos sem achado:
 - as sementes ao abrir: idempotentes; com o banco travado, o app abre em ~5,5 s e grava na abertura seguinte;
 - a chave e o conteúdo fora do log e da sonda, as conexões Qt (D-062) e o laço do worker (D-058).
 Os doze desvios declarados (D-085) não são defeito.
+Conferência na main (03/11, um revisor novo no `f8789b9`): corrigido em `cbb14b9` e `bd0e745` o pedido longo do Haiku
+5.5, cobrado pela soma das tentativas do reenvio; agora por chamada (`Usage.parts`, fora dos campos para o JSON gravado
+não mudar). Sugestão, não defeito: o `ProviderTab.__init__` com 68 linhas efetivas (dividir ao mexer). Conferidos sem
+achado: os ids, os preços e os limites contra a skill `claude-api`, nenhum parâmetro de amostragem, a escolha do
+provedor em todo uso de LLM, a sonda só com `--real` e o CI da D-086.
 
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado, arquivos acima de 400 linhas (dividir ao mexer, backlog),

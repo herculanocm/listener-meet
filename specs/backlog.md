@@ -19,14 +19,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.14 implementada** (02 e 03/11, D-084, D-085, `features/F5.14-claude-anthropic.md`): o Claude (Anthropic) como
   alternativa ao Gemini em todo trabalho de LLM: o adaptador na API de hoje, os padrões Haiku 5.5 e Opus 5.5, as
   sementes de preço, o aviso com o nome do provedor e a sonda `llm_probe.py` (U-134, U-135), em quatro commits, de
-  `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081). Falta o dono: a Parte 25 do
+  `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081) e, com a correção da
+  conferência de 03/11 (o custo do Haiku 5.5 por chamada, `cbb14b9` e `bd0e745`), a 0.7.1. Falta o dono: a Parte 25 do
   roteiro, com a chave da Anthropic.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado (o Claude espera a Parte 25).
 - O `.exe` que vale para as Partes 19 a 24 é o 0.6.0 de 02/11, 17:07 (`2e59b4b`: a F5.13; 441 s, 892 MB, com o
   QtNetwork; sonda `--probe` ok com o commit). Para compartilhar, o `build\exe\listener-meet-0.6.0-win64.zip` (351 MB,
-  a pasta inteira; D-081: `build_exe.py --zip`). O `.exe` 0.7.0, com a F5.14, ainda não foi gerado; a Parte 25 roda
+  a pasta inteira; D-081: `build_exe.py --zip`). O `.exe` 0.7.1, com a F5.14, ainda não foi gerado; a Parte 25 roda
   também pelo venv.
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).

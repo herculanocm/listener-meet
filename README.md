@@ -26,8 +26,9 @@ a manter tudo funcionando e a trazer novidades:
 - **Pix:** R$ 0,99, ou o valor que você quiser, para a chave `herculanocm@outlook.com`.
 - **PayPal:** US$ 0,20 para `herculanocm@outlook.com`, pelo "Enviar dinheiro" do PayPal.
 
-O app traz o mesmo convite em "Apoiar o listener-meet", no Sobre e no rodapé do Histórico. Uma estrela no repositório e
-indicar o projeto a quem vive em reunião também ajudam. Obrigado de verdade!
+O app traz o mesmo convite em "Apoiar o projeto…", na bandeja; em "Apoie o projeto", no Sobre; e em "Apoiar o
+listener-meet", no rodapé do Histórico. Uma estrela no repositório e indicar o projeto a quem vive em reunião também
+ajudam. Obrigado de verdade!
 
 ## Seus dados
 - Áudio, transcrições, perfis de voz e configurações ficam no SQLite do app, numa pasta que você escolhe. O áudio fica

@@ -545,7 +545,7 @@ do venv do checkout ou o `.exe` 0.7.0 gerado de novo (`scripts\build_exe.py --zi
 - [ ] Grave uma reunião de 15 min ou mais e, ao parar, peça ata, resumo e ações: tudo sai sem erro na fila, com o
       título e a transcrição revisada. Anote o tempo da ata e o custo que a fila mostra.
 - [ ] No chat da reunião, uma pergunta: a resposta cita `[mm:ss]` clicável.
-- [ ] Histórico › Perguntar à base: 3 das 15 perguntas do G5.10 respondidas com citações.
+- [ ] Histórico › Perguntar às reuniões: 3 das 15 perguntas do G5.10 respondidas com citações.
 - [ ] Ao vivo: o resumo parcial aparece durante a gravação.
 - [ ] No dia seguinte, compare o gasto do mês na sub-aba com o console da Anthropic (Usage): até 20 % de diferença.
 - [ ] Para voltar ao Gemini: "Ativo para texto" = Gemini; nada mais muda.
