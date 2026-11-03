@@ -1,12 +1,15 @@
 """O que os três adaptadores compartilham sem tocar em SDK: separar a instrução de sistema das mensagens, argumentos do
 cliente HTTP (proxy, certificado, timeout), tradução de erros por forma (código HTTP, nome da classe, cabeçalho
-`Retry-After`, texto de "request too large") e o canário do "testar conexão" (um JSON mínimo com esquema, F3 R-1)."""
+`Retry-After`, texto de "request too large") e o canário do "testar conexão" (um JSON mínimo com esquema, F3 R-1).
+F5.14: o cliente `httpx2` (Anthropic e OpenAI) recebe o PEM como contexto TLS pronto (`verify=<caminho>` é obsoleto no
+httpx2); o erro que chega no meio do streaming (HTTP 200, o tipo no corpo) é traduzido pelo tipo."""
 from __future__ import annotations
 
 import asyncio
 import base64
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import redact
@@ -29,6 +32,10 @@ TEST_MAX_TOKENS = 512            # D-055: modelo que sempre pensa (o Gemini 3.1 
 # `Request.timeout_s`; contar tokens e listar modelos são curtos; embeddings de um lote, no meio-termo
 AUX_TIMEOUT_S = 30.0
 EMBED_TIMEOUT_S = 120.0
+# F5.14: o erro do meio do streaming chega como evento `error` com o HTTP 200 da resposta; o tipo do corpo diz o código
+STREAM_ERROR_STATUS = {"invalid_request_error": 400, "authentication_error": 401, "permission_error": 403, "not_found_error": 404,
+                       "request_too_large": 413, "rate_limit_error": 429, "api_error": 500, "timeout_error": 504,
+                       "overloaded_error": 529}
 
 
 def split_system(req: Request) -> tuple[str | None, tuple[Message, ...]]:
@@ -45,6 +52,19 @@ def http_client_kwargs(net: NetworkConfig, timeout_s: float) -> dict[str, Any]:
         kw["proxy"] = net.proxy_url
     if net.ca_bundle:
         kw["verify"] = net.ca_bundle
+    return kw
+
+
+def httpx2_client_kwargs(net: NetworkConfig, timeout_s: float) -> dict[str, Any]:
+    """Os do `http_client_kwargs` para um `httpx2.AsyncClient` (Anthropic e OpenAI), com o PEM como contexto TLS pronto: o
+    mesmo que o httpx2 montava do caminho (`ssl.create_default_context`, com o truststore injetado no lugar do contexto
+    padrão), sem o aviso de obsoleto. O Gemini segue com o `http_client_kwargs` (outro cliente)."""
+    kw = http_client_kwargs(net, timeout_s)
+    if net.ca_bundle:
+        import ssl
+
+        path = net.ca_bundle
+        kw["verify"] = ssl.create_default_context(capath=path) if Path(path).is_dir() else ssl.create_default_context(cafile=path)
     return kw
 
 
@@ -78,16 +98,28 @@ def looks_too_large(text: str) -> bool:
     return any(h in low for h in TOO_LARGE_HINTS)
 
 
-def translate_error(e: BaseException, provider: str) -> LlmError:
-    """Erro de qualquer SDK -> `LlmError` pela forma (sem importar o SDK): `status_code` ou `code` inteiro, nome da classe,
-    `response.headers['retry-after']` e o texto. A mensagem sai redigida (CP10)."""
-    if isinstance(e, LlmError):
-        return e
-    name = type(e).__name__
+def _status_of(e: BaseException) -> int | None:
+    """`status_code` ou `code` inteiro; sem código de erro (o evento `error` no meio do streaming vem com o 200 da resposta),
+    o do tipo no corpo (`{"error": {"type": "overloaded_error"}}`, F5.14)."""
     status = getattr(e, "status_code", None)
     if not isinstance(status, int):
         code = getattr(e, "code", None)
         status = code if isinstance(code, int) else None
+    if status is None or status < 400:
+        body = getattr(e, "body", None)
+        error = body.get("error") if isinstance(body, Mapping) else None
+        kind = error.get("type") if isinstance(error, Mapping) else None
+        status = STREAM_ERROR_STATUS.get(str(kind), status)
+    return status
+
+
+def translate_error(e: BaseException, provider: str) -> LlmError:
+    """Erro de qualquer SDK -> `LlmError` pela forma (sem importar o SDK): `status_code` ou `code` inteiro (ou o tipo do
+    corpo, `_status_of`), nome da classe, `response.headers['retry-after']` e o texto. A mensagem sai redigida (CP10)."""
+    if isinstance(e, LlmError):
+        return e
+    name = type(e).__name__
+    status = _status_of(e)
     text = redact.GLOBAL.redact(f"{provider}: {status or name}: {str(e)[:400]}")
     headers = getattr(getattr(e, "response", None), "headers", None)
     if isinstance(e, asyncio.TimeoutError | TimeoutError) or name in ("APITimeoutError", "ReadTimeout", "ConnectTimeout",

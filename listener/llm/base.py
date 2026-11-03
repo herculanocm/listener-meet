@@ -51,6 +51,15 @@ class ProviderUnavailableError(LlmError):
         super().__init__(message, permanent=True)
 
 
+class RefusalError(LlmError):
+    """F5.14: o modelo recusou a tarefa pela política de segurança do provedor (o Claude: `stop_reason: refusal` com HTTP 200
+    e a categoria em `stop_details`). Permanente: o `RetryingProvider` não repete nem reenvia, e o job para com a mensagem."""
+
+    def __init__(self, message: str, *, category: str | None = None):
+        super().__init__(message, permanent=True)
+        self.category = category
+
+
 OFF_SCHEMA = "resposta fora do esquema"         # o começo do erro do `RetryingProvider` (F5.6 L2, A-29: a tela o reconhece)
 
 

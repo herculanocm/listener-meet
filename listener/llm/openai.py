@@ -15,7 +15,7 @@ import numpy as np
 
 from ..log import get_logger
 from . import models_table
-from .adapters_common import (AUX_TIMEOUT_S, EMBED_TIMEOUT_S, audio_b64, canary, has_audio, http_client_kwargs, needs_own_http_client,
+from .adapters_common import (AUX_TIMEOUT_S, EMBED_TIMEOUT_S, audio_b64, canary, has_audio, httpx2_client_kwargs, needs_own_http_client,
                              now_ms, split_system, translate_error)
 from .base import LlmStream, ProviderUnavailableError
 from .registry import NetworkConfig
@@ -62,7 +62,7 @@ class OpenAIProvider:
             if needs_own_http_client(self.net):
                 import httpx2
 
-                http_client = httpx2.AsyncClient(**http_client_kwargs(self.net, self.net.timeout_s))
+                http_client = httpx2.AsyncClient(**httpx2_client_kwargs(self.net, self.net.timeout_s))   # F5.14: o PEM em contexto
             client = openai.AsyncOpenAI(api_key=self.api_key, max_retries=0, timeout=self.net.timeout_s, http_client=http_client)
             pair = self._clients[key] = (client, http_client)
         return pair[0]

@@ -55,6 +55,8 @@ class Store:
         self.chat = ChatRepo(self.core)
         self.captions = CaptionsRepo(self.core)
         self.rag = RagRepo(self.core)
+        if role == StoreRole.APP:
+            self.providers.refresh_seeds()            # F5.14 (item 8): depois das migrações, só no papel que escreve e migra
         if (self.base_dir / LEGACY_AUDIO_FILE).exists() and LEGACY_AUDIO_FILE not in space.pending(self.core):
             self.core.attach(LEGACY_AUDIO_FILE)       # F5.6 (R-02): pendente, o VACUUM inteiro da abertura o pega sem anexo
 

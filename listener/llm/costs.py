@@ -2,10 +2,13 @@
 (editáveis na sub-aba), fórmula `input * p_in + cached * p_cached + cache_write * p_in * 1,25 + output * p_out +
 audio * p_audio` (preços por milhão de tokens), estimativa prévia por caracteres ÷ 3,5 quando o provedor não conta
 tokens. Sem linha de preço o custo é nulo e a tela diz "sem preço cadastrado". Valores das sementes são [chute] de
-outubro de 2026: o dono confere contra a fatura."""
+outubro de 2026: o dono confere contra a fatura.
+F5.14: as sementes do Claude de hoje [fato: skill `claude-api` de 06/10; o dono confere na fatura]; o pedido longo do Haiku
+5.5 (acima de 100 mil tokens de entrada, 5 vezes o preço) entra pela família (`Family.long_prompt`), que o `price_for` leva
+ao `Price` (campo com padrão, não coluna do banco) e o `cost_usd` aplica ao custo inteiro."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .models_table import family_for
@@ -24,6 +27,7 @@ class Price:
     output_usd_m: float
     cached_usd_m: float = 0.0
     audio_usd_m: float = 0.0
+    long_prompt: tuple[int, float] | None = None      # F5.14: (limiar de tokens de entrada, fator) da família, fora do banco
 
 
 PRICE_SEEDS: tuple[Price, ...] = (
@@ -41,6 +45,13 @@ PRICE_SEEDS: tuple[Price, ...] = (
     Price("anthropic", "claude-haiku-4-5", 1.00, 5.00, 0.10),
     Price("anthropic", "claude-sonnet-4-5", 3.00, 15.00, 0.30),
     Price("anthropic", "claude-opus-4-1", 15.00, 75.00, 1.50),
+    Price("anthropic", "claude-fable-5-1", 10.00, 50.00, 0.25),           # F5.14: as gerações de 2026
+    Price("anthropic", "claude-fable-5", 10.00, 50.00, 1.00),
+    Price("anthropic", "claude-opus-5-5", 4.00, 20.00, 0.20),
+    Price("anthropic", "claude-opus-5", 5.00, 25.00, 0.50),
+    Price("anthropic", "claude-sonnet-5-5", 2.00, 10.00, 0.20),
+    Price("anthropic", "claude-sonnet-4-6", 3.00, 15.00, 0.30),
+    Price("anthropic", "claude-haiku-5-5", 0.10, 0.50, 0.01),
 )
 
 
@@ -52,15 +63,18 @@ def estimate_tokens(text: str | int) -> int:
 def price_for(prices: list[Any], provider: str, model: str) -> Price | None:
     """Linha de preço do modelo: id exato, senão o prefixo mais longo da mesma família (`gemini-2.5-flash-001` casa
     `gemini-2.5-flash`), senão a família de preço da tabela de modelos (`price_ref`, D-056: o `gemini-3.8-flash` custa
-    como o `gemini-2.5-flash` [chute] até ganhar linha própria). `prices` aceita `Price` ou linhas do banco (dict)."""
+    como o `gemini-2.5-flash` [chute] até ganhar linha própria; F5.14: o `claude-sonnet-5`, sem linha, custa como o
+    `claude-sonnet-5-5`). `prices` aceita `Price` ou linhas do banco (dict). F5.14: o pedido longo vem da família do modelo."""
     rows = [p if isinstance(p, Price) else Price(str(p["provider"]), str(p["model"]), float(p["input_usd_m"] or 0),
                                                  float(p["output_usd_m"] or 0), float(p.get("cached_usd_m") or 0),
                                                  float(p.get("audio_usd_m") or 0)) for p in prices]
     model_id = model.removeprefix("models/")
     found = _row_for(rows, provider, model_id)
-    family = family_for(provider, model_id) if found is None else None
-    if family is not None and family.price_ref:
+    family = family_for(provider, model_id)
+    if found is None and family is not None and family.price_ref:
         found = _row_for(rows, provider, family.price_ref)
+    if found is not None and family is not None and family.long_prompt is not None:
+        found = replace(found, long_prompt=family.long_prompt)
     return found
 
 
@@ -77,13 +91,16 @@ def _row_for(rows: list[Price], provider: str, model_id: str) -> Price | None:
 
 
 def cost_usd(usage: Usage, price: Price | None) -> float | None:
-    """Entrada simples, lida do cache, gravada no cache (`CACHE_WRITE_FACTOR` vezes a entrada, R3-10), áudio e saída."""
+    """Entrada simples, lida do cache, gravada no cache (`CACHE_WRITE_FACTOR` vezes a entrada, R3-10), áudio e saída. F5.14:
+    com `long_prompt`, a entrada inteira (`input_tokens` já soma o cache) acima do limiar multiplica o custo todo."""
     if price is None:
         return None
     plain_input = max(0, usage.input_tokens - usage.cached_tokens - usage.audio_tokens - usage.cache_write_tokens)
     total = (plain_input * price.input_usd_m + usage.cached_tokens * price.cached_usd_m + usage.output_tokens * price.output_usd_m
              + usage.cache_write_tokens * price.input_usd_m * CACHE_WRITE_FACTOR
              + usage.audio_tokens * (price.audio_usd_m or price.input_usd_m)) / 1_000_000
+    if price.long_prompt is not None and usage.input_tokens > price.long_prompt[0]:
+        total *= price.long_prompt[1]
     return round(total, 6)
 
 

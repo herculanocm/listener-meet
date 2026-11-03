@@ -5,6 +5,7 @@ e timeout e um transporte HTTP simulado prova a forma exata do pedido e da respo
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import os
@@ -139,10 +140,18 @@ class OpenAIStub:
                       SimpleNamespace(id="text-embedding-3-small")])
 
 
+@contextlib.asynccontextmanager
+async def _final(msg: Any):
+    """O `messages.stream(...)` do SDK, cujo `get_final_message()` devolve a mensagem inteira (F5.14)."""
+    async def get_final_message() -> Any:
+        return msg
+    yield SimpleNamespace(get_final_message=get_final_message)
+
+
 class AnthropicStub:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.messages = SimpleNamespace(create=self._create, count_tokens=self._count)
+        self.messages = SimpleNamespace(create=self._create, stream=self._stream, count_tokens=self._count)
         self.models = SimpleNamespace(list=self._list)
         self.closed = False
 
@@ -153,20 +162,23 @@ class AnthropicStub:
     def _usage():
         return SimpleNamespace(input_tokens=8, output_tokens=5, cache_read_input_tokens=2, cache_creation_input_tokens=0)
 
-    async def _create(self, **kw: Any):
+    def _stream(self, **kw: Any) -> Any:                                # F5.14: o `complete()` lê pelo streaming
         self.calls.append(("create", kw))
-        if kw.get("stream"):
-            start = SimpleNamespace(type="message_start", message=SimpleNamespace(usage=self._usage(), model="claude-haiku-4-5", id="a2"))
-            end = SimpleNamespace(type="message_delta", delta=SimpleNamespace(stop_reason="end_turn"),
-                                  usage=SimpleNamespace(output_tokens=5))
-            return _agen([start, *(SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text=t))
-                                   for t in ("um ", "dois ", "três")), end])
         if "tools" in kw:
             content = [SimpleNamespace(type="tool_use", name="emit_result", input=_payload(kw["tools"][0]["input_schema"]))]
+        elif "format" in kw.get("output_config", {}):
+            content = [SimpleNamespace(type="text", text=json.dumps(_payload(kw["output_config"]["format"]["schema"])))]
         else:
             content = [SimpleNamespace(type="text", text="texto livre")]
-        return SimpleNamespace(id="a1", model="claude-haiku-4-5-20251001", content=content, usage=self._usage(),
-                               stop_reason="tool_use" if "tools" in kw else "end_turn")
+        return _final(SimpleNamespace(id="a1", model="claude-haiku-4-5-20251001", content=content, usage=self._usage(),
+                                      stop_reason="tool_use" if "tools" in kw else "end_turn"))
+
+    async def _create(self, **kw: Any):
+        self.calls.append(("create", kw))
+        start = SimpleNamespace(type="message_start", message=SimpleNamespace(usage=self._usage(), model="claude-haiku-4-5", id="a2"))
+        end = SimpleNamespace(type="message_delta", delta=SimpleNamespace(stop_reason="end_turn"), usage=SimpleNamespace(output_tokens=5))
+        return _agen([start, *(SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text=t))
+                               for t in ("um ", "dois ", "três")), end])
 
     async def _count(self, **kw: Any):
         self.calls.append(("count", kw))
@@ -276,7 +288,9 @@ def test_provider_contract_with_doubles(name: str):
             kw = stub.calls[-1][1]
             assert kw["reasoning"] == {"effort": "low"} and "temperature" not in kw and json.loads(reasoning.text) == PAYLOAD
         case "anthropic":
-            assert first["tools"][0]["name"] == "emit_result" and first["tool_choice"]["type"] == "tool"
+            fmt = first["output_config"]["format"]                          # F5.14: o Haiku 4.5 aceita o esquema (`output_config`)
+            assert fmt["type"] == "json_schema" and "maximum" not in fmt["schema"]["properties"]["n"] and "tools" not in first
+            assert "thinking" not in first                                  # o orçamento só em LOW e HIGH (Haiku 4.5)
             assert first["system"] == "You are precise." and first["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
             assert first["timeout"] == 120.0 and next(c for k, c in stub.calls if k == "count")["timeout"] == common.AUX_TIMEOUT_S
             assert next(c for k, c in stub.calls if k == "list")["timeout"] == common.AUX_TIMEOUT_S
@@ -287,7 +301,7 @@ def test_provider_contract_with_doubles(name: str):
             assert n == 42
             thinking = run(provider.complete(_req(LlmTask.CHAT, None, model="claude-sonnet-4-5", reasoning=Reasoning.LOW)))
             kw = stub.calls[-1][1]
-            assert kw["thinking"] == {"type": "enabled", "budget_tokens": 2048} and kw["max_tokens"] == 8192
+            assert kw["thinking"] == {"type": "enabled", "budget_tokens": 2048} and kw["max_tokens"] == 8192 + 2048   # F5.14: a folga
             assert thinking.text == "texto livre"
             forced = run(provider.complete(_req(model="claude-sonnet-4-5", reasoning=Reasoning.LOW)))
             assert "thinking" not in stub.calls[-1][1] and forced.data == PAYLOAD                      # ferramenta forçada: sem pensamento
@@ -513,11 +527,16 @@ def test_real_anthropic_client_has_no_sdk_retries_and_mock_transport_round_trip(
         seen.setdefault("timeout", dict(request.extensions.get("timeout") or {}))
         if seen.get("fail"):
             return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})
-        return httpx2.Response(200, json={
-            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-haiku-4-5-20251001",
-            "content": [{"type": "tool_use", "id": "tu_1", "name": "emit_result", "input": PAYLOAD}],
-            "stop_reason": "tool_use", "stop_sequence": None,
-            "usage": {"input_tokens": 9, "output_tokens": 3, "cache_read_input_tokens": 4, "cache_creation_input_tokens": 0}})
+        usage = {"input_tokens": 9, "output_tokens": 1, "cache_read_input_tokens": 4, "cache_creation_input_tokens": 0}
+        events = [{"type": "message_start", "message": {"id": "msg_1", "type": "message", "role": "assistant", "content": [],
+                                                        "model": "claude-haiku-4-5-20251001", "stop_reason": None, "usage": usage}},
+                  {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                  {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": json.dumps(PAYLOAD)}},
+                  {"type": "content_block_stop", "index": 0},
+                  {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 3}},
+                  {"type": "message_stop"}]                          # F5.14: o `complete()` lê pelo streaming (SSE)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                               content="".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
 
     async def main():
         p = AnthropicProvider("sk-ant-teste", net=NetworkConfig(system_certs=False, timeout_s=11.0))
@@ -539,8 +558,8 @@ def test_real_anthropic_client_has_no_sdk_retries_and_mock_transport_round_trip(
     assert comp.data == PAYLOAD and comp.usage.input_tokens == 13 and comp.usage.cached_tokens == 4 and comp.finish == "stop"
     assert seen["url"].endswith("/v1/messages") and "sk-ant-teste" in (seen["key"] or "")
     body = seen["body"]
-    assert body["tool_choice"] == {"type": "tool", "name": "emit_result", "disable_parallel_tool_use": True}
-    assert body["tools"][0]["input_schema"]["properties"]["n"]["maximum"] == 10 and body["system"] == "You are precise."
+    assert body["stream"] is True and "tools" not in body and "tool_choice" not in body          # F5.14: o Haiku 4.5 aceita o esquema
+    assert "maximum" not in body["output_config"]["format"]["schema"]["properties"]["n"] and body["system"] == "You are precise."
     assert body["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"} and body["max_tokens"] == 8192
 
 

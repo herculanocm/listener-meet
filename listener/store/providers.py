@@ -5,10 +5,14 @@ F5.1 (A-01): a linha `local` (embeddings na CPU, sem chave) só vale para o pape
 (`ensure_local`, dado e não esquema) só no caminho de escrita (as Configurações), nunca numa leitura (o `--check` abre só
 leitura); `set_role` faz um único `UPDATE` do papel, que escolhe um provedor ou zera o papel.
 Revisão da F5.4 (R-05): `tested_at` e `latency_ms` são da chave salva; trocar a chave sem dizer o teste dela os limpa (o
-selo "Conectado" só vale para a chave que passou no último teste)."""
+selo "Conectado" só vale para a chave que passou no último teste).
+F5.14 (item 8): `refresh_seeds` ao abrir o banco para escrita, depois das migrações (dado, não esquema: sem versão nova): as
+sementes de preço que faltam entram (`INSERT OR IGNORE`: preço editado não muda) e a linha do Claude sem chave com os
+padrões de 2025 gravados (o Salvar das Configurações grava os das três sub-abas) passa aos novos, cada coluna por si."""
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any, TypedDict, cast
 
 from ..log import get_logger
@@ -24,6 +28,9 @@ PROVIDER_FIELDS = frozenset({"api_key", "model", "params", "fast_model", "strong
                              "base_url"})
 ROLES = {"llm": "is_active_llm", "embed": "is_active_embed"}
 ROLE_KINDS: dict[str, tuple[str, ...]] = {"llm": LLM_KINDS, "embed": (*LLM_KINDS, LOCAL_ID)}
+# F5.14: os padrões do Claude de 2025 (rápido e forte), trocados pelos de `DEFAULT_MODELS` na linha sem chave
+CLAUDE_ID = "anthropic"
+CLAUDE_OLD_DEFAULTS: tuple[tuple[str, str], ...] = (("fast_model", "claude-haiku-4-5"), ("strong_model", "claude-sonnet-4-5"))
 
 
 class ProviderRow(TypedDict, total=False):
@@ -124,6 +131,37 @@ class ProvidersRepo:
         except ValueError:
             return []
         return [d for d in data if isinstance(d, dict)]
+
+    def refresh_seeds(self) -> None:
+        """F5.14 (item 8): as sementes de preço que faltam e os padrões novos do Claude. Só no caminho de escrita (o `Store`
+        do app chama ao abrir); confere lendo e só abre a transação quando há o que gravar, com as mesmas condições no
+        `WHERE`. O banco ocupado por outro processo não impede a abertura: fica para a próxima, com o aviso no log."""
+        from ..llm.costs import PRICE_SEEDS
+        from ..llm.models_table import DEFAULT_MODELS
+        from ..llm.types import ProviderKind
+
+        have = {(str(r["provider"]), str(r["model"])) for r in self.core.q("SELECT provider, model FROM llm_prices")}
+        missing = [p for p in PRICE_SEEDS if (p.provider, p.model) not in have]
+        row = self.get(CLAUDE_ID)
+        keyless = row is not None and not str(row.get("api_key") or "").strip()
+        stale = [(col, old) for col, old in CLAUDE_OLD_DEFAULTS if keyless and row is not None and row.get(col) == old]
+        if not missing and not stale:
+            return
+        new = dict(zip(("fast_model", "strong_model"), DEFAULT_MODELS[ProviderKind.ANTHROPIC], strict=True))
+        now = _now()
+        try:
+            with self.core.transaction() as c:
+                c.executemany("INSERT OR IGNORE INTO llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, "
+                              "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              [(p.provider, p.model, p.input_usd_m, p.output_usd_m, p.cached_usd_m, p.audio_usd_m, now) for p in missing])
+                for col, old in stale:
+                    c.execute(f"UPDATE providers SET {col} = ?, updated_at = ? WHERE id = ? AND {col} = ? "  # noqa: S608
+                              "AND TRIM(COALESCE(api_key, '')) = ''", (new[col], now, CLAUDE_ID, old))
+        except sqlite3.OperationalError as e:
+            log.warning("ao abrir: sementes de preço e padrões do Claude ficam para a próxima abertura (%s)", e)
+            return
+        log.info("ao abrir: %d semente(s) de preço nova(s); provedor %s: %s", len(missing), CLAUDE_ID,
+                 ", ".join(f"{col} {old} -> {new[col]}" for col, old in stale) or "padrões mantidos")
 
     # ---------------------------------------------------------------- preços (llm_prices)
     def list_prices(self, provider: str | None = None) -> list[dict[str, Any]]:
