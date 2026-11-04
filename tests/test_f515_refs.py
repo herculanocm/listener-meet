@@ -17,6 +17,7 @@ from listener.live import proc
 from listener.model import ClusterStatus, EmbeddingSource, JobStatus
 from listener.pipeline import review
 from listener.pipeline.profiles import load_profile_refs
+from listener.pipeline.review_suggest import similarity_to
 from listener.pipeline.types import JobConfig
 from listener.store import Store
 from listener.store.profiles import MAX_REFS, REF_COS, Calibration, ProfileRow, calibrate, normalize
@@ -137,11 +138,11 @@ def test_review_similarity_is_by_the_person_references(store: Store):
     ids = store.segments.insert_clusters([ClusterInsert(mid, job, "R", "SPK_0", 20_000, _tone_vec(330), MODEL, ClusterStatus.UNNAMED),
                                           ClusterInsert(mid, job, "R", "SPK_1", 20_000, None, None, ClusterStatus.UNNAMED)])
     voice = store.segments.get_cluster(ids["SPK_0"])
-    assert review._similarity_to(store, voice, ana) == pytest.approx(1.0, abs=1e-3)           # a referência da condição nova
+    assert similarity_to(store, voice, ana) == pytest.approx(1.0, abs=1e-3)           # a referência da condição nova
     store.set_setting("pipeline.max_refs", "1")                                                 # a revisão lê a cada ação
-    assert review._similarity_to(store, voice, ana) == pytest.approx(1 / np.sqrt(5), abs=0.01)
-    assert review._similarity_to(store, voice, store.people.create_person("Bia")) is None       # sem perfil
-    assert review._similarity_to(store, store.segments.get_cluster(ids["SPK_1"]), ana) is None  # voz sem vetor
+    assert similarity_to(store, voice, ana) == pytest.approx(1 / np.sqrt(5), abs=0.01)
+    assert similarity_to(store, voice, store.people.create_person("Bia")) is None       # sem perfil
+    assert similarity_to(store, store.segments.get_cluster(ids["SPK_1"]), ana) is None  # voz sem vetor
 
 
 def test_job_config_and_worker_snapshot_carry_the_two_settings(store: Store):

@@ -24,12 +24,13 @@ from ..fmt import plural
 from ..log import get_logger
 from ..model import JobStep, SummaryKind
 from ..pipeline import llm_requests, review
+from ..pipeline.review_suggest import LearnHint, learn_hints
 from ..pipeline.voices import VoiceNames, voice_names
 from .common import click_focused_button, keep_until_destroyed
 from .llm_tabs import ActionsTab, LlmTabsGroup, TextTab, TitleTab
 from .player import ERROR, PlayerState
 from .review_actions import ReviewActionsMixin
-from .review_cards import VoiceCardDelegate, card_item, stage_primary
+from .review_cards import VoiceCardDelegate, card_item, stage_primary, taken_voices
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -52,6 +53,7 @@ class ReviewDialog(ReviewActionsMixin, QDialog):
         self.player = player                               # F5: o player único do app (None = sem som nesta janela)
         self.items: list[review.ReviewItem] = []
         self.names = VoiceNames()                          # U-035: "Voz 2" no lugar do rótulo interno
+        self.hints: dict[int, LearnHint] = {}               # F5.15 (U-138): a previsão da linha do U-101, por voz
         self.played: list[tuple[str, int, int]] = []       # instrumentação dos testes
         self.reloads = 0
         m = store.get_meeting(meeting_id) or {}
@@ -172,9 +174,11 @@ class ReviewDialog(ReviewActionsMixin, QDialog):
         current = keep if keep is not None else self.current_cluster_id()
         self.items = review.review_items(self.store, self.meeting_id)
         self.names = voice_names(self.store, self.meeting_id)
+        self.hints = self._learn_hints()
+        taken = taken_voices(self.items)                   # U-137: "(já na Voz N)"
         self.list.clear()
         for it in self.items:
-            self.list.addItem(card_item(it, self.names))   # U-086: o cartão com o estado em selo
+            self.list.addItem(card_item(it, self.names, taken.get(it.cluster_id)))   # U-086: o cartão com o estado em selo
         waiting = review.pending(self.items)
         stage_primary(self.btn_confirm if waiting else self.btn_finish, (self.btn_confirm, self.btn_finish))
         self.header.setText("Tudo confirmado: nenhuma voz pendente." if not waiting else
@@ -191,6 +195,14 @@ class ReviewDialog(ReviewActionsMixin, QDialog):
         self.apply_actions()
         if focus:
             self.list.setFocus()
+
+    def _learn_hints(self) -> dict[int, LearnHint]:
+        """U-138, só para as pessoas dos cards; uma falha não trava a revisão: a linha fica a de antes."""
+        try:
+            return learn_hints(self.store, self.meeting_id, self.items)
+        except Exception as e:
+            log.warning("reunião %s: a previsão das referências de voz falhou: %s", self.meeting_id, e)
+            return {}
 
     @override
     def current_cluster_id(self) -> int | None:

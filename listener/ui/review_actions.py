@@ -1,7 +1,8 @@
 """Os botões da revisão de falantes pelo resultado (F5.11 L1, U-098 a U-101), fora do `ui/review.py` (A-35).
 
-`action_labels(item, names)` é pura (A-19): o principal (Enter), a sugestão pelo contexto (L) e a linha do que a
-confirmação faz (U-101), conforme o estado da voz selecionada, com o nome e sem gênero (P-01):
+`action_labels(item, names, hint)` é pura (A-19): o principal (Enter), a sugestão pelo contexto (L) e a linha do que a
+confirmação faz (U-101; F5.15, U-138: com a previsão `hint`, a referência nova ou o total), conforme o estado da voz
+selecionada, com o nome e sem gênero (P-01):
 
 | Estado da voz | Principal (Enter) | L |
 | --- | --- | --- |
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QInputDialog, QLabel, QMenu, QMessageBox, QVBoxLayout, QWidget
 
+from ..fmt import plural
 from ..model import BY_CONTEXT, ClusterStatus, JobStep
 from ..pipeline import review
 from .review_cards import KeyButton
@@ -31,12 +33,14 @@ from .review_person import PersonActionsMixin
 from .theme import note
 
 if TYPE_CHECKING:
+    from ..pipeline.review_suggest import LearnHint
     from ..pipeline.voices import VoiceNames
     from .player import Player
 
 CHOOSE_TEXT = "Escolher pessoa…"
 NO_CONTEXT = f"Sem sugestão {BY_CONTEXT}"
 UNDO = "Para desfazer, escolha outra pessoa, ignore ou mescle numa voz sem pessoa."     # P-03: os três tiram o reforço
+NEW_REF = "ganha uma referência nova: esta voz é diferente das que o perfil já tem"     # U-138 (F5.15)
 MORE_TIP = f"Mesclar com outra voz, ignorar, editar a pessoa ou sugerir de novo {BY_CONTEXT}"
 NAME_CHARS = 14                      # o nome que cabe inteiro em "É <nome>, pelo contexto"; maior é cortado no meio (A-19)
 
@@ -55,8 +59,9 @@ class ReviewActions:
     line: str                        # U-101: o que a confirmação faz e como desfazer
 
 
-def action_labels(item: review.ReviewItem | None, names: VoiceNames) -> ReviewActions:
-    """A-19: os rótulos da voz `item` por estado (a tabela do módulo); `names` dá o "Voz 3" da mesclada."""
+def action_labels(item: review.ReviewItem | None, names: VoiceNames, hint: LearnHint | None = None) -> ReviewActions:
+    """A-19: os rótulos da voz `item` por estado (a tabela do módulo); `names` dá o "Voz 3" da mesclada; `hint` (U-138) é a
+    previsão do que a confirmação faz com o perfil (sem ela, a linha de antes)."""
     if item is None:
         return ReviewActions(Primary.NONE, "Confirmar", None, "")
     if item.merged_into is not None:
@@ -64,19 +69,22 @@ def action_labels(item: review.ReviewItem | None, names: VoiceNames) -> ReviewAc
         return ReviewActions(Primary.NONE, f"É a mesma que a {target}", None, f"Mesclada com a {target}.")
     name = item.person_name
     if item.status == ClusterStatus.CONFIRMED:
-        return ReviewActions(Primary.NONE, f"É {name}" if name else "Confirmada", None, _done_line(item, name))
+        return ReviewActions(Primary.NONE, f"É {name}" if name else "Confirmada", None, _done_line(item, name, hint))
     context = f"É {item.llm_name}, {BY_CONTEXT}" if item.has_llm else None
     if item.person_id is None or not name:
         return ReviewActions(Primary.CHOOSE, CHOOSE_TEXT, context, _choose_line(item))
     text = f"Confirmar {name}" if item.status == ClusterStatus.AUTO else f"É {name}"
-    return ReviewActions(Primary.CONFIRM, text, context, _confirm_line(item, name))
+    return ReviewActions(Primary.CONFIRM, text, context, _confirm_line(item, name, hint))
 
 
-def _confirm_line(item: review.ReviewItem, name: str) -> str:
-    """U-101: sem vetor da voz, a confirmação só dá o nome às falas; a linha não promete aprendizado."""
-    if item.has_centroid:
-        return f"Ao confirmar, o perfil de voz de {name} aprende com esta fala. {UNDO}"
-    return f"Ao confirmar, as falas desta voz ficam com o nome de {name}."
+def _confirm_line(item: review.ReviewItem, name: str, hint: LearnHint | None = None) -> str:
+    """U-101: sem vetor da voz, a confirmação só dá o nome às falas; a linha não promete aprendizado. U-138: a voz que fica
+    sozinha num grupo ganha uma referência nova no perfil."""
+    if not item.has_centroid:
+        return f"Ao confirmar, as falas desta voz ficam com o nome de {name}."
+    if hint is not None and hint.new_ref:
+        return f"Ao confirmar, o perfil de voz de {name} {NEW_REF}. {UNDO}"
+    return f"Ao confirmar, o perfil de voz de {name} aprende com esta fala. {UNDO}"
 
 
 def _choose_line(item: review.ReviewItem) -> str:
@@ -85,12 +93,14 @@ def _choose_line(item: review.ReviewItem) -> str:
     return "Ao escolher a pessoa, as falas desta voz ficam com o nome dela."
 
 
-def _done_line(item: review.ReviewItem, name: str) -> str:
-    """A confirmada: o "Para desfazer" só com o vetor dela no perfil (a que veio de um reprocessamento o tem na voz antiga)."""
+def _done_line(item: review.ReviewItem, name: str, hint: LearnHint | None = None) -> str:
+    """A confirmada: o "Para desfazer" só com o vetor dela no perfil (a que veio de um reprocessamento o tem na voz antiga);
+    U-138: com as referências de agora."""
     if not name:
         return ""
     if item.learned:
-        return f"O perfil de voz de {name} aprendeu com esta fala. {UNDO}"
+        total = f" (agora {plural(hint.total, 'referência', 'referências')})" if hint is not None else ""
+        return f"O perfil de voz de {name} aprendeu com esta fala{total}. {UNDO}"
     return f"As falas desta voz estão com o nome de {name}."
 
 
@@ -98,6 +108,7 @@ class ReviewActionsMixin(PersonActionsMixin):
     """As ações da voz do `ReviewDialog` (o diálogo é o pai das caixas de pergunta e do menu)."""
     items: list[review.ReviewItem]
     names: VoiceNames
+    hints: dict[int, LearnHint]                       # U-138: voz -> a previsão da linha do U-101 (`ReviewDialog.reload`)
     player: Player | None
     played: list[tuple[str, int, int]]
 
@@ -157,7 +168,7 @@ class ReviewActionsMixin(PersonActionsMixin):
     def apply_actions(self) -> None:
         """Os rótulos da voz selecionada (A-19): o principal, o L, os itens do "Mais" e a linha do U-101."""
         it = self.current_item()
-        acts = action_labels(it, self.names)
+        acts = action_labels(it, self.names, self.hints.get(it.cluster_id) if it is not None else None)
         self.btn_confirm.set_label(acts.primary_text, "Enter")
         self.btn_confirm.setEnabled(acts.primary is not Primary.NONE)
         self.btn_llm.set_label(acts.context_text or NO_CONTEXT, "L")
@@ -260,4 +271,4 @@ class ReviewActionsMixin(PersonActionsMixin):
         self.regenerate(JobStep.IDENTIFY)
 
 
-__all__ = ["CHOOSE_TEXT", "NO_CONTEXT", "UNDO", "Primary", "ReviewActions", "ReviewActionsMixin", "action_labels"]
+__all__ = ["CHOOSE_TEXT", "NEW_REF", "NO_CONTEXT", "UNDO", "Primary", "ReviewActions", "ReviewActionsMixin", "action_labels"]

@@ -1,7 +1,8 @@
 """A ficha da pessoa na revisão de falantes (U-041, F5.2), fora do `ui/review.py`, que passava de 400 linhas (F5.4 L4): "Outra
-pessoa" (O, a escolha pelo id), "Nova pessoa" (N, a ficha; nome repetido pergunta "é ela?"), "Editar pessoa" (E, só voz com
-pessoa decidida; item do "Mais" desde a F5.11, U-100) e "Apagar pessoa…" (LGPD; confirmação, CP3). A base do mixin das
-ações (`ui/review_actions.py`), que o `ReviewDialog` herda: usa o estado e os métodos dele."""
+pessoa" (O, a escolha pelo id; F5.15, U-136: as 3 mais parecidas pela voz no topo), "Nova pessoa" (N, a ficha; nome repetido
+pergunta "é ela?"), "Editar pessoa" (E, só voz com pessoa decidida; item do "Mais" desde a F5.11, U-100) e "Apagar
+pessoa…" (LGPD; confirmação, CP3). A base do mixin das ações (`ui/review_actions.py`), que o `ReviewDialog` herda: usa o
+estado e os métodos dele."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import QDialog, QInputDialog, QLabel, QMessageBox, QWidge
 
 from ..log import get_logger
 from ..model import ClusterStatus
-from ..pipeline import review
+from ..pipeline import review, review_suggest
 from ..pipeline import review_person as sheet
 from .person import DELETE, PersonData, PersonDialog, person_data, person_labels
 
@@ -25,6 +26,11 @@ DELETE_TEXT = ("Apagar {name}?\n\nSaem a ficha, o perfil de voz e o vínculo com
                "reuniões; as vozes dela voltam a \"sem nome\". O áudio e as falas ficam.\n\nAtas, resumos, respostas do chat e o "
                "histórico das chamadas à IA já gerados não mudam: use \"Gerar de novo\" para refazê-los sem o nome.")
 EDITABLE = (ClusterStatus.CONFIRMED, ClusterStatus.AUTO)         # U-041 (A-12): só voz com pessoa decidida tem ficha a editar
+TOP_BY_VOICE = 3                                                  # U-136: as mais parecidas no topo do "Outra pessoa…"
+
+
+def _decimal(x: float) -> str:
+    return f"{x:.2f}".replace(".", ",")
 
 
 class PersonActionsMixin:
@@ -57,15 +63,28 @@ class PersonActionsMixin:
         return self if isinstance(self, QWidget) else None
 
     def ask_other_person(self) -> None:
-        """"Outra pessoa": a lista mostra "Nome — Cargo · Empresa" e a escolha vai pelo id (homônimos, A-11)."""
+        """"Outra pessoa" (e o "Escolher pessoa…"): no topo, as 3 de maior nota pela voz, sem a já sugerida, com a nota
+        ("Ana — CFO · voz 0,58", U-136); depois, "Nome — Cargo · Empresa" em ordem alfabética. A escolha vai do índice para
+        o id, nunca pelo nome (homônimos, A-11)."""
         people = self.store.people.list_people()
         if not people:
             self.ask_new_person()
             return
-        labels = person_labels(people)
-        choice, ok = QInputDialog.getItem(self._parent(), "Outra pessoa", "Quem é esta voz?", labels, 0, False)
-        if ok and choice in labels:
-            self.confirm_current(int(people[labels.index(choice)]["id"]))
+        ids, labels = [int(p["id"]) for p in people], person_labels(people)
+        top = self._top_by_voice(dict(zip(ids, labels, strict=True)))
+        shown = [label for _, label in top] + labels
+        choice, ok = QInputDialog.getItem(self._parent(), "Outra pessoa", "Quem é esta voz?", shown, 0, False)
+        if ok and choice in shown:
+            self.confirm_current(([pid for pid, _ in top] + ids)[shown.index(choice)])
+
+    def _top_by_voice(self, labels: dict[int, str]) -> list[tuple[int, str]]:
+        """U-136: as `TOP_BY_VOICE` pessoas de maior nota contra a voz atual, sem a já sugerida (pergunta 5); nenhuma na voz
+        sem vetor ou sem perfil no modelo."""
+        it = self.current_item()
+        if it is None or not it.has_centroid:
+            return []
+        ranked = [(pid, s) for pid, s in review_suggest.voice_ranking(self.store, it.cluster_id) if pid != it.person_id and pid in labels]
+        return [(pid, f"{labels[pid]} · voz {_decimal(s)}") for pid, s in ranked[:TOP_BY_VOICE]]
 
     def ask_new_person(self) -> None:
         """U-041: a ficha da pessoa (nome obrigatório; cargo, empresa e e-mail opcionais)."""

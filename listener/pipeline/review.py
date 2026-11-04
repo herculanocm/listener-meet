@@ -20,7 +20,8 @@ from ..log import get_logger
 from ..model import BY_CONTEXT, BY_VOICE, ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
 from ..store.segments import ClusterRow, resolve_person, role_of
-from .profiles import person_similarity, voice_settings
+from .profiles import voice_settings
+from .review_suggest import refresh_suggestions, similarity_to
 from .runner import STITCH_ARTIFACT, USER_CLUSTER
 from .types import unpack_artifact
 from .voices import NO_NAMES, VoiceNames, numbering, speaker_of, voice_label
@@ -260,13 +261,6 @@ def decode_clip(store: Store, meeting_id: int, channel: str, t0_ms: int, t1_ms: 
 
 
 # ---------------------------------------------------------------- ações (todas por ação do usuário)
-def _similarity_to(store: Store, c: ClusterRow, person_id: int) -> float | None:
-    """F5.15 item 4: a nota da voz pelas referências da pessoa, com as configurações de agora; None sem perfil utilizável."""
-    if not c["centroid"].size or not c.get("model"):
-        return None
-    return person_similarity(store, str(c["model"]), c["centroid"], person_id, *voice_settings(store))
-
-
 def decision_source_for(c: ClusterRow, pid: int) -> DecisionSource:
     """O que o usuário aceitou (F3 item 5, mede o G3): a sugestão do pyannote, a da LLM, outra pessoa ou nenhuma sugestão."""
     pyannote = c.get("person_id")
@@ -300,19 +294,20 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     if person is None:
         raise ValueError(f"pessoa {pid} não existe")
     meeting = store.get_meeting(int(c["meeting_id"])) or {}
-    sim = c.get("similarity") if pid == c.get("person_id") else _similarity_to(store, c, pid)
+    sim = c.get("similarity") if pid == c.get("person_id") else similarity_to(store, c, pid)
     segs = [s for s in store.segments.list_segments(int(c["meeting_id"]), int(c["job_id"])) if s.get("cluster_id") == cluster_id]
     previous = int(c["person_id"]) if str(c["status"]) == ClusterStatus.CONFIRMED and c.get("person_id") is not None else None  # type: ignore[arg-type]
     ref_cos, max_refs = voice_settings(store)                                      # F5.15 item 8: lidas a cada ação
     with store.transaction():
-        if previous is not None and previous != pid:
-            _unlearn(store, c, str(pid), author)                                   # correção: o vetor sai do perfil anterior (R2-09)
+        changed = _unlearn(store, c, str(pid), author) if previous is not None and previous != pid else set()   # correção (R2-09)
         store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid, decision_source=str(source))
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, pid, str(person.get("role") or "") or None)
         if c["centroid"].size and c.get("model") and previous != pid:              # a nota só vai ao evento e ao log (item 5)
             store.profiles.confirm(pid, str(c["model"]), c["centroid"], int(c["meeting_id"]),
                                    segment_id=int(segs[0]["id"]) if segs else None, platform=meeting.get("platform"),
                                    cluster_id=cluster_id, ref_cos=ref_cos, max_refs=max_refs)
+            changed.add(pid)
+        refresh_suggestions(store, int(c["meeting_id"]), int(c["job_id"]), changed)   # F5.15 item 9: as pendentes, pelo perfil novo
         store.add_revision("cluster", cluster_id, "person_id", c.get("person_id"), pid, author)
         store.add_event(int(c["meeting_id"]), None, EventType.PROFILE_CONFIRM,
                         {"cluster_id": cluster_id, "person_id": pid, "similarity": sim, "label": c["cluster"]})
@@ -320,15 +315,17 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     return pid
 
 
-def _unlearn(store: Store, c: ClusterRow, after: str, author: str) -> None:
+def _unlearn(store: Store, c: ClusterRow, after: str, author: str) -> set[int]:
     """R2-09 e P-03 (F5.11): a voz confirmada que deixa a pessoa tira o vetor do perfil (fonte `invalidado`, nada apagado,
-    CP3), na transação de quem chama; F5.15: o espelho é refeito sem ele, inclusive o limiar (fecha a dívida da F2)."""
+    CP3), na transação de quem chama; F5.15: o espelho é refeito sem ele, inclusive o limiar. Devolve quem mudou (ou nada)."""
     pid = c.get("person_id")
     if str(c["status"]) != ClusterStatus.CONFIRMED or pid is None or not c.get("model"):
-        return
+        return set()
     old = store.profiles.profile_for(int(pid), str(c["model"]))  # type: ignore[arg-type]
-    if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), int(c["id"]), *voice_settings(store)):
-        store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {c['id']}", after, author)
+    if old is None or not store.profiles.invalidate_cluster_embeddings(int(old["id"]), int(c["id"]), *voice_settings(store)):
+        return set()
+    store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {c['id']}", after, author)
+    return {int(pid)}  # type: ignore[arg-type]
 
 
 def new_person(store: Store, cluster_id: int, name: str, role: str = "", author: str = "usuario",
@@ -362,7 +359,7 @@ def ignore(store: Store, cluster_id: int, author: str = "usuario") -> None:
     if c is None:
         return
     with store.transaction():
-        _unlearn(store, c, str(ClusterStatus.IGNORED), author)                     # P-03: ignorar a confirmada desfaz o reforço
+        refresh_suggestions(store, int(c["meeting_id"]), int(c["job_id"]), _unlearn(store, c, str(ClusterStatus.IGNORED), author))   # P-03
         store.segments.update_cluster(cluster_id, status=ClusterStatus.IGNORED)
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
         store.add_revision("cluster", cluster_id, "status", c["status"], ClusterStatus.IGNORED, author)
@@ -387,7 +384,7 @@ def merge(store: Store, cluster_id: int, into_cluster_id: int, author: str = "us
         if pid is not None:
             confirm(store, cluster_id, pid, author)
         else:                                                                  # P-03: numa voz sem pessoa, sai do perfil
-            _unlearn(store, c, f"cluster {into_cluster_id}", author)               # e as falas seguem o alvo, sem nome
+            refresh_suggestions(store, int(c["meeting_id"]), int(c["job_id"]), _unlearn(store, c, f"cluster {into_cluster_id}", author))
             store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, None, None)
             if str(c["status"]) == ClusterStatus.CONFIRMED:                        # a confirmada perde a pessoa, como no "Ignorar"
                 store.segments.update_cluster(cluster_id, status=ClusterStatus.UNNAMED, person_id=None)   # (a sugestão fica)

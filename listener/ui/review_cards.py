@@ -13,7 +13,7 @@
   com foco, o Enter aciona esse botão (`ReviewDialog.keyPressEvent`, R-01 da revisão da F5.4)."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPersistentModelIndex, QPointF, QRect, QRectF, QSize, Qt, Signal
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractScrollArea, QListView
                                QToolTip, QWidget)
 
 from ..model import ClusterStatus
+from ..store.segments import ClusterRow, resolve_person
 from . import icons
 from .style import rounded
 from .theme import KIND_PROP, PRIMARY, Tone, font_for, qcolor, set_kind, surface_tokens
@@ -68,8 +69,23 @@ def card_detail(summary: str, badge: str) -> str:
     return "" if summary == badge else summary
 
 
-def card_item(item: ReviewItem, names: VoiceNames) -> QListWidgetItem:
-    """O item da lista de uma voz: os papéis do cartão e a linha inteira no `DisplayRole`."""
+def taken_voices(items: Sequence[ReviewItem]) -> dict[int, int]:
+    """U-137 (F5.15, pergunta 2): a voz pendente cuja sugestão é uma pessoa já decidida (automática ou confirmada, pela
+    `resolve_person`) noutra voz da reunião -> essa outra voz. Calculado aqui, com os itens da tela, e não no `review_items`,
+    que conta pendentes noutros lugares (A-07)."""
+    rows = {it.cluster_id: ClusterRow(id=it.cluster_id, person_id=it.person_id, status=str(it.status), merged_into=it.merged_into)
+            for it in items}
+    decided: dict[int, int] = {}
+    for it in items:
+        if it.merged_into is None and (pid := resolve_person(rows[it.cluster_id], rows)) is not None:
+            decided.setdefault(pid, it.cluster_id)
+    return {it.cluster_id: decided[it.person_id] for it in items if it.pending and it.merged_into is None
+            and it.person_id is not None and decided.get(it.person_id, it.cluster_id) != it.cluster_id}
+
+
+def card_item(item: ReviewItem, names: VoiceNames, taken: int | None = None) -> QListWidgetItem:
+    """O item da lista de uma voz: os papéis do cartão e a linha inteira no `DisplayRole`. `taken` (U-137): a voz onde a
+    pessoa sugerida já está decidida, dita depois do nome ("Ana (já na Voz 2)")."""
     title = names.title(item.cluster_id, item.title)
     badge, tone = badge_of(item)
     if item.merged_into is not None:
@@ -77,6 +93,8 @@ def card_item(item: ReviewItem, names: VoiceNames) -> QListWidgetItem:
         detail, shown = f"mesclada com a {target}", f"é a mesma que a {target}"
     else:
         detail = item.summary()
+        if taken is not None and item.person_name:
+            detail = detail.replace(item.person_name, f"{item.person_name} (já na {names.title(taken, f'voz #{taken}')})", 1)
         shown = card_detail(detail, badge)
     out = QListWidgetItem(f"{title} · {item.minutes_text} · {detail}")
     out.setData(Qt.ItemDataRole.UserRole, item.cluster_id)
@@ -307,4 +325,4 @@ def stage_primary(primary: QPushButton, others: Iterable[QPushButton]) -> None:
 
 
 __all__ = ["BADGE_ROLE", "BADGE_TONE_ROLE", "DETAIL_ROLE", "META_ROLE", "PLAY_TEXT", "PLAY_TIP", "STATUS_BADGES", "TITLE_ROLE",
-           "KeyButton", "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "stage_primary"]
+           "KeyButton", "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "stage_primary", "taken_voices"]

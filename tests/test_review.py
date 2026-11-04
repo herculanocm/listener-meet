@@ -8,6 +8,7 @@ import pytest
 
 from listener.model import ClusterStatus, EventType, MeetingStatus
 from listener.pipeline import review
+from listener.pipeline.review_suggest import similarity_to
 from listener.pipeline.runner import JobRunner
 from tests.fake_pipeline import FakeDeps
 from tests.test_runner import CFG, SCRIPT, _record
@@ -54,7 +55,7 @@ def test_review_logic_confirm_new_person_merge_ignore_and_finish(platform, store
     assert store._q("SELECT field, after FROM revisions WHERE entity = 'cluster'")[0]["after"] == str(ana)
     assert EventType.PROFILE_CONFIRM in [e["type"] for e in store.list_events(mid)]
     # mesma pessoa de novo (outro cluster): a nota pelas referências dela vai ao evento; o limiar sai das amostras (F5.15)
-    sim = review._similarity_to(store, store.segments.get_cluster(items[1].cluster_id), ana)
+    sim = similarity_to(store, store.segments.get_cluster(items[1].cluster_id), ana)
     assert sim is not None and sim < 0.2
     with caplog.at_level(logging.INFO, logger="listener.pipeline.review"):
         review.confirm(store, items[1].cluster_id, ana)
