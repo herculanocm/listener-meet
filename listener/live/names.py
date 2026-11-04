@@ -2,8 +2,9 @@
 a margem da F2 (`pipeline.threshold`, `pipeline.margin`, o limiar calibrado do perfil quando existe) e o desempate pelos
 participantes esperados do warm-up (`meetings.expected_people_json`). O `ProfileMatcher` da F2 casa clusters inteiros e
 exige 10 s de fala para `auto`; aqui é uma janela de 0,5 a 10 s, então a decisão é por janela e a suavização por canal
-segura o nome quando a janela nova não decide mas soa como a anterior. Só exibição: nada aqui grava clusters, segmentos
-nem perfis (CP11)."""
+segura o nome quando a janela nova não decide mas soa como a anterior. F5.15 (item 4): a nota de cada pessoa é o maior
+cosseno com as referências dela e o limiar segue a variante do app (`THRESHOLD_VARIANT`). Só exibição: nada aqui grava
+clusters, segmentos nem perfis (CP11)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -12,8 +13,8 @@ from typing import Any
 
 import numpy as np
 
-from ..pipeline.profiles import ProfileRef
-from ..store.profiles import normalize
+from ..pipeline.profiles import ProfileRef, person_scores
+from ..store.profiles import THRESHOLD_VARIANT, normalize, threshold_for
 
 SMOOTH_COS = 0.80                 # janelas seguidas com cosseno >= isto são a mesma voz
 PARTICIPANT = "Participante"      # abaixo do limiar (ou sem decisão)
@@ -32,8 +33,9 @@ class NameMatch:
         return self.person_id is not None
 
 
-def _threshold(p: ProfileRef, default: float) -> float:
-    return p.threshold if p.threshold is not None else default
+def _threshold(p: ProfileRef, ref: int, default: float) -> float:
+    """O limiar da pessoa pela variante (F5.15 item 5): na P, a referência vencedora de uma amostra só decide pelo global."""
+    return threshold_for(THRESHOLD_VARIANT, p.threshold, p.sizes[ref] if p.sizes else None, default)
 
 
 def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float, margin: float,
@@ -45,13 +47,14 @@ def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float,
     usable = [p for p in profiles if p.refs.shape[1] == v.size and np.any(p.refs) and np.all(np.isfinite(p.refs))]
     if not usable or not np.all(np.isfinite(v)) or not np.any(v):           # vetor NaN (janela estranha) não decide nada
         return NameMatch(None)
-    sims = np.stack([p.refs[0] for p in usable]) @ v                      # F5.15 L0: ainda a média única (a 1ª referência)
+    scores, refs = person_scores(v.reshape(1, -1), usable)                # por pessoa: a referência mais próxima
+    sims, won = scores[0], refs[0]
     order = np.argsort(-sims)
     by_person = {p.person_id: float(s) for p, s in zip(usable, sims, strict=True)}
     best, best_sim = usable[int(order[0])], float(sims[order[0]])
     second_sim = float(sims[order[1]]) if len(order) > 1 else 0.0
     m = best_sim - second_sim
-    if best_sim < _threshold(best, threshold):
+    if best_sim < _threshold(best, int(won[order[0]]), threshold):
         return NameMatch(None, best_sim, m, best.person_id, by_person)
     if m >= margin:
         return NameMatch(best.person_id, best_sim, m, best.person_id, by_person)
@@ -60,8 +63,8 @@ def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float,
     runner = usable[int(order[1])]
     in_best, in_runner = best.person_id in expected_ids, runner.person_id in expected_ids
     if in_best != in_runner:
-        winner, wsim = (best, best_sim) if in_best else (runner, second_sim)
-        if wsim >= _threshold(winner, threshold):
+        winner, wsim, ref = (best, best_sim, int(won[order[0]])) if in_best else (runner, second_sim, int(won[order[1]]))
+        if wsim >= _threshold(winner, ref, threshold):
             return NameMatch(winner.person_id, wsim, m, best.person_id, by_person)
     return NameMatch(None, best_sim, m, best.person_id, by_person)
 

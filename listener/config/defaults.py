@@ -16,6 +16,9 @@ TRANSCRIBERS = ("whisper", "llm")                            # F3 item 9: "llm" 
 HF_PROVIDER_ID = "huggingface"
 LIVE_MODELS = ("small", "base")                              # F4 Q4: `small` padrão, `base` na degradação
 LIVE_MIN_CORES = 8                                           # F4 Q1: ao vivo ligado por padrão só a partir daqui
+# F5.15: os padrões das referências de voz medidos no L0 (o corte, o teto e a variante do limiar), num lugar só. Moram aqui e
+# não em `store/profiles.py` (que os reexporta) porque o `store` importa o `config`: o contrário seria import circular
+REF_COS, MAX_REFS, THRESHOLD_VARIANT = 0.80, 5, "P"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +145,11 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
                 advanced=True),
     SettingSpec("pipeline.margin", 0.05, _NOW, "Margem entre os dois melhores perfis (0,01 a 0,20)", float, low=0.01, high=0.20,
                 phase="F2", advanced=True),
+    # F5.15 (item 8): as referências de voz; o worker lê no próximo job, o ao vivo na próxima gravação e a revisão a cada ação
+    SettingSpec("pipeline.ref_cos", REF_COS, _NOW, "Semelhança para juntar amostras numa referência de voz (0,60 a 0,95)", float,
+                low=0.60, high=0.95, phase="F5.15", advanced=True),
+    SettingSpec("pipeline.max_refs", MAX_REFS, _NOW, "Referências de voz por pessoa (1 a 10)", int, low=1, high=10, phase="F5.15",
+                advanced=True),
     SettingSpec("pipeline.models_dir", "", _NOW, "Pasta dos modelos (vazio = pasta padrão do sistema)", _text, phase="F2",
                 advanced=True),
     SettingSpec("pipeline.torch_threads", _default_threads(), _NOW, "Threads de CPU do processamento", int, low=1, high=64, phase="F2",

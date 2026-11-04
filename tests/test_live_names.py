@@ -58,6 +58,17 @@ def test_match_one_threshold_margin_calibration_and_expected_tie_break():
     assert not names.match_one(e(0), one, 0.0, 2.0).decided                         # margem acima do próprio cosseno
 
 
+def test_match_one_scores_each_person_by_the_nearest_reference_with_variant_p():
+    """F5.15: a nota é a da referência mais próxima; a referência de uma amostra só decide pelo global (P), a de 4 pelo da
+    pessoa; a suavização segue por pessoa."""
+    ana = ProfileRef(10, 1, np.stack([e(0), e(3)]), 0.75, "p1", sizes=(4, 1))
+    profiles = [ana, ref(2, e(1))]
+    near_new = names.match_one(e(3) + e(5), profiles, 0.60, 0.05)                    # cosseno 0,707 com a referência nova
+    assert near_new.person_id == 1 and near_new.similarity == pytest.approx(0.7071, abs=1e-3) and set(near_new.sims) == {1, 2}
+    assert not names.match_one(e(0) + e(5), profiles, 0.60, 0.05).decided            # 0,707 com a de 4 amostras: limiar 0,75
+    assert names.match_one(e(0) + 0.2 * e(5), profiles, 0.60, 0.05).person_id == 1   # 0,98: passa do limiar dela
+
+
 def test_channel_smoothing_keeps_the_previous_person_only_when_the_voice_is_similar():
     namer = names.ChannelNamer()
     first = names.NameMatch(7, 0.9, 0.3, 7, {7: 0.9})
@@ -81,8 +92,8 @@ def _db(tmp_path, in_room: bool = False) -> tuple[object, int, dict[str, int]]:
     with Store(db) as s:
         ids = {"me": s.upsert_me("Eu", role="Gerente"), "ana": s.people.create_person("Ana", role="CFO"),
                "bia": s.people.create_person("Bia")}
-        s.profiles.confirm(ids["ana"], "fake-tone-256", _tone_vec(220), None, None)
-        s.profiles.confirm(ids["bia"], "fake-tone-256", _tone_vec(440), None, None)
+        s.profiles.confirm(ids["ana"], "fake-tone-256", _tone_vec(220), None)
+        s.profiles.confirm(ids["bia"], "fake-tone-256", _tone_vec(440), None)
         mid = s.create_meeting("nomes", None, None, None, is_in_room=in_room)
     return db, mid, ids
 

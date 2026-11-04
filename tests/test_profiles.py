@@ -1,6 +1,6 @@
-"""Perfis de voz, pessoas e segmentos (F2 L1): centroide só de cadastro e confirmação, Welford e limiar clipado,
-segmentos em lote, troca atômica do reprocessamento e resolução de mesclas. F5.15 L0: o agrupamento das amostras, as
-referências, o limiar calculado das amostras, as variantes A, P e C e as amostras ativas numa consulta."""
+"""Perfis de voz, pessoas e segmentos (F2 L1): o perfil só de cadastro e confirmação, o limiar clipado, segmentos em lote,
+troca atômica do reprocessamento e resolução de mesclas. F5.15: o agrupamento das amostras, as referências, o limiar
+calculado das amostras, as variantes A, P e C, as amostras ativas numa consulta e o espelho em `voice_profiles`."""
 from __future__ import annotations
 
 import math
@@ -10,7 +10,7 @@ import pytest
 
 from listener.model import Attribution, ClusterStatus, EmbeddingSource, MeetingStatus, SegmentSource
 from listener.store.profiles import (MAX_REFS, REF_COS, THRESHOLD_VARIANT, Calibration, calibrate, calibrated_threshold, centroid_of,
-                                     from_blob, group_samples, normalize, references, threshold_for, to_blob, welford_update)
+                                     from_blob, group_samples, normalize, references, threshold_for, to_blob)
 from listener.store.segments import ClusterInsert, SegmentInsert, resolve_person
 
 
@@ -21,13 +21,8 @@ def _vec(i: int, dim: int = 8) -> np.ndarray:
     return v
 
 
-def test_welford_matches_numpy_and_threshold_is_clipped():
-    xs = [0.71, 0.66, 0.80, 0.74, 0.69, 0.77]
-    n, mean, std = 0, 0.0, 0.0
-    for x in xs:
-        n, mean, std = welford_update(n, mean, std, x)
-    assert n == 6 and math.isclose(mean, float(np.mean(xs)), rel_tol=1e-9) and math.isclose(std, float(np.std(xs)), rel_tol=1e-9)
-    assert calibrated_threshold(4, 0.7, 0.01) is None                                  # menos de 5 confirmações: global
+def test_threshold_is_clipped_and_vectors_round_trip():
+    assert calibrated_threshold(4, 0.7, 0.01) is None                                  # menos de 5 notas: global
     assert calibrated_threshold(5, 0.9, 0.01) == 0.75 and calibrated_threshold(5, 0.3, 0.0) == 0.45
     assert math.isclose(calibrated_threshold(6, 0.70, 0.04), 0.64)
     c = centroid_of([np.array([2.0, 0.0]), np.array([0.0, 2.0])])
@@ -36,39 +31,38 @@ def test_welford_matches_numpy_and_threshold_is_clipped():
     assert from_blob(None).size == 0 and np.allclose(np.linalg.norm(normalize(_vec(2))), 1.0)
 
 
-def test_profile_centroid_ignores_automatic_and_calibrates(store):
+def test_profile_mirror_ignores_automatic_and_calibrates_from_the_samples(store):
     ana = store.people.create_person("Ana", role="CFO")
     assert store.people.get_person(ana)["role"] == "CFO" and store.people.find_by_name("ana")["id"] == ana
-    pid = store.profiles.confirm(ana, "wespeaker", _vec(0), similarity=None, meeting_id=None, source=EmbeddingSource.ENROLL)
+    pid = store.profiles.confirm(ana, "wespeaker", _vec(0), None, source=EmbeddingSource.ENROLL)
     assert store.profiles.ensure_profile(ana, "wespeaker", 8) == pid                      # único por (pessoa, modelo)
     assert store.profiles.ensure_profile(ana, "outro-modelo", 8) != pid
     before = store.profiles.get_profile(pid)["centroid"].copy()
     store.profiles.add_embedding(pid, _vec(4), EmbeddingSource.AUTO, meeting_id=None, platform="teams")
-    store.profiles.recompute_centroid(pid)
+    assert store.profiles.refresh(pid, REF_COS, MAX_REFS) == 1
     p = store.profiles.get_profile(pid)
     assert np.allclose(p["centroid"], before) and p["n_samples"] == 1                    # automático não entra
-    for i, sim in enumerate([0.70, 0.72, 0.68, 0.74]):
-        store.profiles.confirm(ana, "wespeaker", _vec(i % 2), similarity=sim, meeting_id=None, platform="teams")
+    assert p["calib_n"] == 0 and p["sim_mean"] is None and p["threshold"] is None         # uma amostra: nenhuma nota
+    rng = np.random.default_rng(4)
+    for _ in range(5):                                                                    # a nota da voz não calibra mais
+        store.profiles.confirm(ana, "wespeaker", _vec(0) + rng.normal(scale=0.05, size=8).astype(np.float32), None, platform="teams")
     p = store.profiles.get_profile(pid)
-    assert p["n_samples"] == 5 and p["threshold"] is None and math.isclose(p["sim_mean"], 0.71)
-    store.profiles.confirm(ana, "wespeaker", _vec(0), similarity=0.66, meeting_id=None)
-    p = store.profiles.get_profile(pid)
-    assert p["n_samples"] == 6 and p["threshold"] is not None and 0.45 <= p["threshold"] <= 0.75
-    assert math.isclose(p["threshold"], max(0.45, min(0.75, p["sim_mean"] - 1.5 * p["sim_std"])))
+    vectors = store.profiles.active_samples("wespeaker")[0].vectors
+    cal = calibrate(vectors, group_samples(vectors, REF_COS, MAX_REFS))
+    assert p["n_samples"] == 6 and p["calib_n"] == cal.n == 6 and p["threshold"] == cal.threshold == 0.75   # notas ~0,99: o teto
+    assert math.isclose(p["sim_mean"], cal.mean) and math.isclose(p["sim_std"], cal.std)
+    assert np.allclose(p["centroid"], centroid_of(list(vectors)))                         # a média única, como antes
     sources = [s for _, _, s in store.profiles.embeddings(pid)]
     assert sources.count("confirmacao") == 5 and sources.count("automatico") == 1 and sources.count("cadastro") == 1
     assert [x["id"] for x in store.profiles.list_profiles("wespeaker")] == [pid]
-    assert p["calib_n"] == 5 and not hasattr(store.profiles, "merge_profiles")                   # R2-24: código que apagava saiu
-    # R2-18: a média usa só as similaridades medidas (a 1ª confirmação, sem perfil, não entra como amostra)
+    assert not hasattr(store.profiles, "merge_profiles")                                  # R2-24: código que apagava saiu
+    assert not hasattr(store.profiles, "update_calibration") and not hasattr(store.profiles, "recompute_centroid")   # F5.15
     bia = store.people.create_person("Bia")
-    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=None, meeting_id=None)
-    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=0.9, meeting_id=None)
-    store.profiles.confirm(bia, "wespeaker", _vec(3), similarity=0.5, meeting_id=None)
+    store.profiles.confirm(bia, "wespeaker", _vec(3), None)
     pb = store.profiles.profile_for(bia, "wespeaker")
-    assert pb["calib_n"] == 2 and math.isclose(pb["sim_mean"], 0.7) and pb["n_samples"] == 3
     assert [p["name"] for p in store.people.list_people()] == ["Ana", "Bia"]
     store.profiles.invalidate_cluster_embeddings(pb["id"], 999)                                   # nada com esse cluster: no-op
-    assert store.profiles.profile_for(bia, "wespeaker")["n_samples"] == 3
+    assert store.profiles.profile_for(bia, "wespeaker")["n_samples"] == 1
 
 
 def test_segments_in_batches_clusters_swap_and_merge_resolution(store):
@@ -84,7 +78,7 @@ def test_segments_in_batches_clusters_swap_and_merge_resolution(store):
     assert n == 2500 and store.segments.count_segments(mid, old_job) == 2500                  # três lotes (1000, 1000, 500)
     seg_old = store.segments.list_segments(mid)[0]["id"]
     ana = store.people.create_person("Ana")
-    pid = store.profiles.confirm(ana, "wespeaker", _vec(0), 0.7, mid, segment_id=seg_old)
+    pid = store.profiles.confirm(ana, "wespeaker", _vec(0), mid, segment_id=seg_old)
     # job novo escreve os seus; os antigos continuam até a troca
     ids_new = store.segments.insert_clusters([
         ClusterInsert(mid, new_job, "R", "SPK_0", 11_000, _vec(0), "wespeaker", ClusterStatus.CONFIRMED, person_id=ana),
@@ -132,7 +126,18 @@ def test_pipeline_settings_and_hf_provider(store):
     from listener.config.defaults import HF_PROVIDER_ID, PIPELINE_KEYS, SPECS
 
     assert "pipeline.paused_until" not in PIPELINE_KEYS and "pipeline.threshold" in PIPELINE_KEYS
-    assert all(SPECS[k].phase == "F2" for k in PIPELINE_KEYS)
+    assert {k for k in PIPELINE_KEYS if SPECS[k].phase != "F2"} == {"pipeline.ref_cos", "pipeline.max_refs"}   # F5.15
+    keys = list(SPECS)                                                                        # logo depois da margem, no Avançado
+    assert keys[keys.index("pipeline.margin") + 1:keys.index("pipeline.margin") + 3] == ["pipeline.ref_cos", "pipeline.max_refs"]
+    ref_cos, max_refs = SPECS["pipeline.ref_cos"], SPECS["pipeline.max_refs"]
+    assert (ref_cos.default, max_refs.default) == (REF_COS, MAX_REFS) == (0.80, 5) and ref_cos.advanced and max_refs.advanced
+    assert (ref_cos.low, ref_cos.high, max_refs.low, max_refs.high) == (0.60, 0.95, 1, 10) and ref_cos.phase == "F5.15"
+    store.set_setting("pipeline.ref_cos", "0.97")
+    store.set_setting("pipeline.max_refs", "11")
+    assert store.get(ref_cos) == 0.80 and store.get(max_refs) == 5                            # fora da faixa: padrão
+    store.set_setting("pipeline.ref_cos", "0.7")
+    store.set_setting("pipeline.max_refs", "3")
+    assert store.get(ref_cos) == 0.7 and store.get(max_refs) == 3
     assert store.get(SPECS["pipeline.auto_start"]) is True and store.get(SPECS["pipeline.paused_manual"]) is False
     store.set_setting("pipeline.paused_manual", True)
     assert store.get(SPECS["pipeline.paused_manual"]) is True and store.get(SPECS["pipeline.torch_threads"]) >= 1
@@ -246,16 +251,18 @@ def test_threshold_for_variants_a_p_and_c():
 def test_active_samples_in_one_query_without_automatic_invalid_or_another_dimension(store):
     ana, bia, caio = (store.people.create_person(n) for n in ("Ana", "Bia", "Caio"))
     m1 = store.create_meeting("r1", "ms-teams", None, None)
-    pa = store.profiles.confirm(ana, "wespeaker", _vec(0) * 3, None, None, source=EmbeddingSource.ENROLL)   # cadastro sem reunião
-    pb = store.profiles.confirm(bia, "wespeaker", _vec(2), None, m1, platform="ms-teams")
-    store.profiles.confirm(ana, "wespeaker", _vec(1), 0.7, m1, platform="ms-teams")
+    pa = store.profiles.confirm(ana, "wespeaker", _vec(0) * 3, None, source=EmbeddingSource.ENROLL)        # cadastro sem reunião
+    pb = store.profiles.confirm(bia, "wespeaker", _vec(2), m1, platform="ms-teams")
+    store.profiles.confirm(ana, "wespeaker", _vec(1), m1, platform="ms-teams")
     store.profiles.add_embedding(pa, _vec(3), EmbeddingSource.AUTO, meeting_id=m1)
     store.profiles.add_embedding(pa, _vec(4), EmbeddingSource.INVALID, meeting_id=m1)
     store.profiles.add_embedding(pa, np.ones(4, np.float32), EmbeddingSource.CONFIRM, meeting_id=m1)    # outra dimensão
+    store.profiles.add_embedding(pa, np.full(8, np.nan, np.float32), EmbeddingSource.CONFIRM, meeting_id=m1)   # não finita
+    store.profiles.add_embedding(pa, np.zeros(8, np.float32), EmbeddingSource.CONFIRM, meeting_id=m1)   # norma zero
     store.profiles.upsert_auto_embedding(caio, "wespeaker", _vec(5), m1, "ms-teams")                    # só automático: fora
-    store.profiles.confirm(ana, "outro", _vec(6), None, None)                                            # outro modelo
+    store.profiles.confirm(ana, "outro", _vec(6), None)                                                  # outro modelo
     got = store.profiles.active_samples("wespeaker")
-    assert [(s.profile_id, s.person_id, s.dim, s.skipped) for s in got] == [(pa, ana, 8, 1), (pb, bia, 8, 0)]
+    assert [(s.profile_id, s.person_id, s.dim, s.skipped) for s in got] == [(pa, ana, 8, 3), (pb, bia, 8, 0)]
     a = got[0]
     assert a.meetings == (None, m1) and a.platforms == (None, "ms-teams") and len(a.ids) == 2 and a.ids[0] < a.ids[1]
     assert a.vectors.shape == (2, 8) and a.vectors.dtype == np.float32 and np.allclose(a.vectors[0], normalize(_vec(0)))

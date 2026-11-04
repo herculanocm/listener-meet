@@ -311,7 +311,8 @@ def test_advanced_group_is_closed_editable_and_an_error_inside_opens_it(qtbot, s
     dlg = SettingsDialog(store, platform, {})
     qtbot.addWidget(dlg)
     advanced = [k for k, s in SPECS.items() if s.advanced]
-    assert set(advanced) == {"pipeline.whisper_hq", "pipeline.threshold", "pipeline.margin", "pipeline.models_dir",
+    assert set(advanced) == {"pipeline.whisper_hq", "pipeline.threshold", "pipeline.margin", "pipeline.ref_cos", "pipeline.max_refs",
+                             "pipeline.models_dir",
                              "pipeline.torch_threads", "pipeline.diar_window_s", "pipeline.whisper_window_s"}
     assert not dlg.advanced.is_open() and all(dlg.advanced.isAncestorOf(dlg.editor(k).widget) for k in advanced)
     assert not dlg.advanced.isAncestorOf(dlg.editor("pipeline.transcriber").widget)

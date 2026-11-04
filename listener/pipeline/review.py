@@ -19,8 +19,8 @@ import numpy as np
 from ..log import get_logger
 from ..model import BY_CONTEXT, BY_VOICE, ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
-from ..store.profiles import normalize
 from ..store.segments import ClusterRow, resolve_person, role_of
+from .profiles import person_similarity, voice_settings
 from .runner import STITCH_ARTIFACT, USER_CLUSTER
 from .types import unpack_artifact
 from .voices import NO_NAMES, VoiceNames, numbering, speaker_of, voice_label
@@ -261,12 +261,10 @@ def decode_clip(store: Store, meeting_id: int, channel: str, t0_ms: int, t1_ms: 
 
 # ---------------------------------------------------------------- ações (todas por ação do usuário)
 def _similarity_to(store: Store, c: ClusterRow, person_id: int) -> float | None:
+    """F5.15 item 4: a nota da voz pelas referências da pessoa, com as configurações de agora; None sem perfil utilizável."""
     if not c["centroid"].size or not c.get("model"):
         return None
-    p = store.profiles.profile_for(person_id, str(c["model"]))
-    if p is None or int(p.get("n_samples") or 0) == 0 or p["centroid"].size != c["centroid"].size:
-        return None
-    return float(np.dot(normalize(c["centroid"]), normalize(p["centroid"])))
+    return person_similarity(store, str(c["model"]), c["centroid"], person_id, *voice_settings(store))
 
 
 def decision_source_for(c: ClusterRow, pid: int) -> DecisionSource:
@@ -305,14 +303,16 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
     sim = c.get("similarity") if pid == c.get("person_id") else _similarity_to(store, c, pid)
     segs = [s for s in store.segments.list_segments(int(c["meeting_id"]), int(c["job_id"])) if s.get("cluster_id") == cluster_id]
     previous = int(c["person_id"]) if str(c["status"]) == ClusterStatus.CONFIRMED and c.get("person_id") is not None else None  # type: ignore[arg-type]
+    ref_cos, max_refs = voice_settings(store)                                      # F5.15 item 8: lidas a cada ação
     with store.transaction():
         if previous is not None and previous != pid:
             _unlearn(store, c, str(pid), author)                                   # correção: o vetor sai do perfil anterior (R2-09)
         store.segments.update_cluster(cluster_id, status=ClusterStatus.CONFIRMED, person_id=pid, decision_source=str(source))
         store.segments.set_segments_person(int(c["meeting_id"]), cluster_id, pid, str(person.get("role") or "") or None)
-        if c["centroid"].size and c.get("model") and previous != pid:
-            store.profiles.confirm(pid, str(c["model"]), c["centroid"], sim, int(c["meeting_id"]),
-                                   segment_id=int(segs[0]["id"]) if segs else None, platform=meeting.get("platform"), cluster_id=cluster_id)
+        if c["centroid"].size and c.get("model") and previous != pid:              # a nota só vai ao evento e ao log (item 5)
+            store.profiles.confirm(pid, str(c["model"]), c["centroid"], int(c["meeting_id"]),
+                                   segment_id=int(segs[0]["id"]) if segs else None, platform=meeting.get("platform"),
+                                   cluster_id=cluster_id, ref_cos=ref_cos, max_refs=max_refs)
         store.add_revision("cluster", cluster_id, "person_id", c.get("person_id"), pid, author)
         store.add_event(int(c["meeting_id"]), None, EventType.PROFILE_CONFIRM,
                         {"cluster_id": cluster_id, "person_id": pid, "similarity": sim, "label": c["cluster"]})
@@ -322,12 +322,12 @@ def confirm(store: Store, cluster_id: int, person_id: int | None = None, author:
 
 def _unlearn(store: Store, c: ClusterRow, after: str, author: str) -> None:
     """R2-09 e P-03 (F5.11): a voz confirmada que deixa a pessoa tira o vetor do perfil (fonte `invalidado`, nada apagado,
-    CP3), na transação de quem chama; a calibração não volta (dívida da F2)."""
+    CP3), na transação de quem chama; F5.15: o espelho é refeito sem ele, inclusive o limiar (fecha a dívida da F2)."""
     pid = c.get("person_id")
     if str(c["status"]) != ClusterStatus.CONFIRMED or pid is None or not c.get("model"):
         return
     old = store.profiles.profile_for(int(pid), str(c["model"]))  # type: ignore[arg-type]
-    if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), int(c["id"])):
+    if old is not None and store.profiles.invalidate_cluster_embeddings(int(old["id"]), int(c["id"]), *voice_settings(store)):
         store.add_revision("voice_profile", int(old["id"]), "invalidado", f"cluster {c['id']}", after, author)
 
 

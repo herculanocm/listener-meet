@@ -31,7 +31,7 @@ from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_p
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
-from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids
+from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids, load_profile_refs
 from .reprocess import target_language
 from .stitch import stitch
 from .types import (AudioWindow, DiarizationWindow, JobConfig, TranscriptWindow, Turn, Word, decode_diarization, decode_transcript,
@@ -433,9 +433,8 @@ class JobRunner(BaseJobRunner):
         return turns, ids, [c for c in self.store.segments.list_clusters(self.meeting_id, self.job_id) if c["channel"] == channel]
 
     def _profile_refs(self, model: str) -> list[ProfileRef]:
-        names = {int(p["id"]): str(p.get("name") or "") for p in self.store.people.list_people()}
-        return [ProfileRef(int(p["id"]), int(p["person_id"]), p["centroid"], p.get("threshold"), names.get(int(p["person_id"]), ""))
-                for p in self.store.profiles.list_profiles(model) if p.get("person_id") is not None and int(p.get("n_samples") or 0) > 0]
+        """F5.15: as referências e o limiar de cada pessoa, calculados das amostras com o `ref_cos` e o `max_refs` do job."""
+        return load_profile_refs(self.store, model, ref_cos=self.config.ref_cos, max_refs=self.config.max_refs)
 
     def _transcribe(self, channel: str, step: JobStep) -> list[TranscriptWindow]:
         self._begin_step(step)

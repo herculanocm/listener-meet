@@ -11,7 +11,7 @@ from typing import Any, Self
 
 import numpy as np
 
-from ..config.defaults import SPECS
+from ..config.defaults import MAX_REFS, REF_COS, SPECS
 from ..model import ClusterStatus
 
 SAMPLE_RATE = 16000
@@ -108,6 +108,8 @@ class JobConfig:
     glossary: str = ""
     threshold: float = 0.60
     margin: float = 0.05
+    ref_cos: float = REF_COS              # F5.15 item 8: as referências de voz, lidas no próximo job
+    max_refs: int = MAX_REFS
     models_dir: str = ""
     torch_threads: int = 4
     diar_window_s: int = 1200             # R2-15: 3 emendas por hora; a janela corrente termina em ~16 min a 0,8x
@@ -129,7 +131,8 @@ class JobConfig:
                 return spec.default
         return cls(transcriber=get("pipeline.transcriber"), whisper_model=get("pipeline.whisper_model"),
                    whisper_hq=get("pipeline.whisper_hq"), glossary=get("pipeline.glossary"), threshold=get("pipeline.threshold"),
-                   margin=get("pipeline.margin"), models_dir=get("pipeline.models_dir"), torch_threads=get("pipeline.torch_threads"),
+                   margin=get("pipeline.margin"), ref_cos=get("pipeline.ref_cos"), max_refs=get("pipeline.max_refs"),
+                   models_dir=get("pipeline.models_dir"), torch_threads=get("pipeline.torch_threads"),
                    diar_window_s=get("pipeline.diar_window_s"), whisper_window_s=get("pipeline.whisper_window_s"),
                    pause_on_record=get("pipeline.pause_on_record"), silence_rms=get("capture.silence_rms"))
 

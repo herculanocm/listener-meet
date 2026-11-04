@@ -64,7 +64,7 @@ from ..config.defaults import HF_PROVIDER_ID, LIVE_MODELS, SPECS
 from ..config.language import meeting_language, whisper_code
 from ..log import attach_file, get_logger, log_versions, setup
 from ..model import EventType
-from ..pipeline.profiles import ProfileRef, expected_person_ids
+from ..pipeline.profiles import ProfileRef, expected_person_ids, load_profile_refs
 from ..platform.common import paths, process
 from ..store import Store
 from ..store.captions import CaptionInsert
@@ -684,16 +684,13 @@ class LiveSession:
         self.expected_ids = expected_person_ids(meeting.get("expected_people_json"))
         self.threshold = float(self.store.get(SPECS["pipeline.threshold"]))
         self.margin = float(self.store.get(SPECS["pipeline.margin"]))
+        ref_cos, max_refs = float(self.store.get(SPECS["pipeline.ref_cos"])), int(self.store.get(SPECS["pipeline.max_refs"]))
         try:
             embedder = self.engines.embedder(self.store, self.hello.threads)
         except Exception as e:
             self._names_unavailable(str(e))
             return None
-        names = {pid: str(p.get("name") or "") for pid, p in self.people.items()}
-        self.profiles = [ProfileRef(int(p["id"]), int(p["person_id"]), p["centroid"], p.get("threshold"),
-                                    names.get(int(p["person_id"]), ""))
-                         for p in self.store.profiles.list_profiles(embedder.model)
-                         if p.get("person_id") is not None and int(p.get("n_samples") or 0) > 0]
+        self.profiles = load_profile_refs(self.store, embedder.model, ref_cos=ref_cos, max_refs=max_refs)   # F5.15: as referências
         return embedder
 
     def _start_names(self, embedder: Embedder) -> None:

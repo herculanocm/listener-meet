@@ -202,7 +202,7 @@ def test_reprocess_transports_decisions_and_failure_keeps_old_results(platform, 
     store.segments.update_cluster(old_r[0]["id"], person_id=ana, status=ClusterStatus.CONFIRMED)
     store.segments.set_segments_person(mid, old_r[0]["id"], ana, "CFO")
     seg_id = next(s["id"] for s in store.segments.list_segments(mid) if s["cluster_id"] == old_r[0]["id"])
-    store.profiles.confirm(ana, "fake-tone-256", old_r[0]["centroid"], 0.0, mid, segment_id=seg_id)
+    store.profiles.confirm(ana, "fake-tone-256", old_r[0]["centroid"], mid, segment_id=seg_id)
     store.segments.update_cluster(old_r[1]["id"], status=ClusterStatus.IGNORED)
     old_seg_ids = {s["id"] for s in store.segments.list_segments(mid)}
     # reprocessar que falha: tudo o que existia continua
@@ -449,7 +449,7 @@ def test_review_finished_during_transcription_is_not_downgraded(platform, store)
 
     _, status = _run(store, FakeDeps(SCRIPT, before=confirm_one_and_finish))
     assert status == JobStatus.DONE and store.get_meeting(mid_b)["status"] == MeetingStatus.REVIEWED
-    assert store.segments.get_cluster(acted[0])["status"] == ClusterStatus.UNNAMED
+    assert store.segments.get_cluster(acted[0])["status"] in (ClusterStatus.UNNAMED, ClusterStatus.AMBIGUOUS)   # F5.15: pendente
     store.jobs.enqueue(mid, JobKind.REPROCESS)                                             # tudo transportado: continua revisada
     _, status = _run(store, FakeDeps(SCRIPT))
     assert status == JobStatus.DONE and store.get_meeting(mid)["status"] == MeetingStatus.REVIEWED

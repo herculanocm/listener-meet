@@ -194,6 +194,18 @@ def test_matcher_margin_between_people_and_variant_p_with_a_one_sample_reference
     with pytest.raises(ValueError, match="variante"):
         ProfileMatcher(variant="X")
 
+
+def test_tie_break_by_expected_checks_the_winner_threshold():
+    """A-10: com margem pequena, o esperado só vence se passa do próprio limiar (como no ao vivo); senão fica ambíguo com o
+    primeiro, como quando ninguém desempata."""
+    ana = ProfileRef(1, 10, _e(0), name="Ana")
+    voice = cluster_data([Turn(0, 20_000, "v")], {"v": [_mix(_e(0), _e(2), 0.95)]})        # 0,725 com a Ana e 0,689 com o Dan
+    strict = ProfileMatcher(0.60, 0.05, expected=("dan",)).match(voice, [ana, ProfileRef(3, 30, _e(2), threshold=0.75, name="Dan")])[0]
+    assert strict.status == ClusterStatus.AMBIGUOUS and strict.person_id == 10 and strict.margin < 0.05
+    ok = ProfileMatcher(0.60, 0.05, expected=("dan",)).match(voice, [ana, ProfileRef(3, 30, _e(2), threshold=0.65, name="Dan")])[0]
+    assert ok.status == ClusterStatus.AUTO and ok.person_id == 30 and ok.threshold == 0.65    # o limiar aplicado é o do vencedor
+
+
 def test_clean_turns_and_cluster_data():
     turns = [Turn(0, 3000, "A"), Turn(3000, 4000, "B"), Turn(4000, 7000, "A"), Turn(7000, 9000, "B"), Turn(9000, 9500, "A")]
     clean = clean_turns(turns, overlap=((4500, 5000),), min_ms=1500)

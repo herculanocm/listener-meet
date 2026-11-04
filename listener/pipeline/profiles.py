@@ -4,20 +4,31 @@ da linha) abaixo de `margin` -> `ambíguo`, com a lista de participantes esperad
 menos de 10 s de fala nunca é `auto` (Q5); abaixo do limiar -> `sem_nome` com a melhor sugestão guardada para a revisão.
 Centroide do cluster: média dos embeddings normalizados dos turnos limpos (>= 1,5 s, sem sobreposição), no máximo 20.
 F5.15 (item 4): a nota de uma voz para uma pessoa é o maior cosseno entre a voz e as referências dela (`person_scores`),
-com uma coluna por pessoa (a margem segue entre pessoas); o limiar de cada célula vem da variante (`threshold_for`). Um
-vetor 1-D (o centroide de hoje) é uma referência só: o resultado é o da média única."""
+com uma coluna por pessoa (a margem segue entre pessoas); o limiar de cada célula vem da variante (`threshold_for`) e o
+desempate pelos esperados confere o limiar do vencedor (A-10). `load_profile_refs`, a única função que lê o banco, monta as
+referências e o limiar das amostras ativas, na carga (A-03), para o worker, o ao vivo e a revisão."""
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+import time
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from ..config.defaults import SPECS
+from ..log import get_logger
 from ..model import ClusterStatus
-from ..store.profiles import THRESHOLD_VARIANT, THRESHOLD_VARIANTS, centroid_of, normalize, threshold_for, unit_rows
+from ..store.profiles import (THRESHOLD_VARIANT, THRESHOLD_VARIANTS, calibrate, centroid_of, group_samples, normalize, references,
+                              threshold_for, unit_rows)
 from .types import ClusterData, MatchResult, Overlaps, Turn
+
+if TYPE_CHECKING:
+    from ..store import Store
+
+log = get_logger("pipeline.profiles")
 
 CLEAN_TURN_MS = 1500
 MAX_TURNS_PER_CLUSTER = 20
@@ -53,6 +64,45 @@ def person_scores(v: np.ndarray, profiles: Sequence[ProfileRef]) -> tuple[np.nda
     s = v @ np.concatenate([p.refs for p in profiles]).T                       # (m, K): uma coluna por referência
     win = np.stack([np.argmax(s[:, a:a + k], axis=1) for a, k in zip(starts.tolist(), counts, strict=True)], axis=1)
     return np.take_along_axis(s, win + starts, axis=1), win
+
+
+def load_profile_refs(store: Store, model: str, *, ref_cos: float, max_refs: int | None,
+                      person_ids: Collection[int] | None = None) -> list[ProfileRef]:
+    """F5.15 (item 3, Comportamento 1): os perfis do modelo com as referências e o limiar calculados das amostras ativas de
+    agora, numa consulta (`active_samples`): cada pessoa tem as amostras agrupadas (`group_samples`), uma referência por
+    grupo (`references`) e o limiar de `calibrate`, nunca o da coluna (A-03). O perfil sem amostra utilizável fica fora. O
+    nome vai só para o desempate pelos esperados; o log leva contagens e ms, nunca o nome (D-053)."""
+    t0 = time.perf_counter()
+    names = {int(p["id"]): str(p.get("name") or "") for p in store.people.list_people()}
+    found = store.profiles.active_samples(model, person_ids)
+    out: list[ProfileRef] = []
+    for ps in found:
+        if not len(ps.vectors):
+            continue
+        labels = group_samples(ps.vectors, ref_cos, max_refs)
+        refs, sizes = references(ps.vectors, labels)
+        out.append(ProfileRef(ps.profile_id, ps.person_id, refs, calibrate(ps.vectors, labels).threshold,
+                              names.get(ps.person_id, ""), sizes))
+    log.debug("perfis de voz (%s): %d pessoa(s), %d referência(s), %d amostra(s) ignorada(s), %.1f ms", model, len(out),
+              sum(p.refs.shape[0] for p in out), sum(ps.skipped for ps in found), 1000 * (time.perf_counter() - t0))
+    return out
+
+
+def voice_settings(store: Store) -> tuple[float, int]:
+    """`pipeline.ref_cos` e `pipeline.max_refs` de agora (item 8: a revisão lê a cada ação)."""
+    return float(store.get(SPECS["pipeline.ref_cos"])), int(store.get(SPECS["pipeline.max_refs"]))
+
+
+def person_similarity(store: Store, model: str, vector: np.ndarray, person_id: int, ref_cos: float,
+                      max_refs: int | None) -> float | None:
+    """A nota de uma voz para uma pessoa: o maior cosseno com as referências dela (item 4); None sem perfil utilizável na
+    dimensão da voz."""
+    v = normalize(vector)
+    found = [p for p in load_profile_refs(store, model, ref_cos=ref_cos, max_refs=max_refs, person_ids=[person_id])
+             if p.refs.shape[1] == v.size]
+    if not found or not np.any(v):
+        return None
+    return float(person_scores(v.reshape(1, -1), found[:1])[0][0, 0])
 
 
 def clean_turns(turns: Sequence[Turn], overlap: Overlaps, min_ms: int = CLEAN_TURN_MS,
@@ -150,14 +200,25 @@ class ProfileMatcher:
         if j != best_j:                                          # o LSA deu o 2º melhor (o melhor foi para outra voz): revisar (R2-16)
             return MatchResult(c.label, ClusterStatus.AMBIGUOUS, p.person_id, p.profile_id, sim, margin, threshold)
         if margin < self.margin:
-            runner_up = int(order[1]) if len(order) > 1 else None
-            winner = self._tie_break(prof[best_j], prof[runner_up] if runner_up is not None else None)
-            if winner is None or (winner is not p and prof.index(winner) in taken):   # nunca repetir pessoa já atribuída
+            w = self._tie_winner(prof, order, row, t_row, j, taken)
+            if w is None:
                 return MatchResult(c.label, ClusterStatus.AMBIGUOUS, p.person_id, p.profile_id, sim, margin, threshold)
-            p, sim = winner, float(row[prof.index(winner)])
+            p, sim, threshold = prof[w], float(row[w]), float(t_row[w])
         if c.speech_ms < self.min_speech_ms:                     # Q5: curto demais para nomear sozinho
             return MatchResult(c.label, ClusterStatus.AMBIGUOUS, p.person_id, p.profile_id, sim, margin, threshold)
         return MatchResult(c.label, ClusterStatus.AUTO, p.person_id, p.profile_id, sim, margin, threshold)
+
+    def _tie_winner(self, prof: list[ProfileRef], order: np.ndarray, row: np.ndarray, t_row: np.ndarray, j: int,
+                    taken: set[int]) -> int | None:
+        """A coluna que vence o desempate pelos esperados, ou None (fica ambíguo): nenhum ou os dois na lista, a pessoa já
+        dada a outra voz (nunca repetir pessoa) ou o vencedor abaixo do próprio limiar (A-10, como no ao vivo)."""
+        winner = self._tie_break(prof[int(order[0])], prof[int(order[1])] if len(order) > 1 else None)
+        if winner is None:
+            return None
+        w = prof.index(winner)
+        if (w != j and w in taken) or row[w] < t_row[w]:
+            return None
+        return w
 
     def _tie_break(self, a: ProfileRef, b: ProfileRef | None) -> ProfileRef | None:
         """Participantes esperados decidem quando só um dos dois está na lista (P4): pelo id casado no warm-up ou pelo nome."""

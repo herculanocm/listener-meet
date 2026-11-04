@@ -1,19 +1,18 @@
 """Perfis de voz persistentes (CP5, F2 item 7): `voice_profiles` (um por pessoa e modelo) e `voice_embeddings`.
 
-Centroide = média dos vetores L2-normalizados com `source in (cadastro, confirmacao)`, renormalizada; os `automatico`
-ficam gravados sem entrar (D-041 P3). Autocalibração (Q3): Welford de `sim_mean` e `sim_std` com a similaridade medida
-antes da atualização; `threshold = clip(mean - 1,5·std, 0,45, 0,75)` só com `n_samples >= 5` (D-008). Vetores em BLOB
-float32 little-endian; `dim` e `model` por perfil (D-009).
+Amostras ativas = `source in (cadastro, confirmacao)`; os `automatico` ficam gravados sem entrar (D-041 P3) e os
+`invalidado` saem da conta. Vetores em BLOB float32 little-endian; `dim` e `model` por perfil (D-009).
 
-F5.15 L0: as funções puras das referências de voz, que a sonda `scripts/probe_f515.py` mede antes de o app usá-las (L1).
-As amostras ativas de um perfil (`active_samples`, uma consulta) se agrupam por ligação média de cosseno
+F5.15: as amostras ativas de um perfil (`active_samples`, uma consulta) se agrupam por ligação média de cosseno
 (`group_samples`); cada grupo vira uma referência (`references`); o limiar da pessoa sai das amostras (`calibrate`: a nota
-de cada uma contra o resto do grupo) e `threshold_for` escolhe o limiar de uma voz pela variante (A, P ou C).
+de cada uma contra o resto do grupo, `clip(média - 1,5·desvio, 0,45, 0,75)` com 5 notas ou mais, D-008) e `threshold_for`
+escolhe o limiar de uma voz pela variante (A, P ou C). As referências e o limiar são calculados na carga (A-03); a linha
+de `voice_profiles` é só o espelho do último cálculo (`refresh`, item 6): a média única em `centroid`, `n_samples` e a
+calibração. Confirmar e desfazer refazem o espelho; o desfazer tira a amostra também do limiar (o Welford da F2 não tirava).
 """
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Collection
 from dataclasses import dataclass
 from itertools import groupby
@@ -21,6 +20,7 @@ from typing import Any, TypedDict, cast
 
 import numpy as np
 
+from ..config.defaults import MAX_REFS, REF_COS, THRESHOLD_VARIANT  # noqa: F401  (a variante é reexportada: os padrões moram lá)
 from ..log import get_logger
 from ..model import EmbeddingSource
 from .core import Core, _now
@@ -29,18 +29,17 @@ log = get_logger("store.profiles")
 
 CENTROID_SOURCES = (str(EmbeddingSource.ENROLL), str(EmbeddingSource.CONFIRM))
 THRESHOLD_LOW, THRESHOLD_HIGH, THRESHOLD_K, MIN_CALIBRATION_SAMPLES = 0.45, 0.75, 1.5, 5
-REF_COS, MAX_REFS = 0.80, 5            # F5.15: os padrões de `pipeline.ref_cos` e `pipeline.max_refs` (as configurações, no L1)
-THRESHOLD_VARIANTS = ("A", "P", "C")   # item 5: o da pessoa; o da pessoa, salvo referência de uma amostra; só o global
-THRESHOLD_VARIANT = "P"                # a variante que o L0 confirma ou troca
+THRESHOLD_VARIANTS = ("A", "P", "C")   # F5.15 item 5: o da pessoa; o da pessoa, salvo referência de uma amostra; só o global
 _ACTIVE_SQL = ("SELECT p.id AS profile_id, p.person_id, p.dim, e.id, e.meeting_id, e.platform, e.vector FROM voice_profiles p "
                "JOIN voice_embeddings e ON e.profile_id = p.id WHERE p.model = ? AND p.person_id IS NOT NULL AND e.source IN (?, ?) "
-               "AND (? IS NULL OR p.person_id IN (SELECT value FROM json_each(?))) ORDER BY p.id, e.id")
+               "AND (? IS NULL OR p.person_id IN (SELECT value FROM json_each(?))) AND (? IS NULL OR p.id = ?) ORDER BY p.id, e.id")
 
 
 @dataclass(frozen=True, slots=True)
 class ProfileSamples:
     """As amostras ativas (`cadastro` e `confirmacao`) de um perfil, na ordem de `voice_embeddings.id`. `vectors` só tem as
-    da dimensão do perfil, com as linhas normalizadas; as de outra dimensão ficam fora e contam em `skipped`."""
+    da dimensão do perfil, finitas e de norma não nula, com as linhas normalizadas; as outras ficam fora e contam em
+    `skipped` (o `linkage` recusa distância NaN)."""
     profile_id: int
     person_id: int
     dim: int
@@ -94,19 +93,9 @@ def centroid_of(vectors: list[np.ndarray]) -> np.ndarray | None:
     return normalize(np.mean([normalize(v) for v in vectors], axis=0))
 
 
-def welford_update(n: int, mean: float, std: float, x: float) -> tuple[int, float, float]:
-    """Média e desvio-padrão populacionais atualizados com mais uma amostra (M2 reconstruído de `std`)."""
-    m2 = std * std * n
-    n += 1
-    delta = x - mean
-    mean += delta / n
-    m2 += delta * (x - mean)
-    return n, mean, math.sqrt(max(m2, 0.0) / n)
-
-
 def calibrated_threshold(n: int, mean: float, std: float, low: float = THRESHOLD_LOW, high: float = THRESHOLD_HIGH,
                          k: float = THRESHOLD_K) -> float | None:
-    """Limiar do perfil, ou None (usa o global) enquanto há menos de `MIN_CALIBRATION_SAMPLES` confirmações."""
+    """Limiar do perfil, ou None (usa o global) enquanto há menos de `MIN_CALIBRATION_SAMPLES` notas."""
     if n < MIN_CALIBRATION_SAMPLES:
         return None
     return float(min(high, max(low, mean - k * std)))
@@ -238,12 +227,14 @@ class ProfilesRepo:
                 self.add_embedding(pid, v, EmbeddingSource.AUTO, meeting_id, None, platform)
         return pid
 
-    def invalidate_cluster_embeddings(self, profile_id: int, cluster_id: int) -> int:
-        """Confirmação corrigida: os vetores daquela voz saem do centroide (fonte `invalidado`), sem apagar (CP3)."""
+    def invalidate_cluster_embeddings(self, profile_id: int, cluster_id: int, ref_cos: float = REF_COS,
+                                      max_refs: int | None = MAX_REFS) -> int:
+        """Confirmação corrigida: os vetores daquela voz saem do perfil (fonte `invalidado`), sem apagar (CP3), e o espelho é
+        refeito sem eles: as referências e também o limiar (F5.15 item 5)."""
         n = self.core.execute("UPDATE voice_embeddings SET source = ? WHERE profile_id = ? AND cluster_id = ? AND source IN (?, ?)",
                               (EmbeddingSource.INVALID, profile_id, cluster_id, EmbeddingSource.CONFIRM, EmbeddingSource.ENROLL))
         if n:
-            self.recompute_centroid(profile_id)
+            self.refresh(profile_id, ref_cos, max_refs)
         return n
 
     def unlink_meeting(self, meeting_id: int) -> int:
@@ -270,64 +261,64 @@ class ProfilesRepo:
             rows = self.core.q("SELECT id, vector, source FROM voice_embeddings WHERE profile_id = ? ORDER BY id", (profile_id,))
         return [(int(r["id"]), from_blob(r["vector"]), str(r["source"])) for r in rows]
 
-    def active_samples(self, model: str, person_ids: Collection[int] | None = None) -> list[ProfileSamples]:
+    def active_samples(self, model: str, person_ids: Collection[int] | None = None, *,
+                       profile_id: int | None = None) -> list[ProfileSamples]:
         """F5.15: as amostras ativas (`cadastro` e `confirmacao`) dos perfis do modelo numa consulta só, na ordem do perfil e
-        de `voice_embeddings.id`; `person_ids` filtra (vazio: nenhum). Perfil sem amostra ativa não volta; o que só tem
-        amostras de outra dimensão volta com a matriz vazia e o `skipped`."""
+        de `voice_embeddings.id`; `person_ids` filtra (vazio: nenhum) e `profile_id` pega um perfil só. Perfil sem amostra
+        ativa não volta; o que só tem amostras fora da matriz volta com ela vazia e o `skipped`."""
         if person_ids is not None and not person_ids:
             return []
         wanted = None if person_ids is None else json.dumps(sorted({int(x) for x in person_ids}))
-        rows = self.core.q(_ACTIVE_SQL, (model, *CENTROID_SOURCES, wanted, wanted))
-        return [self._samples(list(group)) for _, group in groupby(rows, key=lambda r: int(r["profile_id"]))]
+        rows = self.core.q(_ACTIVE_SQL, (model, *CENTROID_SOURCES, wanted, wanted, profile_id, profile_id))
+        found = [self._samples(list(group)) for _, group in groupby(rows, key=lambda r: int(r["profile_id"]))]
+        if skipped := sum(ps.skipped for ps in found):
+            log.debug("%d amostra(s) de voz fora da conta (outra dimensão, não finita ou de norma zero)", skipped)
+        return found
 
     @staticmethod
     def _samples(rows: list[Any]) -> ProfileSamples:
         dim = int(rows[0]["dim"])
-        kept = [(r, v) for r in rows if (v := from_blob(r["vector"])).size == dim]
+        kept = [(r, v) for r in rows if (v := from_blob(r["vector"])).size == dim and np.all(np.isfinite(v)) and np.any(v)]
         vectors = unit_rows(np.stack([v for _, v in kept])) if kept else np.zeros((0, dim), np.float32)
         return ProfileSamples(int(rows[0]["profile_id"]), int(rows[0]["person_id"]), dim, tuple(int(r["id"]) for r, _ in kept),
                               tuple(None if r["meeting_id"] is None else int(r["meeting_id"]) for r, _ in kept),
                               tuple(None if r["platform"] is None else str(r["platform"]) for r, _ in kept), vectors,
                               len(rows) - len(kept))
 
-    def recompute_centroid(self, profile_id: int) -> np.ndarray | None:
-        """Centroide só dos vetores de cadastro e confirmação; `n_samples` acompanha. Sem nenhum, o perfil fica vazio
-        (centroide zero, `n_samples = 0`: o casamento o ignora) e devolve None."""
-        vectors = [v for _, v, _ in self.embeddings(profile_id, CENTROID_SOURCES)]
-        c = centroid_of(vectors)
-        if c is None:
-            p = self.get_profile(profile_id)
-            dim = int(p["dim"]) if p else 0
-            self.core.execute("UPDATE voice_profiles SET centroid = ?, n_samples = 0, updated_at = ? WHERE id = ?",
-                              (to_blob(np.zeros(dim, np.float32)), _now(), profile_id))
-            return None
-        self.core.execute("UPDATE voice_profiles SET centroid = ?, dim = ?, n_samples = ?, updated_at = ? WHERE id = ?",
-                          (to_blob(c), int(c.size), len(vectors), _now(), profile_id))
-        return c
-
-    def update_calibration(self, profile_id: int, similarity: float) -> float | None:
-        """Welford com a similaridade medida antes da confirmação; devolve o limiar calibrado (ou None = global)."""
+    def refresh(self, profile_id: int, ref_cos: float, max_refs: int | None) -> int:
+        """F5.15 item 6: o espelho do perfil em `voice_profiles`, refeito das amostras ativas de agora: a média única em
+        `centroid` (`centroid_of`, como antes), `n_samples` e a calibração (`threshold`, `sim_mean`, `sim_std` e `calib_n`)
+        de `calibrate` sobre os grupos de `group_samples`. Sem amostra ativa, o perfil vazio (centroide zero, `n_samples` 0,
+        calibração nula: o casamento o ignora). Devolve o número de referências; o log leva o id, nunca o nome (D-053)."""
         p = self.get_profile(profile_id)
         if p is None:
-            return None
-        n = int(p.get("calib_n") or 0)                     # só amostras de similaridade medidas, não vetores (R2-18)
-        n, mean, std = welford_update(n, float(p.get("sim_mean") or 0.0), float(p.get("sim_std") or 0.0), float(similarity))
-        threshold = calibrated_threshold(n, mean, std)
-        self.core.execute("UPDATE voice_profiles SET sim_mean = ?, sim_std = ?, calib_n = ?, threshold = ?, updated_at = ? WHERE id = ?",
-                          (mean, std, n, threshold, _now(), profile_id))
-        return threshold
+            return 0
+        found = self.active_samples(str(p["model"]), profile_id=profile_id)
+        v = found[0].vectors if found else np.zeros((0, int(p["dim"])), np.float32)
+        if not len(v):
+            self.core.execute("UPDATE voice_profiles SET centroid = ?, n_samples = 0, threshold = NULL, sim_mean = NULL, "
+                              "sim_std = NULL, calib_n = NULL, updated_at = ? WHERE id = ?",
+                              (to_blob(np.zeros(int(p["dim"]), np.float32)), _now(), profile_id))
+            log.info("perfil %s: sem amostra ativa (perfil vazio)", profile_id)
+            return 0
+        labels = group_samples(v, ref_cos, max_refs)
+        cal = calibrate(v, labels)
+        self.core.execute("UPDATE voice_profiles SET centroid = ?, n_samples = ?, threshold = ?, sim_mean = ?, sim_std = ?, calib_n = ?, "
+                          "updated_at = ? WHERE id = ?", (to_blob(cast(np.ndarray, centroid_of(list(v)))), len(v), cal.threshold,
+                                                          cal.mean, cal.std, cal.n, _now(), profile_id))
+        refs = int(labels.max()) + 1
+        log.info("perfil %s: %d referência(s) de %d amostra(s)", profile_id, refs, len(v))
+        return refs
 
-    def confirm(self, person_id: int, model: str, vector: np.ndarray, similarity: float | None, meeting_id: int | None,
-                segment_id: int | None = None, platform: str | None = None,
-                source: EmbeddingSource = EmbeddingSource.CONFIRM, cluster_id: int | None = None) -> int:
-        """Uma confirmação humana: calibra (antes), grava o vetor e recalcula o centroide; devolve o id do perfil."""
+    def confirm(self, person_id: int, model: str, vector: np.ndarray, meeting_id: int | None, segment_id: int | None = None,
+                platform: str | None = None, source: EmbeddingSource = EmbeddingSource.CONFIRM, cluster_id: int | None = None, *,
+                ref_cos: float = REF_COS, max_refs: int | None = MAX_REFS) -> int:
+        """Uma confirmação humana (ou o cadastro): grava o vetor e refaz o espelho do perfil (`refresh`) na mesma transação;
+        devolve o id do perfil. A nota da voz não calibra mais (F5.15 item 5): fica no evento e no log de quem chama."""
         v = np.asarray(vector, dtype=np.float32).reshape(-1)
         with self.core.transaction():
             pid = self.ensure_profile(person_id, model, int(v.size))
-            if similarity is not None and source == EmbeddingSource.CONFIRM:
-                self.update_calibration(pid, similarity)
             self.add_embedding(pid, v, source, meeting_id, segment_id, platform, cluster_id)
             if source in (EmbeddingSource.CONFIRM, EmbeddingSource.ENROLL):
-                self.recompute_centroid(pid)
+                self.refresh(pid, ref_cos, max_refs)
         return pid
-

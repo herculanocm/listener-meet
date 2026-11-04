@@ -53,14 +53,15 @@ def test_review_logic_confirm_new_person_merge_ignore_and_finish(platform, store
     assert store._q("SELECT segment_id FROM voice_embeddings WHERE source = 'confirmacao'")[0][0] == segs[0]["id"]
     assert store._q("SELECT field, after FROM revisions WHERE entity = 'cluster'")[0]["after"] == str(ana)
     assert EventType.PROFILE_CONFIRM in [e["type"] for e in store.list_events(mid)]
-    # mesma pessoa de novo (outro cluster): calibra com a similaridade ao perfil existente
+    # mesma pessoa de novo (outro cluster): a nota pelas referências dela vai ao evento; o limiar sai das amostras (F5.15)
     sim = review._similarity_to(store, store.segments.get_cluster(items[1].cluster_id), ana)
     assert sim is not None and sim < 0.2
     with caplog.at_level(logging.INFO, logger="listener.pipeline.review"):
         review.confirm(store, items[1].cluster_id, ana)
     assert f"confirmada como pessoa {ana}" in caplog.text and "Ana" not in caplog.text        # D-056: o id, nunca o nome
     prof = store.profiles.profile_for(ana, "fake-tone-256")
-    assert prof["n_samples"] == 2 and prof["sim_mean"] == pytest.approx(sim) and prof["threshold"] is None
+    assert prof["n_samples"] == 2 and prof["sim_mean"] is None and prof["calib_n"] == 0 and prof["threshold"] is None
+    assert next(e for e in reversed(store.list_events(mid)) if e["type"] == EventType.PROFILE_CONFIRM)["data"]["similarity"] == sim
     assert review.pending(review.review_items(store, mid)) == []
     # ignorar e mesclar: segmentos perdem a pessoa; a mescla segue a pessoa do alvo e registra revisão
     review.ignore(store, items[1].cluster_id)
@@ -223,7 +224,7 @@ def test_reading_does_not_name_pending_voices_and_merge_into_suggestion_confirms
     far[200] = 1.0                                                                        # perfil longe dos tons
     from listener.model import EmbeddingSource
 
-    store.profiles.confirm(ana, "fake-tone-256", far, None, None, source=EmbeddingSource.ENROLL)
+    store.profiles.confirm(ana, "fake-tone-256", far, None, source=EmbeddingSource.ENROLL)
     store.jobs.enqueue(mid)
     job = store.jobs.claim(pid=1)
     assert JobRunner(store, FakeDeps(SCRIPT), job, config=CFG, heartbeat_thread=False).run() == "concluído"
