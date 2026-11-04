@@ -552,6 +552,29 @@ do venv do checkout ou o `.exe` 0.7.0 gerado de novo (`scripts\build_exe.py --zi
 - Devolva: a saída da sonda, o tempo e o custo da ata, o gasto contra o console e o texto de qualquer erro da fila
   (a chave nunca aparece nele).
 
+## Parte 26 — F5.15: a pessoa atribuída é reconhecida da próxima vez (20 min, em duas reuniões de verdade)
+Antes: o app desta parte é o do venv do checkout ou o `.exe` 0.8.0 gerado de novo (`scripts\build_exe.py --zip`, a
+Parte 19). Nada sai da máquina: a identificação é local. Para desligar as referências e voltar à média única de antes:
+Configurações › Avançado › "Referências de voz por pessoa" = 1.
+- [ ] Configurações › Avançado: "Semelhança para juntar amostras numa referência de voz" com 0,80 e "Referências de
+      voz por pessoa" com 5, sem texto cortado a 150 %.
+- [ ] Numa reunião com alguém já cadastrado que entrou de outro jeito (outro fone, o celular, outra plataforma) e não
+      foi reconhecido, abra a revisão: a voz aparece "sem nome" ou "parecida com…". Clique em "Outra pessoa…": as
+      pessoas mais parecidas vêm no topo com "· voz 0,xx" (só as de 0,45 ou mais) e, depois, a lista em ordem
+      alfabética. Anote a posição e a nota da pessoa certa.
+- [ ] Antes de confirmar, a linha sob os botões diz "ganha uma referência nova: esta voz é diferente das que o perfil
+      já tem" (ou "aprende com esta fala", se a voz couber numa referência). Confirme: a linha passa a dizer "(agora N
+      referências)", sem texto cortado.
+- [ ] Se a mesma pessoa saiu em duas vozes na reunião: depois de confirmar a primeira, a segunda passa a sugerir a
+      mesma pessoa, com "(já na Voz N)" no card. Confirme ou mescle.
+- [ ] Na reunião seguinte, com a mesma pessoa do mesmo jeito: ela sai com o nome sozinha, sem pendência na revisão.
+      Anote a similaridade do card. É o aceite do uso real (B1): 2 de 2 casos, e nenhuma voz de outra pessoa com o
+      nome dela.
+- [ ] O ao vivo (G4): `.venv\Scripts\python.exe -m listener --check <pasta do banco> --meeting <id>` numa reunião de
+      antes da F5.15 e na nova; o bloco `live` dá o acerto do nome. Anote os dois (alvo de 70 % ou mais, sem cair).
+- Devolva: a posição e a nota da pessoa certa no "Outra pessoa…", as linhas antes e depois de confirmar, se a pessoa
+  saiu com o nome sozinha na reunião seguinte (com a similaridade) e os dois números do `--check`.
+
 ## Ao terminar
 - Mande os resultados de cada parte, mesmo aos poucos: a LLM registra, marca no backlog e corrige o que aparecer.
 - Com o processamento real funcionando (Parte 3), o venv do F0 pode sair (D-050): peça e a LLM lista o que apagar.
