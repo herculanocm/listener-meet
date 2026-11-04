@@ -25,15 +25,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.15 implementada** (04/11, D-087 a D-089, `features/F5.15-referencias-de-voz.md`): referências de voz por
   pessoa, para a pessoa atribuída na revisão ser reconhecida da próxima vez, mais as sugestões refeitas e "Outra
   pessoa…" pela voz (U-136 a U-138), em quatro commits, de `27f5b76` a `a157c10`, com a revisão do diff corrigida. O
-  L0 empatou no banco real e o dono manteve as referências ligadas (D-088). A versão passou a 0.8.0 (D-081), num
-  branch de worktree (`claude/understand-project-e0b954`) ainda fora da main. Falta o dono: a Parte 26 do roteiro.
+  L0 empatou no banco real e o dono manteve as referências ligadas (D-088). A versão passou a 0.8.0 (D-081), na main
+  desde 04/11 (fast-forward do branch `claude/understand-project-e0b954`). Falta o dono: a Parte 26 do roteiro.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado (o Claude espera a Parte 25).
-- O `.exe` que vale para as Partes 19 a 25 é o 0.7.1 de 03/11, 11:30 (`c0ddb2b`: a F5.14 com a conferência; 637 s,
-  892 MB, com o SDK do Claude e o QtNetwork; sonda `--probe` ok com o commit). Para compartilhar, o
-  `build\exe\listener-meet-0.7.1-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`). O primeiro build
-  de 03/11 parou na análise do PyInstaller sem erro nem detecção do Defender; o segundo passou [fato].
+- O `.exe` que vale para as Partes 19 a 26 é o 0.8.0 de 04/11, 20:08 (`d48722c`: a F5.15; 856 s, 892 MB, 4.697
+  arquivos; sonda `--probe` ok com o commit). Para compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB, a
+  pasta inteira; D-081: `build_exe.py --zip`) [fato].
 - CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
@@ -56,8 +55,8 @@ indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem
    com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
    endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
    aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
-   `.exe` 0.7.1 diz "versão 0.7.1 · c0ddb2b" (a versão do produto no arquivo e a sonda já conferidas).
-   F5.13 (Parte 24, pelo `.exe` 0.7.1): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
+   `.exe` 0.8.0 diz "versão 0.8.0 · d48722c" (a versão do produto no arquivo e a sonda já conferidas).
+   F5.13 (Parte 24, pelo `.exe` 0.8.0): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
    atalhos no menu da bandeja. F5.14 (Parte 25, com a chave da Anthropic e o seu OK): a sonda real, o "Testar conexão"
    na rede da empresa e uma reunião de 15 min com o Claude, com o custo contra o console. F5.15 (Parte 26, em duas
    reuniões reais): a pessoa atribuída numa condição nova sai com o nome sozinha na reunião seguinte (2 de 2), as
