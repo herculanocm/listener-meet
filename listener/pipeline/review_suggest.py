@@ -6,9 +6,10 @@ referências e com as configurações de agora (`voice_settings`); sem Qt.
 Sugestões refeitas (`refresh_suggestions`), na transação de quem chama: só as pendentes da reunião (`ambíguo` e `sem_nome`,
 não mescladas, fora o L do usuário, com vetor e modelo). b = a pessoa de maior nota, sem o um para um (pergunta 2); a margem
 é a nota de b menos a da segunda pessoa. (a) Se a sugestão de agora é uma pessoa que mudou: com nota de b de 0,45 ou mais
-(`FLOOR`, pergunta 4), vira b; abaixo disso, fica a mesma pessoa, com a nota nova dela e a margem contra a melhor outra (sem
-perfil utilizável, nota e margem nulas). (b) Senão, se b é uma pessoa que mudou e tem nota de 0,45 ou mais, vira b. (c) Senão,
-nada muda. Grava só `person_id`, `similarity` e `margin`; nunca `status`, `decision_source` nem `llm_*` (CP11, R2-07)."""
+(`FLOOR`, pergunta 4), vira b; abaixo disso, fica a mesma pessoa, com a nota nova dela e a margem contra a melhor outra (nula
+quando ela não é a mais parecida, em vez de negativa; sem perfil utilizável, nota e margem nulas). (b) Senão, se b é uma
+pessoa que mudou e tem nota de 0,45 ou mais, vira b. (c) Senão, nada muda. Grava só `person_id`, `similarity` e `margin`;
+nunca `status`, `decision_source` nem `llm_*` (CP11, R2-07)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -72,7 +73,9 @@ def _suggestion(c: ClusterRow, refs: Sequence[ProfileRef], changed: set[int]) ->
     if best is not None and scores[best] >= FLOOR and (best in changed or current in changed):
         return best, scores[best], _margin(scores, best)
     if current is not None and current in changed:                                  # (a) abaixo do piso: a mesma pessoa
-        return (current, scores[current], _margin(scores, current)) if current in scores else (current, None, None)
+        if current not in scores:
+            return current, None, None
+        return current, scores[current], _margin(scores, current) if current == best else None   # nunca uma margem negativa
     return None
 
 

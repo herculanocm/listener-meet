@@ -1,8 +1,8 @@
 """Revisão mínima de falantes (F2 item 13, U-006) e leitura (item 14), sem Qt: o que a tela mostra e o que cada ação grava.
 
 Cada confirmação: `clusters.status = confirmado` com a pessoa, `segments.person_id` e `role_at_time` do cluster, um vetor em
-`voice_embeddings` (`source = confirmacao`) com centroide recalculado e autocalibração (Welford com a similaridade medida
-antes), `revisions` e um evento `PROFILE_CONFIRM`; a confirmada que deixa a pessoa (outra, ignorada ou, P-03 da F5.11,
+`voice_embeddings` (`source = confirmacao`) com o perfil refeito das amostras: as referências e o limiar (F5.15, sem o
+Welford), `revisions` e um evento `PROFILE_CONFIRM`; a confirmada que deixa a pessoa (outra, ignorada ou, P-03 da F5.11,
 mesclada numa voz sem pessoa) tira o vetor do perfil. Mesclar guarda `clusters.merged_into` (segmentos mantêm o `cluster_id`,
 D-F2-9). "Perfil de um trecho" é o centroide do cluster (P6). O trecho de 5 s vem dos segmentos ou, com o Whisper ainda
 rodando, dos turnos do artefato da costura. A ficha da pessoa (U-041) está em `pipeline/review_person.py` (F5.11, A-35).
@@ -81,23 +81,23 @@ class ReviewItem:
     def title(self) -> str:
         return voice_label(self.label) if self.channel == "R" else f"{voice_label(self.label)} (canal {self.channel})"
 
-    def summary(self) -> str:                                    # sem as teclas: os botões dizem (U-098 da F5.11)
+    def summary(self, also: str = "") -> str:                   # sem as teclas (U-098 da F5.11); `also`, depois do nome (U-137)
         if self.merged_into is not None:
             return f"mesclada com a voz #{self.merged_into}"
         if self.status == ClusterStatus.IGNORED:
             return "ignorada"
         sim = (f" (similaridade {self.similarity:.2f}" + (f", margem {self.margin:.2f})" if self.margin is not None else ")")
                ).replace(".", ",") if self.similarity is not None else ""
-        llm = f" · {self.llm_text()}" if self.has_llm else ""
+        who, llm = f"{self.person_name}{also}", (f" · {self.llm_text()}" if self.has_llm else "")
         match self.status:
             case ClusterStatus.CONFIRMED:
-                return f"confirmada: {self.person_name}{sim}"
+                return f"confirmada: {who}{sim}"
             case ClusterStatus.AUTO:
-                return f"{self.person_name}{sim}"
+                return f"{who}{sim}"
             case ClusterStatus.AMBIGUOUS:
-                return f"{BY_VOICE}: {self.person_name}{sim}{llm}"
+                return f"{BY_VOICE}: {who}{sim}{llm}"
             case _:
-                return (f"sem nome; parecida com {self.person_name}{sim}" if self.person_name else "sem nome") + llm
+                return (f"sem nome; parecida com {who}{sim}" if self.person_name else "sem nome") + llm
 
 
 @dataclass(frozen=True, slots=True)

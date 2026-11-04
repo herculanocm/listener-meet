@@ -36,7 +36,8 @@ def _setup(store: Store) -> tuple[int, int, dict[str, int], tuple[int, int, int]
     job = store.jobs.enqueue(mid)
     u, a = ClusterStatus.UNNAMED, ClusterStatus.AMBIGUOUS
     plan = {"a1": (_voice(0.80, 0.50), a, bia), "a2": (_voice(0.70, 0.10), u, None), "a3": (_voice(0.44, 0.10), u, None),
-            "a4": (_voice(0.20, 0.30), u, bia), "a5": (_voice(0.46, 0.10), u, None), "merged": (_voice(0.90, 0.0), u, None),
+            "a4": (_voice(0.20, 0.30), u, bia), "a5": (_voice(0.46, 0.10), u, None), "a6": (_voice(0.30, 0.40), u, ana),
+            "merged": (_voice(0.90, 0.0), u, None),
             "done": (_voice(0.95, 0.0), ClusterStatus.CONFIRMED, bia)}
     ids = store.segments.insert_clusters([ClusterInsert(mid, job, "R", k, 20_000, v, MODEL, st, person_id=p, similarity=0.2, margin=0.01)
                                           for k, (v, st, p) in plan.items()]
@@ -62,17 +63,19 @@ def test_rule_b_and_the_floor_with_who_changed_and_the_rest_untouched(store: Sto
     before = {k: _plain(store, cid) for k, cid in ids.items()}
     assert refresh_suggestions(store, mid, job, set()) == 0 and refresh_suggestions(store, mid, job, {caio}) == 0   # (c)
     with caplog.at_level(logging.INFO, logger="listener.pipeline.review_suggest"):
-        assert refresh_suggestions(store, mid, job, {ana}) == 3
+        assert refresh_suggestions(store, mid, job, {ana}) == 4
     assert _state(store, ids["a1"]) == (ana, 0.8, 0.3)                       # (b): a mais parecida é a Ana, que mudou
     assert _state(store, ids["a2"]) == (ana, 0.7, 0.6) and _state(store, ids["a5"]) == (ana, 0.46, 0.36)   # 0,46: passa do piso
     assert _state(store, ids["a3"]) == (None, 0.2, 0.01)                      # 0,44: abaixo do piso, fica como estava
     assert _state(store, ids["a4"]) == (bia, 0.2, 0.01)                       # (c): a Bia não mudou e é a mais parecida
+    assert _state(store, ids["a6"]) == (ana, 0.3, None)                       # (a) abaixo do piso, mas a Bia é mais parecida:
+    # a margem seria negativa (-0,10): fica nula e o card mostra só a similaridade
     for key in ("merged", "done", "L"):                                       # a mesclada, a confirmada e o L do usuário
         assert _plain(store, ids[key]) == before[key]
     after = _plain(store, ids["a1"])
     fixed = ("status", "decision_source", "llm_person_id", "llm_name", "llm_confidence", "llm_evidence_json", "merged_into")
     assert all(after[k] == before["a1"][k] for k in fixed) and after["llm_person_id"] == caio     # CP11, R2-07
-    assert f"reunião {mid}: 3 sugestões refeitas" in caplog.text and not any(n.split()[0] in caplog.text for n in NAMES)
+    assert f"reunião {mid}: 4 sugestões refeitas" in caplog.text and not any(n.split()[0] in caplog.text for n in NAMES)
     assert FLOOR == 0.45
 
 

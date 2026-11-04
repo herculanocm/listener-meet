@@ -10,7 +10,7 @@ from dataclasses import replace
 
 import pytest
 
-from listener.model import ClusterStatus
+from listener.model import BY_VOICE, ClusterStatus
 from listener.pipeline import review
 from listener.pipeline.review import ReviewItem
 from listener.pipeline.review_suggest import LearnHint
@@ -248,9 +248,24 @@ def test_the_dialog_predicts_the_references_for_the_people_of_the_cards(qtbot, p
     assert "(agora 1 referência)" in dlg.learn.text()
 
 
+@pytest.mark.parametrize("name", ["cida", "ida", "nome"])
+def test_already_in_goes_right_after_the_name_even_inside_the_fixed_text(qapp, name):
+    """R-01: o "(já na Voz N)" entra na formatação, logo depois do nome, e não por substituição no texto pronto (o nome que
+    é pedaço de "parecida" ou de "sem nome" caía no lugar errado)."""
+    from listener.ui.review_cards import DETAIL_ROLE, card_item
+
+    pending = replace(BASE, status=ClusterStatus.UNNAMED, person_name=name, similarity=0.5, margin=None)
+    assert pending.summary(" (já na Voz 3)") == f"sem nome; parecida com {name} (já na Voz 3) (similaridade 0,50)"
+    assert card_item(pending, NAMES, 9).data(DETAIL_ROLE) == f"parecida com {name} (já na Voz 3) (similaridade 0,50)"
+    asked = replace(BASE, person_name=name)
+    assert card_item(asked, NAMES, 9).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (já na Voz 3) (similaridade 0,70, margem 0,03)"
+    assert card_item(asked, NAMES).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (similaridade 0,70, margem 0,03)"
+
+
 def test_other_person_lists_the_nearest_by_voice_first_without_the_suggested(qtbot, platform, store, monkeypatch):
-    """U-136: no topo, as de maior nota pela voz (só quem tem perfil; a já sugerida fica fora), com a nota, e depois a lista
-    alfabética de antes; a escolha vai do índice para o id (homônimas); a voz sem vetor, só a alfabética."""
+    """U-136: no topo, até 3 pessoas com nota de 0,45 ou mais pela voz (só quem tem perfil; a já sugerida fica fora; D-089),
+    com a nota, e depois a lista alfabética de antes; a escolha vai do índice para o id (homônimas); ninguém acima do piso ou
+    a voz sem vetor, só a alfabética."""
     from PySide6.QtWidgets import QInputDialog
 
     from listener.ui.person import person_labels
@@ -262,15 +277,17 @@ def test_other_person_lists_the_nearest_by_voice_first_without_the_suggested(qtb
     c0, c1 = _centroids(store, items)
     ana = store.people.create_person("Ana", role="CFO")
     bia1, bia2 = store.people.create_person("Bia", role="CFO"), store.people.create_person("Bia", role="CFO")   # homônimas
-    store.people.create_person("Caio")                                               # sem perfil: só na alfabética
-    for person, vec in ((ana, c1), (bia1, normalize(c0 + c1)), (bia2, ToneEmbedder().embed(tone(1.0, 550), 16000))):
+    caio = store.people.create_person("Caio")                                        # perfil longe da voz: abaixo do piso
+    store.people.create_person("Davi")                                               # sem perfil: só na alfabética
+    for person, vec in ((ana, c1), (bia1, normalize(c0 + c1)), (bia2, normalize(c1 + 0.5 * c0)),
+                        (caio, ToneEmbedder().embed(tone(1.0, 550), 16000))):
         store.profiles.confirm(person, "fake-tone-256", vec, None)
     store.segments.update_cluster(items[1].cluster_id, person_id=bia1, status=ClusterStatus.AMBIGUOUS)   # a já sugerida
     dlg = ReviewDialog(store, mid)
     qtbot.addWidget(dlg)
     dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(items[1].cluster_id))
     shown: list[list[str]] = []
-    answers = iter([1, None])
+    answers = iter([1, None, None])
 
     def pick(_parent, _title, _label, labels, *_a):
         shown.append(list(labels))
@@ -280,9 +297,44 @@ def test_other_person_lists_the_nearest_by_voice_first_without_the_suggested(qtb
     monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
     dlg.ask_other_person()
     alphabetical = person_labels(store.people.list_people())
-    assert shown[0] == ["Ana — CFO · voz 1,00", f"Bia — CFO (#{bia2}) · voz 0,00", *alphabetical]
+    assert shown[0] == ["Ana — CFO · voz 1,00", f"Bia — CFO (#{bia2}) · voz 0,89", *alphabetical]   # Caio, 0,00: fora
     assert store.segments.get_cluster(items[1].cluster_id)["person_id"] == bia2       # do índice para o id
+    far = ToneEmbedder().embed(tone(1.0, 660), 16000)                                # ninguém com 0,45 ou mais
+    store._x("UPDATE clusters SET centroid = ? WHERE id = ?", (to_blob(far), items[0].cluster_id))
+    dlg.reload(items[0].cluster_id)
+    dlg.ask_other_person()
     store._x("UPDATE clusters SET centroid = NULL WHERE id = ?", (items[0].cluster_id,))
     dlg.reload(items[0].cluster_id)
     dlg.ask_other_person()                                                           # voz sem vetor: só a alfabética
-    assert shown[1] == alphabetical
+    assert shown[1] == shown[2] == alphabetical
+
+
+def test_other_person_falls_back_to_the_alphabetical_list_when_the_ranking_fails(qtbot, platform, store, monkeypatch, caplog):
+    import logging
+
+    from PySide6.QtWidgets import QInputDialog
+
+    from listener.pipeline import review_suggest
+    from listener.ui.person import person_labels
+    from listener.ui.review import ReviewDialog
+
+    mid, _items = _processed(platform, store)
+    store.people.create_person("Anastácia Zimmerwald")
+    dlg = ReviewDialog(store, mid)
+    qtbot.addWidget(dlg)
+    shown: list[list[str]] = []
+
+    def pick(_parent: object, _title: str, _label: str, labels: list[str], *_a: object) -> tuple[str, bool]:
+        shown.append(list(labels))
+        return "", False
+
+    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
+
+    def broken(*_a: object) -> list:
+        raise RuntimeError("falha de teste")
+
+    monkeypatch.setattr(review_suggest, "voice_ranking", broken)
+    with caplog.at_level(logging.WARNING, logger="listener.ui.review"):
+        dlg.ask_other_person()
+    assert shown == [person_labels(store.people.list_people())] and "a ordem pela voz" in caplog.text
+    assert "Anastácia" not in caplog.text

@@ -92,9 +92,7 @@ def card_item(item: ReviewItem, names: VoiceNames, taken: int | None = None) -> 
         target = names.title(item.merged_into, f"voz #{item.merged_into}")
         detail, shown = f"mesclada com a {target}", f"é a mesma que a {target}"
     else:
-        detail = item.summary()
-        if taken is not None and item.person_name:
-            detail = detail.replace(item.person_name, f"{item.person_name} (já na {names.title(taken, f'voz #{taken}')})", 1)
+        detail = item.summary(f" (já na {names.title(taken, f'voz #{taken}')})" if taken is not None else "")   # R-01: na formatação
         shown = card_detail(detail, badge)
     out = QListWidgetItem(f"{title} · {item.minutes_text} · {detail}")
     out.setData(Qt.ItemDataRole.UserRole, item.cluster_id)

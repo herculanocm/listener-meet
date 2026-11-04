@@ -148,7 +148,8 @@ def _main_v4_pipeline(_core: Core, conn: sqlite3.Connection, schema: str) -> Non
 
 
 def _main_v5_review_columns(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
-    """`voice_profiles.calib_n` (Welford só com similaridades medidas) e `voice_embeddings.cluster_id` (invalidação por voz)."""
+    """`voice_profiles.calib_n` (desde a F5.15, as notas do limiar refeito das amostras) e `voice_embeddings.cluster_id` (invalidação
+    por voz)."""
     _add_columns(conn, schema, MAIN_V5_COLUMNS)
 
 

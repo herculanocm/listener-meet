@@ -63,9 +63,9 @@ class PersonActionsMixin:
         return self if isinstance(self, QWidget) else None
 
     def ask_other_person(self) -> None:
-        """"Outra pessoa" (e o "Escolher pessoa…"): no topo, as 3 de maior nota pela voz, sem a já sugerida, com a nota
-        ("Ana — CFO · voz 0,58", U-136); depois, "Nome — Cargo · Empresa" em ordem alfabética. A escolha vai do índice para
-        o id, nunca pelo nome (homônimos, A-11)."""
+        """"Outra pessoa" (e o "Escolher pessoa…"): no topo, até 3 de maior nota pela voz (0,45 ou mais), sem a já
+        sugerida, com a nota ("Ana — CFO · voz 0,58", U-136); depois, "Nome — Cargo · Empresa" em ordem alfabética. A
+        escolha vai do índice para o id, nunca pelo nome (homônimos, A-11)."""
         people = self.store.people.list_people()
         if not people:
             self.ask_new_person()
@@ -78,13 +78,19 @@ class PersonActionsMixin:
             self.confirm_current(([pid for pid, _ in top] + ids)[shown.index(choice)])
 
     def _top_by_voice(self, labels: dict[int, str]) -> list[tuple[int, str]]:
-        """U-136: as `TOP_BY_VOICE` pessoas de maior nota contra a voz atual, sem a já sugerida (pergunta 5); nenhuma na voz
-        sem vetor ou sem perfil no modelo."""
+        """U-136: até `TOP_BY_VOICE` pessoas com nota de 0,45 ou mais contra a voz atual (o piso da pergunta 4, D-089: o
+        primeiro item vem selecionado e o Enter o aceitaria), sem a já sugerida (pergunta 5). Nenhuma na voz sem vetor, sem
+        perfil no modelo ou sem ninguém acima do piso; uma falha vira aviso no log, sem nome, e fica a lista alfabética."""
         it = self.current_item()
         if it is None or not it.has_centroid:
             return []
-        ranked = [(pid, s) for pid, s in review_suggest.voice_ranking(self.store, it.cluster_id) if pid != it.person_id and pid in labels]
-        return [(pid, f"{labels[pid]} · voz {_decimal(s)}") for pid, s in ranked[:TOP_BY_VOICE]]
+        try:
+            ranked = review_suggest.voice_ranking(self.store, it.cluster_id)
+        except Exception as e:
+            log.warning("revisão da reunião %s: a ordem pela voz %s falhou: %s", self.meeting_id, it.cluster_id, e)
+            return []
+        near = [(pid, s) for pid, s in ranked if s >= review_suggest.FLOOR and pid != it.person_id and pid in labels]
+        return [(pid, f"{labels[pid]} · voz {_decimal(s)}") for pid, s in near[:TOP_BY_VOICE]]
 
     def ask_new_person(self) -> None:
         """U-041: a ficha da pessoa (nome obrigatório; cargo, empresa e e-mail opcionais)."""
