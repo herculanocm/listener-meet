@@ -2,7 +2,7 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (03/11/2026, Windows nativo; tudo commitado; o push é do dono)
+## Onde paramos (04/11/2026, Windows nativo; tudo commitado; o push é do dono)
 - Código: F1 a F5.14 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
   rascunho inicial e F7 é futuro. Suíte de 1.599 testes, esquema v9. Nenhum gate medido ainda.
 - **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
@@ -22,6 +22,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081) e, com a correção da
   conferência de 03/11 (o custo do Haiku 5.5 por chamada, `cbb14b9` e `bd0e745`), a 0.7.1. Falta o dono: a Parte 25 do
   roteiro, com a chave da Anthropic.
+- **F5.15 em revisão** (04/11, pedido do dono, `features/F5.15-referencias-de-voz.md`): referências de voz por pessoa,
+  para a pessoa atribuída na revisão ser reconhecida da próxima vez (U-136 a U-138), com a revisão de arquitetura
+  incorporada (A-01 a A-10). Falta a aprovação do dono (5 perguntas no padrão); o L0 mede no banco real antes do L1.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado (o Claude espera a Parte 25).
@@ -33,7 +36,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
   os números em `decisoes.md`, marca aqui e corrige o que aparecer (a LLM roda sozinha o que não depende dele, 25/10).
-  Sem o dono, o próximo trabalho depende da pergunta 7.
+  Sem o dono, o próximo trabalho é a F5.15, depois de aprovada; e depois, a pergunta 7.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md` e este arquivo; depois só a
@@ -157,7 +160,7 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
 - F2: o worker pesado carrega o CTranslate2 antes do torch, a ordem inversa à do F0; se aparecer "OMP: Error #15" (dois
   `libiomp5md.dll`), importar o torch antes, como o ao vivo já faz (a reunião 8 processou sem ele).
 - F2: invalidar um vetor de confirmação tira-o do centroide, mas a amostra já entrou na média e no desvio do limiar
-  (Welford não é reversível sem guardar as amostras); aceito até o G2 mostrar impacto.
+  (Welford não é reversível sem guardar as amostras); aceito até o G2 mostrar impacto. A F5.15 fecha (item 5).
 - F2: durante um reprocessamento a revisão mostra o job concluído (a abertura antecipada, P1, vale só para o primeiro
   processamento); `embed_range` (trecho livre) e separar perfis ficam para a F6.
 - F2: dois workers leves podem nascer no mesmo segundo (D-056): o segundo não acha job e sai ocioso em 60 s; inofensivo
