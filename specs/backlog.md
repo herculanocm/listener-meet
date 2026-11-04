@@ -22,9 +22,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081) e, com a correção da
   conferência de 03/11 (o custo do Haiku 5.5 por chamada, `cbb14b9` e `bd0e745`), a 0.7.1. Falta o dono: a Parte 25 do
   roteiro, com a chave da Anthropic.
-- **F5.15 em revisão** (04/11, pedido do dono, `features/F5.15-referencias-de-voz.md`): referências de voz por pessoa,
-  para a pessoa atribuída na revisão ser reconhecida da próxima vez (U-136 a U-138), com a revisão de arquitetura
-  incorporada (A-01 a A-10). Falta a aprovação do dono (5 perguntas no padrão); o L0 mede no banco real antes do L1.
+- **F5.15 aprovada, em implementação** (04/11, D-087, `features/F5.15-referencias-de-voz.md`): referências de voz
+  por pessoa, para a pessoa atribuída na revisão ser reconhecida da próxima vez (U-136 a U-138), com a revisão de
+  arquitetura incorporada (A-01 a A-10). O L0 mede no banco real antes do L1.
 - Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
   (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
   transporte simulado (o Claude espera a Parte 25).
@@ -36,7 +36,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
 - Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
   os números em `decisoes.md`, marca aqui e corrige o que aparecer (a LLM roda sozinha o que não depende dele, 25/10).
-  Sem o dono, o próximo trabalho é a F5.15, depois de aprovada; e depois, a pergunta 7.
+  Sem o dono, o próximo trabalho é a F5.15 (em implementação); depois, a pergunta 7.
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md` e este arquivo; depois só a
