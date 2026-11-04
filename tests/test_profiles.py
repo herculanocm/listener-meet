@@ -1,5 +1,6 @@
 """Perfis de voz, pessoas e segmentos (F2 L1): centroide só de cadastro e confirmação, Welford e limiar clipado,
-segmentos em lote, troca atômica do reprocessamento e resolução de mesclas."""
+segmentos em lote, troca atômica do reprocessamento e resolução de mesclas. F5.15 L0: o agrupamento das amostras, as
+referências, o limiar calculado das amostras, as variantes A, P e C e as amostras ativas numa consulta."""
 from __future__ import annotations
 
 import math
@@ -8,7 +9,8 @@ import numpy as np
 import pytest
 
 from listener.model import Attribution, ClusterStatus, EmbeddingSource, MeetingStatus, SegmentSource
-from listener.store.profiles import calibrated_threshold, centroid_of, from_blob, normalize, to_blob, welford_update
+from listener.store.profiles import (MAX_REFS, REF_COS, THRESHOLD_VARIANT, Calibration, calibrate, calibrated_threshold, centroid_of,
+                                     from_blob, group_samples, normalize, references, threshold_for, to_blob, welford_update)
 from listener.store.segments import ClusterInsert, SegmentInsert, resolve_person
 
 
@@ -171,3 +173,93 @@ def test_invalidating_a_new_voice_never_touches_the_samples_of_a_deleted_meeting
                                                                         "WHERE profile_id = ?", (p["id"],))}
     assert sources == {old: "confirmacao", new: "invalidado"}
     assert p["n_samples"] == before[0] and np.allclose(p["centroid"], before[1])
+
+
+# ---------------------------------------------------------------- F5.15 L0: referências de voz
+def _near(axis: int, noise: float, rng: np.random.Generator, dim: int = 16) -> np.ndarray:
+    """Um vetor normalizado perto do eixo `axis` (ruído 0,05: cosseno ~0,98 entre dois deles)."""
+    v = np.zeros(dim, np.float32)
+    v[axis] = 1.0
+    return normalize(v + rng.normal(scale=noise, size=dim).astype(np.float32))
+
+
+def test_group_samples_is_deterministic_renumbers_by_first_sample_and_respects_cut_and_cap():
+    rng = np.random.default_rng(15)
+    a, b = [_near(0, 0.05, rng) for _ in range(3)], [_near(1, 0.05, rng) for _ in range(2)]
+    v = np.stack([b[0], a[0], b[1], a[1], a[2]])
+    labels = group_samples(v, REF_COS, MAX_REFS)
+    assert labels.tolist() == [0, 1, 0, 1, 1] and labels.tolist() == group_samples(v.copy(), REF_COS, MAX_REFS).tolist()
+    assert group_samples(np.stack(a), REF_COS, MAX_REFS).tolist() == [0, 0, 0]                # próximas: um grupo só
+    # três condições: C fica a ~0,6 de A (abaixo do corte) e longe de B; o teto junta primeiro as mais próximas
+    c = [normalize(0.6 * _near(0, 0.02, rng) + 0.8 * _near(2, 0.02, rng)) for _ in range(2)]
+    w = np.stack([a[0], b[0], c[0], a[1], b[1], c[1]])
+    assert group_samples(w, REF_COS, None).tolist() == [0, 1, 2, 0, 1, 2]
+    assert group_samples(w, REF_COS, 2).tolist() == [0, 1, 0, 0, 1, 0]
+    assert group_samples(w, REF_COS, 1).tolist() == [0] * 6
+    # uma amostra, nenhuma e o corte 1,0 (uma referência por amostra; com teto, as mais próximas se juntam)
+    assert group_samples(w[:1], REF_COS, MAX_REFS).tolist() == [0] and group_samples(w[:0], REF_COS, MAX_REFS).shape == (0,)
+    assert group_samples(np.stack([a[0], a[0], b[0]]), 1.0, None).tolist() == [0, 1, 2]
+    assert group_samples(w, 1.0, 3).tolist() == [0, 1, 2, 0, 1, 2]
+
+
+def test_references_are_the_renormalized_mean_of_each_group_with_sizes():
+    rng = np.random.default_rng(3)
+    v = np.stack([_near(0, 0.1, rng), _near(1, 0.1, rng), _near(0, 0.1, rng), _near(0, 0.1, rng)])
+    labels = np.array([0, 1, 0, 0])
+    refs, sizes = references(v, labels)
+    assert refs.shape == (2, 16) and refs.dtype == np.float32 and sizes == (3, 1)
+    assert np.allclose(np.linalg.norm(refs, axis=1), 1.0) and np.allclose(references(v * 3.0, labels)[0], refs)
+    assert np.allclose(refs[0], centroid_of([v[0], v[2], v[3]])) and np.allclose(refs[1], v[1])
+    empty, none = references(v[:0], np.zeros(0, np.intp))
+    assert empty.shape == (0, 16) and none == ()
+
+
+def test_calibrate_scores_each_sample_against_the_rest_of_its_group_and_clips():
+    rng = np.random.default_rng(11)
+    group = [_near(0, 0.2, rng) for _ in range(6)]
+    lone = _near(5, 0.05, rng)
+    v, labels = np.stack([*group, lone]), np.array([0] * 6 + [1])
+    cal = calibrate(v, labels)
+    notes = [float(x @ centroid_of([y for k, y in enumerate(group) if k != i])) for i, x in enumerate(group)]
+    assert cal.n == 6 and math.isclose(cal.mean, float(np.mean(notes)), rel_tol=1e-5)          # a fundadora sozinha fica fora
+    assert math.isclose(cal.std, float(np.std(notes)), rel_tol=1e-3, abs_tol=1e-6)
+    assert cal.threshold == calibrated_threshold(6, cal.mean, cal.std) and 0.45 < cal.threshold < 0.75   # dentro da faixa
+    assert math.isclose(cal.threshold, cal.mean - 1.5 * cal.std)
+    four = calibrate(v[:4], labels[:4])
+    assert four.n == 4 and four.threshold is None                                         # menos de 5 notas: o global
+    assert calibrate(np.stack([lone, group[0]]), np.array([0, 1])) == Calibration(None, 0, None, None)   # só fundadoras
+    assert calibrate(np.stack([group[0]] * 5), np.zeros(5, np.intp)).threshold == 0.75   # notas 1,0: o teto
+    assert calibrate(np.stack([_near(k, 0.0, rng) for k in range(6)]), np.zeros(6, np.intp)).threshold == 0.45   # notas 0: o piso
+
+
+def test_threshold_for_variants_a_p_and_c():
+    assert THRESHOLD_VARIANT == "P"
+    assert threshold_for("A", 0.72, 1, 0.60) == 0.72 and threshold_for("A", None, 3, 0.60) == 0.60
+    assert threshold_for("P", 0.72, 1, 0.60) == 0.60                                     # referência de uma amostra: o global
+    assert threshold_for("P", 0.72, 2, 0.60) == 0.72 and threshold_for("P", 0.72, None, 0.60) == 0.72   # desconhecido: a A
+    assert threshold_for("P", None, 2, 0.55) == 0.55
+    assert threshold_for("C", 0.72, 2, 0.60) == 0.60 and threshold_for("C", None, None, 0.6) == 0.6
+    with pytest.raises(ValueError, match="variante"):
+        threshold_for("X", 0.72, 2, 0.60)
+
+
+def test_active_samples_in_one_query_without_automatic_invalid_or_another_dimension(store):
+    ana, bia, caio = (store.people.create_person(n) for n in ("Ana", "Bia", "Caio"))
+    m1 = store.create_meeting("r1", "ms-teams", None, None)
+    pa = store.profiles.confirm(ana, "wespeaker", _vec(0) * 3, None, None, source=EmbeddingSource.ENROLL)   # cadastro sem reunião
+    pb = store.profiles.confirm(bia, "wespeaker", _vec(2), None, m1, platform="ms-teams")
+    store.profiles.confirm(ana, "wespeaker", _vec(1), 0.7, m1, platform="ms-teams")
+    store.profiles.add_embedding(pa, _vec(3), EmbeddingSource.AUTO, meeting_id=m1)
+    store.profiles.add_embedding(pa, _vec(4), EmbeddingSource.INVALID, meeting_id=m1)
+    store.profiles.add_embedding(pa, np.ones(4, np.float32), EmbeddingSource.CONFIRM, meeting_id=m1)    # outra dimensão
+    store.profiles.upsert_auto_embedding(caio, "wespeaker", _vec(5), m1, "ms-teams")                    # só automático: fora
+    store.profiles.confirm(ana, "outro", _vec(6), None, None)                                            # outro modelo
+    got = store.profiles.active_samples("wespeaker")
+    assert [(s.profile_id, s.person_id, s.dim, s.skipped) for s in got] == [(pa, ana, 8, 1), (pb, bia, 8, 0)]
+    a = got[0]
+    assert a.meetings == (None, m1) and a.platforms == (None, "ms-teams") and len(a.ids) == 2 and a.ids[0] < a.ids[1]
+    assert a.vectors.shape == (2, 8) and a.vectors.dtype == np.float32 and np.allclose(a.vectors[0], normalize(_vec(0)))
+    assert np.allclose(np.linalg.norm(a.vectors, axis=1), 1.0)
+    assert [s.person_id for s in store.profiles.active_samples("wespeaker", [bia])] == [bia]
+    assert store.profiles.active_samples("wespeaker", []) == [] and store.profiles.active_samples("nenhum") == []
+    assert [s.person_id for s in store.profiles.active_samples("outro")] == [ana]

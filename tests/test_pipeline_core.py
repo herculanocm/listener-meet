@@ -10,11 +10,12 @@ import pytest
 from listener.capture.audio import encode_flac, silent_flac
 from listener.model import ClusterStatus
 from listener.pipeline.align import Segmenter, merge_words
-from listener.pipeline.profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names
+from listener.pipeline.profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, person_scores
 from listener.pipeline.stitch import pair_labels, stitch
 from listener.pipeline.types import (DiarizationWindow, JobConfig, TranscriptWindow, Turn, Word, decode_diarization,
                                      decode_transcript, encode_diarization, encode_transcript)
 from listener.pipeline.windows import find_silence_cut, frame_rms, iter_windows
+from listener.store.profiles import normalize
 from tests.fake_pipeline import FakeDeps, ScriptedTranscriber, ToneDiarizer, ToneEmbedder, dominant_freq
 
 SR = 16000
@@ -147,6 +148,51 @@ def test_profile_matcher_lsa_threshold_margin_short_and_tie_break():
     assert ProfileMatcher().match([cluster_data([Turn(0, 100, "x")], {})[0]], [ana])[0].person_id is None   # sem centroide
     assert expected_names(None) == () and expected_names(" Ana , Bia ") == ("ana", "bia")
 
+
+
+def _mix(a: np.ndarray, b: np.ndarray, k: float) -> np.ndarray:
+    return (a + k * b) / np.linalg.norm(a + k * b)
+
+
+def test_person_scores_take_the_best_reference_and_say_which_won():
+    """F5.15 item 4: a nota de uma pessoa é o maior cosseno entre a voz e as referências dela; o 1-D vira uma referência."""
+    ana, bia = ProfileRef(1, 10, np.stack([_e(0), _e(1)]), sizes=(3, 1)), ProfileRef(2, 20, _e(2))
+    assert ana.refs.shape == (2, 16) and bia.refs.shape == (1, 16) and bia.sizes == ()
+    v = np.stack([_mix(_e(1), _e(0), 0.2), _e(2), _e(5)])
+    s, win = person_scores(v, [ana, bia])
+    assert s.shape == win.shape == (3, 2)
+    assert s[0, 0] == pytest.approx(1 / np.hypot(1, 0.2)) and win[0, 0] == 1             # venceu a 2ª referência da Ana
+    assert s[1, 1] == pytest.approx(1.0) and win[1, 1] == 0 and s[2].tolist() == [0.0, 0.0]
+    assert person_scores(v, [])[0].shape == (3, 0)
+    raw = np.random.default_rng(5).normal(size=16).astype(np.float32)
+    assert np.array_equal(ProfileRef(1, 10, raw).refs, normalize(raw)[None, :])           # o centroide de hoje, igual
+    with pytest.raises(ValueError, match="tamanhos"):
+        ProfileRef(1, 10, np.stack([_e(0), _e(1)]), sizes=(3,))
+
+
+def test_matcher_margin_between_people_and_variant_p_with_a_one_sample_reference():
+    bia = ProfileRef(2, 20, _e(1), name="Bia")
+    voice = cluster_data([Turn(0, 20_000, "v")], {"v": [_mix(_e(0), _e(3), 0.05)]})
+    # duas referências próximas da Ana não viram margem pequena contra ela mesma: a margem é contra a Bia
+    ana2 = ProfileRef(1, 10, np.stack([_e(0), _mix(_e(0), _e(3), 0.1)]), name="Ana", sizes=(4, 2))
+    r = ProfileMatcher(0.60, 0.05).match(voice, [ana2, bia])[0]
+    assert r.status == ClusterStatus.AUTO and r.person_id == 10 and r.margin > 0.9
+    split = [ProfileRef(1, 10, _e(0)), ProfileRef(3, 10, _mix(_e(0), _e(3), 0.1)), bia]    # as duas como perfis: margem ~0
+    assert ProfileMatcher(0.60, 0.05).match(voice, split)[0].status == ClusterStatus.AMBIGUOUS
+    # P: a voz que vence a referência de uma amostra decide pelo global; a de 4 amostras e a variante A, pelo da pessoa
+    cal = ProfileRef(1, 10, np.stack([_e(0), _e(3)]), threshold=0.75, name="Ana", sizes=(4, 1))
+    near_new = cluster_data([Turn(0, 20_000, "n")], {"n": [_mix(_e(3), _e(5), 1.0)]})    # cosseno 0,707 com a nova
+    near_old = cluster_data([Turn(0, 20_000, "o")], {"o": [_mix(_e(0), _e(5), 1.0)]})    # 0,707 com a antiga
+    p_new = ProfileMatcher(0.60, 0.05).match(near_new, [cal, bia])[0]
+    assert p_new.status == ClusterStatus.AUTO and p_new.person_id == 10 and p_new.threshold == 0.60
+    a_new = ProfileMatcher(0.60, 0.05, variant="A").match(near_new, [cal, bia])[0]
+    assert a_new.status == ClusterStatus.UNNAMED and a_new.person_id == 10 and a_new.threshold == 0.75
+    p_old = ProfileMatcher(0.60, 0.05).match(near_old, [cal, bia])[0]
+    assert p_old.status == ClusterStatus.UNNAMED and p_old.threshold == 0.75
+    c_old = ProfileMatcher(0.60, 0.05, variant="C").match(near_old, [cal, bia])[0]
+    assert c_old.status == ClusterStatus.AUTO and c_old.threshold == 0.60
+    with pytest.raises(ValueError, match="variante"):
+        ProfileMatcher(variant="X")
 
 def test_clean_turns_and_cluster_data():
     turns = [Turn(0, 3000, "A"), Turn(3000, 4000, "B"), Turn(4000, 7000, "A"), Turn(7000, 9000, "B"), Turn(9000, 9500, "A")]

@@ -42,10 +42,10 @@ def match_one(vec: np.ndarray, profiles: Sequence[ProfileRef], threshold: float,
     margem menor, decide quem estiver entre os participantes esperados quando só um dos dois está (e passa do próprio
     limiar); senão não decide. Perfis de outra dimensão ou vazios não contam."""
     v = normalize(vec)
-    usable = [p for p in profiles if p.centroid.size == v.size and np.any(p.centroid) and np.all(np.isfinite(p.centroid))]
+    usable = [p for p in profiles if p.refs.shape[1] == v.size and np.any(p.refs) and np.all(np.isfinite(p.refs))]
     if not usable or not np.all(np.isfinite(v)) or not np.any(v):           # vetor NaN (janela estranha) não decide nada
         return NameMatch(None)
-    sims = np.stack([normalize(p.centroid) for p in usable]) @ v
+    sims = np.stack([p.refs[0] for p in usable]) @ v                      # F5.15 L0: ainda a média única (a 1ª referência)
     order = np.argsort(-sims)
     by_person = {p.person_id: float(s) for p, s in zip(usable, sims, strict=True)}
     best, best_sim = usable[int(order[0])], float(sims[order[0]])
