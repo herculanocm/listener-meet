@@ -6,6 +6,9 @@ devolve o resultado, junto com os números em `decisoes.md` e a correção do qu
 "Verificar no Windows" e os bloqueios B1, B2, B4, B5, B13 e B15 do `backlog.md` (26/10). O que a LLM já conferiu sem o
 dono não está aqui. Tamanho-alvo: 11 KB.
 
+Encerrado em 04/11 (D-090): o dono considerou feitas as Partes 1 a 26 pelo uso real do app. Fica como referência para
+conferir uma entrega nova, sem estado a marcar.
+
 ## Antes de começar
 - Terminal: PowerShell em `C:\dev\listener-meet`. App: `.venv\Scripts\python.exe -m listener` (depois, pelo ícone da
   bandeja). Sair: bandeja › Sair.

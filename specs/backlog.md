@@ -3,119 +3,35 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (04/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.15 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); F6 é
-  rascunho inicial e F7 é futuro. Suíte de 1.628 testes, esquema v9. Nenhum gate medido ainda.
-- **F5.11 implementada** (02/11, D-077, D-078, `features/F5.11-revisao-reuniao-e-linguagem.md`): as 23 melhorias da
-  crítica de UX (U-098 a U-120) em nove commits, de `8655ef0` a `7aee204`, com a revisão do diff corrigida; a nova
-  crítica deu 34/40, sem P1 (era 28). Falta o dono: a Parte 22 do roteiro. O achado de produção dela, o Enter que
-  apagava a gravação na confirmação do descarte, saiu antes, na D-076.
-- **F5.12 implementada** (02/11, D-079, D-080, `features/F5.12-sobre-e-apoio.md`): o Sobre (bandeja, Configurações e
-  assistente) e o convite para apoiar com R$ 0,99 pelo Pix ou US$ 0,20 pelo PayPal (U-121 a U-128), em três commits,
-  de `f953bfd` a `03b16a0`, com a revisão do diff corrigida. Falta o dono: a Parte 23 do roteiro.
-- **F5.13 implementada** (02/11, D-082, D-083, `features/F5.13-barra-de-tarefas.md`): o ícone fixado na barra de
-  tarefas abre o Histórico, com a instância única (o item 17), o Jump List, a dica de fixar e os atalhos no menu da
-  bandeja (U-129 a U-133), em quatro commits, de `42505ad` a `49f6b19`, com a revisão do diff corrigida. A versão passou
-  a 0.6.0 (D-081). Falta o dono: a Parte 24 do roteiro.
-- **F5.14 implementada** (02 e 03/11, D-084, D-085, `features/F5.14-claude-anthropic.md`): o Claude (Anthropic) como
-  alternativa ao Gemini em todo trabalho de LLM: o adaptador na API de hoje, os padrões Haiku 5.5 e Opus 5.5, as
-  sementes de preço, o aviso com o nome do provedor e a sonda `llm_probe.py` (U-134, U-135), em quatro commits, de
-  `1080ec5` a `7a2032e`, com a revisão do diff corrigida. A versão passou a 0.7.0 (D-081) e, com a correção da
-  conferência de 03/11 (o custo do Haiku 5.5 por chamada, `cbb14b9` e `bd0e745`), a 0.7.1. Falta o dono: a Parte 25 do
-  roteiro, com a chave da Anthropic.
-- **F5.15 implementada** (04/11, D-087 a D-089, `features/F5.15-referencias-de-voz.md`): referências de voz por
-  pessoa, para a pessoa atribuída na revisão ser reconhecida da próxima vez, mais as sugestões refeitas e "Outra
-  pessoa…" pela voz (U-136 a U-138), em quatro commits, de `27f5b76` a `a157c10`, com a revisão do diff corrigida. O
-  L0 empatou no banco real e o dono manteve as referências ligadas (D-088). A versão passou a 0.8.0 (D-081), na main
-  desde 04/11 (fast-forward do branch `claude/understand-project-e0b954`). Falta o dono: a Parte 26 do roteiro.
-- Já rodou de verdade no Windows [fato]: a captura L e R, o ao vivo, o Whisper, o pyannote e o adaptador do Gemini
-  (reunião 8, Teams, 15 min, pelo `.exe`, 30/10; números em `decisoes.md`, Medições). GPT e Claude seguem só contra
-  transporte simulado (o Claude espera a Parte 25).
-- O `.exe` que vale para as Partes 19 a 26 é o 0.8.0 de 04/11, 20:08 (`d48722c`: a F5.15; 856 s, 892 MB, 4.697
-  arquivos; sonda `--probe` ok com o commit). Para compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB, a
-  pasta inteira; D-081: `build_exe.py --zip`) [fato].
-- CI: o `ci.yml` só ficou válido na D-072; o push de 31/10 é o primeiro run de verdade. Conferir no Actions se passou
-  nos três sistemas (pode mostrar falhas de Linux e macOS nunca vistas).
-- Próximo passo do dono: "Verificar no Windows", na ordem. Ele devolve o que cada parte do roteiro pede; a LLM registra
-  os números em `decisoes.md`, marca aqui e corrige o que aparecer (a LLM roda sozinha o que não depende dele, 25/10).
-  Sem o dono, o próximo trabalho depende da pergunta 7.
+- Código: F1 a F5.15 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`) e
+  verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para depois
+  (D-091); F7 é futuro. Suíte de 1.628 testes, esquema v9, versão 0.8.0.
+- O `.exe` atual é o 0.8.0 de 04/11 (`d48722c`, a F5.15; 856 s, 892 MB, 4.697 arquivos; sonda `--probe` ok). Para
+  compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+- Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit.
+- Em andamento (D-091): a suíte em paralelo com o `pytest-xdist` e a transcrição sem o token do Hugging Face (F5.16).
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md` e este arquivo; depois só a
    camada da tarefa.
-2. Testes (D-050): `python -m pytest -q` é a parte rápida; antes de commitar, a inteira (`--tudo`, a que o CI roda),
+2. Testes (D-050): `python -m pytest -q` é a parte rápida; antes de commitar, a inteira (`--tudo`),
    mais `ruff check .`, `mypy` e `mypy --platform linux`. No Windows, pelo venv do checkout:
    `.venv\Scripts\python.exe -m pytest -q --tudo`, `.venv\Scripts\ruff.exe check .` e `.venv\Scripts\mypy.exe`.
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
-## Verificar no Windows (na ordem, quando a sessão estiver no Windows nativo)
-Tudo que foi feito no Linux ou no WSL só vale depois daqui (CP15). Cada item é do dono: o passo a passo é a parte
-indicada de `specs/roteiro-teste-windows.md`; gravar reunião e usar chave pedem o OK dele. Números em `decisoes.md`
-(Medições) e `memory/maquina.md`; defeito vira correção pequena (sem agente) ou item novo aqui.
-1. [ ] F5.11 (Parte 22): a revisão de vozes, a reunião aberta e a linguagem numa reunião real; o "Testar" do token
-   com a rede da empresa; nenhum `listener --hf-check` sobrando. F5.12 (Parte 23): o Sobre, um Pix real de R$ 0,99, o
-   endereço do PayPal e o convite fora de chamada e fora da tela compartilhada. A correção de 02/11: com o Histórico
-   aberto, concluir a revisão muda o estado para "revisada" sem fechar a janela. A D-081: o Sobre do
-   `.exe` 0.8.0 diz "versão 0.8.0 · d48722c" (a versão do produto no arquivo e a sonda já conferidas).
-   F5.13 (Parte 24, pelo `.exe` 0.8.0): o ícone fixado, as tarefas do Jump List, o `.exe` aberto duas vezes e os
-   atalhos no menu da bandeja. F5.14 (Parte 25, com a chave da Anthropic e o seu OK): a sonda real, o "Testar conexão"
-   na rede da empresa e uma reunião de 15 min com o Claude, com o custo contra o console. F5.15 (Parte 26, em duas
-   reuniões reais): a pessoa atribuída numa condição nova sai com o nome sozinha na reunião seguinte (2 de 2), as
-   telas da revisão a 150 % e o G4 no `--check`, antes e depois.
-2. [ ] F5.10, o gate G5.10 (Parte 21): as 15 perguntas com o Gemini no banco real.
-3. [ ] F5.9, os canais que se recuperam (Parte 20): na reunião 8 a troca manual do R aos 13,5 s encerrou a volta ao app
-   (D-067), e as seis verificações (app que fecha no meio, chamada que entra depois, microfone atrasado, "agora X",
-   onde a chamada toca, eco) seguem sem resultado.
-4. [ ] D-067, o som que segue o aparelho escolhido (Parte 18).
-5. [ ] F5.8, o `.exe` numa reunião de verdade (Parte 19).
-6. [ ] F5.7, o aviso de reunião sem gravação (Parte 17; reinicie o app antes).
-7. [ ] F5.6: L2 (Parte 16; reinicie o app antes), L1 (Parte 15) e L3 (Parte 14). Junto da L1, a D-071: a ata em pt-BR
-   segue o contrato como seguia em inglês (evidência nos itens, `[mm:ss]` no chat, "Voz 2" sem tradução); se piorar, o
-   `prompt_version` das chamadas diz qual texto foi usado.
-8. [ ] F5.5 (Parte 13), F5.4 (Parte 12: claro, escuro, contraste alto, notebook, teclado), F5.3 (Parte 11: idioma,
-   fila, aviso, fone no meio da gravação) e F5.2 (Parte 10: fone conectado com o app aberto, ficha da pessoa, ata
-   depois da identificação, log em DEBUG).
-9. [ ] Uso real (B1; Partes 3 e 4): a reunião 8 cobriu a gravação e o processamento; faltam a revisão de falantes, a
-   reunião aberta e os logs que a Parte 3 pede (tempo e RAM por etapa, sonda Q8, canário). Depois da Parte 3, apagar o
-   venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
-10. [ ] Gemini, busca local e ao vivo (Partes 5, 6 e 7; B15): busca e perguntas com o Gemini (F5), a busca local sem
-   custo (F5.1) e o ao vivo com nomes (F4).
-11. [ ] Reuniões reais e bordas (Partes 8 e 9): G1 (B2), G2, G3, G4 e G5; a D-072, o logoff cancelado, e a D-076 (o
-    ✕ do widget com Enter na confirmação: a gravação segue) entram na Parte 9; a metade Linux do L0 da F5.1, na
-    próxima sessão no Linux.
-
-Concluídos: checkout, venv e suíte no Windows (25/10; pelo lock desde 26/10, D-050); Parte 1 (26/10); Parte 2, as
-chaves (o Gemini 3 passou no "Testar conexão" em 26/10, D-055; o pyannote diarizou a reunião 8 com o token em 30/10).
+## Verificar no Windows (quando a sessão estiver no Windows nativo)
+Nada pendente: em 04/11 o dono considerou feitas todas as verificações (as Partes 1 a 26 de
+`specs/roteiro-teste-windows.md`) pelo uso real do app (D-090). Entrega nova feita fora do Windows põe aqui o que só o
+Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como referência. Sobra da Parte 3, com o OK
+dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-As respondidas (2 a 4, 11 a 16, 18 e 20) saíram daqui: o registro está em `decisoes.md`, nas specs e no git.
-1. P23, RAM da busca local: o tokenizer do e5 custa ~262 MB e o app vai a ~620 a 670 MB com o Histórico aberto
-   (aceitar e medir na Parte 6; a alternativa é o `sentencepiece`, dependência nova).
-5. `AGENTS.md`: "Testes: `python -m pytest -q` (a rápida); antes de commitar, `--tudo` (D-050)" (sim).
-6. `pytest-xdist`, só de desenvolvimento, para a meta de 8 s (sim, num lote pequeno).
-7. Próximo passo sem o dono: detalhar a spec da F6 e passá-la pela revisão de arquitetura para ele aprovar (sim).
-8. Sem o token do Hugging Face, transcrever mesmo assim, sem saber quem fala no R (o L é você), em vez de o
-   processamento não sair (sim; muda o comportamento da F2, vai para uma spec).
-9. As janelas pretas eram os workers (D-056), e fechar uma delas no X mata o worker sem rastro (medido). Foi isso nas
-   quedas do job da reunião 2 (26/10, 15:35 e 15:36) e na do terceiro teste (17:27:55)? E o app que fechou sem o "app
-   encerrado": foi o terminal dele que se fechou? (sim aos dois; se não, investigar o antivírus/EDR).
-10. Além das janelas pretas (D-056) e da revisão (U-039), alguma outra janela ainda sobe por cima? (nenhuma).
-17. F5.8: a trava de instância única, para o `.exe` aberto duas vezes, ou junto com o venv, no mesmo banco: entrou na
-    F5.13 (U-129), implementada; falta a Parte 24.
-19. A pasta do banco do teste de 26/10 (`C:\dev\base_listener_meet`) apareceu vazia às 14:21 daquele dia, fora da
-    Lixeira e sem nenhum processo da LLM nela; os `rmtree` do código e dos testes só alcançam pastas do `mkdtemp`. Foi
-    você ou outra ferramenta? (sim, por fora do app; se não, investigar).
+Nenhuma: as últimas (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091), e as anteriores estão em
+`decisoes.md`, nas specs e no git.
 
 ## Bloqueios que só o dono destrava
-| # | O quê | Destrava |
-| --- | --- | --- |
-| B1 | uso real do app pelo roteiro (Partes 3 e 4): gravação, fila, revisão, reunião aberta; dizer o que está estranho | F1.1, F1.2 e o resto da F2 e da F3 pelo uso de verdade |
-| B2 | gate G1: 3 reuniões reais com headset em 2 plataformas e `python -m listener --check <pasta do banco>` (já imprime deriva e deslocamento L/R) | fecha F1 e F1.1; dá áudio real para o G2 |
-| B5 | gravação real de ~1 h com headset (ou as do G1); a reunião 8 deu a primeira medida, de 15 min | Whisper e pyannote por hora de áudio |
-| B15 | `python scripts/live_probe.py all <gravação real>` com `HF_TOKEN` (o embedding do wespeaker) e uma gravação com a legenda ligada | os nomes ao vivo, o EcoQoS e o G4 (o filho real já legendou a reunião 8) |
-
-Fechados: B3 (D-036) · B4 (o token do Hugging Face está no banco real: o pyannote diarizou a reunião 8, 30/10) · B6 ·
-B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-043) · B13 (a chave do Gemini passou no
-"Testar conexão", 26/10, D-055) · B14 (D-044) · B16 (D-047).
+Nenhum: B1, B2, B5 e B15 fecharam pelo uso real, sem os números que pediam (D-090); B3, B4 e B6 a B16 já estavam
+fechados (as decisões em `decisoes.md`).
 
 ## Dívidas técnicas
 - D-072, reais e pequenas (sem correção por ora): a morte da thread de trabalho da captura não marca a reunião; o
@@ -148,7 +64,7 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
   `test_rag_ui.py::test_the_system_loopback_never_opens_with_the_player_playing` falhou uma vez com `-x` (0 em 15
   depois); se voltar, guardar a saída e ver a espera do player.
 - F5.11 (D-078): desfazer a voz transportada de um reprocessamento não acha o vetor (a linha "Para desfazer" não
-  aparece nela); o `--hf-check` atrás da inspeção TLS da empresa só o dono testa (Parte 22).
+  aparece nela).
 - O assistente atende o Enter com o "Sim" na pergunta da pasta sincronizada (`ui/wizard.py:121`, sem botão padrão,
   como o descarte antes da D-076): uma tecla põe o banco numa pasta sincronizada com a nuvem.
 - Suíte acima da meta de 8 s (D-050; a inteira levou 152 s com 1.376 testes em 31/10): a meta pede execução paralela
@@ -156,16 +72,16 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
   `listener-*` no `%TEMP%` (82 em três dias, apagadas na D-052): passar os testes para o `tmp_path` e as sondas a apagar
   o que não imprimem.
 - Captura: a saúde dos canais começa "ok" por até 10 s sem sinal e o R não avisa antes (D-050: silêncio no começo é
-  normal); rever depois do G1. A deriva de relógio só é instrumentada (A7); corrigir em spec própria se o G1 mostrar
-  mais de 100 ms por hora (P22). O eco é medido no "Testar 3 s" e depois de trocar o microfone (F5.9), não de forma
+  normal); rever se aparecer no uso. A deriva de relógio só é instrumentada (A7); corrigir em spec própria se o
+  `--check` de uma reunião mostrar mais de 100 ms por hora (P22). O eco é medido no "Testar 3 s" e depois de trocar o microfone (F5.9), não de forma
   contínua; o `--check` dá o número preciso.
-- F4: o eco do ao vivo usa o limiar do aviso (`capture.echo_corr_min`, 0,25); calibrar no G4 sem headset.
+- F4: o eco do ao vivo usa o limiar do aviso (`capture.echo_corr_min`, 0,25); calibrar se o eco vazar sem headset.
 - F2: o worker pesado carrega o CTranslate2 antes do torch, a ordem inversa à do F0; se aparecer "OMP: Error #15" (dois
   `libiomp5md.dll`), importar o torch antes, como o ao vivo já faz (a reunião 8 processou sem ele).
 - F5.15: quem junta 5 notas de grupo passa a exigir ~0,75 (as notas ficam acima de 0,8 pelo corte; A-01); o L0 não
-  viu, porque ninguém tinha 5. Acompanhar no G2 e no G4; se a pessoa conhecida começar a cair em pendente na condição
+  viu, porque ninguém tinha 5. Acompanhar no uso; se a pessoa conhecida começar a cair em pendente na condição
   de sempre, a variante C (só o global) está a uma constante.
-- Depois do G2 (04/11, ideia do dono avaliada): se a Parte 26 ou o G2 mostrarem gente conhecida caindo em pendente ou
+- Para depois (04/11, ideia do dono avaliada): se o uso mostrar gente conhecida caindo em pendente ou
   com o nome errado, uma spec pequena, local e por evento: (1) a referência nova refaz a sugestão das vozes pendentes
   também das reuniões antigas (hoje só na reunião aberta; nas outras, o Reprocessar); (2) uma checagem dos perfis aponta
   a referência que parece confirmação errada (amostra sozinha, longe das outras da pessoa e perto de outra), sem apagar
@@ -189,14 +105,5 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
 - Interface: a 640 px o campo do título da reunião rola e esconde a primeira letra; a sonda às vezes acusa o índice do
   Histórico cortado no print `historico-abrindo` (o texto chega antes do layout do canto das abas; no print seguinte
   sai inteiro); os textos são fixos em pt-BR (prever i18n, `tr()` do Qt ou gettext, antes da F6; CP15).
-- CP17: subir o piso e o teto do `requires-python` quando WhisperX e torch aceitarem Python 3.14 (hoje `<3.14`; o 3.13
-  já está no CI). O lock é só do Windows (`requirements/windows.txt`); o CI e o Linux seguem com o `pyproject.toml` sem
-  trava, e um lock do Linux pede o índice CPU do torch (o do PyPI traz CUDA, CP14).
-
-## Medições a registrar em `decisoes.md`
-pyannote por hora numa gravação de ~1 h (B5; a primeira medida, de 15 min, em 30/10) · tamanho do banco por hora (G1)
-· deriva por canal e deslocamento L/R (G1, `--check`) · sonda Q8 e similaridade intra e inter-pessoa por plataforma
-(F2) · precisão dos perfis, desvio do clique e legibilidade (G2) · embedding por janela no `live_probe` (B15); atraso
-médio e p95, CPU e acerto do nome (G4) · `rag_probe gemini` por lote, varredura da primeira abertura, híbrida com o
-vetor da consulta e `underflowed` do player com o worker pesado de verdade; citações certas em 10 perguntas (G5) · o G5
-com o embedder local e a RAM com o Histórico aberto (F5.1, P23) · as 15 perguntas do G5.10.
+- CP17: subir o piso e o teto do `requires-python` quando WhisperX e torch aceitarem Python 3.14 (hoje `<3.14`). O lock
+  é só do Windows (`requirements/windows.txt`); o Linux segue com o `pyproject.toml` sem trava, e um lock do Linux pede o índice CPU do torch (o do PyPI traz CUDA, CP14).

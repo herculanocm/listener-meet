@@ -50,7 +50,7 @@ família (F5.14): `output_config.format` com o esquema sem as chaves de `PROVIDE
 4.5 e 4; o Opus 5.5 e o Sonnet 5.5 recusam a ferramenta forçada). Validação sempre do projeto
 (~120 linhas): `type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho;
 dataclass `frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte
-(pydantic vem com os SDKs, mas não entra no WSL nem no CI base). O hash do esquema (`schema_hash`) vai para `llm_calls`,
+(pydantic vem com os SDKs, mas não entra no WSL). O hash do esquema (`schema_hash`) vai para `llm_calls`,
 sem versão própria por tarefa.
 
 ## Prompts (`llm/prompts/<task>.py`)
@@ -133,5 +133,5 @@ o `context` da ata, senão as primeiras falas. Erros traduzidos pela forma (`sta
 `assistant` mais a mensagem de erro em `user`.
 
 ## Pinos de versão (extra `llm`)
-`google-genai>=2.33,<3`, `openai>=3.37,<4`, `anthropic>=2.3,<3`, `truststore>=0.9`; uma célula do CI (Ubuntu, 3.12)
-instala `.[dev,llm]` para os testes de contrato com cliente-dublê; as demais pulam por `importorskip`.
+`google-genai>=2.33,<3`, `openai>=3.37,<4`, `anthropic>=2.3,<3`, `truststore>=0.9`; os testes de contrato com
+cliente-dublê precisam do extra `llm` (o lock do Windows já o traz) e, sem ele, pulam por `importorskip` (sem CI, D-090).

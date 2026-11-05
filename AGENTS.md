@@ -61,7 +61,8 @@ Pontos de contato do dono por entrega: aprovar a spec, verificar no Windows, med
 ## Convenções
 PT-BR em documentos, commits e interface; código com nomes em inglês e comentários em PT-BR. Stack fixa pelo handoff:
 Python 3.12 ou mais novo (CP17) num venv, PySide6, SQLite (`listener.db` e `listener-audio.db`), faster-whisper ou WhisperX, pyannote, LLM
-agnóstica com Gemini inicial. Separe sempre [fato], [exp] e [chute]. Testes: `python -m pytest -q`.
+agnóstica com Gemini inicial. Separe sempre [fato], [exp] e [chute]. Testes: `python -m pytest -q` (a rápida);
+antes de commitar, `--tudo` (D-050).
 
 ## Ferramentas
 Claude Code lê `CLAUDE.md` e Gemini CLI lê `GEMINI.md`; os dois só apontam para cá. Codex, Cursor e similares leem este

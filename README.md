@@ -101,7 +101,7 @@ Frentes abertas para quem quiser ajudar:
 - **Outros provedores** de LLM e de busca por sentido: a camada em `listener/llm/` é agnóstica.
 
 Testes (qualquer sistema, com a plataforma simulada): `python -m pytest -q` roda a parte rápida e `python -m pytest -q
---tudo` a suíte inteira (antes de commitar, e no CI); lint e tipos: `ruff check .` e `mypy`. No Linux, a captura
+--tudo` a suíte inteira (antes de commitar); lint e tipos: `ruff check .` e `mypy`. No Linux, a captura
 precisa da `libportaudio2`.
 
 ## Licença
