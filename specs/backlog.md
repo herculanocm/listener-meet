@@ -9,8 +9,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
-- O `.exe` atual é o 0.8.0 de 04/11 (`d48722c`, a F5.15; 856 s, 892 MB, 4.697 arquivos; sonda `--probe` ok); o 0.9.0
-  ainda não foi gerado. Para compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB; `build_exe.py --zip`).
+- O `.exe` atual é o 0.9.0 de 05/11 (`13b8d37`, a F5.16; 524 s, 892 MB, 4.697 arquivos; sonda `--probe` ok). Para
+  compartilhar, o `build\exe\listener-meet-0.9.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
 
 ## Como retomar (5 minutos)
