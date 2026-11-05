@@ -14,9 +14,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md` e este arquivo; depois só a
    camada da tarefa.
-2. Testes (D-050): `python -m pytest -q` é a parte rápida; antes de commitar, a inteira (`--tudo`),
-   mais `ruff check .`, `mypy` e `mypy --platform linux`. No Windows, pelo venv do checkout:
-   `.venv\Scripts\python.exe -m pytest -q --tudo`, `.venv\Scripts\ruff.exe check .` e `.venv\Scripts\mypy.exe`.
+2. Testes (D-050): `python -m pytest -q` é a parte rápida; antes de commitar, a inteira em paralelo (`--tudo -n 4
+   --dist worksteal`, D-091), mais `ruff check .`, `mypy` e `mypy --platform linux`. No Windows, pelo venv do checkout:
+   `.venv\Scripts\python.exe -m pytest -q --tudo -n 4 --dist worksteal`, `.venv\Scripts\ruff.exe check .` e
+   `.venv\Scripts\mypy.exe`.
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
@@ -61,8 +62,9 @@ fechados (as decisões em `decisoes.md`).
   depois); se voltar, guardar a saída e ver a espera do player.
 - F5.11 (D-078): desfazer a voz transportada de um reprocessamento não acha o vetor (a linha "Para desfazer" não
   aparece nela).
-- Suíte acima da meta de 8 s (D-050; a inteira levou 152 s com 1.376 testes em 31/10): a meta pede execução paralela
-  (pergunta 6); o resto é lógica espalhada (o `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
+- Suíte acima da meta de 8 s (D-050): com o `pytest-xdist` (D-091), a inteira caiu de 287 para 172 s com `-n 4` e a
+  rápida de 81 para 62 s; mais processos pioram nesta máquina (2 núcleos de desempenho, testes que esperam threads e
+  timers). O resto é lógica espalhada (o `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
   `listener-*` no `%TEMP%` (82 em três dias, apagadas na D-052): passar os testes para o `tmp_path` e as sondas a apagar
   o que não imprimem.
 - Captura: a saúde dos canais começa "ok" por até 10 s sem sinal e o R não avisa antes (D-050: silêncio no começo é

@@ -202,7 +202,7 @@ UI_FIXTURES = frozenset({"qtbot", "qapp"})
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption("--tudo", action="store_true", help="roda também os testes marcados `lento` (D-050: o CI e antes de commitar)")
+    parser.addoption("--tudo", action="store_true", help="roda também os testes marcados `lento` (D-050: antes de commitar)")
 
 
 def pytest_configure(config: pytest.Config) -> None:
