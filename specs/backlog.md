@@ -165,6 +165,12 @@ B7 (D-034) · B8 (D-035) · B9 (D-031) · B10 (D-039) · B11 (D-041) · B12 (D-0
 - F5.15: quem junta 5 notas de grupo passa a exigir ~0,75 (as notas ficam acima de 0,8 pelo corte; A-01); o L0 não
   viu, porque ninguém tinha 5. Acompanhar no G2 e no G4; se a pessoa conhecida começar a cair em pendente na condição
   de sempre, a variante C (só o global) está a uma constante.
+- Depois do G2 (04/11, ideia do dono avaliada): se a Parte 26 ou o G2 mostrarem gente conhecida caindo em pendente ou
+  com o nome errado, uma spec pequena, local e por evento: (1) a referência nova refaz a sugestão das vozes pendentes
+  também das reuniões antigas (hoje só na reunião aberta; nas outras, o Reprocessar); (2) uma checagem dos perfis aponta
+  a referência que parece confirmação errada (amostra sozinha, longe das outras da pessoa e perto de outra), sem apagar
+  nada (CP3). Uma rotina periódica com a LLM ficou de fora: a LLM não melhora a biometria, a CP11 a impede de nomear,
+  e um palpite que virasse referência daria o nome errado sozinho.
 - F2: durante um reprocessamento a revisão mostra o job concluído (a abertura antecipada, P1, vale só para o primeiro
   processamento); `embed_range` (trecho livre) e separar perfis ficam para a F6.
 - F2: dois workers leves podem nascer no mesmo segundo (D-056): o segundo não acha job e sai ocioso em 60 s; inofensivo
