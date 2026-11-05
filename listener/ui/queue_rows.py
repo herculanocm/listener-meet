@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..llm.costs import fmt_usd
 from ..model import JOB_KIND_LABELS, JOB_STEP_LABELS, JobKind, JobStatus
+from ..pipeline import no_diarization
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
 from ..rag.export import fmt_datetime
 
@@ -99,6 +100,8 @@ def job_row_texts(job: JobRow, meeting: dict[str, Any] | None, rtf_json: str, ll
         eta = fmt_remaining(remaining_seconds(step or None, float(job.get("progress") or 0.0), duration_ms / 1000 if duration_ms else None,
                                               rtf_json, job.get("timings_json"), kind=str(job.get("kind") or "")))
     detail = str(job.get("error") or "")
+    if status == JobStatus.DONE and no_diarization.reason_in(job.get("timings_json")):   # F5.16 (U-139)
+        detail = no_diarization.QUEUE_NOTE
     label = JOB_STEP_LABELS.get(step, step)
     if str(job.get("kind")) == JobKind.LLM:                              # F3: "LLM: ata (2 de 4)" e custo acumulado (U-020)
         label, cost, left = llm_job_texts(job, label)

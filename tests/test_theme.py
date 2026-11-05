@@ -189,6 +189,7 @@ def test_current_theme_readers_follow_the_scheme(qapp, tmp_path, restore_theme):
     from listener.ui import common
     from listener.ui.transcript import PLAYING_TONE, SegmentsModel
 
+    theme.apply(qapp, FakePlatform(tmp_path), Qt.ColorScheme.Light)   # D-091: no xdist, outro teste do processo deixava outro tema
     model = SegmentsModel([])
     light = model._playing_brush()
     assert light.gradient().stops()[-1][1].name() == LIGHT.background(PLAYING_TONE) and model._playing_brush() is light

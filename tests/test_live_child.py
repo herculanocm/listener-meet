@@ -345,7 +345,7 @@ def test_session_refuses_without_hello_or_meeting(store):
 def test_live_process_end_to_end_in_fake_mode():
     """O único subprocesso real do ao vivo: `python -m listener --live` com LISTENER_LIVE=fake, stdin e stdout de verdade
     (lançado na coleta por `conftest.py`, para correr em paralelo ao resto da suíte)."""
-    run = conftest.LIVE_RUN
+    run = conftest.live_run()
     assert run, "o processo ao vivo devia ter sido lançado na coleta (conftest.pytest_collection_modifyitems)"
     out, err = run["proc"].communicate(timeout=90)
     lines = [pr.decode_line(line) for line in out.splitlines()]

@@ -23,7 +23,7 @@ pytestmark = pytest.mark.lento                              # D-050: dois worker
 
 
 def test_worker_process_runs_one_job_with_own_log_and_low_priority():
-    run = conftest.WORKER_RUN
+    run = conftest.worker_run()
     assert run, "o worker devia ter sido lançado na coleta (conftest.pytest_collection_modifyitems)"
     _out, err = run["proc"].communicate(timeout=90)
     assert run["proc"].returncode == 0, err
@@ -52,7 +52,7 @@ def test_worker_process_runs_one_job_with_own_log_and_low_priority():
 @pytest.mark.skipif(conftest.pipeline_installed(), reason="com o extra pipeline o worker real processaria de verdade (baixaria modelos)")
 def test_worker_without_the_pipeline_extra_fails_permanently_with_a_clear_message():
     """R2-27: `--worker` sem LISTENER_PIPELINE=fake nesta máquina (sem torch): erro permanente, attempts 0, sem traceback."""
-    run = conftest.WORKER_RUN.get("real")
+    run = conftest.worker_run().get("real")
     assert run, "o segundo worker devia ter sido lançado na coleta"
     _out, err = run["proc"].communicate(timeout=90)
     assert run["proc"].returncode == 0 and "erro permanente" in err                           # o traceback vai para o log, de propósito
@@ -126,8 +126,9 @@ def test_models_helpers_without_network(tmp_path, monkeypatch):
     assert fake_hub.constants.HF_HUB_OFFLINE is True                                              # R2-19: no módulo já importado
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     models.ready_mark(cfg, "pyannote").unlink()
-    with pytest.raises(PermanentError, match="token do Hugging Face ausente"):
-        models.prepare_models(cfg, "", lambda m, f: None)
+    models.prepare_models(cfg, "", lambda m, f: None)          # F5.16: sem o token, só o Whisper (já baixado aqui)
+    assert not models.ready_mark(cfg, "pyannote").exists()
+    assert models.real_deps(cfg, "").diarization is False and models.real_deps(cfg, "hf_x").diarization is True
     (tmp_path / "m" / "faster-whisper-small" / "model.bin").unlink()
     if not conftest.pipeline_installed():                     # com o extra, isto baixaria o `small` de verdade (D-050)
         with pytest.raises(PermanentError, match="pip install"):                                    # sem faster-whisper aqui

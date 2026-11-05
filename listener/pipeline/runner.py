@@ -28,6 +28,7 @@ from ..store.core import json_default
 from ..store.jobs import JobRow
 from ..store.profiles import normalize
 from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_person
+from . import no_diarization
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
 from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
@@ -105,6 +106,20 @@ class JobRunner(BaseJobRunner):
     def respects_lease(self) -> bool:
         return self.config.pause_on_record
 
+    @override
+    def _timings_dict(self) -> dict[str, Any]:
+        """F5.16: sem diarização, a marca vai no `timings_json` e no `job_done` (`pipeline/no_diarization.py`)."""
+        out = super()._timings_dict()
+        deps = getattr(self, "deps", None)                       # a base grava antes de `deps` existir
+        if deps is not None and not deps.diarization:
+            out[no_diarization.KEY] = no_diarization.mark()
+        return out
+
+    @override
+    def _load_timings(self, text: str | None) -> None:
+        super()._load_timings(text)
+        self.timings.pop(no_diarization.KEY, None)               # a marca não é etapa: a retomada a refaz pelas dependências
+
     # ---------------------------------------------------------------- ciclo
     def run(self) -> JobStatus:
         meeting = self.store.get_meeting(self.meeting_id)
@@ -133,18 +148,24 @@ class JobRunner(BaseJobRunner):
                              {"job_id": self.job_id, "kind": str(self.kind), "attempts": self.job.get("attempts", 0),
                               "config": self.config.to_dict(), "language": self.language})
         self._log_language()
+        if (not self.deps.diarization and self.kind == JobKind.REPROCESS                # F5.16: sem o token, não tira vozes
+                and no_diarization.would_lose_voices(self.store, self.meeting_id, self.job_id)):
+            raise PermanentError(no_diarization.REPROCESS_REFUSED)
         self._prepare()
         channels = ["R", "L"] if self.meeting.get("is_in_room") else ["R"]
         clusters_by_channel: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]] = {}
-        for ch in channels:
+        for ch in channels if self.deps.diarization else ():                # F5.16: sem o token, sem diarização
             windows = self._diarize(ch, share=1.0 / len(channels))          # preset sala: o peso da etapa se divide (R2-20)
             clusters_by_channel[ch] = self._match(ch, windows)
-        if "L" not in channels:
+        if not self.deps.diarization:
+            self._end_step(JobStep.DIARIZE)
+            log.info("job %s: sem diarização (falta o token do Hugging Face): %s sem quem falou", self.job_id, "/".join(channels))
+        elif "L" not in channels:
             self._embed_user_channel()
         self._end_step(JobStep.EMBED)
         self._end_step(JobStep.MATCH)
         transcripts = {"R": self._transcribe("R", JobStep.TRANSCRIBE_R), "L": self._transcribe("L", JobStep.TRANSCRIBE_L)}
-        self._segments(transcripts, clusters_by_channel)
+        self._segments(transcripts, clusters_by_channel, frozenset() if self.deps.diarization else frozenset(channels))
         return self._finish_ok()
 
     def _log_language(self) -> None:
@@ -473,7 +494,8 @@ class JobRunner(BaseJobRunner):
         return out
 
     def _segments(self, transcripts: dict[str, list[TranscriptWindow]],
-                  clusters: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]]) -> None:
+                  clusters: dict[str, tuple[tuple[Turn, ...], dict[str, int], list[ClusterRow]]],
+                  unknown: frozenset[str] = frozenset()) -> None:
         step = JobStep.SEGMENTS
         self._begin_step(step)
         t0 = time.perf_counter()
@@ -485,6 +507,8 @@ class JobRunner(BaseJobRunner):
             if channel in clusters:
                 turns, ids, _crows = clusters[channel]
                 attribution = Attribution.PYANNOTE
+            elif channel in unknown:                                   # F5.16: sem diarização, a fala fica sem voz nem pessoa
+                turns, ids, attribution = (), {}, Attribution.CHANNEL
             else:
                 ids = self._user_cluster(words)                        # existe mesmo sem fala transcrita
                 duration = int(self.meeting.get("duration_ms") or 0)

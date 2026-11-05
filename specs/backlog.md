@@ -2,21 +2,23 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (04/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.15 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`) e
-  verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para depois
-  (D-091); F7 é futuro. Suíte de 1.628 testes, esquema v9, versão 0.8.0.
-- O `.exe` atual é o 0.8.0 de 04/11 (`d48722c`, a F5.15; 856 s, 892 MB, 4.697 arquivos; sonda `--probe` ok). Para
-  compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
-- Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit.
-- Em andamento (D-091): a suíte em paralelo com o `pytest-xdist` e a transcrição sem o token do Hugging Face (F5.16).
+## Onde paramos (05/11/2026, Windows nativo; tudo commitado; o push é do dono)
+- Código: F1 a F5.16 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+  F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
+  depois (D-091); F7 é futuro. Esquema v9, versão 0.9.0 (D-081).
+- **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
+  Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
+  identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
+- O `.exe` atual é o 0.8.0 de 04/11 (`d48722c`, a F5.15; 856 s, 892 MB, 4.697 arquivos; sonda `--probe` ok); o 0.9.0
+  ainda não foi gerado. Para compartilhar, o `build\exe\listener-meet-0.8.0-win64.zip` (351 MB; `build_exe.py --zip`).
+- Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
 
 ## Como retomar (5 minutos)
 1. T0: `AGENTS.md` (primeiro: em que ambiente a sessão está), `specs/01-clausulas.md` e este arquivo; depois só a
    camada da tarefa.
 2. Testes (D-050): `python -m pytest -q` é a parte rápida; antes de commitar, a inteira em paralelo (`--tudo -n 4
-   --dist worksteal`, D-091), mais `ruff check .`, `mypy` e `mypy --platform linux`. No Windows, pelo venv do checkout:
-   `.venv\Scripts\python.exe -m pytest -q --tudo -n 4 --dist worksteal`, `.venv\Scripts\ruff.exe check .` e
+   --dist loadgroup`, D-091), mais `ruff check .`, `mypy` e `mypy --platform linux`. No Windows, pelo venv do checkout:
+   `.venv\Scripts\python.exe -m pytest -q --tudo -n 4 --dist loadgroup`, `.venv\Scripts\ruff.exe check .` e
    `.venv\Scripts\mypy.exe`.
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
@@ -62,9 +64,10 @@ fechados (as decisões em `decisoes.md`).
   depois); se voltar, guardar a saída e ver a espera do player.
 - F5.11 (D-078): desfazer a voz transportada de um reprocessamento não acha o vetor (a linha "Para desfazer" não
   aparece nela).
-- Suíte acima da meta de 8 s (D-050): com o `pytest-xdist` (D-091), a inteira caiu de 287 para 172 s com `-n 4` e a
-  rápida de 81 para 62 s; mais processos pioram nesta máquina (2 núcleos de desempenho, testes que esperam threads e
-  timers). O resto é lógica espalhada (o `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
+- Suíte acima da meta de 8 s (D-050): com o `pytest-xdist` (D-091), a inteira caiu de 287 para 139 s com `-n 4
+  --dist loadgroup` (os arquivos que lançam subprocesso num processo só, `SUBPROCESS_FILES` no `conftest`) e a rápida
+  de 81 para 62 s; mais processos pioram nesta máquina (2 núcleos de desempenho). O resto é lógica espalhada (o
+  `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
   `listener-*` no `%TEMP%` (82 em três dias, apagadas na D-052): passar os testes para o `tmp_path` e as sondas a apagar
   o que não imprimem.
 - Captura: a saúde dos canais começa "ok" por até 10 s sem sinal e o R não avisa antes (D-050: silêncio no começo é

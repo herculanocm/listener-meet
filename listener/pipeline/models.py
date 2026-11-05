@@ -139,7 +139,8 @@ def prepare_models(config: JobConfig, token: str, progress: ProgressFn) -> None:
     disable_hf_symlinks()
     if config.transcriber != "llm":
         download_whisper(config, progress)
-    download_pyannote(config, token, progress)
+    if token:                                               # F5.16: sem o token, só o Whisper; o pyannote fica para depois
+        download_pyannote(config, token, progress)
     apply_environment(config)                               # agora pode ligar o modo offline
 
 
@@ -175,7 +176,7 @@ def real_deps(config: JobConfig, token: str, store: Any = None) -> PipelineDeps:
         return _adapter("pyannote", "PyannoteEmbedder")(token, torch_threads=config.torch_threads)
 
     prepare: Callable[[ProgressFn], None] = lambda progress: prepare_models(config, token, progress)  # noqa: E731
-    return PipelineDeps(transcriber, diarizer, embedder, prepare, name="real")
+    return PipelineDeps(transcriber, diarizer, embedder, prepare, name="real", diarization=bool(token))   # F5.16
 
 
 def deps_key(config: JobConfig, token: str = "", llm: tuple[str, str] = ("", "")) -> tuple[str, bool, int, str, str, str, str, str]:

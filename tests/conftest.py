@@ -199,6 +199,9 @@ def start_live_process(root: Path) -> dict[str, Any]:
 
 
 UI_FIXTURES = frozenset({"qtbot", "qapp"})
+SUBPROCESS_FILES = frozenset({"test_call_watch.py", "test_instance.py", "test_instance_win.py", "test_language_l3.py",
+                              "test_live_child.py", "test_rag_ui.py", "test_setup_l4.py", "test_win32_devices.py",
+                              "test_worker.py"})
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -211,9 +214,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_itemcollected(item: pytest.Item) -> None:
-    """Telas (pytest-qt) são lentas por natureza: a marca vem da fixture, também para os testes de tela que vierem."""
+    """Telas (pytest-qt) são lentas por natureza: a marca vem da fixture, também para os testes de tela que vierem. D-091:
+    os arquivos que lançam o app ou um filho de verdade, com prazo, vão todos para um mesmo processo do xdist
+    (`--dist loadgroup`): juntos em processos diferentes, disputavam a CPU e estouravam o prazo."""
     if UI_FIXTURES & set(getattr(item, "fixturenames", ())):
         item.add_marker(pytest.mark.lento)
+    if item.path.name in SUBPROCESS_FILES:
+        item.add_marker(pytest.mark.xdist_group("subprocesso"))
 
 
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
@@ -223,14 +230,30 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
                                     "`python -m pytest -q --tudo` (D-050)")
 
 
-@pytest.hookimpl(trylast=True)                               # depois da seleção por marca: só lança o que vai rodar
-def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
-    if any(item.path.name == "test_worker.py" for item in items) and not WORKER_RUN:
+def worker_run() -> dict[str, Any]:
+    """Os workers de verdade do `tests/test_worker.py`: os lançados na coleta ou, sem eles (o `pytest-xdist`), agora."""
+    if not WORKER_RUN:
         WORKER_RUN.update(start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-test-"))))
         if not pipeline_installed():
             WORKER_RUN["real"] = start_worker_process(Path(tempfile.mkdtemp(prefix="listener-worker-real-")), fake=False)
-    if any(item.path.name == "test_live_child.py" and item.name.startswith("test_live_process") for item in items) and not LIVE_RUN:
+    return WORKER_RUN
+
+
+def live_run() -> dict[str, Any]:
+    """O processo ao vivo do `tests/test_live_child.py`: o lançado na coleta ou, sem ele (o `pytest-xdist`), agora."""
+    if not LIVE_RUN:
         LIVE_RUN.update(start_live_process(Path(tempfile.mkdtemp(prefix="listener-live-test-"))))
+    return LIVE_RUN
+
+
+@pytest.hookimpl(trylast=True)                               # depois da seleção por marca: só lança o que vai rodar
+def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
+    if os.environ.get("PYTEST_XDIST_WORKER"):                # D-091: cada processo do xdist coleta tudo, e só um roda o teste:
+        return                                               # o lançamento fica para a hora (um subprocesso, não um por processo)
+    if any(item.path.name == "test_worker.py" for item in items):
+        worker_run()
+    if any(item.path.name == "test_live_child.py" and item.name.startswith("test_live_process") for item in items):
+        live_run()
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

@@ -17,9 +17,10 @@ from PySide6.QtCore import QPoint, QStandardPaths, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
+from ..config.defaults import HF_PROVIDER_ID
 from ..log import get_logger
 from ..model import ClusterStatus
-from ..pipeline import review
+from ..pipeline import no_diarization, review
 from ..pipeline.runner import USER_CLUSTER
 from ..rag import export
 from .common import copy_rich, markdown_html
@@ -150,6 +151,7 @@ class MeetingHeaderMixin:
         self._host().setWindowTitle(f"{self.title_text()} — reunião")
         self.language_bar.reload()
         self.reload_legend()
+        self._diarization_notice()
         pending = pending_voices(self.store, self.meeting_id)
         self.btn_review.setVisible(pending > 0)                 # pergunta 7: à vista só com voz pendente; senão, no "⋯"
         self.act_review.setVisible(pending == 0)
@@ -171,6 +173,18 @@ class MeetingHeaderMixin:
     def show_message(self, text: str) -> None:
         self.message.setText(text)
         self.message_bar.setVisible(bool(text))
+
+    def _diarization_notice(self) -> None:
+        """F5.16 (U-139): a reunião transcrita sem diarização diz como resolver, no lugar de uma faixa vazia ou do próprio
+        aviso (o resultado de outra ação fica); reprocessada com diarização, o aviso sai."""
+        own = (no_diarization.NOTICE_MISSING, no_diarization.NOTICE_PRESENT)
+        shown = self.message.text()
+        if no_diarization.meeting_reason(self.store, self.meeting_id) is None:
+            if shown in own:
+                self.show_message("")
+            return
+        if not shown or shown in own:
+            self.show_message(no_diarization.notice(bool(str(self.store.settings.provider_key(HF_PROVIDER_ID) or "").strip())))
 
     def _review_clicked(self) -> None:
         if self.on_review is not None:

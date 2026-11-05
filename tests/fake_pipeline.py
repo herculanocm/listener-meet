@@ -114,8 +114,10 @@ class ToneEmbedder:
 
 class FakeDeps(PipelineDeps):
     def __init__(self, script: Scripts = (), prepare: Callable[[ProgressFn], None] | None = None,
-                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None):
+                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None,
+                 diarization: bool = True):
         self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at, before=before)
         self.tones = ToneDiarizer()
         self.tone_embedder = ToneEmbedder()
-        super().__init__(lambda: self.scripted, lambda: self.tones, lambda: self.tone_embedder, prepare, name="fake")
+        super().__init__(lambda: self.scripted, lambda: self.tones, lambda: self.tone_embedder, prepare, name="fake",
+                         diarization=diarization)          # F5.16: falso simula a falta do token

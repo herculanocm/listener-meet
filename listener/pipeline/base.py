@@ -38,15 +38,17 @@ class Embedder(Protocol):
 
 
 class PipelineDeps:
-    """Fábricas preguiçosas: nada pesado é importado antes da etapa que precisa; `prepare` baixa modelos com progresso."""
+    """Fábricas preguiçosas: nada pesado é importado antes da etapa que precisa; `prepare` baixa modelos com progresso.
+    F5.16: `diarization` falso (sem o token do Hugging Face) transcreve sem diarizar nem identificar."""
 
     def __init__(self, transcriber: Callable[[], Transcriber], diarizer: Callable[[], Diarizer], embedder: Callable[[], Embedder],
-                 prepare: Callable[[ProgressFn], None] | None = None, name: str = "fake"):
+                 prepare: Callable[[ProgressFn], None] | None = None, name: str = "fake", diarization: bool = True):
         self._transcriber_factory = transcriber
         self._diarizer_factory = diarizer
         self._embedder_factory = embedder
         self._prepare = prepare
         self.name = name
+        self.diarization = diarization
         self._transcriber: Transcriber | None = None
         self._diarizer: Diarizer | None = None
         self._embedder: Embedder | None = None
