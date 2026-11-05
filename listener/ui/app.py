@@ -39,8 +39,8 @@ def attach_log(store: Store) -> str | None:
     path = store.get_setting("log.path") or str(store.default_log_path())
     try:
         attach_file(path, store.get_setting("log.level"))
-    except Exception as e:
-        log.warning("log em arquivo indisponível (%s): %s", path, e)
+    except Exception as e:                    # D-092 (D-053): o código do erro no log; o caminho, só na tela do usuário
+        log.warning("log em arquivo indisponível: %s (errno %s)", type(e).__name__, getattr(e, "errno", None))
         return f"{path}: {e}"
     return None
 
@@ -161,8 +161,9 @@ def _run_app(app: QApplication, platform: Platform, channel: InstanceServer, ope
     if db_dir and (Path(db_dir) / "listener.db").exists():
         try:
             store = Store(db_dir)
-        except Exception as e:
-            log.exception("não consegui abrir o banco em %s", db_dir)
+        except Exception as e:                # D-092 (D-053): sem o caminho no log; a caixa mostra ao usuário. Sem o
+            # traceback, que traria a mensagem da exceção com o caminho (um OSError a leva)
+            log.error("não consegui abrir o banco: %s (errno %s)", type(e).__name__, getattr(e, "errno", None))  # noqa: TRY400
             QMessageBox.critical(None, "listener-meet", f"Não consegui abrir o banco em {db_dir}:\n{e}")
             return 1
     first_run = store is None or store.get_me() is None
@@ -179,7 +180,7 @@ def _run_app(app: QApplication, platform: Platform, channel: InstanceServer, ope
     if store is None:                         # impossível aqui; mantém o verificador de tipos honesto
         return 1
     log_error = attach_log(store)
-    log_versions({"esquema": f"v{store.schema_version()}", "banco": str(store.base_dir)})
+    log_versions({"esquema": f"v{store.schema_version()}"})   # D-092 (D-053): a pasta do banco não vai ao log
     from .controller import Controller
 
     controller = Controller(app, platform, store, first_run=first_run)   # vive até o app.exec() voltar

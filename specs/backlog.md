@@ -38,8 +38,7 @@ fechados (as decisões em `decisoes.md`).
   "banco não responde há N s" exagera (`pending_since`); corridas de leitura e escrita fora da transação (sugestão da
   LLM num cluster recém-confirmado, ação superada que volta, `upsert_me`); o chat em streaming sem retentativa antes do
   primeiro pedaço e o cancelado gravado como `OK` sem custo; o preparo do ao vivo sem prazo no `repo_info` e sem
-  Cancelar; o `db-location.json` sem gravação atômica; "Apagar preset" sem confirmação (UX: perguntar ao dono); o
-  assistente diz "cinco passos" e mostra seis.
+  Cancelar; o `db-location.json` sem gravação atômica.
 - F5.10 (D-075): o `--downgrade` com o app aberto faz o chat falhar até reabrir (nada se perde); a `memory_rss` do
   Windows mede o working set, que o sistema pode encolher, e o teto da consulta mediria menos que o real.
 - Instável sob carga, fora da F5.14: `test_call_watch.py::test_the_app_exits_with_code_0_with_the_sensor_stuck_in_the_audio_system`
@@ -54,9 +53,6 @@ fechados (as decisões em `decisoes.md`).
   inteira (o job 47 diarizou durante a reunião 8, e o ao vivo degradou aos 60 s, com 37 s de atraso). O pós-reunião da
   reunião 8 somou ~1.533 s para 900 s de áudio (~1,7×; o G2 pede até 1,5×, plano B 2×, D-041). Opções: janela menor
   na diarização ou baixar a prioridade do worker enquanto a lease vale; decidir com o dono antes.
-- Privacidade no log (contra a D-053): o `attach_log` do `app.py`, quando falha, loga o caminho do arquivo de log, com a
-  pasta do usuário, e a linha de abertura de todo log grava `"banco": <pasta>` (`ui/app.py:147`). Trocar pelo código
-  do erro e pôr o `app.py` no teste de privacidade.
 - F5.7 (R-04 do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam a dica e o menu da bandeja, e o ícone fica
   igual; proposta: um selo no ícone enquanto houver chamada pendente.
 - Testes: a suíte já travou antes do primeiro teste (29 e 30/10: 14 min parada com 2,4 s de CPU, e a seguinte passou em
@@ -65,8 +61,6 @@ fechados (as decisões em `decisoes.md`).
   depois); se voltar, guardar a saída e ver a espera do player.
 - F5.11 (D-078): desfazer a voz transportada de um reprocessamento não acha o vetor (a linha "Para desfazer" não
   aparece nela).
-- O assistente atende o Enter com o "Sim" na pergunta da pasta sincronizada (`ui/wizard.py:121`, sem botão padrão,
-  como o descarte antes da D-076): uma tecla põe o banco numa pasta sincronizada com a nuvem.
 - Suíte acima da meta de 8 s (D-050; a inteira levou 152 s com 1.376 testes em 31/10): a meta pede execução paralela
   (pergunta 6); o resto é lógica espalhada (o `test_store` sozinho dá 5 s), não o EDR. Testes e sondas deixam pastas
   `listener-*` no `%TEMP%` (82 em três dias, apagadas na D-052): passar os testes para o `tmp_path` e as sondas a apagar

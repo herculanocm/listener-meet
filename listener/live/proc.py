@@ -1101,7 +1101,7 @@ def main(argv: list[str] | None = None) -> int:
         for dist in LIVE_DISTS:
             with suppress(metadata.PackageNotFoundError):
                 versions[dist] = metadata.version(dist)
-        log_versions({"papel": "live", "pid": str(os.getpid()), "banco": str(store.base_dir), "reunião": str(args.meeting),
+        log_versions({"papel": "live", "pid": str(os.getpid()), "reunião": str(args.meeting),   # D-092: sem a pasta do banco
                       **({"modo": "fake"} if is_fake() else {}), **versions})
         if no_throttling():
             log.info("EcoQoS desligado no processo ao vivo %s", os.getpid())

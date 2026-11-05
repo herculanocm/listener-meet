@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QWidget
+from PySide6.QtWidgets import (QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton,
+                               QWidget)
 
 from ..config.defaults import CAPTURE_KEYS, HOTKEY_KEYS, LLM_KEYS, PIPELINE_KEYS, SPECS
 from ..config.language import LANGUAGES, SETTING, default_language, label
@@ -265,8 +266,16 @@ class GeneralPagesMixin(DetectCardMixin):
         it = self.presets.currentItem()
         if not it:
             return
-        pid = int(it.text().split(":", 1)[0])
-        self.store.delete_preset(pid)
+        pid, _, label = it.text().partition(":")
+        # D-092: apagar pede confirmação, com o "Não" no Enter (como o descarte, D-076)
+        name = label.split(" — ", 1)[0].strip()                       # "id: nome — fonte exe" na lista
+        parent = self if isinstance(self, QWidget) else None
+        answer = QMessageBox.question(parent, "Apagar preset", f"Apagar o preset {name}?",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.store.delete_preset(int(pid))
         self.presets.takeItem(self.presets.row(it))
 
 

@@ -138,8 +138,9 @@ class DbPage(QWizardPage):
         except Exception as e:
             QMessageBox.warning(self, "Pasta do banco", f"Não consigo escrever em {p}: {e}")
             return False
-        if self.platform.synced_folder_name(p):
-            r = QMessageBox.question(self, "Pasta sincronizada", "A pasta é sincronizada com a nuvem. Usar mesmo assim?")
+        if self.platform.synced_folder_name(p):   # D-092: o Enter fica com o "Não" (D-076): o banco tem as chaves abertas
+            r = QMessageBox.question(self, "Pasta sincronizada", "A pasta é sincronizada com a nuvem. Usar mesmo assim?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             return r == QMessageBox.StandardButton.Yes
         return True
 

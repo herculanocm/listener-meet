@@ -239,7 +239,7 @@ def _announce(store: Store, light: bool) -> None:
     for dist in LLM_DISTS if light else ML_DISTS:
         with suppress(metadata.PackageNotFoundError):
             versions[dist] = metadata.version(dist)
-    log_versions({"papel": "worker-llm" if light else "worker", "pid": str(os.getpid()), "banco": str(store.base_dir), **versions})
+    log_versions({"papel": "worker-llm" if light else "worker", "pid": str(os.getpid()), **versions})   # D-092: sem a pasta
 
 
 def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: bool = False) -> int:
