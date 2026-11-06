@@ -63,8 +63,10 @@ class _FontFacts:
     line_h: float
 
 
-class SpeechDelegate(QStyledItemDelegate):
-    """O desenho de uma fala (ou legenda). `flags` reserva a coluna da bandeira (Ao vivo)."""
+class SpeechItemDelegate(QStyledItemDelegate):
+    """O desenho de uma fala (ou legenda). `flags` reserva a coluna da bandeira (Ao vivo). Sem `sizeHint` em Python
+    (F5.17, D-094): a lista guarda a altura de cada fala no próprio item (`SizeHintRole`, medida por `item_size`), e o
+    layout fica no C++; o `SpeechDelegate` abaixo pede a altura a cada layout, para a Transcrição (um modelo)."""
 
     def __init__(self, parent: QWidget | None = None, *, flags: bool = False) -> None:
         super().__init__(parent)
@@ -176,11 +178,10 @@ class SpeechDelegate(QStyledItemDelegate):
             full = view.viewport().width() if isinstance(view, QAbstractScrollArea) else 400
         return full - 2 * view.spacing() if isinstance(view, QListView) else full
 
-    @override
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        name, role, text = (str(index.data(r) or "") for r in (SPEAKER_ROLE, ROLE_ROLE, TEXT_ROLE))
-        item_width = self._item_width(option)
-        height = self._measure(option.font, name, role, text, self._text_width(item_width))[0]
+    def item_size(self, body: QFont, name: str, role: str, text: str, item_width: int) -> QSize:
+        """O tamanho de uma fala na largura do item: a conta do `sizeHint`, que a lista com a altura no item pede uma vez
+        por fala e por largura."""
+        height = self._measure(body, name, role, text, self._text_width(item_width))[0]
         return QSize(item_width, max(height, self._caption_fm.height(), DOT) + 2 * PAD_Y)
 
     # ---------------------------------------------------------------- pintura
@@ -250,6 +251,15 @@ class SpeechDelegate(QStyledItemDelegate):
         self._facts = None
 
 
+class SpeechDelegate(SpeechItemDelegate):
+    """O desenho de uma fala com a altura pedida a cada layout (`sizeHint`): a Transcrição, que mostra um modelo."""
+
+    @override
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        name, role, text = (str(index.data(r) or "") for r in (SPEAKER_ROLE, ROLE_ROLE, TEXT_ROLE))
+        return self.item_size(option.font, name, role, text, self._item_width(option))
+
+
 def _flat(text: str) -> str:
     """A quebra de linha, a tabulação e o U+009C do texto viram espaço (o `qt_format_text` da medida os trataria diferente
     da pintura); a checagem antes da troca custa uma fração dela (3.000 falas: 0,4 contra 32 ms)."""
@@ -293,4 +303,5 @@ def speech_roles(item: Any, t_ms: int, name: str, role: str, text: str, color: i
         item.setData(key, value)
 
 
-__all__ = ["COLOR_ROLE", "EXACT", "FLAG_ROLE", "ROLE_ROLE", "SPEAKER_ROLE", "STAMP_ROLE", "TEXT_ROLE", "SpeechDelegate", "speech_roles"]
+__all__ = ["COLOR_ROLE", "EXACT", "FLAG_ROLE", "ROLE_ROLE", "SPEAKER_ROLE", "STAMP_ROLE", "TEXT_ROLE", "WORD_FLAGS", "SpeechDelegate",
+           "SpeechItemDelegate", "speech_roles"]

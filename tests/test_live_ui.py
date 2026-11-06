@@ -269,6 +269,7 @@ def test_controller_live_window_marks_caption_and_partial_item_and_minutes_read_
     monkeypatch.setenv("LISTENER_LIVE", "fake")
     store.upsert_me("Eu", role="Gerente")
     store.set_setting("live.enabled", True)
+    store.set_setting("live.caption_tray", False)                 # F5.17: a linha do widget é a da bandeja desligada
     children: list[ThreadChild] = []
     monkeypatch.setattr(platform, "spawn_child", thread_spawner(store.base_dir, FakeEngines(), children))
     c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)

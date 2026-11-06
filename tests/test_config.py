@@ -57,9 +57,10 @@ def test_live_settings_follow_the_spec(monkeypatch):
     padrão só com 8 núcleos lógicos ou mais."""
     from listener.config import defaults
 
-    assert defaults.LIVE_KEYS == ("live.enabled", "live.names", "live.model", "live.threads", "live.summary_interval_min", "live.in_widget",
-                                  "live.partial")
-    assert all(SPECS[k].phase == "F4" for k in defaults.LIVE_KEYS[:-1])
+    assert defaults.LIVE_KEYS == ("live.enabled", "live.names", "live.model", "live.threads", "live.summary_interval_min",
+                                  "live.caption_tray", "live.in_widget", "live.partial")
+    assert {k for k in defaults.LIVE_KEYS if SPECS[k].phase != "F4"} == {"live.caption_tray", "live.partial"}
+    assert SPECS["live.caption_tray"].default is True and SPECS["live.caption_tray"].phase == "F5.17"   # a bandeja (U-140)
     assert SPECS["live.partial"].default is False and SPECS["live.partial"].phase == "F5.6"     # F5.6 (A-21, P-06): desligado
     assert {k for k in defaults.LIVE_KEYS if SPECS[k].scope == SettingScope.NOW} == {"live.summary_interval_min"}
     assert SPECS["live.model"].default == "small" and validate_setting("live.model", "medium")

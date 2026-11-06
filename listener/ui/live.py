@@ -8,31 +8,31 @@ instante dela com o texto (U-022), uma vez por legenda. Abre pelo clique no widg
 depois de Parar ou Cancelar fica só para leitura até o usuário fechar. Marcar e atualizar passam pelo controlador
 (callbacks): a janela não conhece o gravador. F5.4 L4 (U-081): as legendas pelo `SpeechDelegate` da Transcrição (o [mm:ss] em
 legenda, o falante em negrito com o ponto na cor dele, na ordem em que apareceu; a marcada com a bandeira); os textos em
-`ui/live_text.py`."""
+`ui/live_text.py`. F5.17 (D-094): a lista comum à bandeja (`ui/caption_list.py`), com a altura no item e o layout no
+C++, as cores e as bandeiras da gravação (marcar aqui ou na bandeja repinta as duas)."""
 from __future__ import annotations
 
-import bisect
 from collections.abc import Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QMoveEvent, QResizeEvent
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QSplitter, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QListWidgetItem, QPushButton, QSplitter, QVBoxLayout, QWidget
 
 from ..config.defaults import SPECS
 from ..llm.prompts.common import stamp
 from ..log import get_logger
 from ..model import SummaryKind
+from .caption_list import CaptionList
 from .common import clamp_to_screens
 from .components import HtmlView
 from .live_text import (KIND_PREFIX, KIND_TITLE, NOTE_MAX, STATE_TEXT, MarkCaption, MarkItem, Refresh, caption_key, caption_line,
                         caption_note, caption_who, clip, hhmm, item_key, item_note, partial_data, partial_html, speaker_parts,
                         you_label)
-from .speech_delegate import FLAG_ROLE, SpeechDelegate, speech_roles
+from .speech_delegate import FLAG_ROLE, ROLE_ROLE, SPEAKER_ROLE, TEXT_ROLE, SpeechItemDelegate, speech_roles
 from .theme import Tone, note, role, tone
-from .widget import LIVE_BADGES, _screen_rects
+from .widget_parts import LIVE_BADGES, _screen_rects
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -47,7 +47,7 @@ class LiveWindow(QWidget):
     def __init__(self, store: Store, meeting_id: int, *, on_mark_caption: MarkCaption | None = None,
                  on_mark_item: MarkItem | None = None, on_refresh: Refresh | None = None,
                  marked_captions: set[tuple[Any, ...]] | None = None, marked_items: set[tuple[str, str]] | None = None,
-                 parent: QWidget | None = None, partial_auto: bool = True):
+                 parent: QWidget | None = None, partial_auto: bool = True, speakers: dict[str, int] | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
@@ -62,7 +62,6 @@ class LiveWindow(QWidget):
         self.marked_items = marked_items if marked_items is not None else set()
         self.finished = False
         self.last_id = 0
-        self._keys: list[tuple[int, int]] = []               # (t_start_ms, id) de cada linha, em ordem: inserção por bisect
         self.partial: dict[str, Any] = {}
         self.partial_row: dict[str, Any] | None = None
         m = store.get_meeting(meeting_id) or {}
@@ -96,12 +95,10 @@ class LiveWindow(QWidget):
         self.live_label = QLabel("")
         self.live_label.setTextFormat(Qt.TextFormat.PlainText)
         role(self.live_label, "caption")
-        self.speakers: dict[str, int] = {}                # U-081: a cor de cada falante, na ordem em que apareceu
-        self.list = QListWidget()
-        self.list.setItemDelegate(SpeechDelegate(self.list, flags=True))
-        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.list.setWordWrap(True)
-        self.list.setUniformItemSizes(False)
+        self.speakers = speakers if speakers is not None else {}    # U-081: a cor de cada falante; F5.17: a da gravação
+        self.list = CaptionList(self._item_size)          # F5.17 (D-094): a altura no item, o layout no C++
+        self.delegate = SpeechItemDelegate(self.list, flags=True)
+        self.list.setItemDelegate(self.delegate)
         self.list.itemClicked.connect(self._caption_clicked)
         chead = QHBoxLayout()
         captions_title = QLabel("Legendas")             # F5.4 (A-10): o título e a dica em dois rótulos, sem HTML com cor
@@ -157,19 +154,16 @@ class LiveWindow(QWidget):
         rows = self.store.captions.list_for_meeting(self.meeting_id, after_id=self.last_id)
         if not rows:
             return 0
-        bar = self.list.verticalScrollBar()
-        at_end = bar.value() >= bar.maximum() - 4
-        for r in rows:
-            self._add(dict(r))
-            self.last_id = max(self.last_id, int(r["id"]))
-        if at_end:
-            self.list.scrollToBottom()
+        follow = self.list.pinned                         # F5.17 (U-143): presa ao fim, só a rolagem de quem lê a solta
+        with self.list.bulk():                            # F5.17: abrir com a reunião andando é uma pintura só
+            for r in rows:
+                self._add(dict(r))
+                self.last_id = max(self.last_id, int(r["id"]))
+        if follow:
+            self.list.scroll_to_end()
         return len(rows)
 
     def _add(self, row: dict[str, Any]) -> None:
-        key = (int(row.get("t_start_ms") or 0), int(row.get("id") or 0))
-        pos = bisect.bisect_right(self._keys, key)            # o filho grava por fim de janela: L e R podem chegar fora de ordem
-        self._keys.insert(pos, key)
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, row)
         latency = row.get("latency_ms")
@@ -180,13 +174,25 @@ class LiveWindow(QWidget):
         color = self.speakers.setdefault(name, len(self.speakers)) if name else None
         speech_roles(item, int(row.get("t_start_ms") or 0), name, job, " ".join(str(row.get("text") or "").split()), color)
         self._paint(item, row)
-        self.list.insertItem(pos, item)
+        self.list.place((int(row.get("t_start_ms") or 0), int(row.get("id") or 0)), item)   # L e R chegam fora de ordem
+
+    def _item_size(self, item: QListWidgetItem, width: int) -> QSize:
+        name, job, text = (str(item.data(r) or "") for r in (SPEAKER_ROLE, ROLE_ROLE, TEXT_ROLE))
+        return self.delegate.item_size(self.list.font(), name, job, text, width)
 
     def _paint(self, item: QListWidgetItem, row: Mapping[str, Any]) -> None:
         marked = caption_key(row) in self.marked_captions
         shown = {**row, "label": you_label(row, self.me_id, self.in_room)}   # U-108: "Você" na tela; a nota leva o nome
         item.setText(("⚑ " if marked else "") + caption_line(shown))   # o texto para o leitor de tela (e os testes)
         item.setData(FLAG_ROLE, marked)                       # F5.4 L4: a bandeira no destaque do tema, desenhada
+
+    def refresh_mark(self, key: tuple[Any, ...]) -> None:
+        """F5.17: a bandeira da legenda `key`, marcada aqui ou na bandeja (o conjunto da gravação)."""
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            row = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(row, dict) and caption_key(row) == key:
+                self._paint(item, row)
 
     @property
     def captions(self) -> list[dict[str, Any]]:

@@ -113,6 +113,11 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("ui.widget_size", "320x96", _NOW, "Tamanho do widget", _text),
     SettingSpec("ui.live_geometry", "", _NOW, "Posição e tamanho da janela Ao vivo", _text, phase="F4"),     # "x,y,largura,altura"
     SettingSpec("ui.live_on_top", True, _NOW, "Janela Ao vivo sempre visível", _bool, phase="F4"),
+    # F5.17 (U-140, U-142, U-146): a bandeja de legendas; "x,y,largura,altura" da aberta, o encosto no widget ("acima,<px>",
+    # "abaixo,<px>" ou "solta") e o recolhido valem para a próxima gravação
+    SettingSpec("ui.caption_tray_geometry", "", _NOW, "Posição e tamanho da bandeja de legendas", _text, phase="F5.17"),
+    SettingSpec("ui.caption_tray_dock", "acima,0", _NOW, "Encosto da bandeja de legendas no widget", _text, phase="F5.17"),
+    SettingSpec("ui.caption_tray_collapsed", False, _NOW, "Bandeja de legendas recolhida", _bool, phase="F5.17"),
     SettingSpec("ui.history_geometry", "", _NOW, "Posição e tamanho da janela Histórico", _text, phase="F5"),     # "x,y,largura,altura"
     SettingSpec("ui.meeting_geometry", "", _NOW, "Posição e tamanho da janela da reunião", _text, phase="F5"),
     SettingSpec("ui.history_filters", "{}", _NOW, "Filtros do Histórico (pessoa e período)", _text, phase="F5", internal=True),
@@ -184,7 +189,10 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("live.threads", 2, _NEXT, "Threads de CPU da legenda ao vivo", int, low=1, high=8, phase="F4"),
     SettingSpec("live.summary_interval_min", 5, _NOW, "Intervalo do resumo parcial (min; 0 desliga)", int, low=0, high=60,
                 phase="F4"),                                   # 0: sem o custo do parcial, a ata segue (desvio do orquestrador, L5)
-    SettingSpec("live.in_widget", True, _NEXT, "Mostrar a última legenda no widget", _bool, phase="F4"),
+    # F5.17 (U-140): a legenda numa bandeja própria, como chat; com ela, a linha do widget sai (a `live.in_widget` vale sem ela)
+    SettingSpec("live.caption_tray", True, _NEXT, "Bandeja de legendas ao gravar (como chat, fora do widget)", _bool,
+                phase="F5.17"),
+    SettingSpec("live.in_widget", True, _NEXT, "Última legenda no widget (com a bandeja desligada)", _bool, phase="F4"),
     # F5.6 (A-21, P-06): o resumo parcial automático é escolha da gravação (fora do preset); "Atualizar resumo agora" vale sempre
     SettingSpec("live.partial", False, _NEXT, "Resumo parcial automático (padrão do \"Antes de gravar\")", _bool, phase="F5.6"),
     # F5 (Dados): grupo "Busca" (a tela é do L5). `rag.auto_index` = vetores automáticos (o custo dos embeddings, Q1):

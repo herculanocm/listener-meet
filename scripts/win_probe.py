@@ -20,7 +20,9 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               L4 (`scripts/probe_l4.py`): a reunião em todas as abas, a ata em
                                                               edição, os vazios, o Histórico, a revisão, a ficha, o assistente
                                                               e o Ao vivo; F5.11: a lista da saída, "Falta configurar" parada
-                                                              e baixando, o "Avançado" e a reunião sem fala (L5)
+                                                              e baixando, o "Avançado" e a reunião sem fala (L5); F5.17
+                                                              (`scripts/probe_f517.py`): a bandeja de legendas e o botão
+                                                              "Legendas" do widget
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -57,6 +59,7 @@ import tempfile
 import time
 from pathlib import Path
 from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no topo (o Qt entra na chamada)
+from probe_f517 import f517_shots        # F5.17: a bandeja de legendas e o botão "Legendas" do widget
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -471,6 +474,7 @@ def cmd_shots(args) -> None:
         discard(su)
     l4_shots(store, p, shot, tabs_of, app, Path(tempfile.mkdtemp(prefix="listener-shots-l4-")))   # F5.4 L4
     f56_shots(store, shot, app, p)                        # F5.6: L3 (Histórico) e L1b (caixas, popup, barra, warm-up)
+    f517_shots(store, shot, app)                          # F5.17: a bandeja (vazia, com o chat, a 320 px e recolhida)
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")

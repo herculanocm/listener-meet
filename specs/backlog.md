@@ -3,17 +3,19 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (06/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- Código: F1 a F5.16 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+- Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
-  depois (D-091); F7 é futuro. Esquema v9, versão 0.9.0 (D-081).
+  depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
-- **F5.17 aprovada** (06/11, D-094, `features/F5.17-bandeja-de-legendas.md`): a legenda ao vivo numa bandeja
-  própria, como chat, fora do widget. A análise de performance pedida pelo dono está na spec e na D-094. A
-  implementação vem a seguir.
-- O `.exe` atual é o 0.9.0 de 05/11 (`13b8d37`, a F5.16; 524 s, 892 MB, 4.697 arquivos; sonda `--probe` ok). Para
-  compartilhar, o `build\exe\listener-meet-0.9.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+- **F5.17 implementada** (06/11, D-094, D-095, `features/F5.17-bandeja-de-legendas.md`): a legenda ao vivo numa
+  bandeja própria, como chat, fora do widget, com minimizar e fechar; a janela Ao vivo ganhou a mesma lista (uma
+  legenda nova de 73 para 2 ms com 2.000 falas). Falta o dono: usar numa reunião (Aceite 4, em "Verificar no
+  Windows").
+- O `.exe` atual segue o 0.9.0 de 05/11 (`13b8d37`, a F5.16; 524 s, 892 MB, 4.697 arquivos; sonda `--probe` ok); o
+  0.10.0 ainda não foi gerado. Para compartilhar, o `build\exe\listener-meet-0.9.0-win64.zip` (351 MB, a pasta
+  inteira; D-081: `build_exe.py --zip`).
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
 
 ## Como retomar (5 minutos)
@@ -26,7 +28,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
-Nada pendente: em 04/11 o dono considerou feitas todas as verificações (as Partes 1 a 26 de
+- F5.17 (Aceite 4, no uso): a bandeja aberta, recolhida, fechada e reaberta numa reunião; a roda do mouse, as dicas e
+  o clique direito (o menu fecha com o clique fora e não fecha sozinho); o Teams compartilhando a tela sem a bandeja;
+  dois monitores com escalas diferentes.
+
+Antes disso, nada pendente: em 04/11 o dono considerou feitas todas as verificações (as Partes 1 a 26 de
 `specs/roteiro-teste-windows.md`) pelo uso real do app (D-090). Entrega nova feita fora do Windows põe aqui o que só o
 Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como referência. Sobra da Parte 3, com o OK
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
@@ -51,10 +57,11 @@ fechados (as decisões em `decisoes.md`).
   falhou 1 vez na suíte do L2 da F5.14 (faltou "não parou em 1000 ms" no log) e passou nas 3 rodadas sozinho e na suíte
   seguinte.
 - F5.9, das revisões: `test_call_watch.py::test_failures_degrade_with_one_warning_and_recover_with_one_info` é instável
-  na suíte inteira (3 falhas em 7; 9/9 isolado); o `pyproject` não liga o `C901` (o limite de complexidade 10 é só
-  convenção); o nativo do proctap cai no sistema inteiro calado em caminhos de falha (`is_process_specific()` diz
-  quando) e somaria o sistema inteiro no canal do app sem aviso; o pedido de saída ambíguo (nome repetido no loopback)
-  não fica no handle, e a vigia pode pedir `back` de novo a cada mudança de assinatura.
+  na suíte inteira (3 falhas em 7; 9/9 isolado; de novo em 06/11, 3/3 isolado); o `pyproject` não liga o `C901`
+  (o limite de complexidade 10 é só convenção); o nativo do proctap cai no sistema inteiro calado em caminhos de
+  falha (`is_process_specific()` diz quando) e somaria o sistema inteiro no canal do app sem aviso; o pedido de saída
+  ambíguo (nome repetido no loopback) não fica no handle, e a vigia pode pedir `back` de novo a cada mudança de
+  assinatura.
 - F2 (Q7), a lease lida só entre janelas: a janela de diarização de 1.200 s (RTF 1,2 a 1,6) atravessa uma gravação
   inteira (o job 47 diarizou durante a reunião 8, e o ao vivo degradou aos 60 s, com 37 s de atraso). O pós-reunião da
   reunião 8 somou ~1.533 s para 900 s de áudio (~1,7×; o G2 pede até 1,5×, plano B 2×, D-041). Opções: janela menor

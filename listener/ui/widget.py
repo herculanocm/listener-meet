@@ -12,25 +12,27 @@ F5.4 L2, no tema (claro ou escuro, como o resto do app; sem folha de estilo):
 - U-061: botões só de ícone, 36 x 32, com o nome no `text()` e no `accessibleName` e o atalho na dica; Parar em vermelho;
   Descartar afastado, na ponta. U-063: medidores com trilho e zonas (`ui/meters.py`); o fundo é um caminho em cache (5 Hz).
 - U-062: o mudo é o microfone cortado, no botão ligado (preenchido em destaque, como a alternância do Windows 11); L, R e
-  o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h."""
+  o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h.
+F5.17 (U-142): com a bandeja de legendas, o botão "Legendas" entre Dispositivos e Parar; o selo, as telas e a posição
+inicial moram em `ui/widget_parts.py`."""
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import override
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal, SignalInstance
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtGui import QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ..log import get_logger
 from ..model import AppState, Health
-from .common import HEALTH_TEXT, HEALTH_TONES, STATE_TONES, clamp_to_screens
+from .common import HEALTH_TEXT, HEALTH_TONES, STATE_TONES
 from .components import INFO_KINDS, IconButton
 from .icons import set_icon
 from .meters import LevelMeter
 from .theme import Tone, note, qcolor, role, surface_tokens, tone
-from .widget_parts import (CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, CaptionLine, ElidedLabel, MarkerPopup, caption_text,
-                           channel_letter, clock_text, hbox, health_icon, icon_label, shortcut_text)
+from .widget_parts import (CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, LIVE_BADGES, CaptionLine, ElidedLabel, MarkerPopup,
+                           caption_text, channel_letter, clock_text, hbox, health_icon, icon_label, initial_pos, shortcut_text)
 
 log = get_logger("ui.widget")
 WIDTH = 360                                   # U-060, A-16: fixa
@@ -39,17 +41,7 @@ HEAD_H, METERS_H, BUTTONS_H = 36, 16, 32      # 7 + 36 + 4 + 16 + 4 + 32 + 7 = 1
 CAPTION_H, ALERT_H = 20, 36                   # +24 com a legenda e +40 com o alerta: 170 no máximo
 BUTTON_SIZE = (36, 32)                        # U-061
 METER_PX = 6
-# selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo
-LIVE_BADGES: dict[str, tuple[str, Tone]] = {
-    "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
-    "degraded": ("legenda atrasada", Tone.WARNING), "skipping": ("legenda atrasada", Tone.WARNING),
-    "crashed": ("ao vivo parou", Tone.DANGER)}
-def _screen_rects() -> list[tuple[int, int, int, int]]:
-    out = []
-    for s in QGuiApplication.screens():
-        g = s.availableGeometry()
-        out.append((g.x(), g.y(), g.width(), g.height()))
-    return out
+CAPTIONS_TIP = {True: "Legendas: esconder a bandeja", False: "Legendas: mostrar a bandeja"}   # F5.17 (pergunta 6)
 
 
 class RecordingWidget(QWidget):
@@ -62,17 +54,20 @@ class RecordingWidget(QWidget):
     alert_clicked = Signal(str)           # F5.3 (A-21): o botão da linha de alerta, com a ação dela
     settings_requested = Signal()
     live_clicked = Signal()               # F4: clique na linha da legenda abre a janela "Ao vivo"
+    captions_clicked = Signal()           # F5.17 (U-142): o botão "Legendas" mostra e esconde a bandeja
     moved = Signal(QPoint)
     height_changed = Signal()             # F5.4 L2 (A-16): cresceu ou encolheu, com a borda de baixo no lugar
 
     def __init__(self, size: tuple[int, int] | None = None, pos: QPoint | None = None, live_line: bool = False,
-                 shortcuts: Mapping[str, str] | None = None):
+                 shortcuts: Mapping[str, str] | None = None, captions_button: bool = False):
         """`size` (o `ui.widget_size` salvo) não vale mais: 360 px fixos e a altura do estado (A-16). `shortcuts` são os
-        atalhos globais por ação (`pause`, `mark`, `mute`, `stop`), para a dica dos botões (U-061)."""
+        atalhos globais por ação (`pause`, `mark`, `mute`, `stop`), para a dica dos botões (U-061). `captions_button`: a
+        gravação tem a bandeja de legendas (F5.17)."""
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)     # os cantos arredondados do `paintEvent`
         self.setObjectName("recwidget")
         self.live_line = live_line
+        self.captions_button = captions_button
         self.shortcuts = {k: shortcut_text(v) for k, v in (shortcuts or {}).items() if v}
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
@@ -89,7 +84,7 @@ class RecordingWidget(QWidget):
         self._build_alert()
         self._lay_out()
         self.setFixedSize(WIDTH, self.target_height())
-        self.move(self._initial_pos(pos))
+        self.move(initial_pos(pos, self.width(), self.height()))
 
     # ---------------------------------------------------------------- montagem
     def _build_head(self) -> None:
@@ -128,6 +123,7 @@ class RecordingWidget(QWidget):
         self.btn_mute.setCheckable(True)
         self.btn_devices = self._btn("headphones", "Dispositivos",
                                      "Dispositivos: trocar o microfone e a saída gravada sem parar", "", self.devices_clicked)
+        self.btn_captions = self._btn("chat", "Legendas", CAPTIONS_TIP[True], "", self.captions_clicked)
         self.btn_stop = self._btn("stop", "Parar e salvar", "Parar e salvar", "stop", self.stop_clicked, Tone.DANGER)
         self.btn_cancel = self._btn("delete", "Descartar gravação", "Descartar a gravação: pergunta antes", "", self.cancel_clicked)
 
@@ -169,8 +165,9 @@ class RecordingWidget(QWidget):
             meters.addWidget(channel_letter(channel, METERS_H))
             meters.addWidget(meter, 1)
         buttons = hbox(None, 4)
-        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_stop):
+        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_captions, self.btn_stop):
             buttons.addWidget(b)
+        self.btn_captions.setVisible(self.captions_button)    # F5.17: só com a bandeja (escondido, não ocupa lugar)
         buttons.addStretch(1)                             # U-061: Cancelar longe de Parar
         buttons.addWidget(self.btn_cancel)
         alert = hbox(self.alert_icon, 6)
@@ -213,16 +210,6 @@ class RecordingWidget(QWidget):
         self.move(self.x(), top)
         self.height_changed.emit()
 
-    def _initial_pos(self, pos: QPoint | None) -> QPoint:
-        screens = _screen_rects()
-        if pos is not None:
-            clamped = clamp_to_screens(pos.x(), pos.y(), self.width(), self.height(), screens)
-            if clamped is not None:
-                return QPoint(*clamped)
-            log.info("posição salva do widget fora dos monitores atuais; voltando ao canto padrão")
-        screen = QGuiApplication.primaryScreen().availableGeometry()
-        return QPoint(screen.right() - self.width() - 16, screen.bottom() - self.height() - 16)
-
     def _emit_alert(self) -> None:
         """O clique no botão da linha de alerta, com a ação dela (A-21). Conectado como método do próprio widget: um lambda
         que captura `self` fica guardado do lado C++ do PySide, num ciclo que o coletor do Python não enxerga, e o widget
@@ -230,7 +217,7 @@ class RecordingWidget(QWidget):
         self.alert_clicked.emit(self._alert_action)
 
     def _buttons(self) -> tuple[IconButton, ...]:
-        return (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_stop, self.btn_cancel)
+        return (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_captions, self.btn_stop, self.btn_cancel)
 
     def _btn(self, icon: str, name: str, tip: str, action: str, signal: SignalInstance, value: Tone = Tone.TEXT) -> IconButton:
         b = IconButton(icon, name, value)
@@ -340,6 +327,13 @@ class RecordingWidget(QWidget):
         for w in (self.live_badge, self.live_icon):
             w.setToolTip(tip or text)
             w.show()
+
+    def set_captions_shown(self, shown: bool) -> None:
+        """F5.17 (pergunta 6): o botão "Legendas" sem o preenchimento do Mudo, que ficaria aceso ao lado do Parar; o ícone
+        diz se a bandeja está à vista (o balão ou o balão riscado)."""
+        set_icon(self.btn_captions, "chat" if shown else "chat-off", Tone.TEXT, 20)
+        self.btn_captions.setToolTip(CAPTIONS_TIP[shown])
+        self.btn_captions.setAccessibleDescription("à vista" if shown else "escondida")
 
     def set_caption(self, label: str | None, text: str) -> None:
         """A última legenda na linha (só existe com `live.in_widget`)."""

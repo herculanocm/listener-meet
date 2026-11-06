@@ -21,6 +21,9 @@ KIND_PREFIX = {"decisions": "Decisão", "actions": "Ação"}
 KIND_TITLE = {"decisions": "Possíveis decisões", "actions": "Possíveis ações"}
 STATE_TEXT = {"off": "legenda ao vivo desligada nesta gravação", "unavailable": "legenda ao vivo indisponível nesta gravação",
               "stopping": "gravação parada: terminando as últimas legendas", "stopped": "ao vivo encerrado"}
+BADGE_TIPS = {"starting": "carregando o modelo da legenda…", "restarting": "a legenda caiu: reiniciando…",
+              "live": "legenda ao vivo", "degraded": "legenda atrasada: trocou para o modelo base",
+              "skipping": "legenda atrasada: pulando trechos antigos", "crashed": "a legenda ao vivo parou; a gravação segue"}
 
 type MarkCaption = Callable[[Mapping[str, Any]], tuple[bool, str]]
 type MarkItem = Callable[[str, Mapping[str, Any], int | None], tuple[bool, str]]
@@ -120,12 +123,21 @@ def caption_who(row: Mapping[str, Any], store: Store, rec: Recorder | None) -> s
     return you_label(row, int(me["id"]) if me else None, bool((meeting or {}).get("is_in_room")))
 
 
+def badge_tip(status: str, names: str) -> str:
+    """A dica do selo do ao vivo: o estado em texto e o dos nomes ("nomes indisponíveis: <motivo>"). Saiu do controlador
+    na F5.17, para ele não crescer."""
+    text = BADGE_TIPS.get(status, status)
+    if names and names != "ok":
+        text += f"\nnomes indisponíveis: {names}"
+    return text
+
+
 def speaker_parts(label: str | None) -> tuple[str, str]:
     """F5.4 L4 (U-081): o rótulo "Nome — Cargo" da legenda em nome e cargo (o cargo vazio quando não há)."""
     name, _sep, role = str(label or "").partition(" — ")
     return name.strip(), role.strip()
 
 
-__all__ = ["KIND_PREFIX", "KIND_TITLE", "NOTE_MAX", "STATE_TEXT", "YOU", "MarkCaption", "MarkItem", "Refresh", "caption_key",
-           "caption_line", "caption_note", "caption_who", "clip", "hhmm", "item_key", "item_note", "partial_data", "partial_html",
-           "speaker_parts", "you_label"]
+__all__ = ["BADGE_TIPS", "KIND_PREFIX", "KIND_TITLE", "NOTE_MAX", "STATE_TEXT", "YOU", "MarkCaption", "MarkItem", "Refresh",
+           "badge_tip", "caption_key", "caption_line", "caption_note", "caption_who", "clip", "hhmm", "item_key", "item_note",
+           "partial_data", "partial_html", "speaker_parts", "you_label"]

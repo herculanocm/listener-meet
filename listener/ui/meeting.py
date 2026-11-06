@@ -44,7 +44,7 @@ from .sound_check import no_speech_text
 from .timeline import PlaybackFollower
 from .timeline_view import TimelineTab
 from .transcript import TranscriptTab
-from .widget import _screen_rects
+from .widget_parts import _screen_rects
 
 if TYPE_CHECKING:
     from ..store import Store

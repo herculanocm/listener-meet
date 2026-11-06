@@ -9,12 +9,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QCursor, QFontMetrics, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QWidget
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
 from ..model import MIC_YOU, OUTPUT_YOU, Health
+from .common import clamp_to_screens
 from .icons import set_icon
 from .theme import Tone, note, qcolor, surface_tokens
 
@@ -35,9 +36,38 @@ HEALTH_ICONS: dict[str, dict[str, str]] = {
 }
 
 
+# selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo (no widget e,
+# F5.17, na bandeja de legendas)
+LIVE_BADGES: dict[str, tuple[str, Tone]] = {
+    "starting": ("ao vivo", Tone.NEUTRAL), "restarting": ("ao vivo", Tone.NEUTRAL), "live": ("ao vivo", Tone.SUCCESS),
+    "degraded": ("legenda atrasada", Tone.WARNING), "skipping": ("legenda atrasada", Tone.WARNING),
+    "crashed": ("ao vivo parou", Tone.DANGER)}
+
+
 def health_icon(channel: str, health: str) -> str:
     """O ícone do canal no estado dele (U-062)."""
     return HEALTH_ICONS[channel].get(health, CHANNEL_ICONS[channel])
+
+
+def _screen_rects() -> list[tuple[int, int, int, int]]:
+    """A área livre de cada monitor presente (x, y, largura, altura)."""
+    out = []
+    for s in QGuiApplication.screens():
+        g = s.availableGeometry()
+        out.append((g.x(), g.y(), g.width(), g.height()))
+    return out
+
+
+def initial_pos(pos: QPoint | None, width: int, height: int) -> QPoint:
+    """A posição salva do widget, presa a um monitor existente (F1.1 A9); sem ela, ou fora dos monitores, o canto inferior
+    direito da tela principal."""
+    if pos is not None:
+        clamped = clamp_to_screens(pos.x(), pos.y(), width, height, _screen_rects())
+        if clamped is not None:
+            return QPoint(*clamped)
+        log.info("posição salva do widget fora dos monitores atuais; voltando ao canto padrão")
+    screen = QGuiApplication.primaryScreen().availableGeometry()
+    return QPoint(screen.right() - width - 16, screen.bottom() - height - 16)
 
 
 def wrap_elided(text: str, fm: QFontMetrics, width: int, lines: int, middle: bool = False) -> str:
@@ -251,6 +281,6 @@ def widget_prefs(store: Store) -> dict[str, Any]:
     return {"size": saved_widget_size(store), "pos": saved_widget_pos(store), "shortcuts": shortcuts}
 
 
-__all__ = ["CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "CaptionLine", "ElidedLabel", "MarkerPopup",
-           "caption_text", "channel_letter", "clock_text", "confirm_discard", "hbox", "health_icon", "icon_label", "save_widget_pos",
-           "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]
+__all__ = ["CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "LIVE_BADGES", "CaptionLine", "ElidedLabel",
+           "MarkerPopup", "caption_text", "channel_letter", "clock_text", "confirm_discard", "hbox", "health_icon", "icon_label",
+           "initial_pos", "save_widget_pos", "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]

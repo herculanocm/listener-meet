@@ -64,7 +64,7 @@ from .history_delete import MeetingsDelete, OnDelete
 from .icons import tone_icon
 from .tasks import StreamTask, run_task, wait_before_close
 from .theme import TONE_ROLE, Tone, note, surface_tokens
-from .widget import _screen_rects
+from .widget_parts import _screen_rects
 
 if TYPE_CHECKING:
     from ..rag.search import SearchHit, SearchResult

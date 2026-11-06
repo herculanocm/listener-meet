@@ -120,7 +120,7 @@ def test_speech_rows_carry_time_speaker_and_the_lane_color_and_grow_with_the_tex
 def test_live_captions_use_the_speech_delegate_with_a_color_per_speaker_and_the_flag(qtbot, store):
     from listener.store.captions import CaptionInsert
     from listener.ui.live import LiveWindow, caption_key
-    from listener.ui.speech_delegate import COLOR_ROLE, FLAG_ROLE, ROLE_ROLE, SPEAKER_ROLE, SpeechDelegate
+    from listener.ui.speech_delegate import COLOR_ROLE, FLAG_ROLE, ROLE_ROLE, SPEAKER_ROLE, SpeechItemDelegate
 
     mid = store.create_meeting("Diretoria", None, None, None)
     for t0, text, label in ((1000, "bom dia", "Ana — CFO"), (4000, "oi", None), (7000, "seguimos", "Bia"), (9000, "ok", "Ana — CFO")):
@@ -128,7 +128,7 @@ def test_live_captions_use_the_speech_delegate_with_a_color_per_speaker_and_the_
     marked: set[Any] = set()
     win = LiveWindow(store, mid, on_mark_caption=lambda row: (True, "ok"), marked_captions=marked)
     qtbot.addWidget(win)
-    assert isinstance(win.list.itemDelegate(), SpeechDelegate)
+    assert isinstance(win.list.itemDelegate(), SpeechItemDelegate)       # F5.17 (D-094): o desenho da fala, a altura no item
     items = [win.list.item(i) for i in range(win.list.count())]
     assert [it.data(SPEAKER_ROLE) for it in items] == ["Ana", "", "Bia", "Ana"] and items[0].data(ROLE_ROLE) == "CFO"
     assert [it.data(COLOR_ROLE) for it in items] == [0, None, 1, 0]                  # a cor na ordem em que o falante apareceu
