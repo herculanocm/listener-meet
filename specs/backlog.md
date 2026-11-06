@@ -2,13 +2,16 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (05/11/2026, Windows nativo; tudo commitado; o push é do dono)
+## Onde paramos (06/11/2026, Windows nativo; tudo commitado; o push é do dono)
 - Código: F1 a F5.16 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.9.0 (D-081).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
+- **F5.17 aprovada** (06/11, D-094, `features/F5.17-bandeja-de-legendas.md`): a legenda ao vivo numa bandeja
+  própria, como chat, fora do widget. A análise de performance pedida pelo dono está na spec e na D-094. A
+  implementação vem a seguir.
 - O `.exe` atual é o 0.9.0 de 05/11 (`13b8d37`, a F5.16; 524 s, 892 MB, 4.697 arquivos; sonda `--probe` ok). Para
   compartilhar, o `build\exe\listener-meet-0.9.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
@@ -56,6 +59,8 @@ fechados (as decisões em `decisoes.md`).
   inteira (o job 47 diarizou durante a reunião 8, e o ao vivo degradou aos 60 s, com 37 s de atraso). O pós-reunião da
   reunião 8 somou ~1.533 s para 900 s de áudio (~1,7×; o G2 pede até 1,5×, plano B 2×, D-041). Opções: janela menor
   na diarização ou baixar a prioridade do worker enquanto a lease vale; decidir com o dono antes.
+  Em 06/11, de novo na reunião 22: o job 135, da 21, seguia em andamento na gravação inteira (p95 de 25 s, máximo de
+  92 s; degradou e pulou janelas). Pela D-094, é esta a alavanca do atraso do ao vivo, e não o paralelismo.
 - F5.7 (R-04 do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam a dica e o menu da bandeja, e o ícone fica
   igual; proposta: um selo no ícone enquanto houver chamada pendente.
 - Testes: a suíte já travou antes do primeiro teste (29 e 30/10: 14 min parada com 2,4 s de CPU, e a seguinte passou em

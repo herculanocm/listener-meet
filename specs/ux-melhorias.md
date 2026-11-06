@@ -13,7 +13,7 @@ apoiar (F5.12), aprovadas (D-079) e implementadas em 02/11; U-129 a U-133 da bar
 (D-082) e implementadas em 02/11; U-134 e U-135 do Claude em todo trabalho de LLM (F5.14), aprovadas (D-084) e
 implementadas em 03/11; U-136 a U-138 das referências de voz (F5.15), aprovadas (D-087) e implementadas em 04/11; U-139 da
 transcrição sem o token do Hugging Face (F5.16), aprovada (D-091) e implementada em 05/11; U-140 a U-146 da bandeja
-de legendas (F5.17), propostas em 06/11.
+de legendas (F5.17), aprovadas em 06/11 (D-094).
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -155,10 +155,10 @@ Tamanho-alvo: 3 KB.
 | U-137 | A cada confirmação, as vozes pendentes da reunião refazem a sugestão pela voz com o perfil novo | Revisão | implementada (F5.15, 04/11) |
 | U-138 | A linha do U-101 diz se a voz cabe numa referência da pessoa ou cria uma nova, e o total depois | Revisão | implementada (F5.15, 04/11) |
 | U-139 | Sem o token do Hugging Face, a reunião aberta e a fila dizem que falta quem falou no R e como resolver (o token e Reprocessar) | Reunião, Fila | implementada (F5.16, 05/11) |
-| U-140 | Bandeja de legendas: painel próprio, flutuante e sempre por cima como o widget, que abre ao gravar com o ao vivo e não ativa | Bandeja | proposta (F5.17) |
-| U-141 | As legendas como chat: os outros à esquerda com nome, cargo e cor; as suas à direita; o cabeçalho só na primeira da sequência | Bandeja | proposta (F5.17) |
-| U-142 | Minimizar recolhe à última legenda numa linha; fechar esconde até o botão "Legendas" do widget | Bandeja, widget | proposta (F5.17) |
-| U-143 | Rolagem de chat: rola sozinha no fim; quem subiu para ler fica onde está, com "↓ N novas" | Bandeja | proposta (F5.17) |
-| U-144 | Clique direito numa fala: criar marcador neste instante e copiar | Bandeja | proposta (F5.17) |
-| U-145 | A bandeja fora da captura de tela, como os avisos | Bandeja | proposta (F5.17) |
-| U-146 | Encostada no widget, a bandeja nasce acima dele e o acompanha; arrastada, fica solta e lembrada | Bandeja | proposta (F5.17) |
+| U-140 | Bandeja de legendas: painel próprio, flutuante e sempre por cima como o widget, que abre ao gravar com o ao vivo e não ativa | Bandeja | aprovada (F5.17) |
+| U-141 | As legendas como chat: os outros à esquerda com nome, cargo e cor; as suas à direita; o cabeçalho só na primeira da sequência | Bandeja | aprovada (F5.17) |
+| U-142 | Minimizar recolhe à última legenda numa linha; fechar esconde até o botão "Legendas" do widget | Bandeja, widget | aprovada (F5.17) |
+| U-143 | Rolagem de chat: rola sozinha no fim; quem subiu para ler fica onde está, com "↓ N novas" | Bandeja | aprovada (F5.17) |
+| U-144 | Clique direito numa fala: criar marcador neste instante e copiar | Bandeja | aprovada (F5.17) |
+| U-145 | A bandeja fora da captura de tela, como os avisos | Bandeja | aprovada (F5.17) |
+| U-146 | Encostada no widget, a bandeja nasce acima dele e o acompanha; arrastada, fica solta e lembrada | Bandeja | aprovada (F5.17) |
