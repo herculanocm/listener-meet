@@ -3,16 +3,17 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- **F5.18 aprovada, em implementação** (07/11, `features/F5.18-performance.md`, D-096): a spec de performance pedida pelo dono (a D-094 (3) já
-  pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em segundos (hoje em até 29 min) ao tronco
-  do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três pareceres somente leitura (arquitetura,
-  código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de arquitetura da D-040 (A-01 a A-16)
-  incorporados. Adiados pela revisão, fora do esforço: PF-12 (afinidade P/E), PF-24 (memória do e5 local), PF-25 (laço
-  asyncio persistente no app) e PF-27 (`semantic.build`); voltam com os M-01, M-04 e M-10 e quando o e5 voltar a ser o
-  embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB residentes hoje). Aprovada no padrão
-  em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096); a implementação segue pelos lotes 0 a 5, um
-  commit por lote. A página privada que serviu à leitura: https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
-  Posição da implementação (gravada a cada etapa, a pedido do dono em 07/11; `[x]` com o commit):
+- **F5.18 aprovada, em implementação** (07/11, `features/F5.18-performance.md`, D-096): a spec de performance pedida
+  pelo dono (a D-094 (3) já pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em segundos
+  (hoje em até 29 min) ao tronco do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três pareceres
+  somente leitura (arquitetura, código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de
+  arquitetura da D-040 (A-01 a A-16) incorporados. Adiados pela revisão, fora do esforço: PF-12 (afinidade P/E), PF-24
+  (memória do e5 local), PF-25 (laço asyncio persistente no app) e PF-27 (`semantic.build`); voltam com os M-01, M-04 e
+  M-10 e quando o e5 voltar a ser o embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB
+  residentes hoje). Aprovada no padrão em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096); a
+  implementação segue pelos lotes 0 a 5, um commit por lote. A página privada que serviu à leitura:
+  https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4 Posição da implementação (gravada a cada etapa, a pedido do dono em
+  07/11; `[x]` com o commit):
   - [x] aprovação registrada: spec, D-096, U-147 a U-149 (`bf89d80`).
   - [x] lote 1 (PF-01 a PF-03) implementado, revisado (R-01 a R-05 aplicados: lote padrão 8 trechos = 24 pares; as
     guardas da prioridade no heartbeat) e commitado com os testes do lote verdes, ruff e mypy limpos nos arquivos dele;
@@ -24,41 +25,41 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     modelos (218/218, cosseno 1,0: o PF-08 entra); o `pack` juntou 4 janelas em 2,9 s contra 16,8 separadas, mas o texto
     encolheu (atenção no PF-09); sem bilhete de sessão TLS nesta rede (o PF-25 fica adiado).
   - [x] lote 0, fase A medida: M-10, M-05 e M-08 (em `decisoes.md`, Medições, 07/11): sem bilhete TLS na rede (PF-25
-    segue adiado; partilhar o `SSLContext` poupa ~50 ms por cliente novo), eco só na reunião 22 (71 %; as outras 0 a 5 %),
-    pesos iguais mas cosseno VBx × turno 0,88 numa voz, abaixo de 0,95 (o PF-08 NÃO substitui o embedding por turno;
-    só o id do modelo deixa de sair "dict"). Faltam os de tempo (M-02, M-03, M-04, M-06, M-07, M-09, só com a máquina sem
-    agentes testando) e o M-01 (~3 h, no fim; o padrão das threads fica pela fórmula até lá).
+    segue adiado; partilhar o `SSLContext` poupa ~50 ms por cliente novo), eco só na reunião 22 (71 %; as outras 0 a 5
+    %), pesos iguais mas cosseno VBx × turno 0,88 numa voz, abaixo de 0,95 (o PF-08 NÃO substitui o embedding por turno;
+    só o id do modelo deixa de sair "dict"). Faltam os de tempo (M-02, M-03, M-04, M-06, M-07, M-09, só com a máquina
+    sem agentes testando) e o M-01 (~3 h, no fim; o padrão das threads fica pela fórmula até lá).
   - [x] lote 4 (PF-13 a PF-22) implementado e commitado (`store/jobs.py` em dois ramos, `store/jobs_sql.py` e
     `store/rag_signatures.py` novos, `rag/filters.py` novo, o contador `rag.vector_version`, o leve vivo 10 min com a
     saída por `user_version`, a lista em lotes, o cursor extrapolado); suíte inteira: 1.679 passaram e 2 falharam no
-    `test_theme` por ordem (passam sozinhos e na rodada seguinte: a instabilidade já vista na F5.16), ruff e os dois mypy
-    limpos (commit `3462394`); revisão do diff aplicada (R-01: o `acheckpoint` depois de cada grupo e o `cancel_requested`
-    antes de cada bloco do `revise`, com teste; R-02: o `job_id` lido antes do `gather`; R-03 aceito: a dica de tempo dos
-    jobs antigos conta pelo maior; os nomes de `jobs_sql.py` sem sublinhado).
+    `test_theme` por ordem (passam sozinhos e na rodada seguinte: a instabilidade já vista na F5.16), ruff e os dois
+    mypy limpos (commit `3462394`); revisão do diff aplicada (R-01: o `acheckpoint` depois de cada grupo e o
+    `cancel_requested` antes de cada bloco do `revise`, com teste; R-02: o `job_id` lido antes do `gather`; R-03 aceito:
+    a dica de tempo dos jobs antigos conta pelo maior; os nomes de `jobs_sql.py` sem sublinhado).
   - [x] lote 0, fases B e C medidas na reunião 22 (07/11, em `decisoes.md`): M-02 embeddings 93 % da diarização (o PF-04
-    é a alavanca); M-07 343 ms por janela (o PF-10 vale); M-06 o passe junto perde fala mesmo com timestamps (o PF-09 e a
-    U-147 não entram); M-09 pragmas −21 % na carga das assinaturas (o PF-26 entra com `cache_size` e `mmap_size`); M-04
-    o filho em NORMAL cai de 17,2 para 10,2 s sob carga, sem heartbeat esfomeado; M-03 o Whisper em lote sem ganho (+4 %)
-    e fora do Aceite 4, com a sonda caindo no lote 8 (o PF-05 não entra, sem a configuração). Falta só o M-01 (~3 h), no
-    fim, que só muda o padrão das threads se mostrar outra regra. `capture/echo.py` (a regra do eco, pura, partilhada
-    pelo PF-07 e pelo ao vivo) já commitado com teste. Uma suíte travada de 14:32 ficou viva com 4 workers até 15:40 e
-    pesou nas rodadas da fase C (foi encerrada).
+    é a alavanca); M-07 343 ms por janela (o PF-10 vale); M-06 o passe junto perde fala mesmo com timestamps (o PF-09 e
+    a U-147 não entram); M-09 pragmas −21 % na carga das assinaturas (o PF-26 entra com `cache_size` e `mmap_size`);
+    M-04 o filho em NORMAL cai de 17,2 para 10,2 s sob carga, sem heartbeat esfomeado; M-03 o Whisper em lote sem ganho
+    (+4 %) e fora do Aceite 4, com a sonda caindo no lote 8 (o PF-05 não entra, sem a configuração). Falta só o M-01 (~3
+    h), no fim, que só muda o padrão das threads se mostrar outra regra. `capture/echo.py` (a regra do eco, pura,
+    partilhada pelo PF-07 e pelo ao vivo) já commitado com teste. Uma suíte travada de 14:32 ficou viva com 4 workers
+    até 15:40 e pesou nas rodadas da fase C (foi encerrada).
   - [x] lote 2 commitado: `pipeline/lean_diarization.py` (o tronco do wespeaker uma vez por trecho; sonda `lean`: 5 min
     da reunião 22 de 305 para 118 s, −61 %, clusters idênticos e embeddings com diferença máxima 3,5e-7),
     `pipeline/echo_gate.py` (o gate de eco no L e no reforço do perfil, com `blocks`/`echo_blocks` no `timings_json` e
     no `job_done`, contados só depois do artefato da janela), o id do modelo sem "dict" (o Q8 segue desligado),
     `pipeline.echo_gate`, a fixture `forget_models` no `conftest`; revisão (R-01, R-04 a R-06) aplicada; R-02 e R-03 são
-    desvios de texto (a fração do eco vai no `job_done`, não no `job_step`; a máscara é por etapa) para a spec e a D-097.
-    Só o Windows com os modelos verifica: as 3 reuniões reprocessadas (Aceite 1), o texto do L nas reuniões do M-05
-    (Aceite 5), o RSS com o gate ligado numa reunião sem headset.
+    desvios de texto (a fração do eco vai no `job_done`, não no `job_step`; a máscara é por etapa) para a spec e a
+    D-097. Só o Windows com os modelos verifica: as 3 reuniões reprocessadas (Aceite 1), o texto do L nas reuniões do
+    M-05 (Aceite 5), o RSS com o gate ligado numa reunião sem headset.
   - [x] lote 3 commitado (`bee6ae9`): `live/pacing.py` (o teto de tokens: 32 + 10·s, nunca acima de 448 − prompt − 8;
     sem tokenizer, 228 assumidos), o nome em `live-embed` antes do Whisper, o eco partilhado, a legenda lenta no log e
     `stats.capped`; revisão (R-01 a R-05) aplicada. Só o uso real verifica: o atraso p95 do R com o nome sobreposto e o
     `live_cpu` com três threads nativas na janela; `capped` no `live_stopped`.
-  - [x] lote 5 commitado (`ee53ec1`): PF-23 (`poly_fir` em cache passado em `window=`, saída bit a bit; 48 kHz 143 → 77 µs
-    e 44,1 kHz 654 → 89 µs por bloco), PF-26 só os pragmas do main (`cache_size` 32 MiB, `mmap_size` 256 MiB), PF-28 sem
-    o `_write_lease` nem a contagem de temperatura (a redação e o `SSLContext` em cache, o `gather` em lotes), PF-29 com
-    a migração do hash no lugar (`rag/chunk_hash.py` novo; renomear a reunião não refaz os vetores da transcrição);
+  - [x] lote 5 commitado (`ee53ec1`): PF-23 (`poly_fir` em cache passado em `window=`, saída bit a bit; 48 kHz 143 → 77
+    µs e 44,1 kHz 654 → 89 µs por bloco), PF-26 só os pragmas do main (`cache_size` 32 MiB, `mmap_size` 256 MiB), PF-28
+    sem o `_write_lease` nem a contagem de temperatura (a redação e o `SSLContext` em cache, o `gather` em lotes), PF-29
+    com a migração do hash no lugar (`rag/chunk_hash.py` novo; renomear a reunião não refaz os vetores da transcrição);
     revisão (R-01 a R-05) aplicada: taxas iguais sem filtro, a versão dos vetores só sobe se as pessoas mudaram, o proxy
     fora da chave do TLS; R-06 a R-08 (docs: o módulo novo, o pré-import do SDK sem registro; riscos: um binário antigo
     refaz os vetores uma vez, um embedding pago duas vezes na janela da migração) ficam para o fechamento.
@@ -67,13 +68,16 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `%TEMP%\listener-tests-hang.log`, o processo preso derrubado e o teste em curso nomeado no resumo da rodada. Regra
     de rodada: pytest sempre com a saída num arquivo (`> arquivo 2>&1`, nunca `| tail`); a cada passo só o lote e os
     vizinhos, a suíte inteira uma vez no fechamento (D-050).
-  - [ ] fechamento: suíte inteira, docs (Implementação do lote 5, R-06 a R-08), D-097, versão 0.11.0, `.exe` e zip ·
-    [ ] M-01 no fim (~3 h, máquina quieta; só muda o padrão das threads se mostrar outra regra).
+  - [x] fechamento, parte 1: suíte inteira (1.719 passaram, 8 pulados, 2:30 min; `test_theme` por ordem;
+    `test_rag_local` ajustado ao `passage:` sem título, `7a898c0`), ruff limpo, Implementação do lote 5 e do vigia na
+    spec, R-07 e R-08 em Riscos, D-097, versão 0.11.0.
+  - [ ] fechamento, parte 2: `.exe` e zip (`build_exe.py --zip`) · [ ] M-01 no fim (~3 h, máquina quieta; só muda o
+    padrão das threads se mostrar outra regra) · [ ] o status da spec para "implementada" e o Tamanho-alvo.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
-  depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).
+  depois (D-091); F7 é futuro. Esquema v9, versão 0.11.0 (D-081; F5.18).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
@@ -97,6 +101,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
+- F5.18 (no uso, com os modelos): lote 1, o `pausado dentro da janela` em até 13 s no `listener-worker.log`, o worker
+  "Ociosa" no Gerenciador de Tarefas durante a gravação e o filho `--live` em "Normal"; lote 2, as 3 reuniões
+  reprocessadas (Aceite 1), o texto do L nas reuniões do M-05 (Aceite 5) e o RSS com o gate ligado numa reunião sem
+  headset; lote 3, o atraso p95 do R com o nome sobreposto, o `live_cpu` com três threads nativas e o `capped` no
+  `live_stopped`; lote 5, o app e o worker abrindo o banco real com `mmap_size` 256 MB (RSS na partida) e a primeira
+  varredura do índice migrando os hashes da transcrição sem refazer vetor (`rag.vector_version` parado, nenhum
+  `rag_embed` novo em `llm_calls`); o `.exe` 0.11.0 (sonda `--probe`).
 - F5.17 (Aceite 4, no uso): a bandeja aberta, recolhida, fechada e reaberta numa reunião; a roda do mouse, as dicas e
   o clique direito (o menu fecha com o clique fora e não fecha sozinho); o Teams compartilhando a tela sem a bandeja;
   dois monitores com escalas diferentes.
@@ -115,6 +126,11 @@ Nenhum: B1, B2, B5 e B15 fecharam pelo uso real, sem os números que pediam (D-0
 fechados (as decisões em `decisoes.md`).
 
 ## Dívidas técnicas
+- F5.18, das revisões: a regra dura `test_app_modules_do_not_import_models` num subprocesso (lote 2); `live/proc.py`
+  cresceu 38 linhas (mover os motores para um módulo próprio ao mexer); `store/rag.py` com 474 linhas; o `test_theme`
+  falha por ordem na suíte inteira (2 testes, passam sozinhos: a instabilidade da F5.16); `NetworkConfig.verify()` sem
+  chamador em `listener/`; o `mypy` sobre `scripts/` (fora do gate `files` do `pyproject`) acusa 54 erros, 11 deles nas
+  sondas do lote 0 (`perf/m_live.py`, `m_sqlite.py`, `m_threads.py`, `m_tls.py`, `replay.py`, `probe_perf.py`).
 - D-072, reais e pequenas (sem correção por ora): a morte da thread de trabalho da captura não marca a reunião; o
   "banco não responde há N s" exagera (`pending_since`); corridas de leitura e escrita fora da transação (sugestão da
   LLM num cluster recém-confirmado, ação superada que volta, `upsert_me`); o chat em streaming sem retentativa antes do

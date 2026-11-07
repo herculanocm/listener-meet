@@ -73,7 +73,10 @@ lista da transcrição faz o layout em lotes e o cursor do player extrapola entr
 wespeaker uma vez por trecho (`pipeline/lean_diarization.py`, saída idêntica) e, fora da sala presencial, zera para o
 Whisper e para o reforço do perfil os blocos do L que são o eco do R (`pipeline/echo_gate.py`, a regra pura de
 `capture/echo.py`, a mesma do filho ao vivo); o filho ao vivo calcula o embedding do nome numa thread `live-embed`
-enquanto o Whisper transcreve e limita os tokens novos pelo prompt (`live/pacing.py`).
+enquanto o Whisper transcreve e limita os tokens novos pelo prompt (`live/pacing.py`). O lote 5 desenha o FIR do
+`StreamResampler` uma vez por par de taxas (`capture/audio.py::poly_fir`), põe `cache_size` e `mmap_size` no main do app
+e do worker, partilha um `SSLContext` por PEM entre os clientes de LLM (`llm/adapters_common.py`) e tira o título do
+hash e do embedding da transcrição (`rag/chunk_hash.py`: a migração do hash legado no lugar, sem refazer vetor).
 
 ## Logs (D-059: para a LLM achar qualquer cenário nos testes do dono)
 Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm`
