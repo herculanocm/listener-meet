@@ -23,7 +23,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     JSON vão para `%LOCALAPPDATA%\listener-meet\perf-out`). Sinais dos smokes: pesos do wespeaker iguais nos dois
     modelos (218/218, cosseno 1,0: o PF-08 entra); o `pack` juntou 4 janelas em 2,9 s contra 16,8 separadas, mas o texto
     encolheu (atenção no PF-09); sem bilhete de sessão TLS nesta rede (o PF-25 fica adiado).
-  - [ ] lote 0 medido: feitos M-10, M-05 e M-08 (em `decisoes.md`, Medições, 07/11): sem bilhete TLS na rede (PF-25
+  - [x] lote 0, fase A medida: M-10, M-05 e M-08 (em `decisoes.md`, Medições, 07/11): sem bilhete TLS na rede (PF-25
     segue adiado; partilhar o `SSLContext` poupa ~50 ms por cliente novo), eco só na reunião 22 (71 %; as outras 0 a 5 %),
     pesos iguais mas cosseno VBx × turno 0,88 numa voz, abaixo de 0,95 (o PF-08 NÃO substitui o embedding por turno;
     só o id do modelo deixa de sair "dict"). Faltam os de tempo (M-02, M-03, M-04, M-06, M-07, M-09, só com a máquina sem
@@ -55,10 +55,20 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     sem tokenizer, 228 assumidos), o nome em `live-embed` antes do Whisper, o eco partilhado, a legenda lenta no log e
     `stats.capped`; revisão (R-01 a R-05) aplicada. Só o uso real verifica: o atraso p95 do R com o nome sobreposto e o
     `live_cpu` com três threads nativas na janela; `capped` no `live_stopped`.
-  - [ ] lote 5 (PF-23, PF-26 só os pragmas, PF-28 sem o `_write_lease` nem a contagem de temperatura, PF-29 com a
-    migração do hash no lugar) em implementação por um terceiro agente em paralelo (`capture/audio.py`, `store/core.py`,
-    `store/rag.py`, `llm/redact.py`, `llm/adapters_common.py`, `rag/chunker.py`, `rag/index.py`).
-  - [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip · [ ] M-01 no fim.
+  - [x] lote 5 commitado (`ee53ec1`): PF-23 (`poly_fir` em cache passado em `window=`, saída bit a bit; 48 kHz 143 → 77 µs
+    e 44,1 kHz 654 → 89 µs por bloco), PF-26 só os pragmas do main (`cache_size` 32 MiB, `mmap_size` 256 MiB), PF-28 sem
+    o `_write_lease` nem a contagem de temperatura (a redação e o `SSLContext` em cache, o `gather` em lotes), PF-29 com
+    a migração do hash no lugar (`rag/chunk_hash.py` novo; renomear a reunião não refaz os vetores da transcrição);
+    revisão (R-01 a R-05) aplicada: taxas iguais sem filtro, a versão dos vetores só sobe se as pessoas mudaram, o proxy
+    fora da chave do TLS; R-06 a R-08 (docs: o módulo novo, o pré-import do SDK sem registro; riscos: um binário antigo
+    refaz os vetores uma vez, um embedding pago duas vezes na janela da migração) ficam para o fechamento.
+  - [x] vigia de travamentos da suíte (`ed29c25`, `tests/hang_guard.py`, a pedido do dono depois de duas rodadas
+    travadas em 07/11): `faulthandler` por teste (180 s; a coleta e o fim 360 s), as pilhas em
+    `%TEMP%\listener-tests-hang.log`, o processo preso derrubado e o teste em curso nomeado no resumo da rodada. Regra
+    de rodada: pytest sempre com a saída num arquivo (`> arquivo 2>&1`, nunca `| tail`); a cada passo só o lote e os
+    vizinhos, a suíte inteira uma vez no fechamento (D-050).
+  - [ ] fechamento: suíte inteira, docs (Implementação do lote 5, R-06 a R-08), D-097, versão 0.11.0, `.exe` e zip ·
+    [ ] M-01 no fim (~3 h, máquina quieta; só muda o padrão das threads se mostrar outra regra).
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
