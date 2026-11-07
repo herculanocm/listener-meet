@@ -43,8 +43,13 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     fim, que só muda o padrão das threads se mostrar outra regra. `capture/echo.py` (a regra do eco, pura, partilhada
     pelo PF-07 e pelo ao vivo) já commitado com teste. Uma suíte travada de 14:32 ficou viva com 4 workers até 15:40 e
     pesou nas rodadas da fase C (foi encerrada).
-  - [ ] lotes 2 (PF-04, PF-07, a limpeza do id do modelo no PF-08; sem PF-05) e 3 (PF-10, PF-11 e o eco partilhado; sem
-    PF-09) em implementação por dois agentes em paralelo, arquivos disjuntos (`pipeline/` e `capture/` contra `live/`).
+  - [ ] lote 2 IMPLEMENTADO no working tree (sem commit), em revisão: `pipeline/lean_diarization.py` (o tronco uma vez
+    por trecho; sonda `lean`: 5 min da reunião 22 de 305 para 118 s, −61 %, clusters idênticos e embeddings com diferença
+    máxima 3,5e-7), `pipeline/echo_gate.py` (o gate de eco no L e no reforço do perfil, com `blocks`/`echo_blocks` no
+    `timings_json`), o id do modelo sem "dict", `pipeline.echo_gate`, `tests/test_f518_lote2.py`.
+  - [ ] lote 3 IMPLEMENTADO no working tree (sem commit): `live/pacing.py` (o teto de tokens), o nome em `live-embed`, o
+    eco partilhado e a legenda lenta no log; revisão lida (R-01 a R-05: a estimativa sem tokenizer assume o corte, o
+    `run()` dividido, cortes de linhas, as constantes órfãs do `m_echo.py`, o `return` no `except`) e em aplicação.
   - [ ] lote 5 (PF-23, PF-26 só os pragmas, PF-28 sem o `_write_lease` nem a contagem de temperatura, PF-29 com a
     migração do hash no lugar) em implementação por um terceiro agente em paralelo (`capture/audio.py`, `store/core.py`,
     `store/rag.py`, `llm/redact.py`, `llm/adapters_common.py`, `rag/chunker.py`, `rag/index.py`).
