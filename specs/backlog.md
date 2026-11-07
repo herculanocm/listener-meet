@@ -45,7 +45,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     pesou nas rodadas da fase C (foi encerrada).
   - [ ] lotes 2 (PF-04, PF-07, a limpeza do id do modelo no PF-08; sem PF-05) e 3 (PF-10, PF-11 e o eco partilhado; sem
     PF-09) em implementação por dois agentes em paralelo, arquivos disjuntos (`pipeline/` e `capture/` contra `live/`).
-  - [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip · [ ] M-01 no fim.
+  - [ ] lote 5 (PF-23, PF-26 só os pragmas, PF-28 sem o `_write_lease` nem a contagem de temperatura, PF-29 com a
+    migração do hash no lugar) em implementação por um terceiro agente em paralelo (`capture/audio.py`, `store/core.py`,
+    `store/rag.py`, `llm/redact.py`, `llm/adapters_common.py`, `rag/chunker.py`, `rag/index.py`).
+  - [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip · [ ] M-01 no fim.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
