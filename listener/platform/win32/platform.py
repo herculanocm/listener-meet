@@ -43,8 +43,14 @@ MEETING_EXES = {"ms-teams.exe", "teams.exe", "zoom.exe", "cpthost.exe", "webex.e
                 "slack.exe", "discord.exe", "skype.exe", "googlemeet.exe"}
 MEETING_TITLE_HINTS = ("meet", "teams", "zoom", "webex", "reunião", "meeting", "chamada", "call")
 ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
-CREATE_NO_WINDOW, BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x00004000   # worker da F2 e ao vivo da F4
-CHILD_FLAGS, STARTF_FORCEOFFFEEDBACK = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, 0x00000080   # F5.8: sem o cursor "carregando"
+CREATE_NO_WINDOW = 0x08000000
+IDLE_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS = 0x00000040, 0x00004000, 0x00000020
+# O worker da F2 nasce abaixo do normal e, durante a gravação, cai à classe ociosa (F5.18 PF-02, `set_own_priority` pela thread do
+# heartbeat do job). O filho ao vivo da F4 e os outros filhos interativos (`--hf-check`, `--prepare`) nascem em NORMAL, como o app
+# de reunião (F5.18 PF-02, D-096; a D-044 os punha abaixo do normal), e o ao vivo desliga o EcoQoS em si mesmo
+WORKER_FLAGS = CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+CHILD_FLAGS = CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS
+STARTF_FORCEOFFFEEDBACK = 0x00000080                   # F5.8: sem o cursor "carregando"
 PROCESS_SET_INFORMATION = 0x0200                       # F4: EcoQoS do filho ao vivo (SetProcessInformation)
 PROCESS_POWER_THROTTLING = 4                           # ProcessPowerThrottling (PROCESS_INFORMATION_CLASS)
 POWER_THROTTLING_VERSION, POWER_THROTTLING_EXECUTION_SPEED = 1, 0x1
@@ -121,6 +127,21 @@ def _own_process_kernel32() -> Any:
     k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
     k32.K32GetProcessMemoryInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessMemoryCounters), wintypes.DWORD)
     return k32
+
+
+def _set_priority_class(priority_class: int) -> bool:
+    """`SetPriorityClass` no próprio processo; nunca `PROCESS_MODE_BACKGROUND_BEGIN` (derruba I/O e o SQLite sofre, D-F2-14).
+    Falha vira False com uma linha no log, nunca exceção."""
+    if sys.platform != "win32":
+        return False
+    try:
+        k32 = _own_process_kernel32()
+        if k32.SetPriorityClass(k32.GetCurrentProcess(), priority_class):
+            return True
+        log.info("SetPriorityClass(0x%x) falhou (erro %s)", priority_class, ctypes.get_last_error())
+    except Exception as e:
+        log.info("SetPriorityClass(0x%x): %s", priority_class, e)
+    return False
 
 
 @functools.cache
@@ -517,14 +538,15 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
         if sys.platform != "win32":
             return process.spawn_detached(argv, env)
         p = subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.DEVNULL,  # noqa: S603
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=CHILD_FLAGS,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=WORKER_FLAGS,
                              startupinfo=subprocess.STARTUPINFO(dwFlags=STARTF_FORCEOFFFEEDBACK))
         return int(p.pid)
 
     @override
     def spawn_child(self, argv: list[str], env: Mapping[str, str] | None = None) -> ChildProcess:
-        """F4: sem janela e abaixo do normal (as flags do worker), com stdin e stdout binários e stderr descartado; EcoQoS
-        desligado logo depois de nascer (falha só vai para o log)."""
+        """F4: sem janela, com stdin e stdout binários e stderr descartado; F5.18 (PF-02): em prioridade NORMAL (`CHILD_FLAGS`),
+        não mais nas flags do worker, para a legenda ao vivo não disputar CPU por baixo do app de reunião; o EcoQoS o filho
+        desliga em si mesmo logo depois de nascer (falha só vai para o log)."""
         if sys.platform != "win32":
             return process.spawn_child(argv, env)
         return subprocess.Popen(argv, env=dict(env) if env is not None else None, stdin=subprocess.PIPE,  # noqa: S603
@@ -557,17 +579,19 @@ class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win
 
     @override
     def lower_own_priority(self) -> bool:
-        """`SetPriorityClass(BELOW_NORMAL)`; nunca `PROCESS_MODE_BACKGROUND_BEGIN` (derruba I/O e o SQLite sofre, D-F2-14)."""
+        """`SetPriorityClass(BELOW_NORMAL)` ao nascer (nunca `preexec_fn`); só CPU, a E/S segue normal (D-F2-14)."""
         if sys.platform != "win32":
             return process.lower_own_priority()
-        try:
-            k32 = _own_process_kernel32()
-            if k32.SetPriorityClass(k32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS):
-                return True
-            log.info("SetPriorityClass falhou (erro %s)", ctypes.get_last_error())
-        except Exception as e:
-            log.info("SetPriorityClass: %s", e)
-        return False
+        return _set_priority_class(BELOW_NORMAL_PRIORITY_CLASS)
+
+    @override
+    def set_own_priority(self, idle: bool) -> bool:
+        """F5.18 (PF-02): a classe ociosa enquanto a gravação corre (a lease, lida pela thread do heartbeat do job a cada 15 s) e
+        a volta a abaixo do normal quando ela cai. IDLE é só CPU: a E/S e o SQLite seguem normais; a thread do heartbeat, se
+        esfomeada acima de 30 s sob carga (M-04), sobe de prioridade dentro do processo (fica para a medição)."""
+        if sys.platform != "win32":
+            return process.set_own_priority(idle)
+        return _set_priority_class(IDLE_PRIORITY_CLASS if idle else BELOW_NORMAL_PRIORITY_CLASS)
 
     @override
     def memory_rss(self) -> int | None:

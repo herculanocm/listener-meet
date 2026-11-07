@@ -18,7 +18,7 @@ from ..llm.aio import watched
 from ..llm.base import LLMProvider, ProviderUnavailableError
 from ..llm.types import AudioPart, Capability, LlmTask, ProviderKind, Request
 from ..log import get_logger
-from .base import PermanentError
+from .base import PermanentError, Progress
 from .types import AudioWindow, TranscriptWindow, Word
 
 if TYPE_CHECKING:
@@ -101,7 +101,9 @@ class LLMAudioTranscriber:
                         t0 + int(len(chunk) * 1000 / window.sample_rate)))
         return out
 
-    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
+    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str,
+                   on_segment: Progress | None = None) -> TranscriptWindow:
+        del on_segment            # F5.18 (PF-01): sem lotes numa chamada à LLM; o cancelamento e a lease ficam entre janelas
         parts = self._encode(window)
 
         async def go() -> list[tuple[dict[str, Any], int, int]]:

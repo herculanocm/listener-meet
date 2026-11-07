@@ -12,6 +12,7 @@ fluxo falso no padrão de saída e `play_sound` anota onde o teste do warm-up to
 F5.13 (L1): `claim_instance` anota o nome pedido e pega a trava enquanto `instance_free` (False: outra instância roda);
 `hand_over_foreground` conta as vezes (`handovers`). L2: `set_taskbar_tasks` guarda as tarefas e devolve `taskbar_ok`.
 L3: `pin_hint` devolve `pin_text` (None: sem dica).
+F5.18 (PF-02): `set_own_priority` anota cada pedido em `priorities` (True = classe ociosa) e diz que aplicou.
 """
 from __future__ import annotations
 
@@ -96,6 +97,7 @@ class FakePlatform(Platform):
         self.taskbar_tasks: list[TaskbarTask] | None = None   # L2: as tarefas do Jump List publicadas por último
         self.taskbar_ok = True                                # ...e se o "sistema" as aceita
         self.pin_text: str | None = None                      # L3: a dica de fixar o ícone (None: a plataforma não tem)
+        self.priorities: list[bool] = []                      # F5.18 (PF-02): os pedidos a `set_own_priority` (True = ociosa)
 
     # ---- condução dos testes ----
     def pump(self, seconds: float, step: float = 0.1) -> None:
@@ -347,6 +349,11 @@ class FakePlatform(Platform):
     @override
     def lower_own_priority(self) -> bool:
         self.lowered += 1
+        return True
+
+    @override
+    def set_own_priority(self, idle: bool) -> bool:
+        self.priorities.append(idle)
         return True
 
     @override

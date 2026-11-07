@@ -170,7 +170,7 @@ def real_deps(config: JobConfig, token: str, store: Any = None) -> PipelineDeps:
         return cls(whisper_dir(config), config.whisper_model, cpu_threads=config.torch_threads, hq=config.whisper_hq)
 
     def diarizer() -> Any:
-        return _adapter("pyannote", "PyannoteDiarizer")(token, torch_threads=config.torch_threads)
+        return _adapter("pyannote", "PyannoteDiarizer")(token, torch_threads=config.torch_threads, embedding_batch=config.embedding_batch)
 
     def embedder() -> Any:
         return _adapter("pyannote", "PyannoteEmbedder")(token, torch_threads=config.torch_threads)

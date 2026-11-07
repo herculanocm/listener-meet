@@ -2,13 +2,14 @@
 
 Ordem (P1): diarizar R (embeddings na mesma passagem, com relógio próprio) -> casar perfis (clusters gravados: a revisão já pode abrir) ->
 transcrever R -> transcrever L -> segmentos. Cada janela vira um artefato logo depois de calculada; na retomada, os `idx` presentes são
-pulados (perda máxima: uma janela). Entre janelas: heartbeat, cancelamento cooperativo e a lease da gravação (Q7). Nunca há transação em
-volta de computação. Preset sala (U-015): L segue o caminho do R; senão L é o usuário (`attribution = canal`) e reforça o perfil dele com
-`source = automatico` (P3). Reprocessar escreve com o `job_id` novo e, no último passo, transporta as decisões humanas por cosseno e troca
-numa só transação (item 12, CP3). F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o idioma pedido pela
-troca na reunião aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações (português numa reunião já
-processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído: `meetings.language` muda com
-`revisions` na transação da troca.
+pulados (perda máxima: uma janela). Entre janelas: heartbeat, cancelamento cooperativo e a lease da gravação (Q7); F5.18 (PF-01): também
+dentro delas, pelo gancho do pyannote, pelo gerador do Whisper e nos laços do embedder (`window_hook`), com a pausa fora do `wall_s`. Nunca
+há transação em volta de computação. Preset sala (U-015): L segue o caminho do R; senão L é o usuário (`attribution = canal`) e reforça o
+perfil dele com `source = automatico` (P3). Reprocessar escreve com o `job_id` novo e, no último passo, transporta as decisões humanas por
+cosseno e troca numa só transação (item 12, CP3). F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o
+idioma pedido pela troca na reunião aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações
+(português numa reunião já processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído:
+`meetings.language` muda com `revisions` na transação da troca.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_p
 from . import no_diarization
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
-from .jobbase import BaseJobRunner, Clock, JobCancelledError, Sleep, StepTiming
+from .jobbase import LEASE_POLL_S, BaseJobRunner, Clock, JobCancelledError, SetPriority, Sleep, StepTiming
 from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids, load_profile_refs
 from .reprocess import target_language
 from .stitch import stitch
@@ -51,6 +52,7 @@ STITCH_ARTIFACT = "stitch"        # artefatos auxiliares (não são JobStep)
 EMBED_L_ARTIFACT = "embed_l"
 TRANSPORT_MIN_COS = 0.8
 USER_CLUSTER = "L"
+HOOK_EVERY_TURNS = 10             # F5.18 (PF-01): nos laços do embedder (um forward do wespeaker por turno), o checkpoint a cada 10
 __all__ = ["JobCancelledError", "JobRunner", "StepTiming", "build_prompt", "update_rtf"]    # nomes da F2 continuam aqui
 
 
@@ -92,9 +94,10 @@ class JobRunner(BaseJobRunner):
 
     def __init__(self, store: Store, deps: PipelineDeps, job: JobRow, *, config: JobConfig | None = None, now: Clock | None = None,
                  sleep: Sleep | None = None, heartbeat_s: float = 15.0, heartbeat_thread: bool = True, wait_poll_s: float = 5.0,
-                 memory_rss: Callable[[], int | None] | None = None):
+                 memory_rss: Callable[[], int | None] | None = None, set_priority: SetPriority | None = None,
+                 lease_poll_s: float = LEASE_POLL_S):
         super().__init__(store, job, now=now, sleep=sleep, heartbeat_s=heartbeat_s, heartbeat_thread=heartbeat_thread,
-                         wait_poll_s=wait_poll_s, memory_rss=memory_rss)
+                         wait_poll_s=wait_poll_s, memory_rss=memory_rss, set_priority=set_priority, lease_poll_s=lease_poll_s)
         self.deps = deps
         self.config = config or JobConfig.from_json(job.get("config_json"))
         self.me: dict[str, Any] | None = None
@@ -305,13 +308,14 @@ class JobRunner(BaseJobRunner):
                 out.append(saved[w.idx])
                 continue
             self._between_windows()
+            hook = self.window_hook()                                # PF-01: cancelamento e lease a cada lote do pyannote
             t0 = time.perf_counter()
             if w.has_speech:
-                dw = self.deps.diarizer().diarize(w, min_speakers=min_spk, max_speakers=max_spk)
+                dw = self.deps.diarizer().diarize(w, min_speakers=min_spk, max_speakers=max_spk, on_progress=hook)
             else:
                 dw = DiarizationWindow(w.idx, w.t0_ms, w.t1_ms, ())
             timing = self._timing(step, self.deps.diarizer().name)
-            timing.wall_s += time.perf_counter() - t0
+            timing.wall_s += time.perf_counter() - t0 - hook.paused_s
             timing.audio_s += w.duration_ms / 1000
             dw = self._embed_window(w, dw)
             self.store.jobs.put_artifact(self.job_id, step, idx, encode_diarization(dw))
@@ -330,18 +334,23 @@ class JobRunner(BaseJobRunner):
         if dw.embeddings and dw.model == embedder.model:
             log.info("job %s: embeddings do próprio pipeline (%s) para %d rótulos (Q8)", self.job_id, dw.model, len(dw.embeddings))
             return dw
+        hook = self.window_hook()
         t0 = time.perf_counter()
         vectors: dict[str, np.ndarray] = {}
+        n = 0
         for label, turns in clean_turns(dw.turns, dw.overlap).items():
             acc: np.ndarray | None = None                            # dimensão vem do primeiro vetor, não de `dim` (R2-23)
             for t in turns:
+                n += 1
+                if n % HOOK_EVERY_TURNS == 0:
+                    hook()
                 a, b = round((t.start_ms - w.t0_ms) * w.sample_rate / 1000), round((t.end_ms - w.t0_ms) * w.sample_rate / 1000)
                 v = normalize(embedder.embed(w.samples[a:b], w.sample_rate)) * t.duration_ms
                 acc = v if acc is None else acc + v
                 timing.speech_s += t.duration_ms / 1000
             if acc is not None and np.any(acc):
                 vectors[label] = normalize(acc)
-        timing.wall_s += time.perf_counter() - t0
+        timing.wall_s += time.perf_counter() - t0 - hook.paused_s
         timing.audio_s += w.duration_ms / 1000
         return DiarizationWindow(dw.idx, dw.t0_ms, dw.t1_ms, dw.turns, dw.overlap, vectors or None, embedder.model)
 
@@ -369,9 +378,10 @@ class JobRunner(BaseJobRunner):
                     total += int(header["ms"])
                 continue
             self._between_windows()
+            hook = self.window_hook()
             t0 = time.perf_counter()
-            vec, ms = self._embed_runs(w, embedder)
-            timing.wall_s += time.perf_counter() - t0
+            vec, ms = self._embed_runs(w, embedder, hook=hook)
+            timing.wall_s += time.perf_counter() - t0 - hook.paused_s
             timing.speech_s += ms / 1000
             self.store.jobs.put_artifact(self.job_id, EMBED_L_ARTIFACT, w.idx,
                                          pack_artifact({"ms": ms, "t0": w.t0_ms, "t1": w.t1_ms}, vec.tobytes() if ms else b""))
@@ -382,8 +392,9 @@ class JobRunner(BaseJobRunner):
             self.store.profiles.upsert_auto_embedding(int(self.me["id"]), embedder.model, normalize(acc), self.meeting_id,
                                                       self.meeting.get("platform"))
 
-    def _embed_runs(self, w: AudioWindow, embedder: Any, min_run_ms: int = 1500, limit: int = 20) -> tuple[np.ndarray, int]:
-        """Trechos contíguos com fala (RMS por quadro) do canal L, os mais longos primeiro."""
+    def _embed_runs(self, w: AudioWindow, embedder: Any, min_run_ms: int = 1500, limit: int = 20,
+                    hook: Callable[[], None] | None = None) -> tuple[np.ndarray, int]:
+        """Trechos contíguos com fala (RMS por quadro) do canal L, os mais longos primeiro; `hook` (PF-01) a cada 10 trechos."""
         if not w.has_speech:
             return np.zeros(0, np.float32), 0
         frame = max(1, int(w.sample_rate * 20 / 1000))
@@ -400,7 +411,9 @@ class JobRunner(BaseJobRunner):
         runs.sort(key=lambda r: r[0] - r[1])
         acc: np.ndarray | None = None
         total = 0
-        for a, b in runs[:limit]:
+        for i, (a, b) in enumerate(runs[:limit]):
+            if hook is not None and i and i % HOOK_EVERY_TURNS == 0:
+                hook()
             ms = (b - a) * 20
             v = normalize(embedder.embed(w.samples[a * frame:b * frame], w.sample_rate)) * ms
             acc = v if acc is None else acc + v
@@ -480,10 +493,11 @@ class JobRunner(BaseJobRunner):
                 transcriber = self.deps.transcriber()
                 prompt = build_prompt(self.config.glossary, self.meeting.get("expected_participants"), self.meeting.get("title"), previous,
                                       self.meeting.get("glossary"))
+                hook = self.window_hook()                            # PF-01: cancelamento e lease a cada segmento de ~30 s
                 t0 = time.perf_counter()
-                tw = transcriber.transcribe(w, language=self.language, initial_prompt=prompt)
+                tw = transcriber.transcribe(w, language=self.language, initial_prompt=prompt, on_segment=hook)
                 timing = self._timing(step, transcriber.name, getattr(transcriber, "prompt_version", ""))   # F5.6 L2 (R-06)
-                timing.wall_s += time.perf_counter() - t0
+                timing.wall_s += time.perf_counter() - t0 - hook.paused_s
                 timing.audio_s += w.duration_ms / 1000
                 timing.speech_s += tw.speech_ms / 1000
                 previous = tw.words

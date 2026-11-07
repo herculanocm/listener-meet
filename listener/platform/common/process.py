@@ -125,6 +125,13 @@ def lower_own_priority() -> bool:
     return True
 
 
+def set_own_priority(idle: bool) -> bool:
+    """F5.18 (PF-02): a classe ociosa durante a gravação só existe no Windows (`platform/win32`). No posix o `nice` só sobe sem
+    privilégio (não haveria volta) e o worker já nasce com `nice +10`: nada muda aqui (False)."""
+    del idle
+    return False
+
+
 def memory_rss() -> int | None:
     """RSS atual em bytes (Linux: `/proc/self/statm`; macOS: `ru_maxrss`, que é o pico); None quando não dá para ler."""
     if sys.platform == "win32":

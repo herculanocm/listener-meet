@@ -45,6 +45,10 @@ class IndexJobRunner(BaseJobRunner):
     def respects_lease(self) -> bool:
         return False
 
+    def _wait(self) -> None:
+        """O `wait` de `fill_vectors`: o `checkpoint()` (F5.18: devolve os segundos em pausa, que aqui não interessam)."""
+        self.checkpoint()
+
     def run(self) -> JobStatus:
         if self.store.get_meeting(self.meeting_id) is None:
             return self._fail(PermanentError("a reunião deste job não existe mais"), permanent=True)
@@ -73,7 +77,7 @@ class IndexJobRunner(BaseJobRunner):
         t0 = time.perf_counter()
         if self.forced or auto_index_enabled(self.store):
             filled = fill_vectors(self.store, self.meeting_id, provider=self._provider_override, check=self._beat, paused=self._paused,
-                                  wait=self.checkpoint,             # a espera da pausa, fora do laço (volta a `rodando` sozinho)
+                                  wait=self._wait,                  # a espera da pausa, fora do laço (volta a `rodando` sozinho)
                                   on_progress=lambda done, total: self._progress(JobStep.INDEX_VECTORS, done / max(1, total)),
                                   defer=self._recording)            # só o local consulta (A-06)
         else:                                                  # vetores automáticos desligados: o FTS já foi; os vetores, não

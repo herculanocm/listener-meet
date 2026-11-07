@@ -69,16 +69,17 @@ def worker_log_path(store: Store, light: bool = False) -> Path:
     return Path(base).expanduser().parent / (LLM_WORKER_LOG if light else WORKER_LOG)
 
 
-def _platform_hooks() -> tuple[Any, Any, Any]:
-    """(`lower_own_priority`, `memory_rss`, `spawn_detached`) da plataforma; a versão portável quando a camada não existe
-    (Linux antes da F7)."""
+def _platform_hooks() -> tuple[Any, Any, Any, Any]:
+    """(`lower_own_priority`, `memory_rss`, `spawn_detached`, `set_own_priority`) da plataforma; a versão portável quando a camada
+    não existe (Linux antes da F7). F5.18 (PF-02): `set_own_priority` leva o pesado à classe ociosa durante a gravação, pela
+    thread do heartbeat do job."""
     try:
         from ..platform import get_platform
 
         p = get_platform()
     except NotImplementedError:
-        return process.lower_own_priority, process.memory_rss, process.spawn_detached
-    return p.lower_own_priority, p.memory_rss, p.spawn_detached
+        return process.lower_own_priority, process.memory_rss, process.spawn_detached, process.set_own_priority
+    return p.lower_own_priority, p.memory_rss, p.spawn_detached, p.set_own_priority
 
 
 def run_llm_job(store: Store, job: Any) -> JobStatus:
@@ -197,7 +198,8 @@ class _Deps:
         return self.deps
 
 
-def _run_job(store: Store, job: Any, *, light: bool, once: bool, held: _Deps, memory: Any, spawn: Any) -> JobStatus | None:
+def _run_job(store: Store, job: Any, *, light: bool, once: bool, held: _Deps, memory: Any, spawn: Any,
+             set_priority: Any = None) -> JobStatus | None:
     """Um job da classe; None quando o pesado nem começou (sem o extra do pipeline: erro permanente, sem contar como feito)."""
     if light:
         return run_light_job(store, job)
@@ -208,7 +210,7 @@ def _run_job(store: Store, job: Any, *, light: bool, once: bool, held: _Deps, me
         store.jobs.finish(int(job["id"]), JobStatus.ERROR, error=str(e), count_attempt=False)
         log.warning("job %s: %s", job["id"], e)
         return None
-    status = JobRunner(store, deps, job, memory_rss=memory).run()
+    status = JobRunner(store, deps, job, memory_rss=memory, set_priority=set_priority).run()
     if status == JobStatus.DONE and not once:                  # `--once` não deixa um leve solto (F5A-16)
         spawn_light_worker(store, spawn)
     return status
@@ -244,7 +246,7 @@ def _announce(store: Store, light: bool) -> None:
 
 def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: bool = False) -> int:
     _announce(store, light)
-    lower, memory, spawn = _platform_hooks()
+    lower, memory, spawn, set_priority = _platform_hooks()
     log.info("prioridade baixa: %s", "ok" if lower() else "não aplicada")
     aio.configure_stall(exit_stalled)                              # D-058: chamada nativa presa não trava a fila
     store.core.release_audio()                                     # R-01: os anexos da abertura; o job anexa o que ler
@@ -265,7 +267,7 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
         if job is not None:
             idle_since, released = None, False
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
-            status = _guarded(store, job, light=light, once=once, held=held, memory=memory, spawn=spawn)
+            status = _guarded(store, job, light=light, once=once, held=held, memory=memory, spawn=spawn, set_priority=set_priority)
             if status is None:
                 continue
             log.info("job %s terminou: %s", job["id"], status)

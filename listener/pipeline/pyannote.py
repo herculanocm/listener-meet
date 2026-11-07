@@ -3,16 +3,20 @@
 mais a lista de trechos sobrepostos, `min_speakers`/`max_speakers` (nunca `num_speakers`), sonda Q8 (`speaker_embeddings`
 do resultado e o id do modelo de embedding do pipeline, logados na primeira execução); embeddings por turno com
 wespeaker (`Inference(window="whole")`). Importações preguiçosas: o módulo carrega sem torch. Escrito às cegas no WSL
-seguindo `scripts/medir.py`; verificado no Windows com o token (B4)."""
+seguindo `scripts/medir.py`; verificado no Windows com o token (B4).
+F5.18: `on_progress` vira o `hook` do pipeline (PF-01: o runner confere o cancelamento e a lease a cada lote, na thread de
+cálculo) e o lote dos embeddings sai de `pipeline.embedding_batch` em trechos, multiplicado pelos falantes locais (PF-03)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
+from ..config.defaults import EMBEDDING_BATCH
 from ..log import get_logger
 from ..store.profiles import normalize
-from .base import PermanentError
+from .base import PermanentError, Progress
 from .types import AudioWindow, DiarizationWindow, Overlaps, Turn
 
 log = get_logger("pipeline.pyannote")
@@ -20,6 +24,7 @@ log = get_logger("pipeline.pyannote")
 DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
 EMBEDDING_REPO = "pyannote/wespeaker-voxceleb-resnet34-LM"
 MIN_EMBED_SAMPLES = 16000          # wespeaker precisa de ~1 s: trechos menores são preenchidos com zeros
+LOCAL_SPEAKERS = 3                 # F5.18 (PF-03): falantes locais da segmentação do community-1, quando a instância não os expõe
 
 
 def _permanent(e: BaseException, repo: str) -> PermanentError | None:
@@ -51,6 +56,16 @@ def _waveform(samples: np.ndarray) -> Any:
     return torch.from_numpy(x)[None, :]
 
 
+def _hook(on_progress: Progress) -> Callable[..., None]:
+    """F5.18 (PF-01): o `hook` do pyannote, chamado de forma síncrona na thread de cálculo a cada lote da segmentação e dos
+    embeddings como `hook(etapa, artefato, file=..., total=..., completed=...)` (`speaker_diarization.py`, `apply` e
+    `get_embeddings`). Os argumentos são ignorados; a exceção levantada aqui (o `JobCancelledError`) atravessa o pipeline, que
+    não a engole (`core/pipeline.py`, `__call__` e `apply` sem `try/except` em volta do gancho)."""
+    def hook(*_args: Any, **_kwargs: Any) -> None:
+        on_progress()
+    return hook
+
+
 def overlaps_of(annotation: Any, t0_ms: int) -> Overlaps:
     """Trechos em que mais de um falante fala, a partir da saída não exclusiva (`Annotation.get_overlap()`)."""
     try:
@@ -68,10 +83,11 @@ def turns_of(annotation: Any, t0_ms: int) -> tuple[Turn, ...]:
 
 
 class PyannoteDiarizer:
-    def __init__(self, token: str, *, torch_threads: int = 4, repo: str = DIARIZATION_REPO):
+    def __init__(self, token: str, *, torch_threads: int = 4, repo: str = DIARIZATION_REPO, embedding_batch: int = EMBEDDING_BATCH):
         self.token = token
         self.torch_threads = torch_threads
         self.repo = repo
+        self.embedding_batch = embedding_batch         # F5.18 (PF-03): trechos por lote dos embeddings (`pipeline.embedding_batch`)
         self.name = f"pyannote:{repo.rsplit('/', 1)[-1]}"
         self._pipeline: Any = None
         self.embedding_model: str | None = None        # id do modelo de embedding do pipeline (sonda Q8)
@@ -106,13 +122,34 @@ class PyannoteDiarizer:
             raise
         return loaded
 
-    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None) -> DiarizationWindow:
+    def _set_embedding_batch(self, pipe: Any) -> None:
+        """F5.18 (PF-03): o `embedding_batch_size` do pyannote conta pares (trecho, falante) e vinha dos 32 do `config.yaml`
+        (ativações do ResNet34 de centenas de MB por lote); aqui vale `pipeline.embedding_batch` em trechos vezes os falantes
+        locais do modelo de segmentação (3 no community-1). Por chamada, para a configuração valer em uso. O PF-04 (lote 2)
+        passa o lote a trechos de verdade."""
+        if not hasattr(pipe, "embedding_batch_size"):
+            log.debug("pipeline sem embedding_batch_size: lote dos embeddings não ajustado")
+            return
+        try:
+            local = len(pipe._segmentation.model.specifications.classes)
+        except Exception:
+            local = LOCAL_SPEAKERS
+        batch = max(1, int(self.embedding_batch)) * max(1, local)
+        if pipe.embedding_batch_size != batch:
+            pipe.embedding_batch_size = batch
+            log.info("pyannote: lote dos embeddings %d pares (%d trechos x %d falantes locais)", batch, self.embedding_batch, local)
+
+    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None,
+                on_progress: Progress | None = None) -> DiarizationWindow:
         pipe = self._load()
-        kwargs: dict[str, int] = {}
+        self._set_embedding_batch(pipe)
+        kwargs: dict[str, Any] = {}
         if min_speakers is not None:
             kwargs["min_speakers"] = int(min_speakers)
         if max_speakers is not None:
             kwargs["max_speakers"] = int(max_speakers)
+        if on_progress is not None:
+            kwargs["hook"] = _hook(on_progress)                    # PF-01: `pipe(file, hook=...)` chega ao `apply` como está
         result = pipe({"waveform": _waveform(window.samples), "sample_rate": window.sample_rate}, **kwargs)
         full = getattr(result, "speaker_diarization", None)
         exclusive = getattr(result, "exclusive_speaker_diarization", None)

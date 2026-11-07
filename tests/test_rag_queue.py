@@ -145,7 +145,7 @@ def test_once_worker_never_launches_the_light_worker(store, monkeypatch):
         spawned.append(argv)
         return 4242
 
-    monkeypatch.setattr(worker, "_platform_hooks", lambda: (lambda: True, lambda: None, spawn))
+    monkeypatch.setattr(worker, "_platform_hooks", lambda: (lambda: True, lambda: None, spawn, lambda _idle: False))
 
     class DoneRunner:
         def __init__(self, store: Store, _deps: Any, job: Any, **_kw: Any):

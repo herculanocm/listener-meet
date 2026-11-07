@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from ..log import get_logger
-from .base import PermanentError
+from .base import PermanentError, Progress
 from .types import AudioWindow, TranscriptWindow, Word
 
 log = get_logger("pipeline.whisper")
@@ -65,7 +65,10 @@ class FasterWhisperTranscriber:
         return self._model
 
     # ---------------------------------------------------------------- transcrição
-    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
+    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str,
+                   on_segment: Progress | None = None) -> TranscriptWindow:
+        """F5.18 (PF-01): `on_segment` é chamado entre dois `next()` do gerador, que é preguiçoso de verdade (um segmento de
+        ~30 s, uns 15 s de cálculo, por passo): o runner confere ali o cancelamento e a lease, e a exceção dele sobe daqui."""
         self._new_pass(window)
         model = self._load()
         samples = np.ascontiguousarray(window.samples, dtype=np.float32)
@@ -76,6 +79,8 @@ class FasterWhisperTranscriber:
         kept: list[Any] = []
         speech_ms = 0
         for seg in segments:                                   # o gerador só roda aqui
+            if on_segment is not None:
+                on_segment()
             if float(getattr(seg, "no_speech_prob", 0.0)) > NO_SPEECH_MAX or float(getattr(seg, "avg_logprob", 0.0)) < LOGPROB_MIN:
                 continue
             kept.append(seg)

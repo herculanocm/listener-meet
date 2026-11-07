@@ -139,15 +139,15 @@ def test_spawn_child_has_binary_pipes_and_lower_priority():
 
 
 @pytest.mark.lento                                           # D-050: subprocesso
-def test_win32_spawn_child_is_below_normal_without_window():
-    """Só no Windows (o CI tem um): prioridade abaixo do normal pelas flags de criação, pipes binários; o EcoQoS que o filho
-    desliga em si mesmo."""
+def test_win32_spawn_child_is_normal_priority_without_window():
+    """Só no Windows (o CI tem um): prioridade NORMAL pelas flags de criação (F5.18 PF-02; a D-044 punha abaixo do normal), pipes
+    binários; o EcoQoS que o filho desliga em si mesmo."""
     if sys.platform != "win32":
         pytest.skip("Win32Platform.spawn_child só existe no Windows")
     import ctypes
 
-    from listener.platform.win32.platform import (BELOW_NORMAL_PRIORITY_CLASS, POWER_THROTTLING_EXECUTION_SPEED,
-                                                  PROCESS_POWER_THROTTLING, ProcessPowerThrottlingState, Win32Platform)
+    from listener.platform.win32.platform import (NORMAL_PRIORITY_CLASS, POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING,
+                                                  ProcessPowerThrottlingState, Win32Platform)
 
     plat = Win32Platform()
     p = plat.spawn_child([sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"])
@@ -155,7 +155,7 @@ def test_win32_spawn_child_is_below_normal_without_window():
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         k32.OpenProcess.restype = ctypes.c_void_p
         h = k32.OpenProcess(0x1000, False, p.pid)                                                # PROCESS_QUERY_LIMITED_INFORMATION
-        assert k32.GetPriorityClass(ctypes.c_void_p(h)) == BELOW_NORMAL_PRIORITY_CLASS
+        assert k32.GetPriorityClass(ctypes.c_void_p(h)) == NORMAL_PRIORITY_CLASS
         k32.CloseHandle(ctypes.c_void_p(h))
     finally:
         out, _ = p.communicate(b"\r\n\x00", timeout=30)                                          # type: ignore[attr-defined]

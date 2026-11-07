@@ -12,6 +12,10 @@ import numpy as np
 from .types import AudioWindow, DiarizationWindow, TranscriptWindow
 
 type ProgressFn = Callable[[str, float], None]     # (mensagem, fração 0..1) para "baixando modelo…"
+# F5.18 (PF-01): o gancho de dentro da janela. O adaptador o chama, na própria thread de cálculo, a cada lote (pyannote) ou
+# segmento de ~30 s (Whisper); o runner confere ali o cancelamento e a lease da gravação, e a exceção que ele levanta
+# (`JobCancelledError`) atravessa o adaptador até o `run()`
+type Progress = Callable[[], None]
 
 
 class PermanentError(RuntimeError):
@@ -21,13 +25,15 @@ class PermanentError(RuntimeError):
 class Transcriber(Protocol):
     name: str                                        # ex.: faster-whisper:large-v3-turbo:int8
 
-    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow: ...
+    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str,
+                   on_segment: Progress | None = None) -> TranscriptWindow: ...
 
 
 class Diarizer(Protocol):
     name: str
 
-    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None) -> DiarizationWindow: ...
+    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None,
+                on_progress: Progress | None = None) -> DiarizationWindow: ...
 
 
 class Embedder(Protocol):

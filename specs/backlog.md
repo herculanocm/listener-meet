@@ -14,11 +14,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   commit por lote. A página privada que serviu à leitura: https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
   Posição da implementação (gravada a cada etapa, a pedido do dono em 07/11; `[x]` com o commit):
   - [x] aprovação registrada: spec, D-096, U-147 a U-149 (`bf89d80`).
-  - [ ] lote 1 (PF-01 a PF-03) IMPLEMENTADO no working tree (sem commit) e em revisão por um agente novo: `pipeline/base.py`,
-    `jobbase.py` (o `in_window_checkpoint`, o `WindowHook`, a prioridade pela thread do heartbeat), `runner.py`,
-    `pyannote.py`, `whisper.py`, `worker.py`, `models.py`, `types.py`, `llm_audio.py`, `index_steps.py`,
-    `platform/base.py`, `win32/platform.py`, `common/process.py`, `config/defaults.py`, os fakes, os testes ajustados e
-    `tests/test_f518_lote1.py`; depois as correções da revisão, `--tudo`, ruff, mypy e o commit.
+  - [x] lote 1 (PF-01 a PF-03) implementado, revisado (R-01 a R-05 aplicados: lote padrão 8 trechos = 24 pares; as
+    guardas da prioridade no heartbeat) e commitado com os testes do lote verdes, ruff e mypy limpos nos arquivos dele;
+    a suíte inteira (`--tudo`) roda no fechamento do lote 4, que ainda edita a árvore. Só o Windows com os modelos
+    verifica: o `pausado dentro da janela` em até 13 s no `listener-worker.log`, o worker "Ociosa" no Gerenciador de
+    Tarefas durante a gravação e o filho `--live` em "Normal", o RSS do `_end_step` com 24 pares.
   - [x] sondas do lote 0 escritas (`scripts/probe_perf.py` e `scripts/perf/`, M-01 a M-10 e o `replay`, com smokes; os
     JSON vão para `%LOCALAPPDATA%\listener-meet\perf-out`). Sinais dos smokes: pesos do wespeaker iguais nos dois
     modelos (218/218, cosseno 1,0: o PF-08 entra); o `pack` juntou 4 janelas em 2,9 s contra 16,8 separadas, mas o texto

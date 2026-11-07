@@ -1,5 +1,8 @@
 """Pipeline simulado (F2, D-F2-16): roda o `JobRunner` de ponta a ponta sem torch sobre os tons da `FakePlatform`
-(440 Hz no microfone, 220 Hz no app, 330 Hz no sistema). `LISTENER_PIPELINE=fake` faz o worker real usar isto."""
+(440 Hz no microfone, 220 Hz no app, 330 Hz no sistema). `LISTENER_PIPELINE=fake` faz o worker real usar isto.
+F5.18 (PF-01): os fakes chamam o gancho de dentro da janela (`on_progress`/`on_segment`) `hook_calls` vezes por janela, como o
+pyannote a cada lote e o Whisper a cada segmento; `during(janela, i)` antes de cada chamada é a vez do teste agir no meio da
+janela (escrever a lease, pedir o cancelamento)."""
 from __future__ import annotations
 
 import math
@@ -7,11 +10,27 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-from listener.pipeline.base import PipelineDeps, ProgressFn
+from listener.pipeline.base import PipelineDeps, Progress, ProgressFn
 from listener.pipeline.types import AudioWindow, DiarizationWindow, TranscriptWindow, Turn, Word
 
 type Script = Sequence[tuple[float, float, str]]      # (t0 s, t1 s, texto) na linha do tempo da sessão
 type Scripts = Script | dict[str, Script]             # um roteiro para todos os canais ou um por canal
+type During = Callable[[AudioWindow, int], None]      # F5.18 (PF-01): (janela, i) antes da chamada i do gancho
+HOOK_CALLS = 3                                        # F5.18 (PF-01): chamadas ao gancho por janela, por padrão
+
+
+def call_hooks(window: AudioWindow, hook: Progress | None, times: int, during: During | None) -> int:
+    """F5.18 (PF-01): o que o pyannote e o Whisper fazem de verdade, `times` vezes por janela (um lote, um segmento); `during`
+    roda antes de cada chamada; a exceção do gancho (o `JobCancelledError`) sobe daqui, como no adaptador real. Devolve
+    quantas chamadas ao gancho completaram."""
+    done = 0
+    for i in range(times):
+        if during is not None:
+            during(window, i)
+        if hook is not None:
+            hook()
+            done += 1
+    return done
 
 
 def dominant_freq(x: np.ndarray, sample_rate: int) -> float:
@@ -30,22 +49,28 @@ class ScriptedTranscriber:
     `fail_once_at` = {(canal, idx)}: a primeira chamada dessa janela levanta (simula uma queda para o teste de retomada)."""
 
     def __init__(self, script: Scripts, name: str = "fake:script", language: str = "pt",
-                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None):
+                 fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None,
+                 hook_calls: int = HOOK_CALLS, during: During | None = None):
         self.scripts: dict[str, list[tuple[float, float, str]]] = (
             {k: list(v) for k, v in script.items()} if isinstance(script, dict) else {"*": list(script)})
         self.name = name
         self.language = language
         self.fail_once_at = set(fail_once_at or ())
         self.before = before                   # chamado antes de cada janela: "o usuário agiu enquanto o Whisper roda"
+        self.hook_calls = hook_calls           # F5.18 (PF-01): "segmentos" por janela, uma chamada a `on_segment` cada
+        self.during = during
+        self.hooks = 0                         # chamadas a `on_segment` completadas
         self.calls: list[tuple[str, int, str | None, str]] = []     # (canal, idx, idioma pedido, initial_prompt)
 
-    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str) -> TranscriptWindow:
+    def transcribe(self, window: AudioWindow, *, language: str | None, initial_prompt: str,
+                   on_segment: Progress | None = None) -> TranscriptWindow:
         self.calls.append((window.channel, window.idx, language, initial_prompt))
         if self.before is not None:
             self.before(window)
         if (window.channel, window.idx) in self.fail_once_at:
             self.fail_once_at.discard((window.channel, window.idx))
             raise RuntimeError(f"queda simulada na janela {window.channel}{window.idx}")
+        self.hooks += call_hooks(window, on_segment, self.hook_calls, self.during)
         words: list[Word] = []
         speech = 0
         for t0, t1, text in self.scripts.get(window.channel, self.scripts.get("*", [])):
@@ -65,14 +90,20 @@ class ScriptedTranscriber:
 class ToneDiarizer:
     """Rótulo por frequência dominante a cada 500 ms: cada tom é um falante; quadros silenciosos não viram turno."""
 
-    def __init__(self, frame_ms: int = 500, silence_rms: float = 0.01, name: str = "fake:tone"):
+    def __init__(self, frame_ms: int = 500, silence_rms: float = 0.01, name: str = "fake:tone", hook_calls: int = HOOK_CALLS,
+                 during: During | None = None):
         self.frame_ms = frame_ms
         self.silence_rms = silence_rms
         self.name = name
+        self.hook_calls = hook_calls           # F5.18 (PF-01): "lotes" por janela, uma chamada a `on_progress` cada
+        self.during = during
+        self.hooks = 0                         # chamadas a `on_progress` completadas
         self.calls: list[tuple[int, int | None, int | None]] = []
 
-    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None) -> DiarizationWindow:
+    def diarize(self, window: AudioWindow, *, min_speakers: int | None, max_speakers: int | None,
+                on_progress: Progress | None = None) -> DiarizationWindow:
         self.calls.append((window.idx, min_speakers, max_speakers))
+        self.hooks += call_hooks(window, on_progress, self.hook_calls, self.during)
         n = int(window.sample_rate * self.frame_ms / 1000)
         labels: list[str | None] = []
         for i in range(0, len(window.samples) - n + 1, n):
@@ -115,9 +146,9 @@ class ToneEmbedder:
 class FakeDeps(PipelineDeps):
     def __init__(self, script: Scripts = (), prepare: Callable[[ProgressFn], None] | None = None,
                  fail_once_at: set[tuple[str, int]] | None = None, before: Callable[[AudioWindow], None] | None = None,
-                 diarization: bool = True):
-        self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at, before=before)
-        self.tones = ToneDiarizer()
+                 diarization: bool = True, hook_calls: int = HOOK_CALLS, during: During | None = None):
+        self.scripted = ScriptedTranscriber(script, fail_once_at=fail_once_at, before=before, hook_calls=hook_calls, during=during)
+        self.tones = ToneDiarizer(hook_calls=hook_calls, during=during)
         self.tone_embedder = ToneEmbedder()
         super().__init__(lambda: self.scripted, lambda: self.tones, lambda: self.tone_embedder, prepare, name="fake",
                          diarization=diarization)          # F5.16: falso simula a falta do token

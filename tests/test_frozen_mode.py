@@ -180,7 +180,8 @@ def test_launch_logs_drop_the_value_of_path_flags_also_inline_and_relative(tmp_p
 
 def test_the_children_start_without_the_busy_cursor(monkeypatch):
     """Com o `.exe` os filhos são processos de janela: sem `STARTF_FORCEOFFFEEDBACK` o Windows mostraria o cursor de
-    "carregando" a cada worker e a cada ao vivo. As flags de antes (sem janela, abaixo do normal) seguem."""
+    "carregando" a cada worker e a cada ao vivo. As flags de antes seguem: sem janela, o worker abaixo do normal e, pela F5.18
+    (PF-02), o filho ao vivo em NORMAL."""
     if sys.platform != "win32":
         pytest.skip("as flags de criação só existem no Windows")
     from listener.platform.win32 import platform as win_platform
@@ -199,5 +200,6 @@ def test_the_children_start_without_the_busy_cursor(monkeypatch):
     plat.spawn_child(["x.exe", "--live"])
     for kw in seen:
         assert kw["startupinfo"].dwFlags & win_platform.STARTF_FORCEOFFFEEDBACK
-        assert kw["creationflags"] == win_platform.CREATE_NO_WINDOW | win_platform.BELOW_NORMAL_PRIORITY_CLASS
+    assert seen[0]["creationflags"] == win_platform.WORKER_FLAGS == win_platform.CREATE_NO_WINDOW | win_platform.BELOW_NORMAL_PRIORITY_CLASS
+    assert seen[1]["creationflags"] == win_platform.CHILD_FLAGS == win_platform.CREATE_NO_WINDOW | win_platform.NORMAL_PRIORITY_CLASS
     assert seen[0]["stdout"] == subprocess.DEVNULL and seen[1]["stdout"] == subprocess.PIPE

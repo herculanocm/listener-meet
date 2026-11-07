@@ -19,6 +19,7 @@ LIVE_MIN_CORES = 8                                           # F4 Q1: ao vivo li
 # F5.15: os padrões das referências de voz medidos no L0 (o corte, o teto e a variante do limiar), num lugar só. Moram aqui e
 # não em `store/profiles.py` (que os reexporta) porque o `store` importa o `config`: o contrário seria import circular
 REF_COS, MAX_REFS, THRESHOLD_VARIANT = 0.80, 5, "P"
+EMBEDDING_BATCH = 8      # F5.18 (PF-03): trechos por lote dos embeddings da diarização (24 pares até o PF-04; D-097)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +166,10 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
                 advanced=True),
     SettingSpec("pipeline.whisper_window_s", 600, _NOW, "Janela da transcrição (s)", int, low=60, high=1800, phase="F2",
                 advanced=True),
+    # F5.18 (PF-03): o lote dos embeddings da separação de vozes, em trechos (o pyannote conta pares trecho x falante: o adaptador
+    # multiplica pelos falantes locais, 3 no community-1); menos memória por lote, vazão quase igual; vale no próximo job
+    SettingSpec("pipeline.embedding_batch", EMBEDDING_BATCH, _NOW, "Lote dos embeddings da separação de vozes (trechos)", int, low=4,
+                high=32, phase="F5.18", advanced=True),
     SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),
