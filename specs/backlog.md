@@ -2,7 +2,12 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (06/11/2026, Windows nativo; tudo commitado; o push é do dono)
+## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
+- **F5.18 em rascunho** (07/11, `features/F5.18-performance.md`): a spec de performance pedida pelo dono (a D-094 (3) já
+  pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em segundos (hoje em até 29 min) ao tronco
+  do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três pareceres somente leitura incorporados
+  (arquitetura, código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de arquitetura da D-040 a
+  seguir. Falta o dono: responder as 15 perguntas (padrão: aprovar os lotes 0 a 5 na ordem) e aprovar.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).
@@ -68,7 +73,8 @@ fechados (as decisões em `decisoes.md`).
   reunião 8 somou ~1.533 s para 900 s de áudio (~1,7×; o G2 pede até 1,5×, plano B 2×, D-041). Opções: janela menor
   na diarização ou baixar a prioridade do worker enquanto a lease vale; decidir com o dono antes.
   Em 06/11, de novo na reunião 22: o job 135, da 21, seguia em andamento na gravação inteira (p95 de 25 s, máximo de
-  92 s; degradou e pulou janelas). Pela D-094, é esta a alavanca do atraso do ao vivo, e não o paralelismo.
+  92 s; degradou e pulou janelas). Pela D-094, é esta a alavanca do atraso do ao vivo, e não o paralelismo. A spec
+  F5.18 (rascunho, 07/11) a trata no lote 1 (PF-01 a PF-03: lease conferida dentro da janela e prioridades separadas).
 - F5.7 (R-04 do L3): num Windows sem `WDA_EXCLUDEFROMCAPTURE`, só mudam a dica e o menu da bandeja, e o ícone fica
   igual; proposta: um selo no ícone enquanto houver chamada pendente.
 - Testes: a suíte já travou antes do primeiro teste (29 e 30/10: 14 min parada com 2,4 s de CPU, e a seguinte passou em
