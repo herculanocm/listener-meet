@@ -28,8 +28,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     pesos iguais mas cosseno VBx × turno 0,88 numa voz, abaixo de 0,95 (o PF-08 NÃO substitui o embedding por turno;
     só o id do modelo deixa de sair "dict"). Faltam os de tempo (M-02, M-03, M-04, M-06, M-07, M-09, só com a máquina sem
     agentes testando) e o M-01 (~3 h, no fim; o padrão das threads fica pela fórmula até lá).
-  - [ ] lote 4 (PF-13 a PF-22) em implementação por um terceiro agente, em paralelo (`store/`, `rag/`, `ui/`,
-    `log.py`, `pipeline/review.py`, `pipeline/llm_steps.py`, o `_serve` de `pipeline/worker.py`, `llm/local_embed.py`).
+  - [x] lote 4 (PF-13 a PF-22) implementado e commitado (`store/jobs.py` em dois ramos, `store/jobs_sql.py` e
+    `store/rag_signatures.py` novos, `rag/filters.py` novo, o contador `rag.vector_version`, o leve vivo 10 min com a
+    saída por `user_version`, a lista em lotes, o cursor extrapolado); suíte inteira: 1.679 passaram e 2 falharam no
+    `test_theme` por ordem (passam sozinhos e na rodada seguinte: a instabilidade já vista na F5.16), ruff e os dois mypy
+    limpos. Falta a revisão do diff por um agente novo (lida sobre o commit) e as correções dela.
   - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
     docs, D-097, versão 0.11.0, `.exe` e zip.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git

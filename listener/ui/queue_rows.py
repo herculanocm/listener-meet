@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ..llm.costs import fmt_usd
-from ..model import JOB_KIND_LABELS, JOB_STEP_LABELS, JobKind, JobStatus
+from ..model import JOB_KIND_LABELS, JOB_STEP_LABELS, JobKind, JobStatus, JobStep
 from ..pipeline import no_diarization
 from ..pipeline.estimate import fmt_remaining, remaining_seconds
 from ..rag.export import fmt_datetime
@@ -51,9 +51,10 @@ def work_seconds(timings_json: str | None) -> float | None:
     """Tempo de trabalho de um job pelo `timings_json` (A-08): a soma do `wall_s` das etapas, de todas as tentativas (o
     `started_at` é o do primeiro claim e o "Tentar de novo" não o zera: fim menos início contaria a espera). O pipeline grava
     `{etapa: {audio_s, speech_s, wall_s, model}}` (`StepTiming`), uma etapa depois da outra; o job `llm` grava o mesmo por
-    tarefa mais o bloco `llm`, e o `index` o mesmo por etapa mais o bloco `index`, os dois sem tempo. Executivo, pré-resumo e
-    título rodam juntos no job `llm` (`llm_steps.PARALLEL`): contam pelo maior, não pela soma. None quando nada foi medido."""
-    from ..pipeline.llm_steps import PARALLEL
+    tarefa mais o bloco `llm`, e o `index` o mesmo por etapa mais o bloco `index`, os dois sem tempo. No job `llm` as tarefas
+    de cada grupo rodam juntas (F5.18 PF-20: identidade e revisada, mais o título sem ata; depois executivo, pré-resumo e
+    título, `llm_steps.FIRST_GROUP` e `PARALLEL`): cada grupo conta pelo maior, não pela soma. None quando nada foi medido."""
+    from ..pipeline.llm_steps import FIRST_GROUP, PARALLEL
 
     try:
         data = json.loads(timings_json) if timings_json else {}
@@ -64,8 +65,11 @@ def work_seconds(timings_json: str | None) -> float | None:
     walls = {str(k): w for k, v in data.items() if k not in TIMING_BLOCKS and (w := _wall(v)) is not None}
     if not walls:
         return None
-    together = [w for k, w in walls.items() if k in PARALLEL]
-    return sum(w for k, w in walls.items() if k not in PARALLEL) + max(together, default=0.0)
+    first = {str(s) for s in FIRST_GROUP if s != JobStep.TITLE or str(JobStep.MINUTES) not in walls}
+    second = {str(s) for s in PARALLEL} - first
+    alone = sum(w for k, w in walls.items() if k not in first and k not in second)
+    longest = [max((w for k, w in walls.items() if k in group), default=0.0) for group in (first, second)]
+    return alone + sum(longest)
 
 
 def _wall(block: object) -> float | None:

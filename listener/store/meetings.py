@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from itertools import batched
 from typing import Any, TypedDict, cast
 
 from ..config.language import whisper_code
@@ -10,6 +11,7 @@ from ..log import get_logger
 from ..model import PIPELINE_JOB_KINDS, EventType, JobStatus, MeetingStatus
 from .core import Core, _now, audio_file_for, json_default
 from .floors import MEETINGS, next_id_sql
+from .rag_signatures import bump_vector_version
 
 log = get_logger("store.meetings")
 # F5.6 (A-32): o que a cascata da reunião leva (contadas para o log da exclusão, A-46); `job_artifacts` e `rag_vectors` vão
@@ -139,6 +141,16 @@ class MeetingsRepo:
     def list_meetings(self) -> list[MeetingRow]:
         return [cast(MeetingRow, dict(r)) for r in self.core.q("SELECT * FROM meetings ORDER BY id DESC")]
 
+    def titles_for(self, meeting_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
+        """F5.18 (PF-16): só o que a fila mostra das reuniões dos jobs listados (título, o da LLM, início e duração, esta para
+        a estimativa), por id, em lotes de 500, em vez do `list_meetings()` inteiro a cada 2 s."""
+        out: dict[int, dict[str, Any]] = {}
+        for part in batched(sorted({int(i) for i in meeting_ids}), 500):
+            marks = ",".join("?" * len(part))
+            for r in self.core.q(f"SELECT id, title, title_llm, started_at, duration_ms FROM meetings WHERE id IN ({marks})", part):  # noqa: S608
+                out[int(r["id"])] = dict(r)
+        return out
+
     def overview(self, date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
         """Lista do Histórico (F5 item 8) numa consulta: a reunião, o custo somado das chamadas de LLM dela e o job vigente
         (o pipeline concluído mais recente; sem ele, o maior já gravado nos clusters), da mais recente para a mais antiga;
@@ -243,7 +255,10 @@ class MeetingsRepo:
                           (MeetingStatus.INTERRUPTED, _now(), duration_ms, meeting_id, MeetingStatus.RECORDING))
 
     def delete_meeting_row(self, meeting_id: int) -> None:
+        """A linha, cuja cascata leva as filhas, inclusive os trechos e os vetores da busca: o contador do índice sobe junto
+        (F5.18 PF-19: o cache das assinaturas do app os esquece na próxima busca)."""
         self.core.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+        bump_vector_version(self.core)
 
     def cascade_counts(self, meeting_id: int) -> dict[str, int]:
         """F5.6 (A-46): quantas linhas a cascata da reunião vai levar, por tabela (só para o log: ids e contagens)."""

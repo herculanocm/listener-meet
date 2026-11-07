@@ -70,6 +70,15 @@ def connect_exit(app: Any, *stops: Callable[[], None]) -> None:
     app.commitDataRequest.connect(functools.partial(_quit_after_stops, app), Qt.ConnectionType.DirectConnection)
 
 
+def announce_later(store: Store) -> None:
+    """F5.18 (PF-14): a linha de versões do log sai quando o laço de eventos volta, depois do controlador e da bandeja: os
+    `metadata.version()` dela (0,15 a 0,38 s) deixam de ficar entre o banco e a primeira janela. D-092 (D-053): a pasta do
+    banco não vai ao log."""
+    from PySide6.QtCore import QTimer
+
+    QTimer.singleShot(0, lambda: log_versions({"esquema": f"v{store.schema_version()}"}))
+
+
 def attach_calls(app: Any, controller: Any, platform: Platform, store: Store) -> Any:
     """F5.7: o aviso de reunião sem gravação preso ao controlador (o `hotkeys.start` e a saída). Para antes da parada de
     emergência, que fecha o banco; `start` depois do `controller.start` (a bandeja já existe)."""
@@ -180,13 +189,13 @@ def _run_app(app: QApplication, platform: Platform, channel: InstanceServer, ope
     if store is None:                         # impossível aqui; mantém o verificador de tipos honesto
         return 1
     log_error = attach_log(store)
-    log_versions({"esquema": f"v{store.schema_version()}"})   # D-092 (D-053): a pasta do banco não vai ao log
     from .controller import Controller
 
     controller = Controller(app, platform, store, first_run=first_run)   # vive até o app.exec() voltar
     set_crash_notifier(controller.notify_crash)   # F5.3 (A-10): chamado na thread que falhou; o aviso sai na da interface
     calls = attach_calls(app, controller, platform, store)                # F5.7: o aviso de reunião sem gravação
     controller.start()
+    announce_later(store)                         # F5.18 (PF-14): a linha de versões depois da bandeja, no laço de eventos
     calls.start()                                 # depois do `start`: a bandeja já existe
     attach_invite(app, controller, platform, store, calls)                 # F5.12: o convite para apoiar
     attach_channel(controller, platform, channel)                          # F5.13: o canal e o Jump List

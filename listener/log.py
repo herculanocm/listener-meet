@@ -14,7 +14,6 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from importlib import metadata
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
@@ -124,7 +123,10 @@ def set_crash_notifier(fn: Callable[[str], None] | None) -> None:
 
 def log_versions(extra: dict[str, str] | None = None) -> None:
     """Linha de abertura: Python, sistema (`exe` no executável empacotado, F5.8), SQLite e as bibliotecas que importam para
-    diagnóstico."""
+    diagnóstico. O `importlib.metadata` entra só aqui (F5.18, PF-14): no topo do módulo ele vinha na cadeia de `listener.log`,
+    importada antes da primeira janela."""
+    from importlib import metadata
+
     parts = [f"python {sys.version.split()[0]}", f"{sys.platform}", f"sqlite {sqlite3.sqlite_version}"]
     if getattr(sys, "frozen", False):
         parts.insert(2, "exe")

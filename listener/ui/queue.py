@@ -69,6 +69,7 @@ BUTTON_HELP: dict[str, str] = {                     # a Ajuda (A-09), com o nome
     "Revisar falantes": "abre a revisão de quem fala na reunião selecionada.",
     "Transcrição": "abre a transcrição da reunião selecionada.",
 }
+type RowKey = tuple[int | None, tuple[str, ...], float | None, str]   # (job, textos das colunas, fração da barra, dica de "Enviado")
 COLUMN_HELP: dict[str, str] = {
     "Enviado": "quando o item entrou na fila. Com o mouse em cima, também o início, o fim e o tempo de trabalho (a soma das "
                "etapas, contando as tentativas).",
@@ -87,6 +88,7 @@ class QueueDialog(QDialog):
         self.resize(*SIZE)
         self.setMinimumSize(*MIN_SIZE)
         self.jobs: list[JobRow] = []
+        self._shown: list[RowKey] = []                  # F5.18 (PF-16): o que cada linha mostra; só a que mudou é refeita
         self._running_rows = 0                          # linhas rodando no último refresh: ligam a faixa animada
         self._help: QueueHelpDialog | None = None
         self._message_bar: InfoBar | None = None        # o resultado da última ação, montado na primeira (U-057)
@@ -176,10 +178,13 @@ class QueueDialog(QDialog):
 
     # ---------------------------------------------------------------- leitura
     def refresh(self) -> None:
+        """A cada 2 s: os jobs listados, as reuniões só deles (`titles_for`, F5.18 PF-16, em vez de `list_meetings()` inteiro) e
+        as linhas; uma linha só é refeita quando o que ela mostra mudou (id, textos, fração e dica): com nada mudado, nenhum
+        `QTableWidgetItem` nasce. A ordem e a seleção como antes."""
         selected = self.selected_job_id()
         self.jobs = self.store.jobs.list_jobs(exclude_kinds=INDEX_KINDS)
         rtf = self.store.get_setting("pipeline.rtf_json")
-        meetings = {m["id"]: dict(m) for m in self.store.list_meetings()}
+        meetings = self.store.meetings.titles_for(int(j["meeting_id"]) for j in self.jobs)
         latency_ms = (self.store.llm_calls.avg_latency_ms(tasks=LLM_JOB_TASKS) if any(str(j.get("kind")) == JobKind.LLM for j in self.jobs)
                       else None)
         latency_s = latency_ms / 1000 if latency_ms else None
@@ -187,19 +192,19 @@ class QueueDialog(QDialog):
         running = held[0] if held else None
         summary = self.store.jobs.index_summary()
         aggregated = index_row_texts(summary, running)
-        self.table.setRowCount(len(self.jobs) + (1 if aggregated else 0))
-        states: list[str] = []
-        for r, job in enumerate(self.jobs):
-            texts = job_row_texts(job, meetings.get(job["meeting_id"]), rtf, latency_s)
-            self._fill_row(r, texts, int(job["id"]), float(job.get("progress") or 0.0), job_times_tip(job))
-            states.append(texts[STATE_COL])
-            if selected == job["id"]:
-                self.table.selectRow(r)
+        rows: list[RowKey] = [(int(job["id"]), job_row_texts(job, meetings.get(int(job["meeting_id"])), rtf, latency_s),
+                               float(job.get("progress") or 0.0), job_times_tip(job)) for job in self.jobs]
         if aggregated:                                       # sem id: as ações da seleção não valem para a linha agregada
-            self._fill_row(len(self.jobs), aggregated, None, index_progress(summary, running),
-                           job_times_tip(running) if running is not None else "")
-            states.append(aggregated[STATE_COL])
-        self._running_rows = states.count(JobStatus.RUNNING)
+            rows.append((None, aggregated, index_progress(summary, running), job_times_tip(running) if running is not None else ""))
+        self.table.setRowCount(len(rows))
+        del self._shown[len(rows):]
+        for r, row in enumerate(rows):
+            if r >= len(self._shown) or self._shown[r] != row:
+                self._fill_row(r, row[1], row[0], row[2], row[3])
+            if row[0] is not None and selected == row[0]:
+                self.table.selectRow(r)
+        self._shown = rows
+        self._running_rows = sum(1 for row in rows if row[1][STATE_COL] == JobStatus.RUNNING)
         self._sync_band()
         paused = self.store.get(SPECS["pipeline.paused_manual"])
         self.btn_pause.setText("Retomar fila" if paused else "Pausar fila")

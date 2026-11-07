@@ -22,6 +22,8 @@ BATCH = 1000
 SEGMENT_LOOKBACK_MS = 600_000        # nenhuma fala dura 10 min: a busca por janela de tempo anda só pelo índice de tempo
 LIGHT_COLUMNS = ("id, meeting_id, channel, t_start_ms, t_end_ms, text, text_llm, cluster, person_id, role_at_time, cluster_id, "
                  "job_id")             # o que a leitura mostra, sem `words_json` (o chat global, F5 R6-02)
+# F5.18 (PF-15): o começo da primeira palavra extraído no SQLite (nulo sem palavras, com JSON inválido ou de outra forma)
+FIRST_WORD_SQL = "CASE WHEN json_valid(words_json) THEN json_extract(words_json, '$[0][0]') END"
 CLUSTER_FIELDS = frozenset({"person_id", "status", "merged_into", "similarity", "margin", "speech_ms", "decision_source"})
 # `llm_*` só entram por `set_llm_suggestion` (CP11: recusa em `auto`, `confirmado` e mesclado); nunca por `update_cluster`
 LLM_SUGGESTION_ALLOWED = (str(ClusterStatus.AMBIGUOUS), str(ClusterStatus.UNNAMED))
@@ -44,6 +46,7 @@ class SegmentRow(TypedDict, total=False):
     words_json: str | None
     cluster_id: int | None
     job_id: int | None
+    first_word_ms: int | float | str | None   # F5.18 (PF-15): só em `list_segments_light`; o que o JSON tinha em `$[0][0]`
 
 
 class ClusterRow(TypedDict, total=False):
@@ -127,6 +130,15 @@ class SegmentsRepo:
             rows = self.core.q("SELECT * FROM segments WHERE meeting_id = ? ORDER BY t_start_ms, id", (meeting_id,))
         else:
             rows = self.core.q("SELECT * FROM segments WHERE meeting_id = ? AND job_id = ? ORDER BY t_start_ms, id", (meeting_id, job_id))
+        return [cast(SegmentRow, dict(r)) for r in rows]
+
+    def list_segments_light(self, meeting_id: int, job_id: int | None = None) -> list[SegmentRow]:
+        """As falas da leitura sem `words_json` (F5.18, PF-15): as colunas de `LIGHT_COLUMNS` mais `first_word_ms`, o começo da
+        primeira palavra extraído no SQLite (`json_extract` protegido por `json_valid`), em vez de um `json.loads` por fala no
+        Python (39 -> 25 ms a cada 3.000 falas, na abertura da reunião, em cada recarga e no `sync_text`)."""
+        job, params = (" AND job_id = ?", (job_id,)) if job_id is not None else ("", ())
+        rows = self.core.q(f"SELECT {LIGHT_COLUMNS}, {FIRST_WORD_SQL} AS first_word_ms FROM segments WHERE meeting_id = ?{job} "  # noqa: S608
+                           "ORDER BY t_start_ms, id", (meeting_id, *params))
         return [cast(SegmentRow, dict(r)) for r in rows]
 
     def overlapping(self, meeting_id: int, job_id: int | None, t0: int, t1: int) -> list[SegmentRow]:

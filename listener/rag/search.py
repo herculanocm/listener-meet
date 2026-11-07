@@ -15,7 +15,10 @@ log), e passa por um cache LRU por (modelo, texto) no processo. É
 síncrono (`run_async`, até `QUERY_TIMEOUT_S`): a tela chama numa `Task` (no Enter ou 600 ms depois de parar de digitar) e
 entrega o resultado a `search`, que só lê o banco e também roda numa `Task`; `should_stop` (a saída do app, o chat
 cancelado) cancela a chamada presa na rede em até `POLL_S` (R7-03). As assinaturas ficam num `SignatureCache` por banco e
-modelo, no processo do app (`signature_cache`)."""
+modelo, no processo do app (`signature_cache`). F5.18 (PF-19): o cache recarrega só quando o contador `rag.vector_version`
+muda (uma leitura de `settings` por busca, em vez de contar o índice), guarda a reunião e as pessoas de cada vetor para os
+filtros em numpy (`rag.filters`: sem filtro, nada varre `rag_chunks`), é aquecido quando o Histórico abre, e o
+`EmbedderStatus` é calculado uma vez por busca e passado a `embed_query` e a `search`."""
 from __future__ import annotations
 
 import asyncio
@@ -34,13 +37,15 @@ import numpy as np
 from ..log import get_logger
 from ..model import ChunkKind, LlmCallStatus
 from ..store.llm_calls import LlmCallInsert
-from ..store.rag import FtsHit, SearchFilters, VectorVersion
+from ..store.rag import FtsHit, SearchFilters
 from . import fts, index, vectors
+from .filters import VectorIndex, empty_index, vector_mask
 
 if TYPE_CHECKING:
     from ..llm.base import LLMProvider
     from ..llm.types import Embeddings
     from ..store import Store
+    from .index import EmbedderStatus
 
 log = get_logger("rag.search")
 
@@ -50,7 +55,6 @@ DEFAULT_K = 50                   # linhas fundidas devolvidas (o Histórico)
 HISTORY_PER_MEETING = 5          # teto de trechos por reunião no Histórico (o chat usa `rag.max_per_meeting`, R6-01)
 MIN_AND_RESULTS = 10             # com menos que isto, a busca por palavra refaz com OU
 SNIPPET_TOKENS = 16
-LOAD_BATCH = 20_000              # assinaturas por consulta ao carregar o cache (200 mil x 768 = 19,2 MB no fim)
 MAX_CACHES = 4
 QUERY_CACHE_SIZE = 256
 QUERY_TIMEOUT_S = 15.0           # a busca não espera mais que isto pelo vetor da consulta: cai para "por palavras"
@@ -166,86 +170,63 @@ class CacheView(NamedTuple):
     chunk_ids: np.ndarray        # trecho de cada um (int64)
     words: np.ndarray            # assinaturas como uint64 (n, palavras)
     mu: np.ndarray | None        # a média do modelo com que as assinaturas foram feitas
+    filter_data: VectorIndex     # F5.18 (PF-19): a reunião e as pessoas de cada vetor e as datas das reuniões (os filtros)
+    chunks: int                  # quantos trechos o índice tinha na carga (os sem vetor do modelo são o "índice incompleto")
 
 
 class SignatureCache:
-    """Assinaturas de um modelo na memória do processo (F5A-20 item 3). A chave é `RagRepo.vector_version` (quantos, maior
-    id e `mu_n`), relida a cada busca: o worker leve grava em outro processo. Carrega em lotes de `LOAD_BATCH`; depois, só o
-    que entrou acima do maior id carregado (a v8 tem AUTOINCREMENT: o id não volta, R5-03), desde que a contagem feche;
-    senão (algo saiu, ou o `mu` foi refeito e todas as assinaturas mudaram), recarga total.
+    """Assinaturas de um modelo na memória do processo (F5A-20 item 3), com a reunião e as pessoas de cada vetor (F5.18,
+    PF-19). A chave é o contador `rag.vector_version`, relido a cada busca (uma leitura de `settings`): todo caminho que cria
+    ou remove vetores, ou muda o que a busca guarda deles, o incrementa (inclusive o worker leve, em outro processo); quando
+    ele muda, recarga total, numa consulta só e sem `row_factory`.
 
-    A sincronia roda numa leitura consistente (`Store.snapshot`): a versão, as assinaturas e o `mu` vêm do mesmo instante,
-    mesmo que o leve refaça o `mu` (e regrave todas as assinaturas) no meio da carga em lotes.
+    A sincronia roda numa leitura consistente (`Store.snapshot`): o contador, as assinaturas, as datas e o `mu` vêm do mesmo
+    instante, mesmo que o leve refaça o `mu` (e regrave todas as assinaturas) no meio da carga.
 
     Concorrência: pensado para uma `Task` de busca por vez (a tela descarta o resultado velho pelo contador de geração);
     duas ao mesmo tempo também funcionam, porque `view` sincroniza sob um `Lock` e os vetores são trocados inteiros (quem já
     pegou a vista segue com a dele). A conexão é a da thread que chama (o `Store` abre uma por thread)."""
 
-    def __init__(self, model: str, *, batch: int = LOAD_BATCH):
+    def __init__(self, model: str):
         self.model = model
-        self.batch = max(1, batch)
-        self.version: VectorVersion | None = None
+        self.stamp: int | None = None              # o `rag.vector_version` da última carga; None = ainda sem carga
         self.vids = np.zeros(0, np.int64)
         self.chunk_ids = np.zeros(0, np.int64)
         self.words = np.zeros((0, 0), np.uint64)
         self.mu: np.ndarray | None = None
+        self.filter_data = empty_index()
+        self.chunks = 0
         self.full_loads = 0                        # instrumentação (testes e log)
-        self.appends = 0
-        self._top = 0                              # maior id carregado
         self._lock = threading.Lock()
 
+    @property
+    def loaded(self) -> bool:
+        return self.stamp is not None
+
     def view(self, store: Store) -> CacheView:
-        with self._lock, store.snapshot():            # a versão, as assinaturas e o `mu` do mesmo instante (R5-03): o leve
+        with self._lock, store.snapshot():            # o contador, as assinaturas e o `mu` do mesmo instante (R5-03): o leve
             self._sync(store)                         # pode refazer o `mu` e regravar todas as assinaturas no meio da carga
-            return CacheView(self.vids, self.chunk_ids, self.words, self.mu)
+            return CacheView(self.vids, self.chunk_ids, self.words, self.mu, self.filter_data, self.chunks)
 
     def _sync(self, store: Store) -> None:
-        v = store.rag.vector_version(self.model)
-        if v == self.version:
-            return
-        old = self.version
-        if old is not None and v.mu_n == old.mu_n and self._top and v.size >= len(self.vids) and self._append(store, v.size):
-            self.version = v
+        stamp = store.rag.index_version()
+        if stamp == self.stamp:
             return
         self._full(store)
-        self.version = v                          # a versão lida antes: o que mudou durante a carga aparece na próxima
-
-    def _read(self, store: Store, after: int) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-        while True:
-            ids, chunks, sigs = store.rag.signatures(self.model, after, self.batch)
-            if not len(ids):
-                break
-            parts.append((ids, chunks, vectors.as_words(sigs)))
-            after = int(ids[-1])
-            if len(ids) < self.batch:
-                break
-        return parts
-
-    def _set(self, parts: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray]]) -> None:
-        if parts:
-            self.vids = np.concatenate([p[0] for p in parts])
-            self.chunk_ids = np.concatenate([p[1] for p in parts])
-            self.words = np.ascontiguousarray(np.concatenate([p[2] for p in parts]))
-        self._top = int(self.vids[-1]) if len(self.vids) else 0
+        self.stamp = stamp                        # o contador lido antes: o que mudar durante a carga aparece na próxima
 
     def _full(self, store: Store) -> None:
         t0 = time.perf_counter()
-        self.vids, self.chunk_ids, self.words = np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 0), np.uint64)
-        self._set(self._read(store, 0))
+        rows = store.rag.signatures(self.model)
+        self.vids, self.chunk_ids = rows.vids, rows.chunk_ids
+        self.words = vectors.as_words(rows.sigs) if len(rows.vids) else np.zeros((0, 0), np.uint64)
+        meeting_ids, dates = store.rag.meeting_dates()
+        self.filter_data = VectorIndex(rows.meeting_ids, rows.offsets, rows.person_ids, meeting_ids, dates)
+        self.chunks = store.rag.count_chunks()
         row = store.rag.get_model(self.model)
         self.mu = row["mu"] if row is not None else None
         self.full_loads += 1
         log.info("assinaturas de %s carregadas: %d vetor(es) em %.1f ms", self.model, len(self.vids), _ms(t0))
-
-    def _append(self, store: Store, count: int) -> bool:
-        parts = self._read(store, self._top)
-        if len(self.vids) + sum(len(p[0]) for p in parts) != count:
-            return False                          # algo saiu: recarga total
-        if parts:
-            self._set([(self.vids, self.chunk_ids, self.words), *parts] if len(self.vids) else parts)
-        self.appends += 1
-        return True
 
 
 _CACHES: OrderedDict[tuple[str, str], SignatureCache] = OrderedDict()
@@ -285,25 +266,26 @@ _QUERY_LOCK = threading.Lock()
 
 
 def embed_query(store: Store, text: str, *, provider: LLMProvider | None = None,
-                should_stop: Callable[[], bool] | None = None) -> QueryVector:
+                should_stop: Callable[[], bool] | None = None, status: EmbedderStatus | None = None) -> QueryVector:
     """O vetor da consulta pelo embedder ativo (`task = query`), normalizado, na dimensão do `model_key`; do cache LRU por
     (modelo, texto) quando já pedido neste processo (sem chamada nem custo). Sem embedder pronto ou com erro de rede ou do
     provedor, `vector` nulo com o motivo (a busca cai para "por palavras"); com o índice ainda sem nenhum vetor do modelo,
     também nulo e sem chamar a rede (a busca cairia em "por palavras" do mesmo jeito, depois de pagar e esperar, R6-06).
     `should_stop()` verdadeiro antes da chamada não chama a rede; durante, a chamada é cancelada em até `POLL_S` e o motivo
     é "cancelado" (R7-03). Uma linha em `llm_calls` por chamada, com reunião e job nulos, `task = rag_embed` e
-    `strategy = query`. Síncrono: chamar fora da thread da interface."""
+    `strategy = query`. `status` é o `EmbedderStatus` já calculado pela tela (F5.18 PF-19: um por busca; sem ele, calcula).
+    Síncrono: chamar fora da thread da interface."""
     from ..llm import redact
     from ..llm.aio import run_async
     from ..llm.costs import cost_usd, price_for
 
     text = " ".join((text or "").split())
-    status = index.embedder_status(store)
+    status = status or index.embedder_status(store)
     if not text:
         return QueryVector(None, status.model_key, "consulta vazia")
     if not status.ready or status.model_key is None:
         return QueryVector(None, status.model_key, status.reason)
-    if not store.rag.vector_version(status.model_key).size:
+    if not store.rag.has_vectors(status.model_key):
         return QueryVector(None, status.model_key, NO_VECTORS.format(model=status.model_key))
     key = (status.model_key, text)
     with _QUERY_LOCK:
@@ -386,16 +368,19 @@ def _record(store: Store, provider_id: str, model: str, tokens: int, cost: float
 # ---------------------------------------------------------------- busca
 def search(store: Store, query: str, filters: SearchFilters | None = None, *, query_vector: QueryVector | np.ndarray | None = None,
            k: int = DEFAULT_K, per_meeting: int | None = HISTORY_PER_MEETING, snippets: bool = True,
-           cache: SignatureCache | None = None) -> SearchResult:
+           cache: SignatureCache | None = None, status: EmbedderStatus | None = None) -> SearchResult:
     """Busca híbrida (ou só por palavras, com o motivo) com os filtros nas duas listas; até `k` linhas fundidas, prontas para
     a tela, com no máximo `per_meeting` trechos de cada reunião (em cada lista antes do limite e na fusão; None = sem teto).
-    `query_vector` vem de `embed_query` (None = só por palavras; um `ndarray` vale como vetor do modelo ativo).
+    `query_vector` vem de `embed_query` (None = só por palavras; um `ndarray` vale como vetor do modelo ativo); `status` é o
+    `EmbedderStatus` já calculado para o vetor (F5.18 PF-19: um por busca; sem ele, calcula só quando há vetor).
     `snippets=False` pula o `snippet()` (o chat). Só lê o banco: rodar numa `Task`."""
     t0 = time.perf_counter()
     filters = filters or SearchFilters()
     cap = per_meeting if per_meeting is not None and per_meeting > 0 else None
+    if isinstance(query_vector, np.ndarray) or (query_vector is not None and query_vector.vector is not None):
+        status = status or index.embedder_status(store)
     if isinstance(query_vector, np.ndarray):
-        query_vector = QueryVector(query_vector, index.embedder_status(store).model_key)
+        query_vector = QueryVector(query_vector, status.model_key if status is not None else None)
     q = fts.build_query(query)
     if q is None:
         return SearchResult(query, (), False, "consulta vazia", "", False)
@@ -404,7 +389,7 @@ def search(store: Store, query: str, filters: SearchFilters | None = None, *, qu
     words, expr, used_or = _by_words(store, q, filters, snippets, cap)
     timings["fts_ms"] = _ms(t)
     t = time.perf_counter()
-    meaning, reason, missing = _by_meaning(store, query_vector, filters, cache, cap)
+    meaning, reason, missing = _by_meaning(store, query_vector, filters, cache, cap, status)
     timings["vec_ms"] = _ms(t)
     t = time.perf_counter()
     fused = rrf([[h.chunk_id for h in words], [cid for cid, _cos in meaning]])
@@ -450,29 +435,25 @@ def _by_words(store: Store, q: fts.FtsQuery, filters: SearchFilters, snippets: b
 
 
 def _by_meaning(store: Store, qv: QueryVector | None, filters: SearchFilters, cache: SignatureCache | None,
-                cap: int | None) -> tuple[list[tuple[int, float]], str, int]:
+                cap: int | None, status: EmbedderStatus | None = None) -> tuple[list[tuple[int, float]], str, int]:
     """(trecho, cosseno) do melhor para o pior, no máximo `cap` por reunião, o motivo de não haver busca por sentido (vazio =
-    híbrida) e quantos trechos não têm vetor do modelo ativo."""
+    híbrida) e quantos trechos não têm vetor do modelo ativo (pela contagem guardada com o cache)."""
     if qv is None or qv.vector is None:
         return [], (qv.reason if qv is not None and qv.reason else NO_QUERY_VECTOR), 0
-    key = index.embedder_status(store).model_key
+    key = (status or index.embedder_status(store)).model_key
     if key is None or qv.model_key != key:
         return [], "o modelo de embeddings mudou: busque de novo", 0
     view = (cache if cache is not None and cache.model == key else signature_cache(store, key)).view(store)
-    missing = max(0, store.rag.count_chunks() - len(view.vids))
+    missing = max(0, view.chunks - len(view.vids))
     if not len(view.vids):
         return [], NO_VECTORS.format(model=key), missing
     query = vectors.normalize(qv.vector)[0]
     if view.mu is not None and view.mu.shape[0] != query.shape[0]:
         return [], f"vetor da consulta com {query.shape[0]} dimensões e índice com {view.mu.shape[0]}", missing
-    mask: np.ndarray | None = None
-    if filters.active:
-        allowed = store.rag.chunk_ids_where(filters)
-        if not len(allowed):
-            return [], "", missing                            # nada passa nos filtros: nenhuma das duas listas acha
-        mask = np.isin(view.chunk_ids, allowed)
-        if not mask.any():                                    # há trechos nos filtros, nenhum com vetor (R6-04)
-            return [], FILTERED_NO_VECTORS, missing
+    mask = vector_mask(filters, view.filter_data)             # PF-19: os filtros em numpy, sobre o cache (sem varrer `rag_chunks`)
+    if mask is not None and not mask.any():
+        # nenhum vetor passa: ou nada passa nos filtros (nenhuma das duas listas acha), ou há trechos filtrados sem vetor (R6-04)
+        return [], (FILTERED_NO_VECTORS if store.rag.any_chunk_where(filters) else ""), missing
     sig = vectors.signatures(query, view.mu)[0]
     if vectors.as_words(sig).shape[1] != view.words.shape[1]:
         return [], "assinatura da consulta de outro tamanho que a do índice", missing

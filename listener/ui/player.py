@@ -58,7 +58,7 @@ log = get_logger("ui.player")
 BLOCK_S = 0.25                   # cada `write` bloqueante: o ritmo e o tempo de resposta a um comando
 DECODE_S = 1.0                   # janela que a alimentadora corta dos pedaços já decodificados de cada vez (R7-02)
 QUEUE_S = 3.0                    # áudio pronto à frente do dispositivo, no máximo (fila limitada da alimentadora, R7-02)
-POLL_MS = 100                    # a interface lê a posição a cada 100 ms
+POLL_MS = 50                     # a interface lê a posição a cada 50 ms (F5.18 PF-22: com a extrapolação, cursor a ±20 ms)
 JOIN_S = 3.0                     # sair do app: espera a thread do player até isto
 FEED_JOIN_S = 2.0                # a escritora espera a alimentadora terminar a janela em curso até isto
 SEEK_MS = 10_000                 # -10 s e +10 s da barra
@@ -208,6 +208,7 @@ class PlaybackEngine:
                  probe: Callable[[], str | None] | None = None, clock: Callable[[], float] = time.monotonic):
         self.store = store
         self.factory = factory
+        self.clock = clock
         self.route = Follow(self, probe, clock)     # D-067: o padrão de saída de agora (probe None = não acompanha)
         self.decode_ms = max(1, int(decode_s * 1000))
         self.queue_s = max(BLOCK_S, float(queue_s))
@@ -225,6 +226,7 @@ class PlaybackEngine:
         self._rate = 0
         self._latency = 0
         self._written = 0                       # quadros entregues ao dispositivo desde o começo do trecho atual
+        self._written_at: float | None = None   # F5.18 (PF-22): quando o último bloco foi entregue (a posição anda entre dois)
         self._anchors: list[tuple[int, int]] = [(0, 0)]
         self._end_t = 0
         self._paused_at = 0
@@ -236,7 +238,7 @@ class PlaybackEngine:
         with self._cv:
             self._state, self._req, self._message = PLAYING, req, ""
             self._paused_at = int(req.t_ms)
-            self._written, self._anchors, self._rate = 0, [(0, int(req.t_ms))], 0
+            self._written, self._written_at, self._anchors, self._rate = 0, None, [(0, int(req.t_ms))], 0
         self._send("play", req)
 
     def pause(self, message: str = "", release: bool = False) -> None:
@@ -318,7 +320,7 @@ class PlaybackEngine:
         with self._cv:
             if self._state == PAUSED:
                 self._state, self._message = PLAYING, ""
-                self._written, self._anchors, self._rate = 0, [(0, self._paused_at)], 0
+                self._written, self._written_at, self._anchors, self._rate = 0, None, [(0, self._paused_at)], 0
         self._send("resume")
 
     def seek(self, delta_ms: int) -> None:
@@ -376,9 +378,15 @@ class PlaybackEngine:
         self._thread = thread
 
     def _position_locked(self) -> int:
+        """(sob `_cv`) O tempo que toca: os quadros escritos menos a latência do dispositivo e, tocando, o que o relógio andou
+        desde o último bloco entregue (F5.18 PF-22: entre dois blocos de 250 ms a posição seguia parada), nunca além do que
+        foi escrito (o dispositivo não toca o que não recebeu)."""
         if self._rate <= 0:
             return self._anchors[0][1] if self._anchors else 0
-        t = position_ms(self._anchors, max(0, self._written - self._latency), self._rate)
+        played = max(0, self._written - self._latency)
+        if self._state == PLAYING and self._written_at is not None:
+            played = min(self._written, played + int((self.clock() - self._written_at) * self._rate))
+        t = position_ms(self._anchors, played, self._rate)
         return min(t, self._end_t) if self._end_t else t
 
     # ---------------------------------------------------------------- escritora
@@ -553,6 +561,7 @@ class PlaybackEngine:
             self._feed = _Feed(sess, start_t, max(sess.block, int(sess.rate * self.queue_s)))
             self._written, self._anchors, self._state, self._message, self.route.endpoint = 0, [(0, start_t)], PLAYING, "", sess.endpoint
             self._rate, self._latency, self._duration, self._end_t = sess.rate, sess.latency, sess.duration_ms, sess.end_t
+            self._written_at = None
             self._cv.notify_all()
 
     def _step(self, sess: _Session) -> _Session | None:
@@ -602,6 +611,7 @@ class PlaybackEngine:
         sess.written += len(block)
         with self._cv:
             self._written += len(block)
+            self._written_at = self.clock()      # PF-22: daqui a posição anda com o relógio até o próximo bloco
         return sess
 
     @staticmethod

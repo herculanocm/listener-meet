@@ -145,7 +145,8 @@ def test_position_switch_point_pause_seek_and_stop(store):
     permits.release(4)                                                 # 4 blocos de 0,25 s escritos
     _wait(lambda: bool(outs.opened) and len(outs.opened[0].chunks) == 4)
     _wait(lambda: eng.snapshot().t_ms > 1000)
-    assert eng.snapshot().t_ms == 1000 + (4 * SR // 4 - 0.05 * SR) * 1000 // SR       # 1 s escrito menos 50 ms de latência
+    # 1 s escrito menos 50 ms de latência; F5.18 (PF-22): entre dois blocos o relógio anda, até o que foi escrito
+    assert 1000 + (4 * SR // 4 - 0.05 * SR) * 1000 // SR <= eng.snapshot().t_ms <= 2000
     _wait(lambda: outs.opened[0].entered == 5)                         # o 5º bloco já veio da alimentadora: write em voo
     eng.play(PlayRequest(mid, 6000))                                   # outro ponto: troca o som, no mesmo fluxo
     permits.release(1)                                                 # o write em voo termina; o comando vem em seguida
@@ -153,13 +154,15 @@ def test_position_switch_point_pause_seek_and_stop(store):
     permits.release(4)
     _wait(lambda: len(outs.opened[0].chunks) == 9)
     _wait(lambda: eng.snapshot().t_ms > 6000)
-    assert len(outs.opened) == 1 and eng.snapshot().t_ms == 6950
+    assert len(outs.opened) == 1 and 6950 <= eng.snapshot().t_ms <= 7000
     _wait(lambda: outs.opened[0].entered == 10)
     eng.pause()
     permits.release(1)
     _wait(lambda: outs.opened[0].calls.count("abort") == 2)
     st = eng.snapshot()
-    assert st.state == PAUSED and st.t_ms == 6950
+    assert st.state == PAUSED and 6950 <= st.t_ms <= 7000
+    time.sleep(0.06)
+    assert eng.snapshot().t_ms == st.t_ms                              # pausado, a posição não anda
     eng.seek(+10_000)                                                  # em pausa: só a posição anda, presa ao fim
     _wait(lambda: eng.snapshot().t_ms == 7999)
     eng.seek(-3000)

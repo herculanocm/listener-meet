@@ -20,6 +20,7 @@ depois de uma exclusão); o próximo job os anexa de novo.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import sys
@@ -37,6 +38,7 @@ from ..log import attach_file, dump_all_threads, get_logger, log_versions, setup
 from ..model import HEAVY_JOB_KINDS, LIGHT_JOB_KINDS, JobKind, JobStatus
 from ..platform.common import paths, process
 from ..store import Store
+from ..store.schema import MAIN_SCHEMA_VERSION
 from .base import PermanentError, PipelineDeps
 from .runner import JobRunner
 from .types import JobConfig
@@ -44,6 +46,8 @@ from .types import JobConfig
 log = get_logger("worker")
 
 IDLE_EXIT_S = 60.0
+LIGHT_IDLE_EXIT_S = 600.0            # F5.18 (PF-20): o leve fica 10 min (as rajadas de `llm` e `index` vêm em minutos)
+LOCAL_RELEASE_S = 120.0              # F5.18 (PF-20): a sessão do e5 do leve, solta depois de 2 min sem uso
 POLL_S = 2.0
 RELEASE_AFTER_S = 10.0
 WORKER_LOG = "listener-worker.log"
@@ -165,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", help="pasta do banco (padrão: o ponteiro da configuração do sistema)")
     ap.add_argument("--once", action="store_true", help="processa no máximo um job e sai")
     ap.add_argument("--light", action="store_true", help="worker leve (F3): só jobs de LLM, sem torch, log listener-llm.log")
-    ap.add_argument("--idle-exit", type=float, default=IDLE_EXIT_S)
+    ap.add_argument("--idle-exit", type=float, default=None, help="segundos ocioso antes de sair (padrão: 60; 600 no leve)")
     ap.add_argument("--poll", type=float, default=POLL_S)
     args = ap.parse_args(argv)
     db_dir = Path(args.db) if args.db else bootstrap.read_db_dir(paths.config_dir())
@@ -179,7 +183,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"worker: não abri o banco em {db_dir}: {e}", file=sys.stderr)  # noqa: T201
         return 3
     with store:
-        return _serve(store, once=args.once, idle_exit_s=args.idle_exit, poll_s=args.poll, light=args.light)
+        return _serve(store, once=args.once, idle_exit_s=idle_exit_s(args.idle_exit, args.light), poll_s=args.poll, light=args.light)
+
+
+def idle_exit_s(value: float | None, light: bool) -> float:
+    """O `--idle-exit` pedido ou o padrão da classe: 60 s no pesado e 600 s no leve (F5.18, PF-20: os jobs `llm` e `index` chegam
+    em rajadas separadas por minutos, e cada relançamento pagava a partida e a sessão do e5)."""
+    if value is not None:
+        return float(value)
+    return LIGHT_IDLE_EXIT_S if light else IDLE_EXIT_S
+
+
+def _light_idle(store: Store) -> bool:
+    """Uma volta ociosa do leve (F5.18, PF-20): solta a sessão do e5 parada há `LOCAL_RELEASE_S` e manda sair quando o
+    `user_version` do banco já não é o do código (o app migrou ou voltou de versão: o leve, vivo por 10 min, não segura a
+    conexão durante uma migração). True = sair."""
+    from ..llm import local_embed
+
+    local_embed.release_if_idle(LOCAL_RELEASE_S)
+    version = int(store._q("PRAGMA main.user_version")[0][0])
+    if version != MAIN_SCHEMA_VERSION:
+        log.info("worker leve: o banco está na versão %d e este código na %d; encerrando (o app migra com o leve fora)", version,
+                 MAIN_SCHEMA_VERSION)
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -263,7 +290,8 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
         # a espera é lida antes do claim: um `index` que vença entre as duas consultas é pego pelo próprio claim (com o claim
         # primeiro, ele vencia no meio, nem esperava nem era pego, e o leve saía ocioso com ele pendente)
         waiting = light and bool(store.jobs.delayed(kinds))
-        job = store.jobs.claim(os.getpid(), llm_snapshot(store) if light else config_snapshot(store), kinds=kinds)
+        # PF-20: o snapshot (no leve, o `LlmJobConfig` inteiro) só é montado quando há um pendente da classe a pegar
+        job = store.jobs.claim(os.getpid(), functools.partial(llm_snapshot if light else config_snapshot, store), kinds=kinds)
         if job is not None:
             idle_since, released = None, False
             log.info("job %s (reunião %s, %s) iniciado", job["id"], job["meeting_id"], job.get("kind"))
@@ -276,6 +304,8 @@ def _serve(store: Store, once: bool, idle_exit_s: float, poll_s: float, light: b
                 break
             continue
         if once:
+            break
+        if light and _light_idle(store):                           # PF-20: o e5 solto aos 120 s; sai se o esquema mudou
             break
         if waiting:                                                # há `index` esperando a edição assentar (R5-07): fica
             idle_since = None

@@ -21,13 +21,16 @@ tema vigente (claro e escuro), refeitos quando o tema muda.
 F5.4 L4: a fala pelo `SpeechDelegate` (U-081: o [mm:ss] em legenda e o ponto na cor da faixa do falante na linha do tempo,
 o nome em negrito), a voz sem pessoa como "Voz N" (U-035; F5.5 A-18: o nome de `review.transcript_rows`, o mesmo da ata,
 da exportação e da busca; o `DisplayRole` leva o mesmo nome) e, sem falas, o estado vazio (U-059). A barra de rolagem fica
-sempre à vista: a largura das falas não muda quando ela aparece, e a altura de cada uma é medida uma vez só.
+sempre à vista: a largura das falas não muda quando ela aparece, e a altura de cada uma é medida uma vez só. F5.18 (PF-21): o
+layout da lista é em lotes de 200 falas (`Batched`): a primeira tela sai antes de medir as 3.000, e a rolagem até uma fala
+ainda sem lugar (abrir neste ponto, a recarga, o destaque que segue o som) espera o lote dela (`_when_laid_out`).
 
 F5.11 L2: o rodapé foi para `ui/transcript_footer.py` (A-35); na lista, o Espaço pausa e retoma pelo `on_space` (o da barra
 do player da reunião, P-06), e o Enter segue tocando a fala."""
 from __future__ import annotations
 
 import bisect
+import functools
 import itertools
 import time
 from collections import deque
@@ -55,6 +58,9 @@ if TYPE_CHECKING:
 log = get_logger("ui.transcript")
 
 FOLLOW_PAUSE_S = 5.0             # Q2: o destaque não rola nos 5 s seguintes a uma rolagem do usuário
+LAYOUT_BATCH = 200               # F5.18 (PF-21): falas medidas por lote do layout da lista (`QListView.LayoutMode.Batched`)
+LAYOUT_POLL_MS = 15              # a rolagem a uma fala ainda sem lugar na lista confere de novo a cada 15 ms...
+LAYOUT_WAIT_MS = 3000            # ...e desiste de esperar o lote dela depois de 3 s (a aba escondida não mede)
 NAV_KEYS = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End})
 PLAYING_TONE = Tone.WARNING              # âmbar: o fundo dele é legível com o texto nos dois temas e diferente da seleção
 PLAYING_ACCENT_SPAN = 0.005              # da largura da linha (~5 px numa lista de 1.000 px)
@@ -177,6 +183,8 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
         self.view.setUniformItemSizes(False)
         self.view.setAlternatingRowColors(True)
         self.view.setSpacing(1)
+        self.view.setLayoutMode(QListView.LayoutMode.Batched)     # F5.18 (PF-21): as 3.000 falas medidas em lotes, não no
+        self.view.setBatchSize(LAYOUT_BATCH)                      # primeiro layout (200 a 360 ms) nem a cada redimensionamento
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.view.clicked.connect(self._clicked)
         self.view.installEventFilter(self)                # Enter toca a fala selecionada (P-06); setas e páginas rolam
@@ -242,8 +250,8 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
                 i = next((k for k, r in enumerate(rows) if r.segment_id == current.segment_id), None)
                 if i is not None:
                     self.view.setCurrentIndex(self.model.index(i))
-            if not force:
-                QTimer.singleShot(0, self, lambda: bar.setValue(min(scroll, bar.maximum())))   # depois do layout das linhas
+            if not force:                                     # depois do layout das linhas (em lotes: a última fala medida)
+                self._when_laid_out(self.model.index(len(rows) - 1), functools.partial(self._restore_scroll, bar, scroll))
             self._highlight(self._row_at(self.playing_ms), follow=False)                     # o destaque volta (A-17)
         self._update_status()
         return changed
@@ -265,9 +273,22 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
             return None
         index = self.model.index(i)
         self.view.setCurrentIndex(index)
-        self.view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
-        QTimer.singleShot(0, self, lambda: self.view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter))  # depois do layout
+        self._when_laid_out(index, functools.partial(self.view.scrollTo, index, QAbstractItemView.ScrollHint.PositionAtCenter))
         return self.model.rows[i]
+
+    def _when_laid_out(self, index: QModelIndex, fn: Callable[[], Any], waited_ms: int = 0) -> None:
+        """Roda `fn` quando a fala já tem lugar na lista. No layout em lotes (F5.18, PF-21) uma fala depois do primeiro lote só
+        ganha retângulo quando o lote dela chega, uns ms depois; antes disso o `scrollTo` não teria onde parar (o `singleShot(0)`
+        de antes esperava só o layout único). Confere a cada `LAYOUT_POLL_MS`; sem lugar em `LAYOUT_WAIT_MS` (a aba escondida),
+        roda assim mesmo."""
+        if not index.isValid() or self.view.visualRect(index).isValid() or waited_ms >= LAYOUT_WAIT_MS:
+            fn()
+            return
+        QTimer.singleShot(LAYOUT_POLL_MS, self, functools.partial(self._when_laid_out, index, fn, waited_ms + LAYOUT_POLL_MS))
+
+    @staticmethod
+    def _restore_scroll(bar: Any, value: int) -> None:
+        bar.setValue(min(value, bar.maximum()))
 
     def _clicked(self, index: QModelIndex) -> None:
         if index.isValid():
@@ -326,8 +347,12 @@ class TranscriptTab(TranscriptFooterMixin, QWidget):
         if follow and row is not None and time.monotonic() - self._user_scroll_at >= FOLLOW_PAUSE_S:
             index = self.model.index(row)
             if not self._viewport.rect().contains(self.view.visualRect(index)):
-                self.view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
-                self.followed.append(row)
+                self._when_laid_out(index, functools.partial(self._follow, index, row))
+
+    def _follow(self, index: QModelIndex, row: int) -> None:
+        """A fala que toca rola para o meio da lista (quando já tem lugar nela, PF-21)."""
+        self.view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        self.followed.append(row)
 
     # ---------------------------------------------------------------- copiar com citação (U-029)
     def _title(self) -> str:

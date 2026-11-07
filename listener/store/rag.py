@@ -3,7 +3,12 @@ float32 normalizado e a assinatura binária por trecho e modelo) e `rag_models` 
 trechos, comparar e calcular vetores e assinaturas é de `listener/rag/`. O índice é derivado e refeito (CP3: a reunião e a
 transcrição nunca saem daqui); apagar a reunião leva trechos, FTS e vetores pela cascata. L3: a busca por palavra (FTS5 com
 os filtros, `snippet()` com marcadores que `rag.fts` troca por negrito depois do `html.escape`), os ids que passam nos
-filtros (máscara da busca por sentido) e as linhas dos trechos achados com a reunião."""
+filtros (a referência SQL do filtro da busca por sentido) e as linhas dos trechos achados com a reunião.
+F5.18 (PF-19): `rag.vector_version` é o contador da versão do índice, incrementado (`bump_vector_version`, na transação em
+curso) por todo caminho que cria ou remove vetores ou muda o que a busca por sentido guarda deles (trechos, pessoas, a
+cascata da reunião); o cache das assinaturas do app o compara (`get_setting`, 4 µs) em vez de contar o índice a cada busca.
+`signatures` lê, numa consulta só e sem `row_factory`, as assinaturas com a reunião e as pessoas de cada vetor (CSR), e
+`meeting_dates` as datas das reuniões: os filtros da busca viram máscaras numpy (`rag.filters`)."""
 from __future__ import annotations
 
 import json
@@ -17,6 +22,7 @@ import numpy as np
 
 from ..model import PIPELINE_JOB_KINDS, JobStatus
 from .core import Core, _now
+from .rag_signatures import VECTOR_VERSION_KEY, SignatureRows, bump_vector_version, empty_signature_rows, people_csr
 
 BATCH = 500                     # ids por instrução (`IN (...)` abaixo do limite de variáveis do SQLite)
 SNIPPET_OPEN, SNIPPET_CLOSE = "\x02", "\x03"   # marcadores do `snippet()` (char(2), char(3)): negrito só depois do escape
@@ -85,14 +91,6 @@ class VectorInsert:
     sig: bytes                     # sinal de v - mu, empacotado
 
 
-class VectorVersion(NamedTuple):
-    """Chave do cache das assinaturas de um modelo (`rag.search.SignatureCache`). Com o AUTOINCREMENT da v8 (R5-03) um id
-    nunca volta: entrar vetor muda o maior id, sair muda a contagem e refazer o `mu` muda o `mu_n` (R6-10)."""
-    size: int                    # quantos vetores do modelo
-    max_id: int
-    mu_n: int                    # muda quando o `mu` é refeito (todas as assinaturas mudam)
-
-
 @dataclass(frozen=True, slots=True)
 class SearchFilters:
     """Filtros da busca (F5 item 4: pessoa, período, reunião), aplicados nas duas listas antes do top-k: pessoas (qualquer
@@ -159,20 +157,38 @@ class RagRepo:
         rows = self.core.q("SELECT * FROM rag_chunks WHERE id = ?", (chunk_id,))
         return cast(RagChunkRow, dict(rows[0])) if rows else None
 
+    def bump_version(self) -> int:
+        """O contador do índice (`rag.vector_version`, F5.18 PF-19): chamado por todo caminho que cria ou remove vetores ou muda
+        o que a busca guarda deles; o cache das assinaturas recarrega quando ele muda."""
+        return bump_vector_version(self.core)
+
+    def index_version(self) -> int:
+        """O valor atual do contador (0 num banco anterior a ele): lido a cada busca, em vez de contar o índice."""
+        rows = self.core.q("SELECT value FROM settings WHERE key = ?", (VECTOR_VERSION_KEY,))
+        try:
+            return int(rows[0][0]) if rows else 0
+        except (TypeError, ValueError):
+            return 0
+
     def insert_chunks(self, rows: Sequence[ChunkInsert]) -> list[int]:
         """Na transação de quem chama (o `sync_text` faz ler, comparar e gravar numa só); o gatilho alimenta o FTS."""
         now = _now()
-        return [self.core.insert(
+        ids = [self.core.insert(
             "INSERT INTO rag_chunks(meeting_id, kind, t_start_ms, t_end_ms, seg_first, seg_last, title, speakers, person_ids, text, "
             "text_hash, job_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (c.meeting_id, c.kind, c.t_start_ms, c.t_end_ms, c.seg_first, c.seg_last, c.title, c.speakers, person_ids_json(c.person_ids),
              c.text, c.text_hash, c.job_id, now)) for c in rows]
+        if ids:
+            self.bump_version()                      # a contagem de trechos sem vetor ("índice incompleto") sai do cache
+        return ids
 
     def update_meta(self, rows: Sequence[ChunkMeta]) -> int:
         """Tempos, segmentos, pessoas e job novos dos trechos mantidos; o gatilho do FTS só dispara em título, falantes e texto."""
         self.core.conn().executemany(
             "UPDATE rag_chunks SET t_start_ms = ?, t_end_ms = ?, seg_first = ?, seg_last = ?, person_ids = ?, job_id = ? WHERE id = ?",
             [(m.t_start_ms, m.t_end_ms, m.seg_first, m.seg_last, person_ids_json(m.person_ids), m.job_id, m.chunk_id) for m in rows])
+        if rows:
+            self.bump_version()                      # as pessoas de um trecho mantido mudaram: o filtro de pessoa relê
         return len(rows)
 
     def delete_chunks(self, ids: Iterable[int]) -> int:
@@ -180,6 +196,8 @@ class RagRepo:
         for part in batched((int(i) for i in ids), BATCH):
             marks = ",".join("?" * len(part))
             n += self.core.execute(f"DELETE FROM rag_chunks WHERE id IN ({marks})", part)  # noqa: S608
+        if n:
+            self.bump_version()                      # a cascata levou os vetores dos trechos
         return n
 
     def count_chunks(self, meeting_id: int | None = None) -> int:
@@ -211,7 +229,13 @@ class RagRepo:
                 n += c.execute("INSERT OR IGNORE INTO rag_vectors(chunk_id, model, dim, vector, sig, created_at) "
                                "SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM rag_chunks WHERE id = ? AND text_hash = ?)",
                                (r.chunk_id, model, int(dim), r.vector, r.sig, now, r.chunk_id, r.text_hash)).rowcount
+            if n:
+                self.bump_version()
         return n
+
+    def has_vectors(self, model: str) -> bool:
+        """Há algum vetor do modelo? (pelo índice (model, id); a busca não chama a rede com o índice ainda vazio, R6-06)."""
+        return bool(self.core.q("SELECT 1 FROM rag_vectors WHERE model = ? LIMIT 1", (model,)))
 
     def count_vectors(self, model: str | None = None, meeting_id: int | None = None) -> int:
         sql = "SELECT COUNT(*) FROM rag_vectors v"
@@ -257,33 +281,36 @@ class RagRepo:
                 out[int(r[0])] = (int(r[1]), int(r[2]), np.frombuffer(bytes(r[3]), np.float32))
         return out
 
-    def signatures(self, model: str, after_id: int = 0, limit: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(ids de `rag_vectors`, ids dos trechos, assinaturas uint8 (n, bytes)) do modelo depois de `after_id`, em ordem de
-        id: o cache da busca carrega em lotes e, depois, só o que entrou."""
-        sql = "SELECT id, chunk_id, sig FROM rag_vectors WHERE model = ? AND id > ? ORDER BY id"
-        params: tuple[Any, ...] = (model, int(after_id))
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (*params, int(limit))
-        rows = self.core.q(sql, params)
-        ids = np.fromiter((int(r[0]) for r in rows), np.int64, len(rows))
-        chunk_ids = np.fromiter((int(r[1]) for r in rows), np.int64, len(rows))
-        if not rows:
-            return ids, chunk_ids, np.zeros((0, 0), np.uint8)
-        sigs = np.frombuffer(b"".join(bytes(r[2]) for r in rows), np.uint8).reshape(len(rows), -1).copy()
-        return ids, chunk_ids, sigs
+    def signatures(self, model: str) -> SignatureRows:
+        """Todas as assinaturas do modelo em ordem de id, com a reunião e as pessoas (CSR) de cada vetor, numa consulta só e sem
+        `row_factory` (F5.18, PF-19: as `sqlite3.Row` custavam 97 ms a 60 mil): o que o cache da busca carrega."""
+        cur = self.core.conn().cursor()
+        cur.row_factory = None
+        rows = cur.execute("SELECT v.id, v.chunk_id, v.sig, c.meeting_id, c.person_ids FROM rag_vectors v "
+                           "JOIN rag_chunks c ON c.id = v.chunk_id WHERE v.model = ? ORDER BY v.id", (model,)).fetchall()
+        n = len(rows)
+        if not n:
+            return empty_signature_rows()
+        sigs = np.frombuffer(b"".join(bytes(r[2]) for r in rows), np.uint8).reshape(n, -1).copy()
+        offsets, people = people_csr(r[4] for r in rows)
+        return SignatureRows(np.fromiter((r[0] for r in rows), np.int64, n), np.fromiter((r[1] for r in rows), np.int64, n), sigs,
+                             np.fromiter((r[3] for r in rows), np.int64, n), offsets, people)
 
-    def vector_version(self, model: str) -> VectorVersion:
-        """Chave do cache das assinaturas do modelo: (quantos, maior id, `mu_n`). Muda quando entra ou sai vetor (o leve grava
-        em outro processo) e quando o `mu` é refeito (todas as assinaturas mudam); o AUTOINCREMENT da v8 garante que um id
-        não volta com outro vetor (R5-03). Só o índice (model, id) e uma busca por chave: barato a cada busca."""
-        row = self.core.q("SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE((SELECT mu_n FROM rag_models WHERE model = ?), 0) "
-                          "FROM rag_vectors WHERE model = ?", (model, model))[0]
-        return VectorVersion(int(row[0]), int(row[1]), int(row[2]))
+    def meeting_dates(self) -> tuple[np.ndarray, np.ndarray]:
+        """(ids, datas `AAAA-MM-DD` como `S10`) das reuniões com data: o filtro de período da busca por sentido em numpy, com a
+        mesma comparação de texto do `substr(started_at, 1, 10)` do SQL (`SearchFilters.sql`)."""
+        cur = self.core.conn().cursor()
+        cur.row_factory = None
+        rows = cur.execute("SELECT id, substr(started_at, 1, 10) FROM meetings WHERE started_at IS NOT NULL").fetchall()
+        ids = np.fromiter((r[0] for r in rows), np.int64, len(rows))
+        dates = np.array([str(r[1]).encode("utf-8", "replace") for r in rows], dtype="S10") if rows else np.zeros(0, "S10")
+        return ids, dates
 
     def set_signatures(self, rows: Sequence[tuple[int, bytes]]) -> int:
         """Regrava assinaturas (id de `rag_vectors`, sig) na transação de quem chama (o `mu` refeito vale para todas)."""
         self.core.conn().executemany("UPDATE rag_vectors SET sig = ? WHERE id = ?", [(sig, int(vid)) for vid, sig in rows])
+        if rows:
+            self.bump_version()
         return len(rows)
 
     # ---------------------------------------------------------------- modelos (média por modelo)
@@ -404,11 +431,19 @@ class RagRepo:
         return [FtsHit(int(r[0]), float(r[1]), snippets.get(int(r[0]))) for r in ranked]
 
     def chunk_ids_where(self, filters: SearchFilters) -> np.ndarray:
-        """Ids dos trechos que passam nos filtros (a máscara da busca por sentido, antes dos candidatos)."""
+        """Ids dos trechos que passam nos filtros: a referência SQL da máscara da busca por sentido (F5.18, PF-19: a máscara é
+        feita em numpy sobre o cache, `rag.filters`; esta consulta fica como oráculo do teste de paridade)."""
         where, params, meetings = filters.sql()
         join = " JOIN meetings m ON m.id = c.meeting_id" if meetings else ""
         rows = self.core.q(f"SELECT c.id FROM rag_chunks c{join} WHERE 1 = 1{where}", params)  # noqa: S608
         return np.fromiter((int(r[0]) for r in rows), np.int64, len(rows))
+
+    def any_chunk_where(self, filters: SearchFilters) -> bool:
+        """Algum trecho passa nos filtros? Só quando nenhum vetor passou (R6-04: distingue "nada passa nos filtros" de "há
+        trechos filtrados sem vetor do modelo")."""
+        where, params, meetings = filters.sql()
+        join = " JOIN meetings m ON m.id = c.meeting_id" if meetings else ""
+        return bool(self.core.q(f"SELECT 1 FROM rag_chunks c{join} WHERE 1 = 1{where} LIMIT 1", params))  # noqa: S608
 
     def hit_rows(self, ids: Sequence[int]) -> dict[int, dict[str, Any]]:
         """Os trechos achados com a reunião (título atual do usuário ou da LLM, `started_at`), por id; os que saíram no meio

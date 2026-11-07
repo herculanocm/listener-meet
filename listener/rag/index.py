@@ -181,32 +181,50 @@ def _key_counts(items: list[tuple[str, str]]) -> list[tuple[str, str, int]]:
     return out
 
 
+SYNC_ATTEMPTS = 3                # PF-17: quantas vezes o `sync_text` relê quando o job vigente muda entre a leitura e a transação
+
+
 def sync_text(store: Store, meeting_id: int) -> SyncResult:
-    """Lê, monta e compara numa transação só (pesado e leve não se atropelam), casando por (tipo, `text_hash`, ocorrência):
-    os mantidos ganham tempos, segmentos, pessoas e job novos sem perder os vetores; os novos entram (o FTS pelo gatilho);
-    os que sumiram saem, com os vetores pela cascata."""
-    with store.transaction():
+    """Lê e monta FORA da transação (F5.18, PF-17: `gather` e `build_chunks` levam 65 ms por hora de reunião e, dentro do
+    `BEGIN IMMEDIATE`, as legendas e as escritas do app esperavam por eles); dentro, relê o job vigente e os trechos gravados
+    e compara por (tipo, `text_hash`, ocorrência): os mantidos ganham tempos, segmentos, pessoas e job novos sem perder os
+    vetores; os novos entram (o FTS pelo gatilho); os que sumiram saem, com os vetores pela cascata. Se o job vigente mudou no
+    meio (um reprocessamento concluiu entre a leitura e a transação), recomeça, até `SYNC_ATTEMPTS` vezes; na última segue
+    com o que leu (o `index` do job novo acerta depois)."""
+    attempt = 0
+    while True:
+        attempt += 1
         data = gather(store, meeting_id)
         if data is None:
             return SyncResult()
         job_id = store.segments.current_job_id(meeting_id)
         built = chunker.build_chunks(data)
-        old = store.rag.list_chunks(meeting_id)
-        old_keys = dict(zip(_key_counts([(str(r["kind"]), str(r["text_hash"])) for r in old]), old, strict=True))
-        new_keys = _key_counts([(str(c.kind), c.text_hash) for c in built])
-        kept = [(old_keys[key], c) for key, c in zip(new_keys, built, strict=True) if key in old_keys]
-        kept_ids = {int(row["id"]) for row, _c in kept}
-        moved = [ChunkMeta(int(row["id"]), c.t_start_ms, c.t_end_ms, c.seg_first, c.seg_last, c.person_ids, job_id)
-                 for row, c in kept if _meta_changed(row, c, job_id)]
-        removed = [int(r["id"]) for r in old if int(r["id"]) not in kept_ids]
-        added = [_insert(meeting_id, c, job_id) for key, c in zip(new_keys, built, strict=True) if key not in old_keys]
-        store.rag.delete_chunks(removed)
-        store.rag.update_meta(moved)
-        store.rag.insert_chunks(added)
-    result = SyncResult(len(built), len(kept), len(added), len(removed), len(moved))
-    log.info("reunião %s: %d trecho(s); %d mantido(s) (%d com tempos novos), %d novo(s), %d removido(s)", meeting_id, result.total,
-             result.kept, result.moved, result.added, result.removed)
-    return result
+        with store.transaction():
+            if attempt < SYNC_ATTEMPTS and store.segments.current_job_id(meeting_id) != job_id:
+                log.info("reunião %s: o job vigente mudou durante a leitura dos trechos; lendo de novo (%d de %d)", meeting_id, attempt,
+                         SYNC_ATTEMPTS)
+                continue
+            result = _apply_chunks(store, meeting_id, job_id, built)
+        log.info("reunião %s: %d trecho(s); %d mantido(s) (%d com tempos novos), %d novo(s), %d removido(s)", meeting_id, result.total,
+                 result.kept, result.moved, result.added, result.removed)
+        return result
+
+
+def _apply_chunks(store: Store, meeting_id: int, job_id: int | None, built: list[Chunk]) -> SyncResult:
+    """O diff dos trechos montados contra os gravados e as escritas, na transação de quem chama."""
+    old = store.rag.list_chunks(meeting_id)
+    old_keys = dict(zip(_key_counts([(str(r["kind"]), str(r["text_hash"])) for r in old]), old, strict=True))
+    new_keys = _key_counts([(str(c.kind), c.text_hash) for c in built])
+    kept = [(old_keys[key], c) for key, c in zip(new_keys, built, strict=True) if key in old_keys]
+    kept_ids = {int(row["id"]) for row, _c in kept}
+    moved = [ChunkMeta(int(row["id"]), c.t_start_ms, c.t_end_ms, c.seg_first, c.seg_last, c.person_ids, job_id)
+             for row, c in kept if _meta_changed(row, c, job_id)]
+    removed = [int(r["id"]) for r in old if int(r["id"]) not in kept_ids]
+    added = [_insert(meeting_id, c, job_id) for key, c in zip(new_keys, built, strict=True) if key not in old_keys]
+    store.rag.delete_chunks(removed)
+    store.rag.update_meta(moved)
+    store.rag.insert_chunks(added)
+    return SyncResult(len(built), len(kept), len(added), len(removed), len(moved))
 
 
 def _meta_changed(row: RagChunkRow, c: Chunk, job_id: int | None) -> bool:
@@ -253,10 +271,12 @@ class FillResult:
 def refresh_mu(store: Store, key: str, dim: int) -> bool:
     """Refaz o `mu` do modelo quando os vetores dobraram (até 2 mil, depois congela) e regrava todas as assinaturas a partir
     dos float32, numa transação que também decide se é a hora (dois processos não refazem com contas velhas; sem rede).
-    Reentrante: dentro da transação do lote, vale junto com ele."""
+    Reentrante: dentro da transação do lote, vale junto com ele. F5.18 (PF-18): a linha do modelo vem primeiro, e o
+    `COUNT(*)` dos vetores (3 a 9 ms por lote) só sai enquanto o `mu` não congelou."""
     with store.transaction():
         row = store.rag.get_model(key)
-        if not vectors.mu_due(store.rag.count_vectors(key), int(row["mu_n"]) if row is not None else 0):
+        mu_n = int(row["mu_n"]) if row is not None else 0
+        if mu_n >= vectors.MU_FREEZE or not vectors.mu_due(store.rag.count_vectors(key), mu_n):
             return False
         ids, mat = store.rag.vectors_by_model(key)
         if not len(ids):

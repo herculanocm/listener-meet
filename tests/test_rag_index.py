@@ -143,9 +143,9 @@ def test_fill_vectors_batches_normalizes_signs_refreshes_mu_and_records_calls(st
     assert np.allclose(np.linalg.norm(mat, axis=1), 1.0)                                          # normaliza sempre
     model = store.rag.get_model(MODEL)
     assert model["mu_n"] == 4 and model["dim"] == 768                                            # refeito em 2 e 4; 5 não dobra
-    _vids, chunk_ids, sigs = store.rag.signatures(MODEL)
-    assert np.array_equal(sigs, vectors.signatures(mat, model["mu"])) and len(chunk_ids) == 5     # todas no `mu` vigente
-    assert store.rag.vector_version(MODEL) == (5, int(ids.max()), 4)
+    rows = store.rag.signatures(MODEL)
+    assert np.array_equal(rows.sigs, vectors.signatures(mat, model["mu"])) and len(rows.chunk_ids) == 5     # todas no `mu` vigente
+    assert store.rag.count_vectors(MODEL) == 5 and int(rows.vids.max()) == int(ids.max())
     calls = [c for c in store.llm_calls.list_for_meeting(mid) if c["task"] == "rag_embed"]
     assert len(calls) == 3 and {c["job_id"] for c in calls} == {job} and all(c["status"] == "ok" for c in calls)
     assert sorted(c["strategy"] for c in calls) == ["batch:1", "batch:2", "batch:2"] and all(c["cost_usd"] > 0 for c in calls)
@@ -505,7 +505,7 @@ def test_each_batch_is_signed_with_the_mu_read_in_its_own_write_transaction(stor
 
     index.fill_vectors(store, mid, provider=ScaledFake(during=other_process, at=4), batch_size=1)
     _ids, mat = store.rag.vectors_by_model(MODEL)
-    _vids, _chunks, sigs = store.rag.signatures(MODEL)
+    sigs = store.rag.signatures(MODEL).sigs
     model = store.rag.get_model(MODEL)
     assert model["mu_n"] == 5000 and np.array_equal(sigs, vectors.signatures(mat, model["mu"]))
 

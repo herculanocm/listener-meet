@@ -1,5 +1,6 @@
-"""`LlmJobRunner` (F3 itens 2, 3, 5 a 8, 13, 15): o job `kind = llm` no worker leve. Ordem: identify -> minutes -> (executive,
-pre_summary, title em paralelo sob `asyncio.Semaphore(llm.max_parallel)`) -> revise em blocos. Nenhuma tarefa levanta dentro do
+"""`LlmJobRunner` (F3 itens 2, 3, 5 a 8, 13, 15): o job `kind = llm` no worker leve. Ordem (F5.18, PF-20): test -> (identify,
+revise em blocos e, sem `minutes` no job, title, juntas sob `asyncio.Semaphore(llm.max_parallel)`) -> minutes -> (executive,
+pre_summary, title, juntas). Nenhuma tarefa levanta dentro do
 `TaskGroup`: cada uma devolve `TaskOutcome`; as prontas ficam gravadas (artefato `ok` por tarefa) e `retry` refaz só as
 faltantes; alguma falha -> job `erro` com a lista ("ata e executivo falharam: sem rede"). Tudo que o job escreve carrega o
 `job_id` do pai (`params_json.parent_job_id`). Regras duras: nunca `await` dentro de `store.transaction()`; resultados gravados
@@ -59,7 +60,9 @@ STEP_TASK: dict[JobStep, LlmTask] = {JobStep.IDENTIFY: LlmTask.IDENTIFY, JobStep
                                      JobStep.TITLE: LlmTask.TITLE, JobStep.REVISE: LlmTask.REVISE, JobStep.TEST: LlmTask.TEST}
 TASK_ORDER: tuple[JobStep, ...] = (JobStep.TEST, JobStep.IDENTIFY, JobStep.MINUTES, JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE,
                                    JobStep.REVISE)
-PARALLEL: tuple[JobStep, ...] = (JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE)
+PARALLEL: tuple[JobStep, ...] = (JobStep.EXECUTIVE, JobStep.PRE_SUMMARY, JobStep.TITLE)        # juntas, depois da ata
+# F5.18 (PF-20): juntas antes da ata; `title` só sem `minutes` no job (ela lê a ata ou o pré-resumo quando existem)
+FIRST_GROUP: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE, JobStep.TITLE)
 OPTIONAL: frozenset[JobStep] = frozenset({JobStep.EXECUTIVE, JobStep.REVISE})           # P5: automáticas só até o alerta de custo
 TASKS_AFTER_MEETING: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.TITLE, JobStep.REVISE)   # F5.6 (A-05): o núcleo
 TASKS_AFTER_REPROCESS: tuple[JobStep, ...] = (JobStep.IDENTIFY, JobStep.REVISE)         # P7: ata antiga fica, com aviso
@@ -517,6 +520,9 @@ class LlmJobRunner(BaseJobRunner):
 
     # ---------------------------------------------------------------- orquestração
     async def _run_tasks(self) -> None:
+        """A ordem (F5.18, PF-20): `test`; depois `identify`, os blocos de `revise` e, sem `minutes` no job, `title`, juntas num
+        `TaskGroup` sob o semáforo (`identify` só grava sugestões e não toca o `Context`, montado antes; `title` sem ata lê o
+        pré-resumo que houver ou as falas de abertura); `minutes`; depois `executive`, `pre_summary` e `title` (que lê a ata)."""
         cfg = self.config
         self._sem = asyncio.Semaphore(max(1, cfg.max_parallel))
         own = self._provider_override is None
@@ -524,20 +530,25 @@ class LlmJobRunner(BaseJobRunner):
         self._provider = provider
         try:
             await self._plan_costs()
-            for step in (JobStep.TEST, JobStep.IDENTIFY, JobStep.MINUTES):
-                if step in self.tasks:
-                    await self._run_step(step)
-            group = [s for s in PARALLEL if s in self.tasks]
-            if group:
-                await self.acheckpoint()
-                async with asyncio.TaskGroup() as tg:
-                    for s in group:
-                        tg.create_task(self._run_step(s, check=False))
-            if JobStep.REVISE in self.tasks:
-                await self._run_step(JobStep.REVISE)
+            if JobStep.TEST in self.tasks:
+                await self._run_step(JobStep.TEST)
+            with_minutes = JobStep.MINUTES in self.tasks
+            await self._run_group([s for s in FIRST_GROUP if s in self.tasks and (s != JobStep.TITLE or not with_minutes)])
+            if with_minutes:
+                await self._run_step(JobStep.MINUTES)
+            await self._run_group([s for s in PARALLEL if s in self.tasks and (s != JobStep.TITLE or with_minutes)])
         finally:
             if own:
                 await provider.aclose()
+
+    async def _run_group(self, steps: list[JobStep]) -> None:
+        """As tarefas juntas num `TaskGroup` (cada chamada sob o semáforo `llm.max_parallel`), com um `acheckpoint` antes."""
+        if not steps:
+            return
+        await self.acheckpoint()
+        async with asyncio.TaskGroup() as tg:
+            for s in steps:
+                tg.create_task(self._run_step(s, check=False))
 
     async def _run_step(self, step: JobStep, check: bool = True) -> None:
         if check:
@@ -590,11 +601,13 @@ class LlmJobRunner(BaseJobRunner):
         return model_info(self.config.provider_kind, model).input_limit
 
     async def _transcript_tokens(self) -> int:
+        """Os tokens da transcrição: contados pelo provedor (uma chamada de rede) só no job automático, onde valem para o alerta
+        de custo (F5.18, PF-20); no pedido manual a estimativa por caracteres basta."""
         if self.ctx is None:
             return 0
         text = render_lines(self.ctx.lines)
         provider = self._provider
-        if provider is not None and text:
+        if self.auto and provider is not None and text:
             req = Request(LlmTask.MINUTES, self.config.fast_model, (Message(prompts.common.Role.USER, text),))
             try:
                 n = await provider.count_tokens(req)

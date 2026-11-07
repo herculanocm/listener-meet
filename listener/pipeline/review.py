@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -186,14 +187,13 @@ def _speaker(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: 
 
 def _row(s: Mapping[str, Any], people: dict[int, dict[str, Any]], clusters: dict[int, ClusterRow], prefer_llm: bool,
          names: VoiceNames) -> TranscriptRow:
+    """Uma linha da leitura. O ponto de reprodução vem de `first_word_ms` (F5.18, PF-15: o começo da primeira palavra já
+    extraído pelo SQLite em `list_segments_light`); sem ele (linhas sem palavras, as de `overlapping`), do começo da fala."""
     name, role, pid = _speaker(s, people, clusters, names)
     first = int(s["t_start_ms"])
-    try:
-        words = json.loads(s.get("words_json") or "[]")
-        if words:
-            first = int(words[0][0])
-    except (ValueError, TypeError, IndexError):
-        pass
+    if (word := s.get("first_word_ms")) is not None:
+        with suppress(ValueError, TypeError):
+            first = int(word)
     return TranscriptRow(int(s["id"]), str(s.get("channel") or ""), int(s["t_start_ms"]), int(s["t_end_ms"]), name, role,
                          str(s.get("text") or ""), max(0, first - PLAY_LEAD_MS), s.get("text_llm") or None, prefer_llm, pid)
 
@@ -209,7 +209,7 @@ def transcript_rows(store: Store, meeting_id: int, prefer_llm: bool = True) -> l
     """`[mm:ss] Nome — Cargo: texto` por segmento; sem pessoa, "Voz N" (F5.5, A-15); toca da primeira palavra menos 150 ms.
     `prefer_llm` mostra a transcrição revisada quando existe (P4); o texto original fica sempre na linha."""
     people, job_id, clusters, _ = reading(store, meeting_id, speakers=False)
-    segments = store.segments.list_segments(meeting_id, job_id)
+    segments = store.segments.list_segments_light(meeting_id, job_id)   # PF-15: sem `words_json`; a primeira palavra pelo SQLite
     names = numbering(clusters.values(), job_id, segments)          # A-17: a primeira fala de cada voz, das falas já lidas
     return [_row(s, people, clusters, prefer_llm, names) for s in segments]
 

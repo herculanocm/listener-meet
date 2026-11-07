@@ -123,7 +123,10 @@ def test_local_time_and_work_time_of_each_timings_format():
     assert work_seconds(json.dumps(pipeline)) == pytest.approx(1031.0)
     llm = {"identify": _timing(10.0), "minutes": _timing(30.0), "executive": _timing(8.0), "pre_summary": _timing(5.0),
            "title": _timing(9.5), "revise": _timing(40.0), "llm": {"cost_usd": 0.12, "calls": 6, "done": ["identify"]}}
-    assert work_seconds(json.dumps(llm)) == pytest.approx(10 + 30 + 9.5 + 40)      # executivo, pré-resumo e título juntos: o maior
+    # F5.18 (PF-20): identidade e revisada juntas (a maior), a ata, e executivo, pré-resumo e título juntos (a maior)
+    assert work_seconds(json.dumps(llm)) == pytest.approx(40 + 30 + 9.5)
+    core = {"identify": _timing(10.0), "title": _timing(9.5), "revise": _timing(40.0)}       # sem ata: o título corre com as duas
+    assert work_seconds(json.dumps(core)) == pytest.approx(40.0)
     index = {"index_text": _timing(0.4), "index_vectors": _timing(2.1), "index": {"chunks": 12, "cost_usd": 0.0, "note": ""}}
     assert work_seconds(json.dumps(index)) == pytest.approx(2.5)
     assert work_seconds(None) is None and work_seconds("{}") is None and work_seconds("[1]") is None

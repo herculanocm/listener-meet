@@ -212,6 +212,7 @@ def test_filters_apply_to_both_lists_before_the_top_k(store):
     # R6-04: trechos nos filtros, nenhum com vetor: "por palavras" com o motivo (não "híbrida" vazia)
     with store.transaction():
         store._x("DELETE FROM rag_vectors WHERE chunk_id IN (SELECT id FROM rag_chunks WHERE meeting_id = ?)", (b,))
+        store.rag.bump_version()                     # o SQL cru não passa pelo repositório: o contador do cache sobe à mão (PF-19)
     only_b = search.search(store, "campanha redes sociais", SearchFilters(meeting_ids=(b,)), query_vector=_qv("campanha redes sociais"))
     assert not only_b.hybrid and only_b.reason == search.FILTERED_NO_VECTORS and only_b.hits
     assert all(h.vec_rank is None for h in only_b.hits) and {h.meeting_id for h in only_b.hits} == {b}
@@ -244,15 +245,17 @@ def test_words_only_without_query_vector_or_without_vectors_of_the_active_model(
 
 
 def test_signature_cache_mu_change_new_vector_from_another_process_deleted_chunk_and_reused_id(store):
+    """F5.18 (PF-19): o cache recarrega quando o contador `rag.vector_version` muda (vetor novo de outro processo, `mu` refeito,
+    trecho apagado) e só então; o id de `rag_vectors` nunca volta (AUTOINCREMENT, R5-03)."""
     who = _people(store)
     mid, _job = _meeting(store, who)
     _ready(store)
     _indexed(store, mid)
-    cache = SignatureCache(MODEL, batch=2)                                                        # carga em lotes de 2
+    cache = SignatureCache(MODEL)
     view = cache.view(store)
-    assert (len(view.vids), cache.full_loads, cache.appends) == (5, 1, 0) and view.words.shape == (5, 12)     # 768 bits
-    assert cache.view(store).vids is view.vids and cache.full_loads == 1                          # mesma versão: nada lido
-    # vetor novo gravado por outro processo (o worker leve): entra sem recarga total
+    assert (len(view.vids), cache.full_loads, cache.loaded) == (5, 1, True) and view.words.shape == (5, 12)     # 768 bits
+    assert cache.view(store).vids is view.vids and cache.full_loads == 1                          # mesmo contador: nada lido
+    # vetor novo gravado por outro processo (o worker leve): o contador sobe lá, o cache recarrega aqui
     other = Store(store.base_dir, role=StoreRole.WORKER)
     try:
         silent = other.create_meeting("Sem fala", None, None, None)
@@ -262,22 +265,23 @@ def test_signature_cache_mu_change_new_vector_from_another_process_deleted_chunk
     finally:
         other.close()
     view = cache.view(store)
-    assert (len(view.vids), cache.full_loads, cache.appends) == (6, 1, 1)
+    assert (len(view.vids), cache.full_loads) == (6, 2)
     assert set(view.chunk_ids.tolist()) == {c["id"] for c in store.rag.list_chunks(mid) + store.rag.list_chunks(silent)}
-    # o μ refeito muda todas as assinaturas: recarga total, com o μ novo
+    # o μ refeito regrava todas as assinaturas (`set_signatures` sobe o contador): recarga, com o μ novo
     model = store.rag.get_model(MODEL)
-    store.rag.set_model(MODEL, 768, np.asarray(model["mu"]) * 0.5, 99)
+    assert index.refresh_mu(store, MODEL, 768) is False                                            # ainda não dobrou
+    with store.transaction():
+        store.rag.set_signatures([(int(v), bytes(96)) for v in view.vids])
+        store.rag.set_model(MODEL, 768, np.asarray(model["mu"]) * 0.5, 99)
     view = cache.view(store)
-    assert cache.full_loads == 2 and np.allclose(view.mu, np.asarray(model["mu"]) * 0.5)
+    assert cache.full_loads == 3 and np.allclose(view.mu, np.asarray(model["mu"]) * 0.5) and not view.words.any()
     # trecho apagado: o vetor sai pela cascata e some do cache
     gone = int(store.rag.list_chunks(mid)[0]["id"])
     with store.transaction():
         store.rag.delete_chunks([gone])
     view = cache.view(store)
-    assert cache.full_loads == 3 and gone not in view.chunk_ids.tolist() and len(view.vids) == 5
-    # o maior id sai e entra outro vetor: com o AUTOINCREMENT da v8 (R5-03) o id não se repete, a versão muda pelo maior id
-    # e a contagem não fecha com o que entrou acima do maior carregado: recarga total (sem depender do relógio, R6-10)
-    before = cache.version
+    assert cache.full_loads == 4 and gone not in view.chunk_ids.tolist() and len(view.vids) == 5
+    # o maior id sai e entra outro vetor: com o AUTOINCREMENT da v8 (R5-03) o id não se repete (sem depender do relógio, R6-10)
     top_vid = int(view.vids.max())
     with store.transaction():
         store.rag.delete_chunks([int(view.chunk_ids[int(np.argmax(view.vids))])])
@@ -286,12 +290,12 @@ def test_signature_cache_mu_change_new_vector_from_another_process_deleted_chunk
     fresh = int(store._q("SELECT MAX(id) FROM rag_chunks")[0][0])
     index.fill_vectors(store, silent, provider=FakeProvider())
     fresh_vid = int(store._q("SELECT id FROM rag_vectors WHERE chunk_id = ?", (fresh,))[0][0])
-    after = store.rag.vector_version(MODEL)
-    assert fresh_vid > top_vid and after.size == before.size and after.max_id == fresh_vid      # id novo, nunca o reaproveitado
+    assert fresh_vid > top_vid                                                                    # id novo, nunca o reaproveitado
     view = cache.view(store)
-    _vids, _chunks, sigs = store.rag.signatures(MODEL)
-    assert cache.full_loads == 4 and fresh in view.chunk_ids.tolist() and np.array_equal(view.words, vectors.as_words(sigs))
-    assert top_vid not in view.vids.tolist() and cache.version == after
+    rows = store.rag.signatures(MODEL)
+    assert cache.full_loads == 5 and fresh in view.chunk_ids.tolist() and np.array_equal(view.words, vectors.as_words(rows.sigs))
+    assert top_vid not in view.vids.tolist() and cache.stamp == store.rag.index_version()
+    assert cache.view(store).vids is view.vids and cache.full_loads == 5                          # e para por aí
 
 
 def test_embed_query_caches_records_calls_without_meeting_and_falls_back(store, monkeypatch):

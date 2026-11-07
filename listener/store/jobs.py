@@ -18,14 +18,14 @@ adiaram os vetores durante a gravação (embedder local), e `retry_index_meeting
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from datetime import datetime, timedelta
+from collections.abc import Callable, Iterable
 from typing import Any, TypedDict, cast
 
 from ..log import get_logger
 from ..model import JobKind, JobStatus, JobStep
 from .core import Core, _now, json_default
 from .floors import JOBS, next_id_sql
+from .jobs_sql import NOT_BEFORE_SQL, SWEEP_LAST_SQL, _after, _before, _kinds, _params
 
 log = get_logger("store.jobs")
 
@@ -34,9 +34,6 @@ MAX_ATTEMPTS = 3
 ACTIVE = (str(JobStatus.PENDING), str(JobStatus.RUNNING), str(JobStatus.PAUSED))
 HELD = (str(JobStatus.RUNNING), str(JobStatus.PAUSED))      # um worker vivo está com o job
 INDEX_REASONS = frozenset({"pipeline", "llm", "review", "edit", "sweep", "reindex"})   # `params_json.reason` do `index`
-# campos de `params_json` lidos pelo SQL (só JSON válido; o resto vale nulo): o "não antes de" e o motivo do `index`
-NOT_BEFORE_SQL = "julianday(CASE WHEN json_valid(params_json) THEN json_extract(params_json, '$.not_before') END)"
-SWEEP_LAST_SQL = "COALESCE((CASE WHEN json_valid(params_json) THEN json_extract(params_json, '$.reason') END) = 'sweep', 0)"
 
 
 class JobRow(TypedDict, total=False):
@@ -60,29 +57,12 @@ class JobRow(TypedDict, total=False):
     created_at: str
 
 
-def _before(now: str, seconds: float) -> str:
-    return (datetime.fromisoformat(now) - timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
-
-
-def _after(now: str, seconds: float) -> str:
-    return (datetime.fromisoformat(now) + timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
-
-
-def _params(raw: str | None) -> dict[str, Any]:
-    try:
-        data = json.loads(raw or "{}")
-    except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _kinds(kinds: Iterable[JobKind | str] | None, negate: bool = False) -> tuple[str, tuple[str, ...]]:
-    """Cláusula `AND kind IN (...)` (ou `NOT IN`, com `negate`) e seus parâmetros; vazia quando a classe não é filtrada
-    (comportamento da F2)."""
-    values = tuple(str(k) for k in kinds) if kinds is not None else ()
-    if not values:
-        return "", ()
-    return f" AND kind {'NOT IN' if negate else 'IN'} ({','.join('?' * len(values))})", values
+def _job(row: Any) -> JobRow:
+    """A linha como `JobRow`, sem as colunas de ordenação que o `list_jobs` acrescenta (`grp`, `sort_key`)."""
+    d = dict(row)
+    d.pop("grp", None)
+    d.pop("sort_key", None)
+    return cast(JobRow, d)
 
 
 class JobsRepo:
@@ -121,15 +101,23 @@ class JobsRepo:
     def list_jobs(self, limit: int = 50, *, kinds: Iterable[JobKind | str] | None = None,
                   exclude_kinds: Iterable[JobKind | str] | None = None, statuses: Iterable[JobStatus | str] | None = None) -> list[JobRow]:
         """Ativos primeiro (na ordem da fila), depois os terminados mais recentes; `kinds`, `exclude_kinds` e `statuses` filtram
-        (F5: a fila e a bandeja listam sem os `index`, que seriam dezenas depois da varredura)."""
+        (F5: a fila e a bandeja listam sem os `index`, que seriam dezenas depois da varredura). F5.18 (PF-13): dois ramos com os
+        mesmos filtros e `LIMIT` cada um, os ativos por `idx_jobs_status` e os terminados pelo `rowid` decrescente, unidos por
+        `UNION ALL` com a coluna de grupo e a chave de ordem e ordenados por fora (a ordem de um `UNION ALL` sem `ORDER BY` é
+        da implementação): o `ORDER BY` por expressão varria e ordenava a tabela inteira (43 ms com 48 mil jobs); os mesmos
+        ids, na mesma ordem."""
         clause, params = _kinds(kinds)
         not_clause, not_params = _kinds(exclude_kinds, negate=True)
         wanted = tuple(str(x) for x in statuses) if statuses is not None else ()
         status_clause = f" AND status IN ({','.join('?' * len(wanted))})" if wanted else ""
-        rows = self.core.q(f"SELECT * FROM processing_jobs WHERE 1 = 1{clause}{not_clause}{status_clause} "  # noqa: S608
-                           "ORDER BY (status NOT IN (?, ?, ?)), CASE WHEN status IN (?, ?, ?) THEN id ELSE -id END LIMIT ?",
-                           (*params, *not_params, *wanted, *ACTIVE, *ACTIVE, int(limit)))
-        return [cast(JobRow, dict(r)) for r in rows]
+        where, marks = f"{clause}{not_clause}{status_clause}", ",".join("?" * len(ACTIVE))
+        branch = (*ACTIVE, *params, *not_params, *wanted, int(limit))
+        rows = self.core.q(
+            f"SELECT * FROM (SELECT 0 AS grp, id AS sort_key, * FROM processing_jobs WHERE status IN ({marks}){where} "  # noqa: S608
+            f"ORDER BY id LIMIT ?) UNION ALL SELECT * FROM (SELECT 1 AS grp, -id AS sort_key, * FROM processing_jobs "
+            f"WHERE status NOT IN ({marks}){where} ORDER BY id DESC LIMIT ?) ORDER BY grp, sort_key LIMIT ?",
+            (*branch, *branch, int(limit)))
+        return [_job(r) for r in rows]
 
     def enqueue_index(self, meeting_id: int, reason: str, *, force: bool = False, delay_s: float | None = None,
                       now: str | None = None) -> int | None:
@@ -269,12 +257,13 @@ class JobsRepo:
                 "running": running, "errors": int(errors)}
 
     # ---------------------------------------------------------------- claim e ciclo do worker
-    def claim(self, pid: int, config_json: str | None = None, now: str | None = None, stale_s: float = STALE_S,
-              max_attempts: int = MAX_ATTEMPTS, kinds: Iterable[JobKind | str] | None = None) -> JobRow | None:
+    def claim(self, pid: int, config_json: str | Callable[[], str | None] | None = None, now: str | None = None,
+              stale_s: float = STALE_S, max_attempts: int = MAX_ATTEMPTS, kinds: Iterable[JobKind | str] | None = None) -> JobRow | None:
         """Pega o primeiro `pendente` da classe (`kinds`; None = qualquer) se nenhum worker vivo segura um job dessa classe;
         os `index` vão depois de todos os outros pendentes, e os da varredura depois dos outros `index` (F5A-02, R5-08); job
         com "não antes de" no futuro espera (R5-07). A devolução dos jobs com heartbeat vencido e o esgotamento das
-        tentativas valem para todas as classes."""
+        tentativas valem para todas as classes. F5.18 (PF-20): `config_json` pode ser uma função, chamada dentro da transação
+        só quando há um pendente da classe já devido (o snapshot do leve monta o `LlmJobConfig` inteiro, e saía a cada 2 s)."""
         now = now or _now()
         limit = _before(now, stale_s)
         clause, params = _kinds(kinds)
@@ -292,6 +281,13 @@ class JobsRepo:
                 log.error("job %s (%s): tentativas esgotadas (%d); fica com erro", r["id"], r["kind"], r["attempts"])
             c.execute("UPDATE processing_jobs SET status = ?, finished_at = ?, error = COALESCE(error, '') || ' (tentativas esgotadas)' "
                       "WHERE status = ? AND attempts >= ?", (JobStatus.ERROR, now, JobStatus.PENDING, int(max_attempts)))
+            if callable(config_json):
+                due = c.execute(f"SELECT 1 FROM processing_jobs WHERE status = ? AND attempts < ?{clause} "  # noqa: S608
+                                f"AND NOT COALESCE({NOT_BEFORE_SQL} > julianday(?), 0) LIMIT 1",
+                                (JobStatus.PENDING, int(max_attempts), *params, now)).fetchone()
+                if due is None:
+                    return None
+                config_json = config_json()
             row = c.execute(
                 "UPDATE processing_jobs SET status = ?, worker_pid = ?, claimed_at = ?, heartbeat_at = ?, "  # noqa: S608
                 "started_at = COALESCE(started_at, ?), config_json = COALESCE(config_json, ?) "

@@ -209,6 +209,9 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
                 phase="F5"),
     SettingSpec("rag.max_per_meeting", 3, _NOW, "Trechos por reunião no chat sobre todas as reuniões (1 a 10)", int, low=1, high=10,
                 phase="F5"),
+    # F5.18 (PF-19): o contador da versão do índice da busca, incrementado por quem cria ou remove vetores (`RagRepo.bump_version`);
+    # o cache das assinaturas do app o compara em vez de contar o índice a cada busca
+    SettingSpec("rag.vector_version", 0, _NOW, "Versão dos vetores da busca (interno)", int, phase="F5.18", internal=True),
     # F5.10: "Perguntar à base" (cartão próprio na página Busca). As três guardas não limitam o raciocínio: só cortam o caso
     # patológico (custo, tempo e laço); a de custo fica inativa sem preço cadastrado
     SettingSpec("rag.sql_strong", False, _NOW, "Usar o modelo forte nas consultas (mais caro)", _bool, phase="F5.10"),

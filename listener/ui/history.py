@@ -67,6 +67,8 @@ from .theme import TONE_ROLE, Tone, note, surface_tokens
 from .widget_parts import _screen_rects
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ..rag.search import SearchHit, SearchResult
     from ..store import Store
     from ..store.rag import SearchFilters
@@ -111,6 +113,15 @@ class LinkBrowser(HtmlView):
         if extra and first is not None:
             menu.insertSeparator(first)
         menu.exec(event.globalPos())
+
+
+def _preload(store: Store, cache: rag_search.SignatureCache, folder: Path | None) -> float:
+    """Na `Task` da pré-carga: a sessão do e5 (quando `folder` veio) e o cache das assinaturas; devolve os ms da sessão."""
+    from ..llm import local_embed
+
+    ms = local_embed.preload(folder) if folder is not None else 0.0
+    cache.view(store)
+    return ms
 
 
 class HistoryPage(AskMixin, QWidget):
@@ -344,7 +355,8 @@ class HistoryPage(AskMixin, QWidget):
     def preload_local(self) -> bool:
         """Com o embedder local ativo e pronto, abre a sessão do e5 numa `Task` (a saída a espera): a primeira busca por
         sentido não espera a carga (1 a 1,4 s no Windows, quase toda do tokenizer). Liga a soltura depois de 10 min sem uso.
-        False sem nada a carregar."""
+        F5.18 (PF-19): a mesma `Task` aquece o cache das assinaturas do modelo ativo (local ou pago), e a primeira busca por
+        sentido não paga a carga dele (~300 ms a 60 mil vetores). False sem nada a carregar."""
         from ..llm import local_embed
         from ..rag.index import embedder_status, is_local
 
@@ -355,14 +367,18 @@ class HistoryPage(AskMixin, QWidget):
         except Exception as e:  # banco ocupado: a primeira busca carrega
             log.debug("pré-carga da busca local: %s", e)
             return False
-        if not status.ready or not is_local(status.model_key):
+        if not status.ready or status.model_key is None:
             return False
-        self._local_timer.start()
-        if local_embed.loaded():
+        folder: Path | None = None
+        if is_local(status.model_key):
+            self._local_timer.start()
+            if not local_embed.loaded():
+                folder = local_embed.model_dir(self.store.get_setting("pipeline.models_dir"))
+        cache = rag_search.signature_cache(self.store, status.model_key)
+        if folder is None and cache.loaded:
             return False
-        folder = local_embed.model_dir(self.store.get_setting("pipeline.models_dir"))
         self._preloading = True
-        self._start(functools.partial(local_embed.preload, folder), self._on_preloaded)
+        self._start(functools.partial(_preload, self.store, cache, folder), self._on_preloaded)
         return True
 
     def _on_preloaded(self, result: Any) -> None:
@@ -469,7 +485,11 @@ class HistoryPage(AskMixin, QWidget):
         store, filters, stop = self.store, self.filters(), self._stop.is_set
         if with_vector:
             def fn() -> SearchResult:
-                return rag_search.search(store, query, filters, query_vector=rag_search.embed_query(store, query, should_stop=stop))
+                from ..rag.index import embedder_status
+
+                status = embedder_status(store)                   # F5.18 (PF-19): um por busca, para o vetor e a lista por sentido
+                vector = rag_search.embed_query(store, query, should_stop=stop, status=status)
+                return rag_search.search(store, query, filters, query_vector=vector, status=status)
         else:
             def fn() -> SearchResult:
                 return rag_search.search(store, query, filters)
