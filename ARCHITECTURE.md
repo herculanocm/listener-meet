@@ -21,8 +21,8 @@ legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQ
 | Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, nível configurável (D-033) | F1.1 |
 
 ## Fluxo de uma reunião (handoff §4)
-1. Warm-up: mic, fonte (app tocando ou sistema), medidores, teste; título e participantes opcionais; a LLM monta glossário
-   e lista de perfis candidatos.
+1. Warm-up: mic, fonte (app tocando ou sistema), medidores, teste; título e participantes opcionais; a LLM monta
+   glossário e lista de perfis candidatos.
 2. Gravação: widget com tempo, medidores, saúde dos canais, pausar, marcador com nota, mudo global (D-004), parar,
    cancelar. Ao vivo (F4): legenda leve e resumo parcial a cada N minutos.
 3. Processamento (fila automática ao parar, D-014; subprocesso): Whisper em L e R, pyannote em R, cosseno contra perfis.
@@ -69,14 +69,18 @@ NORMAL e o worker em BELOW_NORMAL; o leve fica 10 min ocioso (solta o e5 aos 2 m
 snapshot só com job a pegar e roda `identify`, `revise` e `title` (sem ata) no mesmo `TaskGroup`; a busca compara o
 contador `rag.vector_version` em vez de contar o índice e filtra pessoa, período e reunião em numpy ao lado das
 assinaturas, aquecidas ao abrir o Histórico; a fila lê só as reuniões dos jobs listados por uma consulta indexada; a
-lista da transcrição faz o layout em lotes e o cursor do player extrapola entre blocos.
+lista da transcrição faz o layout em lotes e o cursor do player extrapola entre blocos. O pesado roda o tronco do
+wespeaker uma vez por trecho (`pipeline/lean_diarization.py`, saída idêntica) e, fora da sala presencial, zera para o
+Whisper e para o reforço do perfil os blocos do L que são o eco do R (`pipeline/echo_gate.py`, a regra pura de
+`capture/echo.py`, a mesma do filho ao vivo); o filho ao vivo calcula o embedding do nome numa thread `live-embed`
+enquanto o Whisper transcreve e limita os tokens novos pelo prompt (`live/pacing.py`).
 
 ## Logs (D-059: para a LLM achar qualquer cenário nos testes do dono)
-Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm` e
-`index`) e `listener-live.log` (ao vivo). A categoria é o logger `listener.<módulo>`. Níveis: DEBUG para o detalhe de cada
-chamada, lote ou decisão (começo de toda chamada à LLM e de todo lote de embeddings; configuração mudada; apps com som,
-só quando mudam); INFO para marcos e ações do usuário (gravação, pausa, mudo, marcador, fonte, warm-up e teste de 3 s,
-janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada com latência, tokens e motivo,
+Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm`
+e `index`) e `listener-live.log` (ao vivo). A categoria é o logger `listener.<módulo>`. Níveis: DEBUG para o detalhe de
+cada chamada, lote ou decisão (começo de toda chamada à LLM e de todo lote de embeddings; configuração mudada; apps com
+som, só quando mudam); INFO para marcos e ações do usuário (gravação, pausa, mudo, marcador, fonte, warm-up e teste de 3
+s, janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada com latência, tokens e motivo,
 provedor e chave definidos, exportação, avisos da bandeja); WARNING para o recuperável (job devolvido à fila, chamada
 que falhou de vez, terminal fechado com o app aberto); ERROR para falha (tentativas esgotadas, vigia do laço, D-058). O
 faulthandler grava crash nativo e o dump do vigia num `<log>-crash.log` ao lado de cada log, sem rotação (D-072: no
