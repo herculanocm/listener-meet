@@ -47,9 +47,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     por trecho; sonda `lean`: 5 min da reunião 22 de 305 para 118 s, −61 %, clusters idênticos e embeddings com diferença
     máxima 3,5e-7), `pipeline/echo_gate.py` (o gate de eco no L e no reforço do perfil, com `blocks`/`echo_blocks` no
     `timings_json`), o id do modelo sem "dict", `pipeline.echo_gate`, `tests/test_f518_lote2.py`.
-  - [ ] lote 3 IMPLEMENTADO no working tree (sem commit): `live/pacing.py` (o teto de tokens), o nome em `live-embed`, o
-    eco partilhado e a legenda lenta no log; revisão lida (R-01 a R-05: a estimativa sem tokenizer assume o corte, o
-    `run()` dividido, cortes de linhas, as constantes órfãs do `m_echo.py`, o `return` no `except`) e em aplicação.
+  - [x] lote 3 commitado (`bee6ae9`): `live/pacing.py` (o teto de tokens: 32 + 10·s, nunca acima de 448 − prompt − 8;
+    sem tokenizer, 228 assumidos), o nome em `live-embed` antes do Whisper, o eco partilhado, a legenda lenta no log e
+    `stats.capped`; revisão (R-01 a R-05) aplicada. Só o uso real verifica: o atraso p95 do R com o nome sobreposto e o
+    `live_cpu` com três threads nativas na janela; `capped` no `live_stopped`.
   - [ ] lote 5 (PF-23, PF-26 só os pragmas, PF-28 sem o `_write_lease` nem a contagem de temperatura, PF-29 com a
     migração do hash no lugar) em implementação por um terceiro agente em paralelo (`capture/audio.py`, `store/core.py`,
     `store/rag.py`, `llm/redact.py`, `llm/adapters_common.py`, `rag/chunker.py`, `rag/index.py`).
