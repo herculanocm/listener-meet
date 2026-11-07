@@ -27,9 +27,11 @@ from listener import log as applog
 from listener.capture.clock import ManualClock
 from listener.capture.recorder import RecordConfig, Recorder, SourceSpec
 from listener.store import Store
+from tests import hang_guard
 from tests.fake_platform import FakePlatform
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+hang_guard.arm(hang_guard.HANG_S * 2, "coleta")                 # F5.18: a coleta também já travou (16:13 de 07/11)
 
 
 @pytest.fixture(scope="session")
@@ -209,9 +211,31 @@ def start_live_process(root: Path) -> dict[str, Any]:
 
 
 UI_FIXTURES = frozenset({"qtbot", "qapp"})
-SUBPROCESS_FILES = frozenset({"test_call_watch.py", "test_instance.py", "test_instance_win.py", "test_language_l3.py",
-                              "test_live_child.py", "test_rag_ui.py", "test_setup_l4.py", "test_win32_devices.py",
-                              "test_worker.py"})
+SUBPROCESS_FILES = frozenset({"test_call_watch.py", "test_hang_guard.py", "test_instance.py", "test_instance_win.py",
+                              "test_language_l3.py", "test_live_child.py", "test_rag_ui.py", "test_setup_l4.py",
+                              "test_win32_devices.py", "test_worker.py"})
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Iterator[None]:
+    """F5.18: cada teste rearma o vigia de travamento (`tests/hang_guard.py`) com o seu nome no marcador; vencido o prazo, as
+    pilhas vão para o log e o processo sai, em vez de a suíte ficar parada."""
+    hang_guard.arm(hang_guard.HANG_S, item.nodeid)
+    yield
+    hang_guard.disarm()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    hang_guard.note(f"coleta concluída: {len(session.items)} teste(s)")
+    hang_guard.disarm()
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtestloop(session: pytest.Session) -> Iterator[None]:
+    """F5.18: o controlador do xdist não coleta (o `pytest_collection_finish` não corre nele); o prazo da coleta armado na
+    importação cai aqui, senão o vigia derrubaria o próprio controlador aos 6 min de uma rodada longa."""
+    hang_guard.disarm()
+    yield
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -238,6 +262,14 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     if skipped_slow and config.option.markexpr == "not lento":
         terminalreporter.write_line(f"{skipped_slow} teste(s) lento(s) fora desta rodada: antes de commitar, "
                                     "`python -m pytest -q --tudo` (D-050)")
+    if hasattr(config, "workerinput"):                            # só o controlador (ou a rodada sem xdist) lê os marcadores
+        return
+    leftovers = hang_guard.leftover_markers()
+    if leftovers:
+        terminalreporter.write_line(f"vigia de travamento: {len(leftovers)} processo(s) derrubado(s) por passar de "
+                                    f"{hang_guard.HANG_S:g} s; pilhas em {hang_guard.LOG}", red=True)
+        for line in leftovers:
+            terminalreporter.write_line(f"  {line}", red=True)
 
 
 def worker_run() -> dict[str, Any]:
@@ -267,6 +299,8 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    hang_guard.note("fim da sessão")
+    hang_guard.arm(hang_guard.HANG_S * 2, "fim da sessão", marker=False)   # F5.18: a rodada de 14:32 de 07/11 travou na saída
     for run in (WORKER_RUN, WORKER_RUN.get("real") or {}, LIVE_RUN):
         if run and "proc" in run:
             proc = run["proc"]
