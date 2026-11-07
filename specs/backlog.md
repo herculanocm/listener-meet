@@ -32,7 +32,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `store/rag_signatures.py` novos, `rag/filters.py` novo, o contador `rag.vector_version`, o leve vivo 10 min com a
     saída por `user_version`, a lista em lotes, o cursor extrapolado); suíte inteira: 1.679 passaram e 2 falharam no
     `test_theme` por ordem (passam sozinhos e na rodada seguinte: a instabilidade já vista na F5.16), ruff e os dois mypy
-    limpos. Falta a revisão do diff por um agente novo (lida sobre o commit) e as correções dela.
+    limpos (commit `3462394`). Em curso: a revisão do diff por um agente novo (lida sobre o commit) e, em paralelo, as
+    medições de tempo do lote 0 (M-02, M-07, M-06, M-09, M-04 e M-03, nesta ordem, na reunião 22, com a máquina sem
+    testes; logs no scratchpad da sessão, JSON em `perf-out`); as correções da revisão entram depois das medições, para
+    não pesar na CPU no meio delas. Depois: lotes 2 e 3 em paralelo (arquivos disjuntos), lote 5, M-01 (~3 h) no fim.
   - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
     docs, D-097, versão 0.11.0, `.exe` e zip.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
