@@ -60,7 +60,7 @@ class Spawner:
 
 
 # ---------------------------------------------------------------- A-29: as mensagens e o filho
-def test_the_check_messages_are_the_download_ones_and_the_fake_answers_by_the_token(monkeypatch):
+def test_the_check_messages_are_the_download_ones_and_the_fake_answers_by_the_token(monkeypatch, forget_models):
     from listener.pipeline import models
 
     gated = RuntimeError("403 Client Error: gated repo")
@@ -313,7 +313,7 @@ def test_advanced_group_is_closed_editable_and_an_error_inside_opens_it(qtbot, s
     advanced = [k for k, s in SPECS.items() if s.advanced]
     assert set(advanced) == {"pipeline.whisper_hq", "pipeline.threshold", "pipeline.margin", "pipeline.ref_cos", "pipeline.max_refs",
                              "pipeline.models_dir", "pipeline.torch_threads", "pipeline.diar_window_s", "pipeline.whisper_window_s",
-                             "pipeline.embedding_batch"}                                                      # F5.18 (PF-03)
+                             "pipeline.embedding_batch", "pipeline.echo_gate"}                                # F5.18 (PF-03, PF-07)
     assert not dlg.advanced.is_open() and all(dlg.advanced.isAncestorOf(dlg.editor(k).widget) for k in advanced)
     assert not dlg.advanced.isAncestorOf(dlg.editor("pipeline.transcriber").widget)
     chosen = tmp_path / "outra-pasta"

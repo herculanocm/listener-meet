@@ -5,7 +5,9 @@ transcrever R -> transcrever L -> segmentos. Cada janela vira um artefato logo d
 pulados (perda máxima: uma janela). Entre janelas: heartbeat, cancelamento cooperativo e a lease da gravação (Q7); F5.18 (PF-01): também
 dentro delas, pelo gancho do pyannote, pelo gerador do Whisper e nos laços do embedder (`window_hook`), com a pausa fora do `wall_s`. Nunca
 há transação em volta de computação. Preset sala (U-015): L segue o caminho do R; senão L é o usuário (`attribution = canal`) e reforça o
-perfil dele com `source = automatico` (P3). Reprocessar escreve com o `job_id` novo e, no último passo, transporta as decisões humanas por
+perfil dele com `source = automatico` (P3); F5.18 (PF-07): fora da sala, com `pipeline.echo_gate`, os blocos do L que são o eco do R
+vão zerados ao Whisper e ao reforço (`pipeline/echo_gate.py`), com as contagens no `timings_json` (`blocks`, `echo_blocks`) da
+etapa. Reprocessar escreve com o `job_id` novo e, no último passo, transporta as decisões humanas por
 cosseno e troca numa só transação (item 12, CP3). F5.3 (A-01, A-05): sem detecção de idioma; o Whisper recebe desde a primeira janela o
 idioma pedido pela troca na reunião aberta (`params_json.reason = language`), senão o da reunião, senão o padrão das Configurações
 (português numa reunião já processada antes da F5.3, R-11), gravado quando a reunião não tinha. A troca só vale com o job concluído:
@@ -32,6 +34,7 @@ from ..store.segments import ClusterInsert, ClusterRow, SegmentInsert, resolve_p
 from . import no_diarization
 from .align import Segmenter, merge_words
 from .base import PermanentError, PipelineDeps
+from .echo_gate import EchoGate, EchoStats, describe, merge_stats, stats_from_json
 from .jobbase import LEASE_POLL_S, BaseJobRunner, Clock, JobCancelledError, SetPriority, Sleep, StepTiming
 from .profiles import ProfileMatcher, ProfileRef, clean_turns, cluster_data, expected_names, expected_person_ids, load_profile_refs
 from .reprocess import target_language
@@ -116,12 +119,21 @@ class JobRunner(BaseJobRunner):
         deps = getattr(self, "deps", None)                       # a base grava antes de `deps` existir
         if deps is not None and not deps.diarization:
             out[no_diarization.KEY] = no_diarization.mark()
+        merge_stats(self._echo_stats, out)                       # PF-07: os blocos do gate de eco do L, por etapa
         return out
 
     @override
     def _load_timings(self, text: str | None) -> None:
         super()._load_timings(text)
         self.timings.pop(no_diarization.KEY, None)               # a marca não é etapa: a retomada a refaz pelas dependências
+        self._echo_stats: dict[str, EchoStats] = stats_from_json(text)      # PF-07: a retomada soma em cima das contagens gravadas
+
+    @override
+    def _end_step(self, step: JobStep, share: float = 1.0) -> None:
+        super()._end_step(step, share)
+        line = describe(self._echo_stats.get(str(step)))         # PF-07: a etapa passou pelo gate de eco do L
+        if line:
+            log.info("job %s etapa %s: %s", self.job_id, step, line)
 
     # ---------------------------------------------------------------- ciclo
     def run(self) -> JobStatus:
@@ -277,6 +289,15 @@ class JobRunner(BaseJobRunner):
         """Nome da F2 para `checkpoint()`: heartbeat, cancelamento e lease da gravação antes de cada janela."""
         self.checkpoint()
 
+    def _echo_gate(self, channel: str, step: JobStep) -> EchoGate | None:
+        """F5.18 (PF-07): o gate de eco do L, só fora da sala presencial e com `pipeline.echo_gate`; as contagens somam por etapa
+        (também na retomada) e entram no `timings_json` por `_timings_dict`, por isso a etapa ganha o `StepTiming` aqui."""
+        if channel != "L" or self.meeting.get("is_in_room") or not self.config.echo_gate:
+            return None
+        self._timing(step)
+        stats = self._echo_stats.setdefault(str(step), EchoStats())
+        return EchoGate(self.store, self.meeting_id, corr_min=self.config.echo_corr_min, silence_rms=self.config.silence_rms, stats=stats)
+
     # ---------------------------------------------------------------- etapas
     def _prepare(self) -> None:
         def progress(message: str, fraction: float) -> None:
@@ -368,6 +389,7 @@ class JobRunner(BaseJobRunner):
         for idx in sorted(done):
             saved[idx] = unpack_artifact(self.store.jobs.get_artifact(self.job_id, EMBED_L_ARTIFACT, idx) or b"")
         known = {i: (int(h["t0"]), int(h["t1"]), 0) for i, (h, _) in saved.items() if "t0" in h}
+        gate = self._echo_gate("L", step)                          # PF-07: o eco do R não reforça o perfil do usuário
         for w in iter_windows(self.store, self.meeting_id, "L", self.config.diar_window_s, 0, silence_rms=self.config.silence_rms,
                               cut_on_silence=False, known=known):
             if w.idx in saved:
@@ -379,12 +401,15 @@ class JobRunner(BaseJobRunner):
                 continue
             self._between_windows()
             hook = self.window_hook()
+            src = gate.clean(w) if gate is not None else w
             t0 = time.perf_counter()
-            vec, ms = self._embed_runs(w, embedder, hook=hook)
+            vec, ms = self._embed_runs(src, embedder, hook=hook)
             timing.wall_s += time.perf_counter() - t0 - hook.paused_s
             timing.speech_s += ms / 1000
             self.store.jobs.put_artifact(self.job_id, EMBED_L_ARTIFACT, w.idx,
                                          pack_artifact({"ms": ms, "t0": w.t0_ms, "t1": w.t1_ms}, vec.tobytes() if ms else b""))
+            if gate is not None:
+                gate.commit()                                      # PF-07 (R-01): a contagem da janela entra com o artefato
             if ms:
                 acc = vec * ms if acc is None else acc + vec * ms
                 total += ms
@@ -479,6 +504,7 @@ class JobRunner(BaseJobRunner):
         out: list[TranscriptWindow] = []
         total_ms = max(1, int(self.meeting.get("duration_ms") or 1))
         previous: tuple[Word, ...] = ()
+        gate = self._echo_gate(channel, step)                        # PF-07: só no L, fora da sala presencial
         for w in iter_windows(self.store, self.meeting_id, channel, self.config.whisper_window_s, self.config.whisper_overlap_s,
                               silence_rms=self.config.silence_rms, cut_on_silence=True, known=known):
             if w.idx in saved:
@@ -487,7 +513,8 @@ class JobRunner(BaseJobRunner):
                 previous = tw.words
                 continue
             self._between_windows()
-            if not w.has_speech:
+            src = gate.clean(w) if gate is not None else w          # os blocos de eco zerados antes do Whisper (o gravado não muda)
+            if not src.has_speech:
                 tw = TranscriptWindow(w.idx, w.t0_ms, w.t1_ms, (), overlap_ms=w.overlap_ms)
             else:
                 transcriber = self.deps.transcriber()
@@ -495,13 +522,15 @@ class JobRunner(BaseJobRunner):
                                       self.meeting.get("glossary"))
                 hook = self.window_hook()                            # PF-01: cancelamento e lease a cada segmento de ~30 s
                 t0 = time.perf_counter()
-                tw = transcriber.transcribe(w, language=self.language, initial_prompt=prompt, on_segment=hook)
+                tw = transcriber.transcribe(src, language=self.language, initial_prompt=prompt, on_segment=hook)
                 timing = self._timing(step, transcriber.name, getattr(transcriber, "prompt_version", ""))   # F5.6 L2 (R-06)
                 timing.wall_s += time.perf_counter() - t0 - hook.paused_s
                 timing.audio_s += w.duration_ms / 1000
                 timing.speech_s += tw.speech_ms / 1000
                 previous = tw.words
             self.store.jobs.put_artifact(self.job_id, step, w.idx, encode_transcript(tw))
+            if gate is not None:
+                gate.commit()                                        # PF-07 (R-01): a contagem da janela entra com o artefato
             out.append(tw)
             self._progress(step, w.t1_ms / total_ms)
         self._end_step(step)

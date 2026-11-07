@@ -127,7 +127,7 @@ def test_pipeline_settings_and_hf_provider(store):
 
     assert "pipeline.paused_until" not in PIPELINE_KEYS and "pipeline.threshold" in PIPELINE_KEYS
     assert {k for k in PIPELINE_KEYS if SPECS[k].phase != "F2"} == {"pipeline.ref_cos", "pipeline.max_refs",
-                                                                     "pipeline.embedding_batch"}            # F5.15, F5.18
+                                                                     "pipeline.embedding_batch", "pipeline.echo_gate"}    # F5.15, F5.18
     keys = list(SPECS)                                                                        # logo depois da margem, no Avançado
     assert keys[keys.index("pipeline.margin") + 1:keys.index("pipeline.margin") + 3] == ["pipeline.ref_cos", "pipeline.max_refs"]
     ref_cos, max_refs = SPECS["pipeline.ref_cos"], SPECS["pipeline.max_refs"]

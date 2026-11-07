@@ -107,6 +107,16 @@ def disarmed_loop_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def forget_models() -> Iterator[None]:
+    """F5.18 (R-05): os adaptadores reais (`pipeline/models.py`, `whisper.py`, `pyannote.py`) saem do `sys.modules` ao fim do
+    teste que os importou de propósito: a regra dura (`test_runner.py::test_app_modules_do_not_import_models`) confere que o app
+    não os puxa, e com o xdist o teste que importa e o da regra podem cair no mesmo worker."""
+    yield
+    for name in ("listener.pipeline.models", "listener.pipeline.whisper", "listener.pipeline.pyannote"):
+        sys.modules.pop(name, None)
+
+
+@pytest.fixture
 def no_summary_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """U-042: os testes de ponta a ponta da LLM (anteriores à F5.2) validam a ata, não a espera pela identificação; o
     pipeline falso deixa vozes pendentes, então aqui ninguém fica pendente para o adiamento. A espera tem os próprios

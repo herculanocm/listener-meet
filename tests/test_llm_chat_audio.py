@@ -154,7 +154,7 @@ def test_chat_panel_renders_the_partial_answer_while_streaming(qtbot, platform, 
     assert panel.answers[0].text[:20] in panel.view.toPlainText() and 'seg=' in panel.view.toHtml()
 
 
-def test_llm_audio_transcriber_interpolates_words_and_models_skip_whisper(tmp_path, store, monkeypatch):
+def test_llm_audio_transcriber_interpolates_words_and_models_skip_whisper(tmp_path, store, monkeypatch, forget_models):
     import numpy as np
 
     from listener.pipeline import models, worker

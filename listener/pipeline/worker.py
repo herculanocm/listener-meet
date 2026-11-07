@@ -153,6 +153,7 @@ def llm_transcriber_key(store: Store, config: JobConfig) -> tuple[str, str]:
 def config_snapshot(store: Store) -> str:
     snap = store.settings.settings_with_prefix("pipeline.")
     snap["capture.silence_rms"] = store.get_setting("capture.silence_rms")
+    snap["capture.echo_corr_min"] = store.get_setting("capture.echo_corr_min")     # F5.18 (PF-07): o limiar do gate de eco do L
     return json.dumps(snap, ensure_ascii=False)
 
 

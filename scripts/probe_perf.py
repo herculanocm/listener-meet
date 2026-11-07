@@ -14,6 +14,7 @@ recente (`--no-quiet-check` desliga). O banco real nunca é escrito; o token do 
   python scripts/probe_perf.py sqlite   [--n 60000] [--repeat 5]                                                 M-09
   python scripts/probe_perf.py tls                                                                               M-10
   python scripts/probe_perf.py replay   --meeting ID [--speed 1.0] [--load 0.85] [--names]                       PF-09
+  python scripts/probe_perf.py lean     --meeting ID [--minutes 1] [--runs 1]                                    PF-04 (paridade)
 
 Opções comuns: `--out PASTA` (um JSON por rodada, `<sonda>-<data-hora>.json`; padrão `%LOCALAPPDATA%/listener-meet/perf-out`,
 criada se faltar), `--runs N` (3; `diar` e `weights` 1), `--minutes M` (corte do áudio, 5; `echo` e `replay` 0 = a reunião
@@ -41,9 +42,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                     # o pacote deste checkout (o .pth do venv pode apontar para outro)
 
-AUDIO_PROBES = frozenset({"threads", "diar", "batched", "priority", "pack", "embed", "weights"})
+AUDIO_PROBES = frozenset({"threads", "diar", "batched", "priority", "pack", "embed", "weights", "lean"})
 P_CORES_DEFAULT = frozenset({"echo", "pack", "embed", "sqlite", "tls"})
-TORCH_PROBES = frozenset({"diar", "batched", "embed", "weights"})     # rodam torch no próprio processo: ambiente antes de importar
+TORCH_PROBES = frozenset({"diar", "batched", "embed", "weights", "lean"})     # rodam torch no próprio processo: ambiente antes de importar
 
 
 def default_threads() -> int:
@@ -104,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--load", type=float, default=0.0, help="fração da máquina ocupada por um filho de carga (0 = sem carga; 0,85)")
     p.add_argument("--load-class", default="below_normal", choices=("idle", "below_normal", "normal"), help="classe da carga")
     p.add_argument("--names", action="store_true", help="copia o token do Hugging Face para o banco temporário e liga os nomes")
+    add_common(sub.add_parser("lean", help="PF-04: a mesma janela pelo pyannote original e pela LeanDiarization (paridade e segundos)"),
+               "lean", runs=1, minutes=1.0)
     add_child(sub.add_parser("_child", help=argparse.SUPPRESS))
     return ap
 
@@ -188,7 +191,7 @@ def run_probe(args: argparse.Namespace) -> None:
 
 def dispatch(args: argparse.Namespace, report: Any, store: Any, db_dir: Path | None, source: Any, config: Any, language: str,
              silence_rms: float) -> None:
-    from perf import common, m_batched, m_diar, m_echo, m_live, m_priority, m_sqlite, m_threads, m_tls, m_weights, replay
+    from perf import common, m_batched, m_diar, m_echo, m_lean, m_live, m_priority, m_sqlite, m_threads, m_tls, m_weights, replay
 
     token = common.read_token(store)
     match args.cmd:
@@ -196,6 +199,8 @@ def dispatch(args: argparse.Namespace, report: Any, store: Any, db_dir: Path | N
             m_threads.run(args, report, source, db_dir, language)
         case "diar":
             m_diar.run(args, report, token, language, source)
+        case "lean":
+            m_lean.run(args, report, token, language, source)
         case "batched":
             m_batched.run(args, report, config, language, source)
         case "priority":

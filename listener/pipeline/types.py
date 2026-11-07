@@ -117,6 +117,8 @@ class JobConfig:
     pause_on_record: bool = True
     embedding_batch: int = EMBEDDING_BATCH   # F5.18 (PF-03): trechos por lote dos embeddings da diarização
     silence_rms: float = 0.004
+    echo_gate: bool = True                # F5.18 (PF-07): zerar no L os blocos que são o eco do R (fora da sala presencial)
+    echo_corr_min: float = 0.25           # F5.18 (PF-07): o limiar do eco, de `capture.echo_corr_min` (como `silence_rms`)
     diar_overlap_s: int = 30
     whisper_overlap_s: int = 2
     extra: dict[str, Any] = field(default_factory=dict)
@@ -136,7 +138,7 @@ class JobConfig:
                    models_dir=get("pipeline.models_dir"), torch_threads=get("pipeline.torch_threads"),
                    diar_window_s=get("pipeline.diar_window_s"), whisper_window_s=get("pipeline.whisper_window_s"),
                    pause_on_record=get("pipeline.pause_on_record"), embedding_batch=get("pipeline.embedding_batch"),
-                   silence_rms=get("capture.silence_rms"))
+                   silence_rms=get("capture.silence_rms"), echo_gate=get("pipeline.echo_gate"), echo_corr_min=get("capture.echo_corr_min"))
 
     @classmethod
     def from_json(cls, text: str | None) -> Self:

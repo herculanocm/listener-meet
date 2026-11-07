@@ -170,6 +170,8 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     # multiplica pelos falantes locais, 3 no community-1); menos memória por lote, vazão quase igual; vale no próximo job
     SettingSpec("pipeline.embedding_batch", EMBEDDING_BATCH, _NOW, "Lote dos embeddings da separação de vozes (trechos)", int, low=4,
                 high=32, phase="F5.18", advanced=True),
+    SettingSpec("pipeline.echo_gate", True, _NOW, "Ignorar no microfone o eco da reunião (sem headset)", _bool, phase="F5.18",
+                advanced=True),                                       # PF-07: o gate de eco do L no pesado, fora da sala presencial
     SettingSpec("pipeline.paused_until", "", _NOW, "Fila pausada até (lease da gravação)", _text, phase="F2", internal=True),
     SettingSpec("pipeline.paused_manual", False, _NOW, "Fila pausada pelo usuário", _bool, phase="F2", internal=True),
     SettingSpec("pipeline.rtf_json", "{}", _NOW, "Velocidade medida por etapa (estimativa)", _text, phase="F2", internal=True),

@@ -43,10 +43,14 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     fim, que só muda o padrão das threads se mostrar outra regra. `capture/echo.py` (a regra do eco, pura, partilhada
     pelo PF-07 e pelo ao vivo) já commitado com teste. Uma suíte travada de 14:32 ficou viva com 4 workers até 15:40 e
     pesou nas rodadas da fase C (foi encerrada).
-  - [ ] lote 2 IMPLEMENTADO no working tree (sem commit), em revisão: `pipeline/lean_diarization.py` (o tronco uma vez
-    por trecho; sonda `lean`: 5 min da reunião 22 de 305 para 118 s, −61 %, clusters idênticos e embeddings com diferença
-    máxima 3,5e-7), `pipeline/echo_gate.py` (o gate de eco no L e no reforço do perfil, com `blocks`/`echo_blocks` no
-    `timings_json`), o id do modelo sem "dict", `pipeline.echo_gate`, `tests/test_f518_lote2.py`.
+  - [x] lote 2 commitado: `pipeline/lean_diarization.py` (o tronco do wespeaker uma vez por trecho; sonda `lean`: 5 min
+    da reunião 22 de 305 para 118 s, −61 %, clusters idênticos e embeddings com diferença máxima 3,5e-7),
+    `pipeline/echo_gate.py` (o gate de eco no L e no reforço do perfil, com `blocks`/`echo_blocks` no `timings_json` e
+    no `job_done`, contados só depois do artefato da janela), o id do modelo sem "dict" (o Q8 segue desligado),
+    `pipeline.echo_gate`, a fixture `forget_models` no `conftest`; revisão (R-01, R-04 a R-06) aplicada; R-02 e R-03 são
+    desvios de texto (a fração do eco vai no `job_done`, não no `job_step`; a máscara é por etapa) para a spec e a D-097.
+    Só o Windows com os modelos verifica: as 3 reuniões reprocessadas (Aceite 1), o texto do L nas reuniões do M-05
+    (Aceite 5), o RSS com o gate ligado numa reunião sem headset.
   - [x] lote 3 commitado (`bee6ae9`): `live/pacing.py` (o teto de tokens: 32 + 10·s, nunca acima de 448 − prompt − 8;
     sem tokenizer, 228 assumidos), o nome em `live-embed` antes do Whisper, o eco partilhado, a legenda lenta no log e
     `stats.capped`; revisão (R-01 a R-05) aplicada. Só o uso real verifica: o atraso p95 do R com o nome sobreposto e o
