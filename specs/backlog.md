@@ -10,7 +10,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   incorporados. Adiados pela revisão, fora do esforço: PF-12 (afinidade P/E), PF-24 (memória do e5 local), PF-25 (laço
   asyncio persistente no app) e PF-27 (`semantic.build`); voltam com os M-01, M-04 e M-10 e quando o e5 voltar a ser o
   embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB residentes hoje). Falta o dono:
-  responder as 13 perguntas (padrão: aprovar os lotes 0 a 5 na ordem) e aprovar.
+  responder as 13 perguntas (padrão: aprovar os lotes 0 a 5 na ordem) e aprovar. Página privada para ler e responder
+  pelo navegador (as respostas ficam no armazenamento da própria página e a LLM as lê de volta):
+  https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).
