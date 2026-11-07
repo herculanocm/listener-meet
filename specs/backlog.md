@@ -23,8 +23,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     JSON vão para `%LOCALAPPDATA%\listener-meet\perf-out`). Sinais dos smokes: pesos do wespeaker iguais nos dois
     modelos (218/218, cosseno 1,0: o PF-08 entra); o `pack` juntou 4 janelas em 2,9 s contra 16,8 separadas, mas o texto
     encolheu (atenção no PF-09); sem bilhete de sessão TLS nesta rede (o PF-25 fica adiado).
-  - [ ] lote 0 medido (M-01 a M-10, replay) fora de gravação, com os números em `decisoes.md` (Medições): M-08, M-05 e
-    M-10 rodando primeiro; os de tempo (M-01 a M-04, M-06, M-09) só com a máquina sem agentes testando.
+  - [ ] lote 0 medido: feitos M-10, M-05 e M-08 (em `decisoes.md`, Medições, 07/11): sem bilhete TLS na rede (PF-25
+    segue adiado; partilhar o `SSLContext` poupa ~50 ms por cliente novo), eco só na reunião 22 (71 %; as outras 0 a 5 %),
+    pesos iguais mas cosseno VBx × turno 0,88 numa voz, abaixo de 0,95 (o PF-08 NÃO substitui o embedding por turno;
+    só o id do modelo deixa de sair "dict"). Faltam os de tempo (M-02, M-03, M-04, M-06, M-07, M-09, só com a máquina sem
+    agentes testando) e o M-01 (~3 h, no fim; o padrão das threads fica pela fórmula até lá).
   - [ ] lote 4 (PF-13 a PF-22) em implementação por um terceiro agente, em paralelo (`store/`, `rag/`, `ui/`,
     `log.py`, `pipeline/review.py`, `pipeline/llm_steps.py`, o `_serve` de `pipeline/worker.py`, `llm/local_embed.py`).
   - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
