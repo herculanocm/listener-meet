@@ -14,15 +14,15 @@ NOT_BEFORE_SQL = "julianday(CASE WHEN json_valid(params_json) THEN json_extract(
 SWEEP_LAST_SQL = "COALESCE((CASE WHEN json_valid(params_json) THEN json_extract(params_json, '$.reason') END) = 'sweep', 0)"
 
 
-def _before(now: str, seconds: float) -> str:
+def iso_before(now: str, seconds: float) -> str:
     return (datetime.fromisoformat(now) - timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
 
 
-def _after(now: str, seconds: float) -> str:
+def iso_after(now: str, seconds: float) -> str:
     return (datetime.fromisoformat(now) + timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
 
 
-def _params(raw: str | None) -> dict[str, Any]:
+def parse_params(raw: str | None) -> dict[str, Any]:
     try:
         data = json.loads(raw or "{}")
     except ValueError:
@@ -30,7 +30,7 @@ def _params(raw: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _kinds(kinds: Iterable[JobKind | str] | None, negate: bool = False) -> tuple[str, tuple[str, ...]]:
+def kinds_clause(kinds: Iterable[JobKind | str] | None, negate: bool = False) -> tuple[str, tuple[str, ...]]:
     """Cláusula `AND kind IN (...)` (ou `NOT IN`, com `negate`) e seus parâmetros; vazia quando a classe não é filtrada
     (comportamento da F2)."""
     values = tuple(str(k) for k in kinds) if kinds is not None else ()
@@ -39,4 +39,4 @@ def _kinds(kinds: Iterable[JobKind | str] | None, negate: bool = False) -> tuple
     return f" AND kind {'NOT IN' if negate else 'IN'} ({','.join('?' * len(values))})", values
 
 
-__all__ = ["NOT_BEFORE_SQL", "SWEEP_LAST_SQL"]
+__all__ = ["NOT_BEFORE_SQL", "SWEEP_LAST_SQL", "iso_after", "iso_before", "kinds_clause", "parse_params"]

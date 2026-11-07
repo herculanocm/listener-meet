@@ -20,7 +20,7 @@ from listener.rag import filters as rag_filters
 from listener.rag import index, search, vectors
 from listener.rag.search import QueryVector, SignatureCache
 from listener.store import Store
-from listener.store.jobs import ACTIVE, _kinds
+from listener.store.jobs import ACTIVE, kinds_clause
 from listener.store.rag import ChunkMeta, SearchFilters
 from listener.store.segments import SegmentInsert
 from tests.test_rag_index import MODEL, _meeting, _people, _pipeline_job, _ready
@@ -41,8 +41,8 @@ def fresh_caches():
 def _old_list_jobs(store: Store, limit: int = 50, *, kinds: Iterable[str] | None = None, exclude_kinds: Iterable[str] | None = None,
                    statuses: Iterable[str] | None = None) -> list[int]:
     """A consulta de antes da F5.18 (um `ORDER BY` por expressão sobre a tabela inteira), guardada aqui como referência."""
-    clause, params = _kinds(kinds)
-    not_clause, not_params = _kinds(exclude_kinds, negate=True)
+    clause, params = kinds_clause(kinds)
+    not_clause, not_params = kinds_clause(exclude_kinds, negate=True)
     wanted = tuple(str(x) for x in statuses) if statuses is not None else ()
     status_clause = f" AND status IN ({','.join('?' * len(wanted))})" if wanted else ""
     rows = store._q(f"SELECT id FROM processing_jobs WHERE 1 = 1{clause}{not_clause}{status_clause} "  # noqa: S608

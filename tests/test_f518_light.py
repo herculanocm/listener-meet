@@ -143,3 +143,31 @@ def test_idle_light_worker_releases_the_e5_session_and_leaves_when_the_schema_mo
     applog.flush()                                                                      # o log do leve grava em thread
     text = (tmp_path / "logs" / "listener-llm.log").read_text(encoding="utf-8")
     assert "encerrando (o app migra com o leve fora)" in text and "sessão solta depois de 2 min sem uso" in text
+
+
+class CancelDuringGroupFake(FakeProvider):
+    """Pede o cancelamento do job de dentro da primeira chamada da LLM: o grupo termina, os blocos do `revise` que ainda não
+    saíram não chamam a rede, e o `acheckpoint` do fim do grupo fecha o job como `cancelado` (R-01 da revisão do lote 4)."""
+
+    def __init__(self, store: Store):
+        super().__init__()
+        self.store = store
+        self.calls: list[str] = []
+
+    async def complete(self, req: Request) -> Any:
+        self.calls.append(str(req.task))
+        if len(self.calls) == 1:
+            job = next(j for j in self.store.jobs.active() if str(j["kind"]) == str(JobKind.LLM))
+            self.store.jobs.request_cancel(int(job["id"]))
+        return await super().complete(req)
+
+
+def test_cancel_requested_during_the_group_closes_the_job_as_cancelled_and_skips_the_revise_blocks(platform, store):
+    mid = _ready_meeting(platform, store)
+    store.set_setting("llm.max_parallel", 1)                                                # uma chamada por vez
+    fake = CancelDuringGroupFake(store)
+    runner, status, _ = _run_llm(store, fake)
+    assert status == JobStatus.CANCELLED and runner.status == JobStatus.CANCELLED
+    assert str(JobStatus.CANCELLED) == str(store.jobs.get(runner.job_id)["status"])
+    assert str(LlmTask.REVISE) not in fake.calls                                            # os blocos viram o pedido e não saíram
+    assert not any(s["text_llm"] for s in store.segments.list_segments(mid))

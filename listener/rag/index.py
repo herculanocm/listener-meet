@@ -194,10 +194,10 @@ def sync_text(store: Store, meeting_id: int) -> SyncResult:
     attempt = 0
     while True:
         attempt += 1
-        data = gather(store, meeting_id)
+        job_id = store.segments.current_job_id(meeting_id)     # antes do `gather` (R-02 do lote 4): um reprocessamento que
+        data = gather(store, meeting_id)                       # conclua entre os dois cai na releitura da transação
         if data is None:
             return SyncResult()
-        job_id = store.segments.current_job_id(meeting_id)
         built = chunker.build_chunks(data)
         with store.transaction():
             if attempt < SYNC_ATTEMPTS and store.segments.current_job_id(meeting_id) != job_id:

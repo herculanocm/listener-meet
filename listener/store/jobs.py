@@ -25,7 +25,7 @@ from ..log import get_logger
 from ..model import JobKind, JobStatus, JobStep
 from .core import Core, _now, json_default
 from .floors import JOBS, next_id_sql
-from .jobs_sql import NOT_BEFORE_SQL, SWEEP_LAST_SQL, _after, _before, _kinds, _params
+from .jobs_sql import NOT_BEFORE_SQL, SWEEP_LAST_SQL, iso_after, iso_before, kinds_clause, parse_params
 
 log = get_logger("store.jobs")
 
@@ -106,8 +106,8 @@ class JobsRepo:
         `UNION ALL` com a coluna de grupo e a chave de ordem e ordenados por fora (a ordem de um `UNION ALL` sem `ORDER BY` é
         da implementação): o `ORDER BY` por expressão varria e ordenava a tabela inteira (43 ms com 48 mil jobs); os mesmos
         ids, na mesma ordem."""
-        clause, params = _kinds(kinds)
-        not_clause, not_params = _kinds(exclude_kinds, negate=True)
+        clause, params = kinds_clause(kinds)
+        not_clause, not_params = kinds_clause(exclude_kinds, negate=True)
         wanted = tuple(str(x) for x in statuses) if statuses is not None else ()
         status_clause = f" AND status IN ({','.join('?' * len(wanted))})" if wanted else ""
         where, marks = f"{clause}{not_clause}{status_clause}", ",".join("?" * len(ACTIVE))
@@ -139,17 +139,17 @@ class JobsRepo:
                 if force:
                     params["force"] = True
                 if delay_s is not None and delay_s > 0:
-                    params["not_before"] = _after(now, delay_s)
+                    params["not_before"] = iso_after(now, delay_s)
                 payload = json.dumps(params, ensure_ascii=False)
                 new = c.execute(f"INSERT INTO processing_jobs(id, meeting_id, kind, status, params_json, created_at) VALUES "  # noqa: S608
                                 f"({next_id_sql(JOBS[0])}, ?, ?, ?, ?, ?) RETURNING id",
                                 (JOBS[1], meeting_id, JobKind.INDEX, JobStatus.PENDING, payload, now)).fetchone()
                 return int(new[0])
-            data = _params(row["params_json"])
+            data = parse_params(row["params_json"])
             before = dict(data)
             if delay_s is not None:
                 if delay_s > 0:
-                    data["not_before"] = _after(now, delay_s)
+                    data["not_before"] = iso_after(now, delay_s)
                 else:
                     data.pop("not_before", None)
             if force:
@@ -171,7 +171,7 @@ class JobsRepo:
 
     def delayed(self, kinds: Iterable[JobKind | str] | None = None, now: str | None = None) -> int:
         """Pendentes da classe que ainda esperam o "não antes de": o worker leve não sai ocioso enquanto houver um (R5-07)."""
-        clause, params = _kinds(kinds)
+        clause, params = kinds_clause(kinds)
         return int(self.core.q(f"SELECT COUNT(*) FROM processing_jobs WHERE status = ?{clause} AND {NOT_BEFORE_SQL} > julianday(?)",  # noqa: S608
                                (JobStatus.PENDING, *params, now or _now()))[0][0])
 
@@ -224,7 +224,7 @@ class JobsRepo:
     def active(self, kinds: Iterable[JobKind | str] | None = None, *, due_only: bool = False, now: str | None = None) -> list[JobRow]:
         """Pendentes, rodando e pausados da classe; `due_only` deixa de fora os que esperam o "não antes de" (R5-07: o app
         não lança um worker só para esperar a edição assentar)."""
-        clause, params = _kinds(kinds)
+        clause, params = kinds_clause(kinds)
         due = f" AND NOT COALESCE({NOT_BEFORE_SQL} > julianday(?), 0)" if due_only else ""
         rows = self.core.q(f"SELECT * FROM processing_jobs WHERE status IN (?, ?, ?){clause}{due} ORDER BY id",  # noqa: S608
                            (*ACTIVE, *params, *((now or _now(),) if due_only else ())))
@@ -235,13 +235,13 @@ class JobsRepo:
         return [cast(JobRow, dict(r)) for r in rows]
 
     def has_pending(self, kinds: Iterable[JobKind | str] | None = None) -> bool:
-        clause, params = _kinds(kinds)
+        clause, params = kinds_clause(kinds)
         return bool(self.core.q(f"SELECT 1 FROM processing_jobs WHERE status = ?{clause} LIMIT 1", (JobStatus.PENDING, *params)))  # noqa: S608
 
     def held_fresh(self, now: str | None = None, stale_s: float = STALE_S, kinds: Iterable[JobKind | str] | None = None) -> list[JobRow]:
         """Jobs `rodando` ou `pausado` com heartbeat recente: há um worker vivo (da classe pedida, ou de qualquer uma)."""
-        limit = _before(now or _now(), stale_s)
-        clause, params = _kinds(kinds)
+        limit = iso_before(now or _now(), stale_s)
+        clause, params = kinds_clause(kinds)
         rows = self.core.q(f"SELECT * FROM processing_jobs WHERE status IN (?, ?) AND heartbeat_at IS NOT NULL "  # noqa: S608
                            f"AND julianday(heartbeat_at) >= julianday(?){clause} ORDER BY id", (*HELD, limit, *params))
         return [cast(JobRow, dict(r)) for r in rows]
@@ -251,7 +251,7 @@ class JobsRepo:
         skip = {str(k) for k in exclude_kinds or ()}
         active = [j for j in self.active() if str(j.get("kind")) not in skip]
         running = next((j for j in active if j["status"] in HELD), None)
-        clause, params = _kinds(exclude_kinds, negate=True)
+        clause, params = kinds_clause(exclude_kinds, negate=True)
         errors = self.core.q(f"SELECT COUNT(*) FROM processing_jobs WHERE status = ?{clause}", (JobStatus.ERROR, *params))[0][0]  # noqa: S608
         return {"active": len(active), "pending": sum(1 for j in active if j["status"] == JobStatus.PENDING),
                 "running": running, "errors": int(errors)}
@@ -265,8 +265,8 @@ class JobsRepo:
         tentativas valem para todas as classes. F5.18 (PF-20): `config_json` pode ser uma função, chamada dentro da transação
         só quando há um pendente da classe já devido (o snapshot do leve monta o `LlmJobConfig` inteiro, e saía a cada 2 s)."""
         now = now or _now()
-        limit = _before(now, stale_s)
-        clause, params = _kinds(kinds)
+        limit = iso_before(now, stale_s)
+        clause, params = kinds_clause(kinds)
         with self.core.transaction() as c:
             for r in c.execute("SELECT id, kind, worker_pid, heartbeat_at, attempts FROM processing_jobs WHERE status IN (?, ?) "
                                "AND (heartbeat_at IS NULL OR julianday(heartbeat_at) < julianday(?))", (*HELD, limit)).fetchall():

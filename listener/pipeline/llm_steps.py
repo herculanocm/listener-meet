@@ -542,13 +542,16 @@ class LlmJobRunner(BaseJobRunner):
                 await provider.aclose()
 
     async def _run_group(self, steps: list[JobStep]) -> None:
-        """As tarefas juntas num `TaskGroup` (cada chamada sob o semáforo `llm.max_parallel`), com um `acheckpoint` antes."""
+        """As tarefas juntas num `TaskGroup` (cada chamada sob o semáforo `llm.max_parallel`), com um `acheckpoint` antes e
+        outro depois (R-01 do lote 4): o cancelamento ou a pausa pedidos durante o grupo valem ao fim dele, nunca de dentro do
+        `TaskGroup`, onde a exceção viraria `ExceptionGroup` e o job fecharia como erro com tentativa contada."""
         if not steps:
             return
         await self.acheckpoint()
         async with asyncio.TaskGroup() as tg:
             for s in steps:
                 tg.create_task(self._run_step(s, check=False))
+        await self.acheckpoint()
 
     async def _run_step(self, step: JobStep, check: bool = True) -> None:
         if check:
@@ -899,6 +902,9 @@ class LlmJobRunner(BaseJobRunner):
         results: dict[int, list[tuple[int, str]]] = {}
 
         async def one(bi: int, block: list[Line]) -> None:
+            if self.store.jobs.cancel_requested(self.job_id):   # R-01 do lote 4: os blocos que ainda não saíram não chamam a rede
+                results[bi] = []                                 # o `acheckpoint` do fim do grupo fecha o job como `cancelado`
+                return
             first, last = index[block[0].segment_id], index[block[-1].segment_id]
             before = todo[max(0, first - REVISE_CONTEXT):first]
             after = todo[last + 1:last + 1 + REVISE_CONTEXT]
