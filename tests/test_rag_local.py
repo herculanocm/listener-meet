@@ -79,7 +79,8 @@ def test_fill_vectors_with_the_local_goes_in_small_batches_one_at_a_time_and_fre
     assert [c["strategy"] for c in calls] == ["batch:8"] * 5 + ["batch:1"] and {c["cost_usd"] for c in calls} == {0.0}
     assert {(c["provider"], c["model"]) for c in calls} == {("local", "multilingual-e5-small")} and calls[0]["input_tokens"] > 0
     assert local.f.session is not None and len(local.f.session.feeds) == 6 and local.f.sessions[0][1] == 1   # uma sessão, 1 thread
-    assert local.f.tokenizer is not None and local.f.tokenizer.batches[0][0].startswith("passage: Comitê do fundo")
+    first = local.f.tokenizer.batches[0][0] if local.f.tokenizer is not None else ""
+    assert first.startswith("passage: ") and "Bia: Fala 0" in first and "Comitê do fundo" not in first   # PF-29: sem o título
     assert [tuple(r) for r in store._q("SELECT DISTINCT model, dim FROM rag_vectors")] == [(KEY, 384)]
     assert store.rag.get_model(KEY) is not None and store.rag.get_model(KEY)["mu"].shape == (384,)
 
