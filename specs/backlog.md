@@ -13,9 +13,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   bandeja própria, como chat, fora do widget, com minimizar e fechar; a janela Ao vivo ganhou a mesma lista (uma
   legenda nova de 73 para 2 ms com 2.000 falas). Falta o dono: usar numa reunião (Aceite 4, em "Verificar no
   Windows").
-- O `.exe` atual segue o 0.9.0 de 05/11 (`13b8d37`, a F5.16; 524 s, 892 MB, 4.697 arquivos; sonda `--probe` ok); o
-  0.10.0 ainda não foi gerado. Para compartilhar, o `build\exe\listener-meet-0.9.0-win64.zip` (351 MB, a pasta
-  inteira; D-081: `build_exe.py --zip`).
+- O `.exe` atual é o 0.10.0 de 06/11 (`77129ae`, a F5.17; 801 s, 892 MB, 4.700 arquivos; sonda `--probe` ok). Para
+  compartilhar, o `build\exe\listener-meet-0.10.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+  Para o build, o processamento da reunião 23 (job 145) foi parado às 23:30, a pedido do dono: o worker segurava a
+  pasta do `.exe`. Ele volta à fila e retoma da última janela salva quando o app abrir.
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
 
 ## Como retomar (5 minutos)
