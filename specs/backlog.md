@@ -19,8 +19,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `pyannote.py`, `whisper.py`, `worker.py`, `models.py`, `types.py`, `llm_audio.py`, `index_steps.py`,
     `platform/base.py`, `win32/platform.py`, `common/process.py`, `config/defaults.py`, os fakes, os testes ajustados e
     `tests/test_f518_lote1.py`; depois as correções da revisão, `--tudo`, ruff, mypy e o commit.
-  - [ ] sondas do lote 0 (`scripts/probe_perf.py`, `scripts/perf/`) em escrita por outro agente, só com smokes.
-  - [ ] lote 0 medido (M-01 a M-10, replay) fora de gravação, com os números em `decisoes.md` (Medições).
+  - [x] sondas do lote 0 escritas (`scripts/probe_perf.py` e `scripts/perf/`, M-01 a M-10 e o `replay`, com smokes; os
+    JSON vão para `%LOCALAPPDATA%\listener-meet\perf-out`). Sinais dos smokes: pesos do wespeaker iguais nos dois
+    modelos (218/218, cosseno 1,0: o PF-08 entra); o `pack` juntou 4 janelas em 2,9 s contra 16,8 separadas, mas o texto
+    encolheu (atenção no PF-09); sem bilhete de sessão TLS nesta rede (o PF-25 fica adiado).
+  - [ ] lote 0 medido (M-01 a M-10, replay) fora de gravação, com os números em `decisoes.md` (Medições): M-08, M-05 e
+    M-10 rodando primeiro; os de tempo (M-01 a M-04, M-06, M-09) só com a máquina sem agentes testando.
   - [ ] lote 4 (PF-13 a PF-22) em implementação por um terceiro agente, em paralelo (`store/`, `rag/`, `ui/`,
     `log.py`, `pipeline/review.py`, `pipeline/llm_steps.py`, o `_serve` de `pipeline/worker.py`, `llm/local_embed.py`).
   - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
