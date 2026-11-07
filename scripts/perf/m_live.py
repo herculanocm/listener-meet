@@ -38,6 +38,18 @@ def joined(pieces: list[np.ndarray]) -> np.ndarray:
     return np.ascontiguousarray(np.concatenate(parts), dtype=np.float32)
 
 
+def text_chars(whisper: Any, samples: np.ndarray, language: str, prompt: str, timestamps: bool) -> int:
+    """Caracteres transcritos: pelo `WhisperLive` (sem timestamps, como o filho faz hoje) ou pelo modelo com timestamps
+    (`--timestamps`): sem eles o decodificador pode parar na primeira pausa e o faster-whisper pula o resto do passe de 30 s
+    (medido em 07/11: 4 janelas juntas davam o texto de uma só), o que o PF-09 precisa evitar."""
+    if not timestamps:
+        return sum(len(s.text) for s in whisper.transcribe(samples, language=language, prompt=prompt).segments)
+    segments, _info = whisper._model.transcribe(np.ascontiguousarray(samples, dtype=np.float32), language=language, task="transcribe",
+                                                beam_size=1, vad_filter=False, word_timestamps=False, condition_on_previous_text=False,
+                                                without_timestamps=False, temperature=0.0, initial_prompt=prompt or None)
+    return sum(len(s.text) for s in segments)
+
+
 def run_pack(args: Any, report: Report, config: Any, language: str, source: audio.Source, silence_rms: float) -> None:
     from .models import live_prompt, live_whisper
 
@@ -52,9 +64,9 @@ def run_pack(args: Any, report: Report, config: Any, language: str, source: audi
         subset = pieces[:n]
         t0 = time.perf_counter()
         if mode == "separate":
-            chars = sum(len(s.text) for p in subset for s in whisper.transcribe(p, language=language, prompt=prompt).segments)
+            chars = sum(text_chars(whisper, p, language, prompt, args.timestamps) for p in subset)
         else:
-            chars = sum(len(s.text) for s in whisper.transcribe(joined(subset), language=language, prompt=prompt).segments)
+            chars = text_chars(whisper, joined(subset), language, prompt, args.timestamps)
         wall = time.perf_counter() - t0
         label = f"n{n}_{mode}"
         walls.setdefault(label, []).append(round(wall, 3))

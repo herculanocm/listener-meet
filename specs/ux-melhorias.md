@@ -163,6 +163,6 @@ Tamanho-alvo: 3 KB.
 | U-144 | Clique direito numa fala: criar marcador neste instante e copiar | Bandeja | implementada (F5.17, 06/11) |
 | U-145 | A bandeja fora da captura de tela, como os avisos | Bandeja | implementada (F5.17, 06/11) |
 | U-146 | Encostada no widget, a bandeja nasce acima dele e o acompanha; arrastada, fica solta e lembrada | Bandeja | implementada (F5.17, 06/11) |
-| U-147 | Legenda agrupada sob atraso: com a fila do ao vivo atrasada, uma legenda cobre até 25 s de fala do mesmo canal; sem atraso, nada muda | Bandeja, Ao vivo | aprovada (F5.18, D-096) |
+| U-147 | Legenda agrupada sob atraso: com a fila do ao vivo atrasada, uma legenda cobre até 25 s de fala do mesmo canal; sem atraso, nada muda | Bandeja, Ao vivo | vetada pela medida (M-06, 07/11: o passe junto perde fala; D-097) |
 | U-148 | Transcrição com layout incremental: a lista das falas aparece e responde na hora; a barra de rolagem cresce nas primeiras frações de segundo | Reunião | aprovada (F5.18, D-096) |
 | U-149 | Cursor do player a 50 ms, extrapolado entre blocos (hoje salta a cada 250 ms e fica 8 a 118 ms atrás do som) | Player | aprovada (F5.18, D-096) |

@@ -35,15 +35,17 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     limpos (commit `3462394`); revisão do diff aplicada (R-01: o `acheckpoint` depois de cada grupo e o `cancel_requested`
     antes de cada bloco do `revise`, com teste; R-02: o `job_id` lido antes do `gather`; R-03 aceito: a dica de tempo dos
     jobs antigos conta pelo maior; os nomes de `jobs_sql.py` sem sublinhado).
-  - [ ] lote 0, fase B medida na reunião 22 (07/11; a registrar em `decisoes.md`): M-02 embeddings 273 de 293 s (93 % da
-    diarização; segmentação 19,6 s); M-07 343 ms por janela de 5 s; M-06 quatro janelas juntas 3,6 s contra 14,5 s
-    separadas, mas o texto encolhe sem timestamps (o PF-09 precisa transcrever com timestamps: rerodando); M-09 pragmas
-    −21 % na carga das assinaturas e −13 % no FTS onipresente (o PF-26 entra com `cache_size` e `mmap_size`); M-04
-    filho em NORMAL de 17,2 para 10,2 s por janela sob carga (IDLE na carga não muda mais; heartbeat máximo 1,0 s); M-03
-    o lote 4 do Whisper deu +4 % de tempo e Δ p95 de 400 ms (a sonda morreu na variante só com glossário; o lote 8
-    rerodando): o PF-05 tende a não entrar. Depois: lotes 2 e 3 em paralelo, lote 5, M-01 (~3 h) no fim.
-  - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
-    docs, D-097, versão 0.11.0, `.exe` e zip.
+  - [x] lote 0, fases B e C medidas na reunião 22 (07/11, em `decisoes.md`): M-02 embeddings 93 % da diarização (o PF-04
+    é a alavanca); M-07 343 ms por janela (o PF-10 vale); M-06 o passe junto perde fala mesmo com timestamps (o PF-09 e a
+    U-147 não entram); M-09 pragmas −21 % na carga das assinaturas (o PF-26 entra com `cache_size` e `mmap_size`); M-04
+    o filho em NORMAL cai de 17,2 para 10,2 s sob carga, sem heartbeat esfomeado; M-03 o Whisper em lote sem ganho (+4 %)
+    e fora do Aceite 4, com a sonda caindo no lote 8 (o PF-05 não entra, sem a configuração). Falta só o M-01 (~3 h), no
+    fim, que só muda o padrão das threads se mostrar outra regra. `capture/echo.py` (a regra do eco, pura, partilhada
+    pelo PF-07 e pelo ao vivo) já commitado com teste. Uma suíte travada de 14:32 ficou viva com 4 workers até 15:40 e
+    pesou nas rodadas da fase C (foi encerrada).
+  - [ ] lotes 2 (PF-04, PF-07, a limpeza do id do modelo no PF-08; sem PF-05) e 3 (PF-10, PF-11 e o eco partilhado; sem
+    PF-09) em implementação por dois agentes em paralelo, arquivos disjuntos (`pipeline/` e `capture/` contra `live/`).
+  - [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip · [ ] M-01 no fim.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
