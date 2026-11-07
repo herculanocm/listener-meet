@@ -295,6 +295,32 @@ def test_a_filtered_window_logs_the_metrics_never_the_speech(store, caplog):
     assert "sem legenda" in caplog.text and "[(22, 0.01, -0.2, 1.1)]" in caplog.text and "assistir" not in caplog.text
 
 
+def test_a_slow_caption_insert_is_logged_without_the_text(store, caplog, monkeypatch):
+    """PF-28: gravar a legenda acima de 100 ms (a cauda do `busy_timeout` de 5 s do banco) vai ao log com o canal, o início e
+    os ms, nunca com o texto; abaixo disso, nenhuma linha."""
+    mid = store.create_meeting("banco lento", None, None, None)
+    now = [1000.0]
+    session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), store, mid, FakeEngines(), clock=lambda: now[0])
+    session.hello = pr.Hello(1000.0, names=False)
+    session.transcriber = FakeTranscriber("small", itertools.count(1), texts=["segredo da reunião", "outra fala"])
+    real_insert, delays = store.captions.insert, iter([0.15, 0.02])
+
+    def slow_insert(row):
+        now[0] += next(delays)                                   # o relógio da sessão anda dentro do insert
+        return real_insert(row)
+
+    monkeypatch.setattr(store.captions, "insert", slow_insert)
+    session.queue.put(proc.LiveWindow("R", 0, 32000, 2 * SR, tone(2.0)))
+    session.queue.put(proc.LiveWindow("L", 32000, 64000, 2 * SR, tone(2.0)))
+    session.queue.close()
+    with caplog.at_level(logging.WARNING, logger="listener.live"):
+        session._loop()
+    slow = [r.getMessage() for r in caplog.records if "para gravar" in r.getMessage()]
+    assert slow == [f"reunião {mid}: legenda R 0 ms levou 150 ms para gravar"]
+    assert "segredo" not in caplog.text and "outra fala" not in caplog.text
+    assert session.stats.captions == 2 and session.stats.db_errors == 0
+
+
 def test_after_eof_only_a_window_that_fits_the_deadline_starts(store):
     """Revisão do L0 a L3: depois do EOF, uma janela só começa se couber no prazo (média do custo por janela); o resto é
     pulado e o `bye` sai antes de o app matar o processo."""

@@ -15,7 +15,9 @@ detecção; o automático dobrava o custo do `small`, 25/10). Degradação (máq
 fim da janela até o fim da transcrição): acima de 20 s por 30 s troca `small` por `base`; persistindo mais 30 s, pula as janelas
 pendentes menos a mais nova de cada canal; nunca volta sozinho. EOF: fecha as janelas em curso, transcreve a fila enquanto a próxima
 janela couber no prazo do `hello` (pela média do custo por janela), grava `live_stopped`, emite `bye` e sai com 0.
-`LISTENER_LIVE=fake` usa `tests/fake_live.py` (sem ML).
+F5.18 (lote 3): o embedding do nome começa na thread `live-embed` antes do Whisper e é lido depois (PF-10); o Whisper recebe
+`max_new_tokens` pela duração da janela e pelos tokens do prompt (PF-11, `pacing.py`). `LISTENER_LIVE=fake` usa
+`tests/fake_live.py` (sem ML).
 
 Nomes (F4 item 5, só com "nomes ao vivo"): o `PyannoteEmbedder` da F2 (torch com uma thread, importado só aqui e antes do
 Whisper) carrega numa thread própria enquanto as legendas já saem; cada janela de R (e de L na sala presencial) vira um
@@ -48,6 +50,7 @@ import time
 import unicodedata
 from collections import deque
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -57,8 +60,8 @@ from typing import Any, BinaryIO, Protocol
 
 import numpy as np
 
-from ..capture.align import estimate_offset
 from ..capture.audio import StreamResampler
+from ..capture.echo import echo_verdict
 from ..config import bootstrap
 from ..config.defaults import HF_PROVIDER_ID, LIVE_MODELS, SPECS
 from ..config.language import meeting_language, whisper_code
@@ -72,6 +75,7 @@ from ..store.core import MAIN_FILE
 from ..store.meetings import MeetingRow
 from .client import DEGRADE_MODEL, CpuMeter, is_fake, live_models_dir, whisper_model_dir
 from .names import PARTICIPANT, ChannelNamer, match_one, person_label
+from .pacing import PromptTokens, token_budget
 from .protocol import (BYE, CAPTION, CPU, ERROR, READY, STATE, STATS, AudioFrame, ControlFrame, FrameReader, Hello, ProtocolError,
                        encode_line)
 from .vad import FRAME, SAMPLE_RATE, Segmenter, SegmenterConfig, SileroStream, Vad, WindowSpan, silero_session
@@ -99,8 +103,7 @@ DEGRADE_HOLD_S = 30.0
 STALL_S = 2.0                    # canal com janela aberta e sem quadros enquanto o outro anda: o trecho vira silêncio
 SILENCE_FILL_MS = 1500           # zeros guardados de um silêncio marcado (o bastante para fechar a janela aberta)
 HISTORY_S = 12.0                 # áudio recente de cada canal para conferir o eco de uma janela do outro
-ECHO_FRAME_MS = 100              # quadros da conferência de fala própria (L com sinal, R em silêncio)
-ECHO_OWN_SPEECH_MS = 500         # tanta fala própria numa janela de L e ela nunca é tratada como eco
+SLOW_INSERT_MS = 100.0           # PF-28: gravar a legenda acima disto (a cauda do `busy_timeout` de 5 s) vai ao log, sem o texto
 CPU_INTERVAL_S = 10.0
 QUEUE_POLL_S = 0.2
 TX_GUESS_S = 4.0                 # custo de uma janela antes da primeira medida (`small` int8 no Xeon de 2,1 GHz: 3,6 s)
@@ -121,6 +124,7 @@ class Transcript:
     segments: tuple[Segment, ...]
     language: str | None = None
     language_prob: float = 0.0
+    capped: bool = False         # a decodificação bateu em `max_new_tokens` (PF-11): `stats.capped`
 
 
 class Transcriber(Protocol):
@@ -154,25 +158,31 @@ class NamesUnavailableError(RuntimeError):
 
 
 class WhisperLive:
-    """faster-whisper int8 por janela (F4 item 4): um só modelo carregado, `cpu_threads = live.threads`, `num_workers=1`."""
+    """faster-whisper int8 por janela (F4 item 4): um só modelo carregado, `cpu_threads = live.threads`, `num_workers=1`;
+    `engine` já construído (um dublê nos testes) dispensa a carga."""
 
-    def __init__(self, path: Path, model: str, threads: int):
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError as e:
-            raise LiveError(f"instale o extra: pip install -e .[pipeline] ({e})") from e
+    def __init__(self, path: Path, model: str, threads: int, engine: Any = None):
+        if engine is None:
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError as e:
+                raise LiveError(f"instale o extra: pip install -e .[pipeline] ({e})") from e
+            engine = WhisperModel(str(path), device="cpu", compute_type="int8", cpu_threads=max(1, int(threads)), num_workers=1)
         self.model = model
         self.name = f"faster-whisper:{model}:int8"
-        self._model = WhisperModel(str(path), device="cpu", compute_type="int8", cpu_threads=max(1, int(threads)), num_workers=1)
+        self._model = engine
+        self._tokens = PromptTokens.from_hf(getattr(engine, "hf_tokenizer", None))    # PF-11: a conta dos tokens do prompt
 
     def transcribe(self, samples: np.ndarray, *, language: str | None, prompt: str) -> Transcript:
+        budget = token_budget(len(samples) / SAMPLE_RATE, self._tokens(prompt))              # PF-11: corta o laço de alucinação
         segments, info = self._model.transcribe(
             np.ascontiguousarray(samples, dtype=np.float32), language=language, task="transcribe", beam_size=1, vad_filter=False,
             word_timestamps=False, condition_on_previous_text=False, without_timestamps=True, temperature=0.0,
-            initial_prompt=prompt or None)
-        segs = tuple(Segment(str(s.text), float(s.no_speech_prob), float(s.avg_logprob), float(s.compression_ratio))
-                     for s in segments)                                          # o gerador só roda aqui
-        return Transcript(segs, getattr(info, "language", None), float(getattr(info, "language_probability", 0.0) or 0.0))
+            initial_prompt=prompt or None, max_new_tokens=budget)
+        found = list(segments)                                                               # o gerador só roda aqui
+        segs = tuple(Segment(str(s.text), float(s.no_speech_prob), float(s.avg_logprob), float(s.compression_ratio)) for s in found)
+        capped = sum(len(getattr(s, "tokens", ()) or ()) for s in found) >= budget            # a decodificação bateu no teto
+        return Transcript(segs, getattr(info, "language", None), float(getattr(info, "language_probability", 0.0) or 0.0), capped)
 
 
 class PyannoteLive:
@@ -560,6 +570,7 @@ class LiveStats:
     filtered: int = 0            # sem texto depois dos filtros (silêncio, ruído, alucinação)
     skipped: int = 0             # puladas (modo pular e prazo do EOF)
     echo: int = 0                # janelas de L que eram o eco de R (sem headset)
+    capped: int = 0              # janelas em que o teto de tokens (PF-11) cortou a decodificação
     captions: int = 0
     degradations: int = 0
     errors: int = 0
@@ -569,7 +580,7 @@ class LiveStats:
     def as_dict(self, lost_frames: int) -> dict[str, Any]:
         return {"captions": self.captions, "windows": self.windows, "short": self.short, "filtered": self.filtered,
                 "skipped": self.skipped, "echo": self.echo, "degradations": self.degradations, "errors": self.errors,
-                "db_errors": self.db_errors,
+                "db_errors": self.db_errors, "capped": self.capped,
                 "lost_frames": lost_frames, "app_dropped": int(self.app.get("dropped", 0) or 0)}
 
 
@@ -620,6 +631,7 @@ class LiveSession:
         self.names_error = ""
         self.names_sync = names_sync              # testes: carrega o embedder antes da primeira legenda
         self._names_thread: threading.Thread | None = None
+        self._embed_pool: ThreadPoolExecutor | None = None       # PF-10: a thread `live-embed`, viva só durante o `_loop`
 
     # ---- ciclo
     def run(self) -> int:
@@ -660,7 +672,15 @@ class LiveSession:
         self.out.emit({"type": READY, "model": model, "names": self.hello.names, "pid": os.getpid()})
         if embedder is not None:
             self._start_names(embedder)
-        self._loop()
+        self._embed_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-embed")
+        try:
+            self._loop()
+        finally:
+            self._embed_pool.shutdown(wait=False)         # PF-10: sem esperar um embedding em curso; a saída do processo o recolhe
+        return self._finish()
+
+    def _finish(self) -> int:
+        """O fim da sessão: espera a leitura, grava `live_stopped` com o resumo e emite `bye`."""
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         lost = sum(s.lost_frames for s in self.streams.values())
@@ -771,31 +791,19 @@ class LiveSession:
         self.queue.put(w)
 
     def _is_echo(self, w: LiveWindow) -> bool:
-        """A janela de L é o som de R vazando no microfone (sem headset): correlação cruzada >= `capture.echo_corr_min` e
-        nenhuma fala própria (L com sinal onde R está em silêncio por 0,5 s ou mais)."""
+        """L é o eco de R (sem headset): a regra pura de `capture/echo.py` (PF-07, partilhada com o pesado) sobre o R do mesmo trecho."""
         other = self.streams.get("R")
         if other is None or not other.started or self.echo_corr_min <= 0:
             return False
-        r = other.history(w.start, w.end)
-        if not np.any(r):
-            return False
-        frame = ECHO_FRAME_MS * SAMPLE_RATE // 1000
-        n = min(len(w.samples), len(r)) // frame
-        if n:
-            l_rms = np.sqrt(np.mean(np.square(w.samples[:n * frame].reshape(n, frame)), axis=1))
-            r_rms = np.sqrt(np.mean(np.square(r[:n * frame].reshape(n, frame)), axis=1))
-            own = int(np.count_nonzero((l_rms > self.silence_rms) & (r_rms <= self.silence_rms)))
-            if own * ECHO_FRAME_MS >= ECHO_OWN_SPEECH_MS:
-                return False
         try:
-            res = estimate_offset(w.samples, r, SAMPLE_RATE)
+            verdict = echo_verdict(w.samples, other.history(w.start, w.end), SAMPLE_RATE, self.echo_corr_min, self.silence_rms)
         except Exception as e:
             log.debug("eco não conferido: %s", e)
             return False
-        if res is None or res["correlation"] < self.echo_corr_min:
+        if not verdict.echo:
             return False
         log.info("reunião %s: janela L %d-%d ms descartada como eco de R (correlação %.2f)", self.meeting_id, w.start_ms, w.end_ms,
-                 res["correlation"])
+                 verdict.correlation)
         return True
 
     def _stall_guard(self, fed: ChannelStream) -> list[LiveWindow]:
@@ -876,53 +884,83 @@ class LiveSession:
             self.stats.skipped += 1
             return
         prompt = build_prompt(self.terms, self.previous.get(job.channel, ""))
+        future = self._submit_embedding(job)                     # PF-10: o nome começa antes do Whisper
         try:
-            result = transcriber.transcribe(job.samples, language=self.language, prompt=prompt)
+            result: Transcript | None = transcriber.transcribe(job.samples, language=self.language, prompt=prompt)
         except Exception:
             self.stats.errors += 1
             log.exception("reunião %s: transcrição da janela %s %d-%d ms falhou", self.meeting_id, job.channel, job.start_ms, job.end_ms)
-            return
-        text = caption_text(result)
+            result = None
+        text = caption_text(result) if result is not None else ""
+        if result is not None:
+            self.stats.capped += result.capped                   # o teto de tokens (PF-11) cortou a janela
         if not text:
-            self.stats.filtered += 1
-            log.debug("janela %s %d-%d ms sem legenda (caracteres, no_speech, logprob, compressão; o texto não, D-056): %s",
-                      job.channel, job.start_ms, job.end_ms,
-                      [(len(sg.text.strip()), round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
-                       for sg in result.segments])
+            if result is not None:
+                self.stats.filtered += 1
+                log.debug("janela %s %d-%d ms sem legenda (caracteres, no_speech, logprob, compressão; o texto não, D-056): %s",
+                          job.channel, job.start_ms, job.end_ms,
+                          [(len(sg.text.strip()), round(sg.no_speech_prob, 2), round(sg.avg_logprob, 2), round(sg.compression_ratio, 2))
+                           for sg in result.segments])
+            if future is not None:
+                self._vector(job, future.result)                 # já calculado (filtrada ou falhada): recolhido, sem nome
             return
-        person_id, label, confidence = self._name(job)
+        person_id, label, confidence = self._name(job, future)
         latency_ms = round((self.clock() - (self.hello.t0_perf + job.end / SAMPLE_RATE)) * 1000)
         row = CaptionInsert(self.meeting_id, job.channel, job.start_ms, job.end_ms, text, person_id, label, confidence,
                             transcriber.name, latency_ms)
-        caption_id: int | None
-        try:
-            caption_id = self.store.captions.insert(row)
-        except Exception as e:
-            self.stats.db_errors += 1
-            caption_id = None
-            log.warning("reunião %s: legenda não gravada no banco: %s", self.meeting_id, e)
+        caption_id = self._insert_caption(row, job)
         self.stats.captions += 1
         self.previous[job.channel] = text
         self.out.emit({"type": CAPTION, "id": caption_id, "channel": job.channel, "t_start_ms": job.start_ms,
                        "t_end_ms": job.end_ms, "text": text, "person_id": person_id, "label": label, "confidence": confidence,
                        "latency_ms": latency_ms, "model": transcriber.name})
 
-    def _name(self, job: LiveWindow) -> tuple[int | None, str | None, float | None]:
-        """(pessoa, rótulo, cosseno). L sem sala presencial é o usuário (sem embedding); R, e L na sala, passam pelo
-        embedding quando o embedder está pronto; abaixo do limiar (e sem suavização), "Participante"."""
+    def _insert_caption(self, row: CaptionInsert, job: LiveWindow) -> int | None:
+        """Grava a legenda; a falha conta em `db_errors` (ela sai na tela); acima de `SLOW_INSERT_MS`, uma linha sem o texto (PF-28)."""
+        t0 = self.clock()
+        try:
+            caption_id = self.store.captions.insert(row)
+        except Exception as e:
+            self.stats.db_errors += 1
+            log.warning("reunião %s: legenda não gravada no banco: %s", self.meeting_id, e)
+            return None
+        took_ms = (self.clock() - t0) * 1000
+        if took_ms > SLOW_INSERT_MS:
+            log.warning("reunião %s: legenda %s %d ms levou %.0f ms para gravar", self.meeting_id, job.channel, job.start_ms, took_ms)
+        return caption_id
+
+    def _submit_embedding(self, job: LiveWindow) -> Future[np.ndarray] | None:
+        """PF-10: o embedding do nome começa na `live-embed` antes do Whisper (R; L só na sala; embedder pronto); None sem executor."""
+        pool, embedder = self._embed_pool, self.embedder
+        if pool is None or embedder is None or not self.hello.names or (job.channel == "L" and not self.in_room):
+            return None
+        return pool.submit(embedder.embed, job.samples, SAMPLE_RATE)
+
+    def _vector(self, job: LiveWindow, compute: Callable[[], np.ndarray]) -> np.ndarray | None:
+        """O embedding da janela (pedido antes do Whisper ou calculado agora); a falha conta em `stats.errors`: sai sem nome."""
+        try:
+            vec = compute()
+        except Exception:
+            self.stats.errors += 1
+            log.exception("reunião %s: embedding da janela %s %d ms falhou", self.meeting_id, job.channel, job.start_ms)
+            return None
+        return vec
+
+    def _name(self, job: LiveWindow, future: Future[np.ndarray] | None = None) -> tuple[int | None, str | None, float | None]:
+        """(pessoa, rótulo, cosseno). L sem sala presencial é o usuário (sem embedding); R, e L na sala, passam pelo embedding
+        quando o embedder está pronto (o `future` pedido antes do Whisper, PF-10, ou calculado aqui); abaixo do limiar, "Participante"."""
         if not self.hello.names:
             return None, None, None
         if job.channel == "L" and not self.in_room:
             me = self.me
             return (int(me["id"]), person_label(me), None) if me else (None, None, None)
-        embedder = self.embedder
-        if embedder is None:
+        if future is not None:
+            vec = self._vector(job, future.result)
+        elif (embedder := self.embedder) is not None:
+            vec = self._vector(job, lambda: embedder.embed(job.samples, SAMPLE_RATE))
+        else:
             return None, None, None
-        try:
-            vec = embedder.embed(job.samples, SAMPLE_RATE)
-        except Exception:
-            self.stats.errors += 1
-            log.exception("reunião %s: embedding da janela %s %d ms falhou", self.meeting_id, job.channel, job.start_ms)
+        if vec is None:
             return None, None, None
         try:
             match = match_one(vec, self.profiles, self.threshold, self.margin, self.expected_ids)

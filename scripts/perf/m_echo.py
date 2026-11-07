@@ -11,11 +11,11 @@ from typing import Any
 
 import numpy as np
 
+from listener.capture.echo import ECHO_FRAME_MS, ECHO_OWN_SPEECH_MS      # os mesmos do ao vivo e do pesado (PF-07)
+
 from . import audio
 from .common import Report, stats
 
-ECHO_FRAME_MS = 100               # os mesmos de `live/proc.py`
-ECHO_OWN_SPEECH_MS = 500
 SPAN_MS = 60_000                  # decodificação por minuto (um pedaço FLAC de cada canal), cortada em blocos
 
 

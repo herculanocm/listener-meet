@@ -5,6 +5,7 @@ nada grava clusters, segmentos nem perfis."""
 from __future__ import annotations
 
 import io
+import logging
 import sys
 import threading
 import time
@@ -192,6 +193,86 @@ def test_names_load_in_parallel_and_captions_do_not_wait(tmp_path):
         assert session.run() == 0
         labels = [c["label"] for c in w.captions.list_for_meeting(mid)]
     assert labels == [None, "Ana — CFO"] and engines.embedders[0].loaded
+
+
+def _no_embed_thread(timeout: float = 2.0) -> bool:
+    """Depois do `run()`: a thread `live-embed` já saiu (o executor fecha sem esperar; ela acorda e termina em seguida)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(t.name.startswith("live-embed") for t in threading.enumerate()):
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _bye(out: io.BytesIO) -> dict:
+    return [pr.decode_line(line) for line in out.getvalue().splitlines()][-1]
+
+
+def test_the_name_embedding_runs_on_the_live_embed_thread_before_the_transcription_ends(tmp_path):
+    """PF-10: o embedding da janela é pedido antes do Whisper e corre na thread `live-embed` enquanto ele transcreve; a legenda
+    sai com o mesmo nome de antes; L fora da sala não passa pelo embedding; o executor fecha com a sessão."""
+    db, mid, ids = _db(tmp_path)
+    embedded = threading.Event()
+    waits: list[bool] = []
+    engines = FakeEngines(on_embed=embedded.set, before=lambda _n: waits.append(embedded.wait(2.0)))
+    out = io.BytesIO()
+    with Store.open_worker(db) as w:
+        data = _input([("R", tone(1.5, 220)), ("L", tone(1.5, 440)), ("R", tone(1.5, 330))])
+        assert proc.serve(io.BytesIO(data), out, w, mid, engines, clock=lambda: 1010.0, names_sync=True) == 0
+        caps = w.captions.list_for_meeting(mid)
+    assert waits[0] is True                                                      # a 1ª transcrição viu o embedding já começado
+    assert [(c["channel"], c["person_id"], c["label"]) for c in caps] == [("R", ids["ana"], "Ana — CFO"), ("L", ids["me"], "Eu — Gerente"),
+                                                                           ("R", None, "Participante")]
+    assert engines.embedders[0].threads == ["live-embed_0", "live-embed_0"]     # só as duas janelas de R, na thread do executor
+    assert _no_embed_thread()
+    assert _bye(out)["errors"] == 0 and _bye(out)["captions"] == 3
+
+
+def test_without_the_executor_name_computes_the_embedding_on_the_spot(tmp_path):
+    """O caminho sem executor (`_loop` chamado direto, ou `_name` sem future): nada é submetido e o embedding roda na própria
+    thread, com o mesmo resultado."""
+    db, mid, ids = _db(tmp_path)
+    engines = FakeEngines()
+    with Store.open_worker(db) as w:
+        session = proc.LiveSession(io.BytesIO(b""), io.BytesIO(), w, mid, engines)
+        session.hello = pr.Hello(1000.0)
+        embedder = session._prepare_names(w.get_meeting(mid))
+        assert embedder is not None
+        session._load_names(embedder)
+        job = proc.LiveWindow("R", 0, 24000, 24000, tone(1.5, 220))
+        assert session._submit_embedding(job) is None
+        assert session._name(job) == (ids["ana"], "Ana — CFO", pytest.approx(1.0, abs=1e-3))
+    assert engines.embedders[0].threads == [threading.current_thread().name] and session.stats.errors == 0
+
+
+def test_a_filtered_window_computes_the_embedding_but_emits_no_name(tmp_path):
+    """PF-10: a janela que os filtros descartam já pagou o embedding (pedido antes do Whisper); ele é recolhido e nada sai."""
+    db, mid, _ids = _db(tmp_path)
+    engines = FakeEngines(texts=["Obrigado por assistir.", "fala ao vivo"])
+    out = io.BytesIO()
+    with Store.open_worker(db) as w:
+        data = _input([("R", tone(1.5, 220)), ("R", tone(1.5, 220))])
+        assert proc.serve(io.BytesIO(data), out, w, mid, engines, names_sync=True) == 0
+        caps = w.captions.list_for_meeting(mid)
+    assert [(c["label"], c["text"]) for c in caps] == [("Ana — CFO", "fala ao vivo")]
+    assert len(engines.embedders[0].threads) == 2                                 # calculado nas duas janelas, usado numa
+    bye = _bye(out)
+    assert bye["filtered"] == 1 and bye["captions"] == 1 and bye["errors"] == 0 and _no_embed_thread()
+
+
+def test_an_embedding_failure_keeps_the_caption_without_a_name(tmp_path, caplog):
+    db, mid, ids = _db(tmp_path)
+    engines = FakeEngines(fail_embed="o torch não digeriu a janela")
+    out = io.BytesIO()
+    with Store.open_worker(db) as w, caplog.at_level(logging.ERROR, logger="listener.live"):
+        data = _input([("R", tone(1.5, 220)), ("L", tone(1.5, 440))])
+        assert proc.serve(io.BytesIO(data), out, w, mid, engines, names_sync=True) == 0
+        caps = w.captions.list_for_meeting(mid)
+    assert [(c["channel"], c["person_id"], c["label"]) for c in caps] == [("R", None, None), ("L", ids["me"], "Eu — Gerente")]
+    bye = _bye(out)
+    assert bye["errors"] == 1 and bye["captions"] == 2 and _no_embed_thread()
+    assert "embedding da janela R" in caplog.text and "fala ao vivo" not in caplog.text
 
 
 def test_real_engines_explain_why_names_are_unavailable_without_importing_torch(tmp_path, store):

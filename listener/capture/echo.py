@@ -38,12 +38,12 @@ def echo_verdict(l: np.ndarray, r: np.ndarray, sample_rate: int, corr_min: float
         r_rms = np.sqrt(np.mean(np.square(r[:n * frame].reshape(n, frame)), axis=1))
         l_signal = bool(np.any(l_rms > silence_rms))
         own_ms = int(np.count_nonzero((l_rms > silence_rms) & (r_rms <= silence_rms))) * ECHO_FRAME_MS
-    if not len(r) or not np.any(r) or not len(l):
-        return EchoVerdict(l_signal, own_ms, None, None, False)
+    if not len(r) or not np.any(r) or not len(l) or own_ms >= ECHO_OWN_SPEECH_MS or corr_min <= 0:
+        return EchoVerdict(l_signal, own_ms, None, None, False)       # sem a correlação (~11 ms) quando ela não decide
     res = estimate_offset(l, r, int(sample_rate))
     corr = float(res["correlation"]) if res else None
     offset = float(res["offset_ms"]) if res else None
-    if own_ms >= ECHO_OWN_SPEECH_MS or corr is None or corr_min <= 0:
+    if corr is None:
         return EchoVerdict(l_signal, own_ms, corr, offset, False)
     return EchoVerdict(l_signal, own_ms, corr, offset, corr >= corr_min)
 

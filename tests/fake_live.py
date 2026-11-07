@@ -51,13 +51,14 @@ class EnergyVad:
 
 class FakeTranscriber:
     def __init__(self, model: str, counter: Iterator[int], delay_s: float = 0.0, texts: list[str] | None = None,
-                 before: Callable[[int], None] | None = None):
+                 before: Callable[[int], None] | None = None, capped: bool = False):
         self.model = model
         self.name = f"fake:{model}"
         self.counter = counter
         self.delay_s = delay_s
         self.texts = texts                      # roteiro opcional (alucinação, vazio...), consumido em ordem
         self.before = before                    # chamado com o número da chamada (1, 2...) antes de transcrever
+        self.capped = capped                    # toda janela "bate no teto de tokens" (PF-11: `stats.capped`)
         self.calls: list[tuple[int, str | None, str]] = []
 
     def transcribe(self, samples: np.ndarray, *, language: str | None, prompt: str) -> Transcript:
@@ -68,18 +69,23 @@ class FakeTranscriber:
             time.sleep(self.delay_s)
         n = next(self.counter)
         text = self.texts.pop(0) if self.texts else f"fala ao vivo {n}"
-        return Transcript((Segment(text, 0.01, -0.2, 1.1),), "pt", 0.99)
+        return Transcript((Segment(text, 0.01, -0.2, 1.1),), "pt", 0.99, self.capped)
 
 
 class FakeEmbedder(ToneEmbedder):
     """O `ToneEmbedder` da F2 (one-hot suavizado na frequência dominante: 220 Hz no app, 440 Hz no microfone) com a carga
-    do contrato do ao vivo; `fail_load` simula o torch que não carrega."""
+    do contrato do ao vivo; `fail_load` simula o torch que não carrega, `fail_embed` uma janela que ele não digere, e
+    `threads` guarda em que thread cada embedding rodou (PF-10: `live-embed_0`)."""
 
-    def __init__(self, fail_load: str = "", load_event: threading.Event | None = None):
+    def __init__(self, fail_load: str = "", load_event: threading.Event | None = None, fail_embed: str = "",
+                 on_embed: Callable[[], None] | None = None):
         super().__init__()
         self.fail_load = fail_load
         self.load_event = load_event              # a carga espera este evento (testa legendas antes dos nomes)
+        self.fail_embed = fail_embed
+        self.on_embed = on_embed                  # chamado ao começar cada embedding (a ordem contra a transcrição)
         self.loaded = False
+        self.threads: list[str] = []
 
     def load(self) -> None:
         if self.load_event is not None:
@@ -88,19 +94,31 @@ class FakeEmbedder(ToneEmbedder):
             raise RuntimeError(self.fail_load)
         self.loaded = True
 
+    def embed(self, samples: np.ndarray, sample_rate: int) -> np.ndarray:
+        self.threads.append(threading.current_thread().name)
+        if self.on_embed is not None:
+            self.on_embed()
+        if self.fail_embed:
+            raise RuntimeError(self.fail_embed)
+        return super().embed(samples, sample_rate)
+
 
 class FakeEngines:
     """Os motores do filho no modo fake; guarda o que carregou (modelo, threads) e os transcritores criados."""
     name = "fake"
 
     def __init__(self, delay_s: float = 0.0, texts: list[str] | None = None, names_error: str = "", fail_load: str = "",
-                 load_event: threading.Event | None = None, before: Callable[[int], None] | None = None):
+                 load_event: threading.Event | None = None, before: Callable[[int], None] | None = None, fail_embed: str = "",
+                 on_embed: Callable[[], None] | None = None, capped: bool = False):
         self.delay_s = delay_s
         self.texts = texts
         self.before = before
+        self.capped = capped
         self.names_error = names_error            # `NamesUnavailableError` (sem token, sem modelos)
         self.fail_load = fail_load
         self.load_event = load_event
+        self.fail_embed = fail_embed
+        self.on_embed = on_embed
         self.counter = itertools.count(1)
         self.loads: list[tuple[str, int]] = []
         self.transcribers: list[FakeTranscriber] = []
@@ -111,14 +129,14 @@ class FakeEngines:
 
     def transcriber(self, model: str, threads: int) -> FakeTranscriber:
         self.loads.append((model, threads))
-        t = FakeTranscriber(model, self.counter, self.delay_s, self.texts, self.before)
+        t = FakeTranscriber(model, self.counter, self.delay_s, self.texts, self.before, self.capped)
         self.transcribers.append(t)
         return t
 
     def embedder(self, store: Store, threads: int) -> FakeEmbedder:
         if self.names_error:
             raise NamesUnavailableError(self.names_error)
-        e = FakeEmbedder(self.fail_load, self.load_event)
+        e = FakeEmbedder(self.fail_load, self.load_event, self.fail_embed, self.on_embed)
         self.embedders.append(e)
         return e
 
