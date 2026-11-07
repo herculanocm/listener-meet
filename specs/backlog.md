@@ -20,8 +20,10 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     o commit.
   - [ ] sondas do lote 0 (`scripts/probe_perf.py`, `scripts/perf/`) em escrita por outro agente, só com smokes.
   - [ ] lote 0 medido (M-01 a M-10, replay) fora de gravação, com os números em `decisoes.md` (Medições).
-  - [ ] lote 4 (PF-13 a PF-22) · [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26,
-    28, 29) · [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip.
+  - [ ] lote 4 (PF-13 a PF-22) em implementação por um terceiro agente, em paralelo (`store/`, `rag/`, `ui/`,
+    `log.py`, `pipeline/review.py`, `pipeline/llm_steps.py`, o `_serve` de `pipeline/worker.py`, `llm/local_embed.py`).
+  - [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26, 28, 29) · [ ] fechamento:
+    docs, D-097, versão 0.11.0, `.exe` e zip.
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
