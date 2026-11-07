@@ -56,7 +56,7 @@ def test_reindex_estimate_counts_tokens_cost_and_minutes(store):
     chars = 0
     for mid in (a, b):
         date = str(store.get_meeting(mid)["started_at"])[:10]
-        chars += sum(len(chunker.embed_input(str(c["title"]), date, str(c["text"]))) for c in store.rag.list_chunks(mid))
+        chars += sum(len(chunker.embed_input(str(c["kind"]), str(c["title"]), date, str(c["text"]))) for c in store.rag.list_chunks(mid))
     assert (est.model_key, est.ready, est.chunks, est.meetings, est.without_chunks) == (MODEL, True, store.rag.count_chunks(), 2, 0)
     assert est.tokens == math.ceil(chars / 4) and est.cost_usd == round(est.tokens * 0.15 / 1_000_000, 6)    # gemini-embedding-001
     assert (est.batches, est.seconds, est.measured) == (2, 4.0, False)                     # um lote por reunião, 2 s cada

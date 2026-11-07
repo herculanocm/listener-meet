@@ -104,7 +104,7 @@ def test_build_chunks_actions_executive_meeting_and_deterministic_hash():
     assert executive.text == "Resumo executivo curto." and executive.t_start_ms is None and executive.speakers == ""
     assert meeting.text == f"Reunião: Orçamento 2027\nData: 2026-10-25\nParticipantes: {ANA}, {BIA}\nDuração: 1 h 05 min"
     assert meeting.person_ids == (1, 2) and meeting.t_start_ms is None
-    assert chunker.embed_input("Orçamento 2027", "2026-10-25", "corpo") == "Orçamento 2027 · 2026-10-25\ncorpo"
+    assert chunker.embed_input("ata", "Orçamento 2027", "2026-10-25", "corpo") == "Orçamento 2027 · 2026-10-25\ncorpo"
     assert len(chunker.header("t" * 300, "2026-10-25")) == chunker.HEADER_MAX and chunker.header("", "2026-10-25") == "2026-10-25"
     again = chunker.build_chunks(m)
     assert [c.text_hash for c in again] == [c.text_hash for c in chunks]                         # determinístico
@@ -113,7 +113,8 @@ def test_build_chunks_actions_executive_meeting_and_deterministic_hash():
     moved = chunker.build_chunks(shifted)
     assert moved[0].text_hash == chunks[0].text_hash and moved[0].t_start_ms == 1000              # tempo fora do hash
     renamed = chunker.build_chunks(dataclasses.replace(m, title="Outro título"))
-    assert not {c.text_hash for c in renamed} & {c.text_hash for c in chunks}                     # o título entra em todo trecho
+    same = {c.text_hash for c in renamed} & {c.text_hash for c in chunks}                     # o título entra em todo trecho,
+    assert same == {c.text_hash for c in chunks if c.kind == ChunkKind.TRANSCRIPT}            # menos na transcrição (PF-29)
     empty = chunker.build_chunks(MeetingInput("", "2026-10-25", None))
     assert [c.kind for c in empty] == [ChunkKind.MEETING] and "sem título" in empty[0].text and "Duração: —" in empty[0].text
 

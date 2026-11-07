@@ -20,7 +20,7 @@ from typing import Any, NamedTuple, TypedDict, cast
 
 import numpy as np
 
-from ..model import PIPELINE_JOB_KINDS, JobStatus
+from ..model import PIPELINE_JOB_KINDS, ChunkKind, JobStatus
 from .core import Core, _now
 from .rag_signatures import VECTOR_VERSION_KEY, SignatureRows, bump_vector_version, empty_signature_rows, people_csr
 
@@ -73,7 +73,9 @@ class ChunkInsert:
 
 @dataclass(frozen=True, slots=True)
 class ChunkMeta:
-    """O que muda num trecho mantido pelo diff sem mexer no texto (e, portanto, sem tocar o FTS nem os vetores)."""
+    """O que muda num trecho mantido pelo diff sem mexer no texto (e, portanto, sem tocar os vetores). F5.18 (PF-29): `text_hash`
+    é o hash novo de um trecho casado pelo hash legado (a migração no lugar) e `title` o título novo de um trecho de
+    transcrição mantido depois de renomear a reunião (o gatilho refaz só a linha dele no FTS); None = como está."""
     chunk_id: int
     t_start_ms: int | None
     t_end_ms: int | None
@@ -81,6 +83,8 @@ class ChunkMeta:
     seg_last: int | None
     person_ids: tuple[int, ...]
     job_id: int | None
+    text_hash: str | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,11 +187,21 @@ class RagRepo:
         return ids
 
     def update_meta(self, rows: Sequence[ChunkMeta]) -> int:
-        """Tempos, segmentos, pessoas e job novos dos trechos mantidos; o gatilho do FTS só dispara em título, falantes e texto."""
-        self.core.conn().executemany(
-            "UPDATE rag_chunks SET t_start_ms = ?, t_end_ms = ?, seg_first = ?, seg_last = ?, person_ids = ?, job_id = ? WHERE id = ?",
-            [(m.t_start_ms, m.t_end_ms, m.seg_first, m.seg_last, person_ids_json(m.person_ids), m.job_id, m.chunk_id) for m in rows])
-        if rows:
+        """Tempos, segmentos, pessoas e job novos dos trechos mantidos; o gatilho do FTS só dispara em título, falantes e texto.
+        F5.18 (PF-29): o `text_hash` migrado vai numa instrução à parte (fora do gatilho; `rag_vectors` não o guarda) e o título
+        novo noutra, só para os trechos em que mudou (cada `UPDATE OF title` refaz a linha do FTS, mesmo com o valor igual); a
+        versão dos vetores só sobe se as pessoas de algum trecho mudaram (R-03: cada subida relê as assinaturas na busca)."""
+        c = self.core.conn()
+        c.executemany(
+            "UPDATE rag_chunks SET t_start_ms = ?, t_end_ms = ?, seg_first = ?, seg_last = ?, job_id = ? WHERE id = ?",
+            [(m.t_start_ms, m.t_end_ms, m.seg_first, m.seg_last, m.job_id, m.chunk_id) for m in rows])
+        people = c.executemany("UPDATE rag_chunks SET person_ids = ? WHERE id = ? AND person_ids IS NOT ?",
+                               [(person_ids_json(m.person_ids), m.chunk_id, person_ids_json(m.person_ids)) for m in rows])
+        if hashes := [(m.text_hash, m.chunk_id) for m in rows if m.text_hash is not None]:
+            c.executemany("UPDATE rag_chunks SET text_hash = ? WHERE id = ?", hashes)
+        if titles := [(m.title, m.chunk_id) for m in rows if m.title is not None]:
+            c.executemany("UPDATE rag_chunks SET title = ? WHERE id = ?", titles)
+        if people.rowcount > 0:
             self.bump_version()                      # as pessoas de um trecho mantido mudaram: o filtro de pessoa relê
         return len(rows)
 
@@ -382,12 +396,13 @@ class RagRepo:
 
     def missing_stats(self, model: str) -> list[tuple[int, int, int]]:
         """(reunião, trechos sem vetor do modelo, caracteres da entrada do embedding) por reunião: a estimativa do "reindexar"
-        (L5). A entrada é o cabeçalho "título · AAAA-MM-DD" (até 200 caracteres; sem título, só a data) e o corpo, como
-        `rag.chunker.embed_input`, contada aqui sem ler os textos para o Python."""
+        (L5). A entrada é o cabeçalho "título · AAAA-MM-DD" (até 200 caracteres; sem título, e nos trechos de transcrição desde
+        a F5.18 (PF-29), só a data) e o corpo, como `rag.chunker.embed_input`, contada aqui sem ler os textos para o Python."""
         rows = self.core.q(
-            "SELECT c.meeting_id, COUNT(*), SUM(LENGTH(c.text) + 1 + MIN(CASE WHEN TRIM(COALESCE(c.title, '')) = '' THEN 10 "
-            "ELSE LENGTH(TRIM(c.title)) + 13 END, 200)) FROM rag_chunks c WHERE NOT EXISTS "
-            "(SELECT 1 FROM rag_vectors v WHERE v.chunk_id = c.id AND v.model = ?) GROUP BY c.meeting_id ORDER BY c.meeting_id", (model,))
+            "SELECT c.meeting_id, COUNT(*), SUM(LENGTH(c.text) + 1 + MIN(CASE WHEN c.kind = ? OR TRIM(COALESCE(c.title, '')) = '' "
+            "THEN 10 ELSE LENGTH(TRIM(c.title)) + 13 END, 200)) FROM rag_chunks c WHERE NOT EXISTS "
+            "(SELECT 1 FROM rag_vectors v WHERE v.chunk_id = c.id AND v.model = ?) GROUP BY c.meeting_id ORDER BY c.meeting_id",
+            (str(ChunkKind.TRANSCRIPT), model))
         return [(int(r[0]), int(r[1]), int(r[2] or 0)) for r in rows]
 
     def vector_counts(self, meeting_id: int | None = None) -> dict[str, int]:

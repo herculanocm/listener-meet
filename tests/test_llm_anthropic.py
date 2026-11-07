@@ -249,12 +249,12 @@ def test_the_chat_stream_carries_thinking_and_a_refusal_raises_at_the_end(caplog
 
 
 # ---------------------------------------------------------------- rede: o PEM como contexto TLS (item 9)
-def test_the_pem_becomes_a_tls_context_for_httpx2_only():
+def test_the_pem_becomes_a_tls_context_shared_by_every_client():
     certifi = pytest.importorskip("certifi")
     net = NetworkConfig(proxy_url="http://proxy.local:3128", ca_bundle=certifi.where(), system_certs=False)
     kw = common.httpx2_client_kwargs(net, 30.0)
     assert isinstance(kw["verify"], ssl.SSLContext) and kw["proxy"] == "http://proxy.local:3128" and kw["timeout"] == 30.0
-    assert common.http_client_kwargs(net, 30.0)["verify"] == certifi.where()            # o do Gemini segue com o caminho
+    assert common.http_client_kwargs(net, 30.0)["verify"] is kw["verify"]              # F5.18 (PF-28): o do Gemini, o mesmo contexto
     assert "verify" not in common.httpx2_client_kwargs(NetworkConfig(proxy_url="http://p:1"), 5.0)
 
 

@@ -13,11 +13,12 @@ pelo `text_hash`. Nada de banco nem de rede aqui.
 - `executivo`: o resumo executivo atual, sem tempo. `reuniao`: título, data, participantes e duração, sem tempo.
 
 `text` guarda o corpo; o embedding recebe o cabeçalho ("título · AAAA-MM-DD", até 200 caracteres) mais o corpo
-(`embed_input`). O `text_hash` cobre o que entra no FTS e no embedding: tipo, título, data, falantes e texto. Tempos,
-segmentos, pessoas e job ficam fora: o diff os troca nos trechos mantidos sem perder os vetores (F5A-06)."""
+(`embed_input`). O `text_hash` (`rag.chunk_hash`) cobre o que entra no FTS e no embedding: tipo, título, data, falantes e
+texto. Tempos, segmentos, pessoas e job ficam fora: o diff os troca nos trechos mantidos sem perder os vetores (F5A-06).
+F5.18 (PF-29): nos trechos `transcricao` o título fica fora do hash e do cabeçalho do embedding (só a data): renomear a
+reunião não refaz trechos nem vetores da transcrição; os outros tipos seguem com o título nos dois."""
 from __future__ import annotations
 
-import hashlib
 import re
 from bisect import bisect_right
 from collections.abc import Iterable, Sequence
@@ -25,13 +26,13 @@ from dataclasses import dataclass
 
 from ..llm.render import HEADINGS
 from ..model import ChunkKind
+from .chunk_hash import text_hash
 
 BODY_MAX = 1400                  # caracteres do corpo (e5: 512 tokens com o cabeçalho, F5A-23)
 HEADER_MAX = 200
 TURN_CLOSE_MS = 60_000           # em fim de turno, fecha a partir daqui
 HARD_CLOSE_MS = 120_000          # no meio do turno (entre falas), não passa daqui
 MIN_PIECE = 200                  # uma fala longa nunca vira pedaços menores que isto por causa de um rótulo comprido
-SEP = "\x1f"
 
 SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 STAMP_RE = re.compile(r"\s*\[(?:(\d{1,2}):)?(\d{1,3}):(\d{2})\]\s*$")
@@ -101,13 +102,10 @@ def header(title: str, date: str) -> str:
     return (f"{title} · {date}" if title else date)[:HEADER_MAX]
 
 
-def embed_input(title: str, date: str, text: str) -> str:
-    """O que vai ao modelo de embeddings: cabeçalho e corpo."""
-    return f"{header(title, date)}\n{text}"
-
-
-def text_hash(kind: str, title: str, date: str, speakers: str, text: str) -> str:
-    return hashlib.sha1(SEP.join((str(kind), title, date, speakers, text)).encode("utf-8")).hexdigest()  # noqa: S324
+def embed_input(kind: str, title: str, date: str, text: str) -> str:
+    """O que vai ao modelo de embeddings: cabeçalho e corpo; nos `transcricao`, o cabeçalho é só a data (F5.18, PF-29: o título
+    fora do embedding, como do hash)."""
+    return f"{header('' if str(kind) == ChunkKind.TRANSCRIPT else title, date)}\n{text}"
 
 
 def clean(text: str) -> str:

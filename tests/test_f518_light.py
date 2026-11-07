@@ -152,11 +152,11 @@ class CancelDuringGroupFake(FakeProvider):
     def __init__(self, store: Store):
         super().__init__()
         self.store = store
-        self.calls: list[str] = []
+        self.tasks_seen: list[str] = []
 
     async def complete(self, req: Request) -> Any:
-        self.calls.append(str(req.task))
-        if len(self.calls) == 1:
+        self.tasks_seen.append(str(req.task))
+        if len(self.tasks_seen) == 1:
             job = next(j for j in self.store.jobs.active() if str(j["kind"]) == str(JobKind.LLM))
             self.store.jobs.request_cancel(int(job["id"]))
         return await super().complete(req)
@@ -169,5 +169,5 @@ def test_cancel_requested_during_the_group_closes_the_job_as_cancelled_and_skips
     runner, status, _ = _run_llm(store, fake)
     assert status == JobStatus.CANCELLED and runner.status == JobStatus.CANCELLED
     assert str(JobStatus.CANCELLED) == str(store.jobs.get(runner.job_id)["status"])
-    assert str(LlmTask.REVISE) not in fake.calls                                            # os blocos viram o pedido e não saíram
+    assert str(LlmTask.REVISE) not in fake.tasks_seen                                            # os blocos viram o pedido e não saíram
     assert not any(s["text_llm"] for s in store.segments.list_segments(mid))

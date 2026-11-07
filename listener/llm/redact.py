@@ -17,23 +17,28 @@ class Redactor:
     def __init__(self) -> None:
         self._secrets: set[str] = set()
         self._lock = threading.Lock()
+        self._patterns: tuple[str, ...] | None = None    # F5.18 (PF-28): ordenados uma vez, válidos até o próximo `add`/`clear`
 
     def add(self, *secrets: str | None) -> None:
         with self._lock:
             for s in secrets:
-                if s and len(s) >= MIN_SECRET:
+                if s and len(s) >= MIN_SECRET and s not in self._secrets:
                     self._secrets.add(s)
+                    self._patterns = None
 
     def clear(self) -> None:
         with self._lock:
             self._secrets.clear()
+            self._patterns = None
 
-    def patterns(self) -> list[str]:
+    def patterns(self) -> tuple[str, ...]:
+        """A chave inteira primeiro; o sufixo pega ecos parciais (URL cortada, "...xyz12345"). Calculados uma vez por mudança dos
+        segredos (F5.18, PF-28: eram refeitos, com duas ordenações, a cada registro de log e três vezes por registro com traceback)."""
         with self._lock:
-            out = set(self._secrets)
-        # a chave inteira primeiro; o sufixo pega ecos parciais (URL cortada, "...xyz12345")
-        tails = {s[-TAIL:] for s in out if len(s) > TAIL + 4}
-        return sorted(out, key=len, reverse=True) + sorted(tails, key=len, reverse=True)
+            if self._patterns is None:
+                tails = {s[-TAIL:] for s in self._secrets if len(s) > TAIL + 4}
+                self._patterns = (*sorted(self._secrets, key=len, reverse=True), *sorted(tails, key=len, reverse=True))
+            return self._patterns
 
     def redact(self, text: str | None) -> str:
         if not text:

@@ -41,12 +41,28 @@ def resample(x: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
     return resample_poly(x, sr_to // g, sr_from // g).astype(np.float32, copy=False)
 
 
+@cache
+def poly_fir(up: int, down: int) -> np.ndarray:
+    """O FIR passa-baixa que o `resample_poly` desenha a cada chamada (scipy 1.18, `_signaltools.py`: `firwin` com Kaiser β = 5,
+    `2 * 10 * max(up, down) + 1` coeficientes, corte em `1 / max(up, down)`), desenhado uma vez por par de taxas e em float32,
+    como o scipy o converte para uma entrada float32. Passado em `window=`, o scipy só o copia e multiplica por `up`, nos dois
+    caminhos: a saída é bit a bit a do filtro padrão (F5.18, PF-23; a 44,1 kHz → 16 kHz são 8.821 coeficientes com a função de
+    Bessel do Kaiser: 654 → 89 µs por bloco de 100 ms, medido na sonda do lote 5). Só leitura: partilhado pelas instâncias."""
+    from scipy.signal import firwin
+
+    max_rate = max(int(up), int(down))
+    h = firwin(2 * 10 * max_rate + 1, 1.0 / max_rate, window=("kaiser", 5.0)).astype(np.float32)
+    h.flags.writeable = False
+    return h
+
+
 class StreamResampler:
     """Reamostragem por blocos com estado (overlap-save): a saída é idêntica à do sinal inteiro, sem tique na emenda.
 
     Guarda uma cauda de `tail_frames` amostras de entrada (contexto do filtro) e retém `hold` amostras ainda não
     emitidas (metade do filtro do `resample_poly`); `pending_in` diz quantas amostras de entrada já recebidas ainda
-    não saíram, para quem precisa carimbar o tempo da saída. `flush()` entrega o resto e zera o estado.
+    não saíram, para quem precisa carimbar o tempo da saída. `flush()` entrega o resto e zera o estado. O filtro vem
+    pronto de `poly_fir` (PF-23), em vez de desenhado a cada bloco.
     """
 
     def __init__(self, sr_from: int, sr_to: int, tail_frames: int = 480):
@@ -57,6 +73,7 @@ class StreamResampler:
         half_in = ceil(half / self.up)                             # em amostras de entrada
         self.hold = ceil(half_in / self.down) * self.down          # retenção, múltiplo de `down`
         self.ctx = ceil(max(2 * self.hold, tail_frames) / self.down) * self.down
+        self._h = poly_fir(self.up, self.down) if self.up != self.down else None   # taxas iguais: o scipy devolve a cópia (R-01)
         self._buf = np.zeros(0, np.float32)
         self._rem = np.zeros(0, np.float32)                        # resto menor que `down`
         self._emitted = 0                                          # amostras de `_buf` já emitidas
@@ -77,7 +94,7 @@ class StreamResampler:
             return np.zeros(0, np.float32)
         x = x[:n_ok]
         self._buf = np.concatenate([self._buf, x]) if len(self._buf) else x
-        y = resample_poly(self._buf, self.up, self.down).astype(np.float32, copy=False)
+        y = resample_poly(self._buf, self.up, self.down, window=self._h).astype(np.float32, copy=False)
         k0 = self._emitted * self.up // self.down
         k1 = max(k0, (len(self._buf) - self.hold) * self.up // self.down)
         out = y[k0:k1].copy()
@@ -99,7 +116,7 @@ class StreamResampler:
         self._rem = np.zeros(0, np.float32)
         if not len(self._buf):
             return np.zeros(0, np.float32)
-        y = resample_poly(self._buf, self.up, self.down).astype(np.float32, copy=False)
+        y = resample_poly(self._buf, self.up, self.down, window=self._h).astype(np.float32, copy=False)
         out = y[self._emitted * self.up // self.down:].copy()
         self.reset()
         return out

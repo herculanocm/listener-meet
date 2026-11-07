@@ -390,8 +390,10 @@ def test_error_translation_by_shape():
     assert type(other) is LlmError and not other.retryable and not other.permanent
     assert common.retry_after_s({"retry-after": "abc"}) is None and common.retry_after_s(None) is None
     assert common.looks_too_large("Request Entity Too Large") and not common.looks_too_large("ok")
-    kw = common.http_client_kwargs(NetworkConfig(proxy_url="http://p:3128", ca_bundle="/c.pem"), 30.0)
-    assert kw == {"timeout": 30.0, "trust_env": True, "proxy": "http://p:3128", "verify": "/c.pem"}
+    pem = pytest.importorskip("certifi").where()
+    kw = common.http_client_kwargs(NetworkConfig(proxy_url="http://p:3128", ca_bundle=pem), 30.0)
+    ctx = common.shared_ssl_context(NetworkConfig(proxy_url="http://p:3128", ca_bundle=pem))         # F5.18 (PF-28): o contexto partilhado
+    assert kw == {"timeout": 30.0, "trust_env": True, "proxy": "http://p:3128", "verify": ctx}
     assert not common.needs_own_http_client(NetworkConfig()) and common.needs_own_http_client(NetworkConfig(proxy_url="x"))
 
 

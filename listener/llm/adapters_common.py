@@ -2,11 +2,13 @@
 cliente HTTP (proxy, certificado, timeout), tradução de erros por forma (código HTTP, nome da classe, cabeçalho
 `Retry-After`, texto de "request too large") e o canário do "testar conexão" (um JSON mínimo com esquema, F3 R-1).
 F5.14: o cliente `httpx2` (Anthropic e OpenAI) recebe o PEM como contexto TLS pronto (`verify=<caminho>` é obsoleto no
-httpx2); o erro que chega no meio do streaming (HTTP 200, o tipo no corpo) é traduzido pelo tipo."""
+httpx2); o erro que chega no meio do streaming (HTTP 200, o tipo no corpo) é traduzido pelo tipo. F5.18 (PF-28): o contexto do
+PEM é um por configuração de rede e por processo (`shared_ssl_context`), partilhado pelos clientes dos três adaptadores."""
 from __future__ import annotations
 
 import asyncio
 import base64
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -18,6 +20,8 @@ from .schema import validate
 from .types import Capability, ConnectionTest, LlmTask, Message, Request, Role
 
 if TYPE_CHECKING:
+    import ssl
+
     from .base import LLMProvider
     from .registry import NetworkConfig
 
@@ -45,27 +49,48 @@ def split_system(req: Request) -> tuple[str | None, tuple[Message, ...]]:
     return system, rest
 
 
+_SSL_CONTEXTS: dict[tuple[str, bool], ssl.SSLContext] = {}
+_SSL_LOCK = threading.Lock()
+
+
+def shared_ssl_context(net: NetworkConfig) -> ssl.SSLContext:
+    """O contexto TLS dos clientes HTTP próprios, um por configuração de rede e por processo (F5.18, PF-28). M-10: montar um
+    contexto custa ~50 ms com o truststore (a loja de certificados do Windows lida a cada vez), pago por cliente novo, isto é,
+    por tarefa de LLM; o contexto é feito para ser partilhado por conexões e threads. A chave é o PEM e o toggle do truststore:
+    o proxy (com a sua senha) e o timeout não moldam o contexto e ficam fora dela (R-04). Com PEM, o contexto padrão com ele (`capath`
+    numa pasta, `cafile` num arquivo), como o httpx2 montava do caminho; sem PEM, o padrão do processo (com o truststore
+    injetado, o do sistema)."""
+    import ssl
+
+    key = (net.ca_bundle, net.system_certs)
+    with _SSL_LOCK:
+        ctx = _SSL_CONTEXTS.get(key)
+        if ctx is None:
+            path = net.ca_bundle
+            if not path:
+                ctx = ssl.create_default_context()
+            else:
+                ctx = ssl.create_default_context(capath=path) if Path(path).is_dir() else ssl.create_default_context(cafile=path)
+            _SSL_CONTEXTS[key] = ctx
+    return ctx
+
+
 def http_client_kwargs(net: NetworkConfig, timeout_s: float) -> dict[str, Any]:
-    """Argumentos de um `httpx(2).AsyncClient`: proxy explícito ou o do ambiente, PEM configurado ou padrão, timeout."""
+    """Argumentos de um `httpx(2).AsyncClient`: proxy explícito ou o do ambiente, timeout e, com PEM configurado, o contexto TLS
+    partilhado (`shared_ssl_context`); sem PEM, o padrão do cliente. O google-genai (httpx) e o httpx2 aceitam o contexto em
+    `verify=` e o httpx2 recusa o caminho (F5.14)."""
     kw: dict[str, Any] = {"timeout": float(timeout_s), "trust_env": True}
     if net.proxy_url:
         kw["proxy"] = net.proxy_url
     if net.ca_bundle:
-        kw["verify"] = net.ca_bundle
+        kw["verify"] = shared_ssl_context(net)
     return kw
 
 
 def httpx2_client_kwargs(net: NetworkConfig, timeout_s: float) -> dict[str, Any]:
-    """Os do `http_client_kwargs` para um `httpx2.AsyncClient` (Anthropic e OpenAI), com o PEM como contexto TLS pronto: o
-    mesmo que o httpx2 montava do caminho (`ssl.create_default_context`, com o truststore injetado no lugar do contexto
-    padrão), sem o aviso de obsoleto. O Gemini segue com o `http_client_kwargs` (outro cliente)."""
-    kw = http_client_kwargs(net, timeout_s)
-    if net.ca_bundle:
-        import ssl
-
-        path = net.ca_bundle
-        kw["verify"] = ssl.create_default_context(capath=path) if Path(path).is_dir() else ssl.create_default_context(cafile=path)
-    return kw
+    """Os do `http_client_kwargs` para um `httpx2.AsyncClient` (Anthropic e OpenAI). Desde a F5.18 (PF-28) são os mesmos: o PEM
+    vai como o contexto TLS partilhado nos dois clientes; o nome fica pelos adaptadores."""
+    return http_client_kwargs(net, timeout_s)
 
 
 def needs_own_http_client(net: NetworkConfig) -> bool:

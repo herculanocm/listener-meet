@@ -3,7 +3,8 @@ anexados sob demanda, migrações atômicas por arquivo, `transaction()`, papéi
 
 Papéis (`StoreRole`): APP abre o main em escrita, migra e faz VACUUM de legado; WORKER (F2) abre o main em escrita sem
 migrar (recusa se a versão for diferente da do código) e anexa o áudio com `mode=ro` e `mmap_size` de 256 MB; READONLY
-abre tudo com `mode=ro` (`--check`).
+abre tudo com `mode=ro` (`--check`). F5.18 (PF-26): nos dois papéis em escrita, o main tem `cache_size` de 32 MB e
+`mmap_size` de 256 MB (M-09); o READONLY fica nos padrões do SQLite.
 
 Arquivos: `listener.db` (main) e um `listener-audio-AAAA-MM.db` por mês de `meetings.started_at` (D-039); o
 `listener-audio.db` da F1 continua sendo lido pelas reuniões antigas e nunca é apagado nem renomeado (CP3).
@@ -42,6 +43,10 @@ MAX_ATTACHED = 8                 # anexos simultâneos por conexão; os menos us
 VACUUM_MAX_BYTES = 100_000_000   # só arquivos legados pequenos recebem VACUUM para mudar o page_size
 BUSY_TIMEOUT_S = 5.0
 AUDIO_MMAP_BYTES = 256 * 1024 * 1024   # worker da F2: horas de FLAC lidas por mmap, sem cópia para o cache de páginas
+# F5.18 (PF-26, M-09): o main do app e dos workers com 32 MB de cache de páginas e 256 MB de mapa (carga das assinaturas -21 %,
+# 200 vetores por id -22 %, FTS onipresente -13 %); o SQLite só gasta o que o arquivo ocupa (o main é pequeno)
+MAIN_CACHE_KIB = 32768
+MAIN_MMAP_BYTES = 256 * 1024 * 1024
 
 type PyMigration = Callable[["Core", sqlite3.Connection, str], None]
 
@@ -328,6 +333,11 @@ class Core:
             c.execute("PRAGMA journal_mode = WAL")
             c.execute("PRAGMA synchronous = NORMAL")
             c.execute(f"PRAGMA wal_autocheckpoint = {WAL_AUTOCHECKPOINT}")
+            # F5.18 (PF-26): com o nome do schema, para que o limite não vire o padrão da conexão e alcance os arquivos de áudio
+            # anexados depois: no app, um mapa deles impediria o encolhimento (F5.6 R-01); o worker os mapeia por conta própria em
+            # `attach`. Conferido: `PRAGMA mmap_size = N` sem schema vale para todo ATTACH seguinte; `main.mmap_size`, só para o main.
+            c.execute(f"PRAGMA main.cache_size = -{MAIN_CACHE_KIB}")
+            c.execute(f"PRAGMA main.mmap_size = {MAIN_MMAP_BYTES}")
         return c
 
     def close_thread(self) -> None:

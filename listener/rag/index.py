@@ -37,8 +37,8 @@ from ..log import get_logger
 from ..model import ActionStatus, LlmCallStatus, SummaryKind
 from ..pipeline import review
 from ..store.llm_calls import LlmCallInsert
-from ..store.rag import ChunkInsert, ChunkMeta, VectorInsert, person_ids_json
-from . import chunker, vectors, voice_sweep
+from ..store.rag import BATCH, ChunkInsert, ChunkMeta, VectorInsert, person_ids_json
+from . import chunk_hash, chunker, vectors, voice_sweep
 from .chunker import ActionInput, Chunk, MeetingInput, Utterance
 
 if TYPE_CHECKING:
@@ -138,8 +138,10 @@ def gather(store: Store, meeting_id: int) -> MeetingInput | None:
         return None
     rows = review.transcript_rows(store, meeting_id, prefer_llm=True)
     long_ids = [r.segment_id for r in rows if len(r.shown_text) > chunker.BODY_MAX - chunker.MIN_PIECE]
-    words = {int(r[0]): _words(r[1]) for r in store._q(
-        f"SELECT id, words_json FROM segments WHERE id IN ({','.join('?' * len(long_ids))})", tuple(long_ids))} if long_ids else {}  # noqa: S608
+    words: dict[int, tuple[tuple[int, int, str], ...]] = {}
+    for part in batched(long_ids, BATCH):                # F5.18 (PF-28): o `IN` em lotes, abaixo do limite de variáveis do SQLite
+        words.update((int(r[0]), _words(r[1])) for r in store._q(
+            f"SELECT id, words_json FROM segments WHERE id IN ({','.join('?' * len(part))})", part))  # noqa: S608
     utterances = tuple(Utterance(r.segment_id, r.t_start_ms, r.t_end_ms, f"{r.name} — {r.role}" if r.role else r.name, r.person_id,
                                  r.shown_text, words.get(r.segment_id, ())) for r in rows)
     who: dict[int, str] = {}
@@ -171,26 +173,18 @@ def gather(store: Store, meeting_id: int) -> MeetingInput | None:
                         participants, tuple(who), utterances, store.summaries.display_text(minutes), tuple(actions), executive)
 
 
-def _key_counts(items: list[tuple[str, str]]) -> list[tuple[str, str, int]]:
-    seen: dict[tuple[str, str], int] = {}
-    out: list[tuple[str, str, int]] = []
-    for kind, digest in items:
-        n = seen.get((kind, digest), 0)
-        seen[(kind, digest)] = n + 1
-        out.append((kind, digest, n))
-    return out
-
-
 SYNC_ATTEMPTS = 3                # PF-17: quantas vezes o `sync_text` relê quando o job vigente muda entre a leitura e a transação
 
 
 def sync_text(store: Store, meeting_id: int) -> SyncResult:
     """Lê e monta FORA da transação (F5.18, PF-17: `gather` e `build_chunks` levam 65 ms por hora de reunião e, dentro do
     `BEGIN IMMEDIATE`, as legendas e as escritas do app esperavam por eles); dentro, relê o job vigente e os trechos gravados
-    e compara por (tipo, `text_hash`, ocorrência): os mantidos ganham tempos, segmentos, pessoas e job novos sem perder os
-    vetores; os novos entram (o FTS pelo gatilho); os que sumiram saem, com os vetores pela cascata. Se o job vigente mudou no
-    meio (um reprocessamento concluiu entre a leitura e a transação), recomeça, até `SYNC_ATTEMPTS` vezes; na última segue
-    com o que leu (o `index` do job novo acerta depois)."""
+    e compara por (tipo, `text_hash`, ocorrência; `chunk_hash.match_rows`): os mantidos ganham tempos, segmentos, pessoas e job
+    novos sem perder os vetores; os novos entram (o FTS pelo gatilho); os que sumiram saem, com os vetores pela cascata. F5.18
+    (PF-29): o trecho de transcrição gravado com o hash legado (com o título) é mantido e tem o hash regravado no lugar, e o
+    mantido depois de renomear a reunião recebe o título novo (só a linha dele no FTS): nenhum vetor refeito nem apagado. Se o
+    job vigente mudou no meio (um reprocessamento concluiu entre a leitura e a transação), recomeça, até `SYNC_ATTEMPTS` vezes;
+    na última segue com o que leu (o `index` do job novo acerta depois)."""
     attempt = 0
     while True:
         attempt += 1
@@ -204,27 +198,36 @@ def sync_text(store: Store, meeting_id: int) -> SyncResult:
                 log.info("reunião %s: o job vigente mudou durante a leitura dos trechos; lendo de novo (%d de %d)", meeting_id, attempt,
                          SYNC_ATTEMPTS)
                 continue
-            result = _apply_chunks(store, meeting_id, job_id, built)
-        log.info("reunião %s: %d trecho(s); %d mantido(s) (%d com tempos novos), %d novo(s), %d removido(s)", meeting_id, result.total,
-                 result.kept, result.moved, result.added, result.removed)
+            result = _apply_chunks(store, meeting_id, job_id, built, data.date)
+        log.info("reunião %s: %d trecho(s); %d mantido(s) (%d com tempos, título ou hash novos), %d novo(s), %d removido(s)", meeting_id,
+                 result.total, result.kept, result.moved, result.added, result.removed)
         return result
 
 
-def _apply_chunks(store: Store, meeting_id: int, job_id: int | None, built: list[Chunk]) -> SyncResult:
+def _apply_chunks(store: Store, meeting_id: int, job_id: int | None, built: list[Chunk], date: str) -> SyncResult:
     """O diff dos trechos montados contra os gravados e as escritas, na transação de quem chama."""
     old = store.rag.list_chunks(meeting_id)
-    old_keys = dict(zip(_key_counts([(str(r["kind"]), str(r["text_hash"])) for r in old]), old, strict=True))
-    new_keys = _key_counts([(str(c.kind), c.text_hash) for c in built])
-    kept = [(old_keys[key], c) for key, c in zip(new_keys, built, strict=True) if key in old_keys]
-    kept_ids = {int(row["id"]) for row, _c in kept}
-    moved = [ChunkMeta(int(row["id"]), c.t_start_ms, c.t_end_ms, c.seg_first, c.seg_last, c.person_ids, job_id)
-             for row, c in kept if _meta_changed(row, c, job_id)]
+    kept, new = chunk_hash.match_rows(old, built, date)
+    kept_ids = {int(m.row["id"]) for m in kept}
+    moved = [meta for meta in (_meta(m, job_id) for m in kept) if meta is not None]
     removed = [int(r["id"]) for r in old if int(r["id"]) not in kept_ids]
-    added = [_insert(meeting_id, c, job_id) for key, c in zip(new_keys, built, strict=True) if key not in old_keys]
+    added = [_insert(meeting_id, c, job_id) for c in new]
     store.rag.delete_chunks(removed)
     store.rag.update_meta(moved)
     store.rag.insert_chunks(added)
     return SyncResult(len(built), len(kept), len(added), len(removed), len(moved))
+
+
+def _meta(m: chunk_hash.Match, job_id: int | None) -> ChunkMeta | None:
+    """O que regravar num trecho mantido: tempos, segmentos, pessoas e job quando mudaram; o `text_hash` novo no casamento pelo
+    legado (PF-29, a migração no lugar); o título quando a reunião foi renomeada (o gatilho refaz só a linha dele no FTS; o vetor
+    fica, com o cabeçalho velho dentro). None = nada a regravar."""
+    row, c = m.row, m.chunk
+    title = c.title if str(row.get("title") or "") != c.title else None
+    if title is None and not m.legacy and not _meta_changed(row, c, job_id):
+        return None
+    return ChunkMeta(int(row["id"]), c.t_start_ms, c.t_end_ms, c.seg_first, c.seg_last, c.person_ids, job_id,
+                     c.text_hash if m.legacy else None, title)
 
 
 def _meta_changed(row: RagChunkRow, c: Chunk, job_id: int | None) -> bool:
@@ -421,7 +424,7 @@ class _Plan:
         async with sem:
             if not self._gate():
                 return
-            texts = [chunker.embed_input(str(r.get("title") or ""), self.date, str(r["text"])) for r in rows]
+            texts = [chunker.embed_input(str(r["kind"]), str(r.get("title") or ""), self.date, str(r["text"])) for r in rows]
             log.debug("reunião %s: lote %d de %d de embeddings começando (%d trecho(s), %s)", self.meeting_id, idx + 1,
                       len(self.batches), len(rows), self.key)
             t0 = time.perf_counter()
