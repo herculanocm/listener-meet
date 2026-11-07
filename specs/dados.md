@@ -51,10 +51,10 @@ vetores de voz dela); `revisions` registra
 toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
 `listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`,
 `ui.widget_pos`, `ui.widget_size`, `warmup.last_*`, `pipeline.*` (F2; internas `paused_until`, `paused_manual`,
-`rtf_json`; F5.15: `ref_cos` e `max_refs`, as referências de voz), `llm.*` (F3: output_language, auto_tasks, cost_alert_usd, max_parallel, audio_second_opinion,
+`rtf_json`; F5.15: `ref_cos` e `max_refs`, as referências de voz; F5.18: `embedding_batch`, o lote dos embeddings da diarização em trechos), `llm.*` (F3: output_language, auto_tasks, cost_alert_usd, max_parallel, audio_second_opinion,
 glossary_enabled, store_payloads, proxy_url, ca_bundle, system_certs), `live.*` (F4: enabled, names, model, threads,
 summary_interval_min com 0 = parcial desligado, in_widget), `ui.live_geometry`, `ui.live_on_top`, `rag.*` (F5:
-auto_index = vetores automáticos, top_k, max_per_meeting; F5.10: sql_strong, sql_max_rows, sql_timeout_s e as guardas
+auto_index = vetores automáticos, top_k, max_per_meeting; F5.18: `vector_version`, interno, o contador que o cache das assinaturas do app compara, subido por quem cria ou remove vetores ou trechos; F5.10: sql_strong, sql_max_rows, sql_timeout_s e as guardas
 sql_max_cost_usd, sql_max_minutes, sql_max_rounds), `hotkeys.history`, `ui.history_geometry`,
 `ui.meeting_geometry`, `ui.history_filters`; tipo, faixa e escopo na tabela `SPECS` (M-24).
 Esquema do main: v1 (F1), v2 (datas com offset, A5), v3 (`meetings.audio_file`), v4 (F2: fila, clusters, artefatos,

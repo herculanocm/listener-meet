@@ -62,6 +62,14 @@ embedder local é uma sessão do ONNX por processo, sob lock, que calcula na thr
 leve, 1 no app, pré-carregada numa `Task` ao abrir o Histórico e solta 10 min depois do último uso); com a lease da
 gravação o `index` adia os vetores e parar ou cancelar a gravação roda a varredura; `--live --prepare --what rag` baixa
 o e5 (pelo HTTP, que retoma) e grava a marca `.ready`; o .docx sai numa `Task`.
+F5.18: o pesado confere a lease, a pausa manual e o cancelamento DENTRO da janela (o `hook` do pyannote a cada lote e o
+gerador do Whisper a cada segmento chamam `in_window_checkpoint`, com o tempo em pausa fora do `wall_s`), e a thread do
+heartbeat o baixa à classe ociosa enquanto a lease vale; o `spawn_child` (o `--live` e os filhos interativos) nasce em
+NORMAL e o worker em BELOW_NORMAL; o leve fica 10 min ocioso (solta o e5 aos 2 min e sai se o esquema mudou), monta o
+snapshot só com job a pegar e roda `identify`, `revise` e `title` (sem ata) no mesmo `TaskGroup`; a busca compara o
+contador `rag.vector_version` em vez de contar o índice e filtra pessoa, período e reunião em numpy ao lado das
+assinaturas, aquecidas ao abrir o Histórico; a fila lê só as reuniões dos jobs listados por uma consulta indexada; a
+lista da transcrição faz o layout em lotes e o cursor do player extrapola entre blocos.
 
 ## Logs (D-059: para a LLM achar qualquer cenário nos testes do dono)
 Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm` e
