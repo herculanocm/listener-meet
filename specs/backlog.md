@@ -12,6 +12,18 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB residentes hoje). Aprovada no padrão
   em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096); a implementação segue pelos lotes 0 a 5, um
   commit por lote. A página privada que serviu à leitura: https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
+  Posição da implementação (gravada a cada etapa, a pedido do dono em 07/11; `[x]` com o commit):
+  - [x] aprovação registrada: spec, D-096, U-147 a U-149 (`bf89d80`).
+  - [ ] lote 1 (PF-01 a PF-03) em implementação por um agente: `pipeline/base.py`, `jobbase.py`, `runner.py`,
+    `pyannote.py`, `whisper.py`, `worker.py`, `models.py`, `types.py`, `platform/base.py`, `win32/platform.py`,
+    `common/process.py`, `config/defaults.py`, os fakes e os testes; depois a revisão do diff, `--tudo`, ruff, mypy e
+    o commit.
+  - [ ] sondas do lote 0 (`scripts/probe_perf.py`, `scripts/perf/`) em escrita por outro agente, só com smokes.
+  - [ ] lote 0 medido (M-01 a M-10, replay) fora de gravação, com os números em `decisoes.md` (Medições).
+  - [ ] lote 4 (PF-13 a PF-22) · [ ] lote 2 (PF-04 a PF-08) · [ ] lote 3 (PF-09 a PF-11) · [ ] lote 5 (PF-23, 26,
+    28, 29) · [ ] fechamento: docs, D-097, versão 0.11.0, `.exe` e zip.
+  Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
+  status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).
