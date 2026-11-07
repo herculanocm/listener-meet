@@ -3,15 +3,16 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- **F5.18 aprovada, em implementação** (07/11, `features/F5.18-performance.md`, D-096): a spec de performance pedida
-  pelo dono (a D-094 (3) já pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em segundos
-  (hoje em até 29 min) ao tronco do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três pareceres
-  somente leitura (arquitetura, código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de
+- **F5.18 implementada** (07/11, `features/F5.18-performance.md`, D-096, D-097; versão 0.11.0): a spec de performance
+  pedida pelo dono (a D-094 (3) já pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em
+  segundos (hoje em até 29 min) ao tronco do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três
+  pareceres somente leitura (arquitetura, código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de
   arquitetura da D-040 (A-01 a A-16) incorporados. Adiados pela revisão, fora do esforço: PF-12 (afinidade P/E), PF-24
   (memória do e5 local), PF-25 (laço asyncio persistente no app) e PF-27 (`semantic.build`); voltam com os M-01, M-04 e
   M-10 e quando o e5 voltar a ser o embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB
-  residentes hoje). Aprovada no padrão em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096); a
-  implementação segue pelos lotes 0 a 5, um commit por lote. A página privada que serviu à leitura:
+  residentes hoje). Aprovada no padrão em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096);
+  implementada pelos lotes 0 a 5, um commit por lote, com a D-097 no fechamento; falta o dono: o uso real (a lista em
+  "Verificar no Windows") e o push. A página privada que serviu à leitura:
   https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4 Posição da implementação (gravada a cada etapa, a pedido do dono em
   07/11; `[x]` com o commit):
   - [x] aprovação registrada: spec, D-096, U-147 a U-149 (`bf89d80`).
@@ -71,11 +72,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   - [x] fechamento, parte 1: suíte inteira (1.719 passaram, 8 pulados, 2:30 min; `test_theme` por ordem;
     `test_rag_local` ajustado ao `passage:` sem título, `7a898c0`), ruff limpo, Implementação do lote 5 e do vigia na
     spec, R-07 e R-08 em Riscos, D-097, versão 0.11.0.
-  - [ ] fechamento, parte 2: `.exe` e zip (`build_exe.py --zip`) · [ ] M-01 no fim (~3 h, máquina quieta; só muda o
-    padrão das threads se mostrar outra regra) · [ ] o status da spec para "implementada" e o Tamanho-alvo.
+  - [x] fechamento, parte 2: `.exe` 0.11.0+bfe8ed4 (438 s, 893 MB, 4.700 arquivos; sonda `--probe` ok) e zip de 351 MB;
+    M-01 feito em 90 min (12 threads é o melhor para a diarização e o Whisper: o padrão `cpu_count - 2` fica;
+    `KMP_BLOCKTIME=0` sem ganho); a spec implementada, Tamanho-alvo 55 KB (o commit final).
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
-- Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+- Código: F1 a F5.18 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.11.0 (D-081; F5.18).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
@@ -85,8 +87,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   bandeja própria, como chat, fora do widget, com minimizar e fechar; a janela Ao vivo ganhou a mesma lista (uma
   legenda nova de 73 para 2 ms com 2.000 falas). Falta o dono: usar numa reunião (Aceite 4, em "Verificar no
   Windows").
-- O `.exe` atual é o 0.10.0 de 06/11 (`77129ae`, a F5.17; 801 s, 892 MB, 4.700 arquivos; sonda `--probe` ok). Para
-  compartilhar, o `build\exe\listener-meet-0.10.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+- O `.exe` atual é o 0.11.0 de 07/11 (`bfe8ed4`, a F5.18; 438 s, 893 MB, 4.700 arquivos; sonda `--probe` ok). Para
+  compartilhar, o `build\exe\listener-meet-0.11.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
   Para o build, o processamento da reunião 23 (job 145) foi parado às 23:30, a pedido do dono: o worker segurava a
   pasta do `.exe`. Ele volta à fila e retoma da última janela salva quando o app abrir.
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
