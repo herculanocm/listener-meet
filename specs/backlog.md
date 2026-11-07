@@ -3,16 +3,15 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- **F5.18 em revisão** (07/11, `features/F5.18-performance.md`): a spec de performance pedida pelo dono (a D-094 (3) já
+- **F5.18 aprovada, em implementação** (07/11, `features/F5.18-performance.md`, D-096): a spec de performance pedida pelo dono (a D-094 (3) já
   pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em segundos (hoje em até 29 min) ao tronco
   do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três pareceres somente leitura (arquitetura,
   código da captura/ao vivo/pipeline, código do store/RAG/LLM/UI) e a revisão de arquitetura da D-040 (A-01 a A-16)
   incorporados. Adiados pela revisão, fora do esforço: PF-12 (afinidade P/E), PF-24 (memória do e5 local), PF-25 (laço
   asyncio persistente no app) e PF-27 (`semantic.build`); voltam com os M-01, M-04 e M-10 e quando o e5 voltar a ser o
-  embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB residentes hoje). Falta o dono:
-  responder as 13 perguntas (padrão: aprovar os lotes 0 a 5 na ordem) e aprovar. Página privada para ler e responder
-  pelo navegador (as respostas ficam no armazenamento da própria página e a LLM as lê de volta):
-  https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
+  embedder ativo (aí vale medir `sentencepiece` no lugar do `tokenizers`: ~262 MB residentes hoje). Aprovada no padrão
+  em 07/11 pelo chat, com as decisões técnicas delegadas (D-064, D-096); a implementação segue pelos lotes 0 a 5, um
+  commit por lote. A página privada que serviu à leitura: https://claude.ai/artifact/LfrmQ6Z4tDaqEPED6zNQY4
 - Código: F1 a F5.17 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
   depois (D-091); F7 é futuro. Esquema v9, versão 0.10.0 (D-081).

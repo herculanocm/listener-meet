@@ -13,8 +13,8 @@ apoiar (F5.12), aprovadas (D-079) e implementadas em 02/11; U-129 a U-133 da bar
 (D-082) e implementadas em 02/11; U-134 e U-135 do Claude em todo trabalho de LLM (F5.14), aprovadas (D-084) e
 implementadas em 03/11; U-136 a U-138 das referências de voz (F5.15), aprovadas (D-087) e implementadas em 04/11; U-139
 da transcrição sem o token do Hugging Face (F5.16), aprovada (D-091) e implementada em 05/11; U-140 a U-146 da bandeja
-de legendas (F5.17), aprovadas (D-094) e implementadas em 06/11; U-147 a U-149 da performance (F5.18), propostas em
-07/11.
+de legendas (F5.17), aprovadas (D-094) e implementadas em 06/11; U-147 a U-149 da performance (F5.18), aprovadas em
+07/11 (D-096).
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -163,6 +163,6 @@ Tamanho-alvo: 3 KB.
 | U-144 | Clique direito numa fala: criar marcador neste instante e copiar | Bandeja | implementada (F5.17, 06/11) |
 | U-145 | A bandeja fora da captura de tela, como os avisos | Bandeja | implementada (F5.17, 06/11) |
 | U-146 | Encostada no widget, a bandeja nasce acima dele e o acompanha; arrastada, fica solta e lembrada | Bandeja | implementada (F5.17, 06/11) |
-| U-147 | Legenda agrupada sob atraso: com a fila do ao vivo atrasada, uma legenda cobre até 25 s de fala do mesmo canal; sem atraso, nada muda | Bandeja, Ao vivo | proposta (F5.18) |
-| U-148 | Transcrição com layout incremental: a lista das falas aparece e responde na hora; a barra de rolagem cresce nas primeiras frações de segundo | Reunião | proposta (F5.18) |
-| U-149 | Cursor do player a 50 ms, extrapolado entre blocos (hoje salta a cada 250 ms e fica 8 a 118 ms atrás do som) | Player | proposta (F5.18) |
+| U-147 | Legenda agrupada sob atraso: com a fila do ao vivo atrasada, uma legenda cobre até 25 s de fala do mesmo canal; sem atraso, nada muda | Bandeja, Ao vivo | aprovada (F5.18, D-096) |
+| U-148 | Transcrição com layout incremental: a lista das falas aparece e responde na hora; a barra de rolagem cresce nas primeiras frações de segundo | Reunião | aprovada (F5.18, D-096) |
+| U-149 | Cursor do player a 50 ms, extrapolado entre blocos (hoje salta a cada 250 ms e fica 8 a 118 ms atrás do som) | Player | aprovada (F5.18, D-096) |
