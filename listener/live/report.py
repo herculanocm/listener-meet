@@ -37,6 +37,7 @@ PARTIAL_SLACK_MS = 20_000           # o disparo do parcial confere a cada 15 s: 
 TARGET_FIRST_P50_S, TARGET_FIRST_P95_S, TARGET_TOTAL_P95_S = 3.0, 6.0, 10.0
 TARGET_USEFUL, TARGET_EVIDENCE, TARGET_COMPACTION = 0.5, 0.9, 0.25
 TARGET_COST_USD = 0.01                 # por pedido, com o modelo rápido
+TARGET_SCREEN_FIRST_P50_S, TARGET_SCREEN_FIRST_P95_S, TARGET_SCREEN_CITES = 4.0, 8.0, 0.4    # F5.21 (Aceite): com a tela
 
 
 def _stats(values: Sequence[float]) -> dict[str, Any]:
@@ -284,4 +285,30 @@ def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
                     "evidence": _gate(out["evidence_share"], TARGET_EVIDENCE, at_least=True),
                     "compaction": _gate(out["compaction"], TARGET_COMPACTION, at_least=True),
                     "cost": _gate(out["cost_per_request_usd"], TARGET_COST_USD)}
+    out["screen"] = screen_report(store, meeting_id, rows, options)
     return out
+
+
+def screen_report(store: Store, meeting_id: int, rows: Sequence[Mapping[str, Any]],
+                  options: Mapping[int, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+    """F5.21 (Aceite): os pedidos com a tela por estado; do clique à primeira opção nos que terminaram bem com a tela enviada
+    (o `first_ms` conta do clique, A-19); a parcela das opções desses pedidos que citam a tela; os bytes médios do que foi
+    enviado e quantas cópias ficaram guardadas; cada critério contra o alvo."""
+    screens = store.suggestions.screens_for_meeting(meeting_id)
+    if not screens:
+        return {"requests": 0}
+    sent = {sid for sid, s in screens.items() if s.get("status") == "enviada"}
+    ok = [r for r in rows if int(r["id"]) in sent and r.get("status") == "ok"]
+    first = [float(r["first_ms"]) for r in ok if r.get("first_ms") is not None]
+    opts = [o for r in ok for o in options.get(int(r["id"]), [])]
+    cites = round(sum(1 for o in opts if o.get("screen")) / len(opts), 3) if opts else None
+    stats = {**_stats(first), "p50": _median(first)}
+    sizes = [int(screens[sid].get("bytes") or 0) for sid in sent]
+    copies = store.suggestions.count_copies(meeting_id)
+    return {"requests": len(screens), "by_status": dict(Counter(str(s.get("status")) for s in screens.values())),
+            "by_source": dict(Counter(str(s.get("source")) for s in screens.values())), "first_ms": stats,
+            "cites_share": cites, "bytes_avg": round(sum(sizes) / len(sizes)) if sizes else None, "copies": int(copies),
+            "covered": sum(int(s.get("covered") or 0) for s in screens.values()),
+            "gates": {"first_p50": _gate(_seconds(stats["p50"]), TARGET_SCREEN_FIRST_P50_S, unit=" s"),
+                      "first_p95": _gate(_seconds(stats["p95"]), TARGET_SCREEN_FIRST_P95_S, unit=" s"),
+                      "cites": _gate(cites, TARGET_SCREEN_CITES, at_least=True)}}

@@ -169,6 +169,12 @@ class SuggestionsRepo:
                            "ORDER BY s.id", (meeting_id,))
         return {int(r["suggestion_id"]): cast(ScreenRow, dict(r)) for r in rows}
 
+    def count_copies(self, meeting_id: int) -> int:
+        """F5.21: quantas cópias de 960 px a reunião guarda (o `--check`)."""
+        rows = self.core.q("SELECT COUNT(*) AS n FROM suggestion_screens t JOIN suggestions s ON s.id = t.suggestion_id "
+                           "WHERE s.meeting_id = ? AND t.data IS NOT NULL", (meeting_id,))
+        return int(rows[0]["n"]) if rows else 0
+
     def screen_copy(self, suggestion_id: int) -> bytes | None:
         """F5.21: a cópia de 960 px guardada (ou nada, com `suggest.screen_keep` desligada)."""
         rows = self.core.q("SELECT data FROM suggestion_screens WHERE suggestion_id = ?", (suggestion_id,))

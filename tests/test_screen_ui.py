@@ -218,3 +218,47 @@ def test_the_screen_modules_never_log_the_image_the_summary_or_the_title():
 
     assert {m.name: leaks(m, F521_FORBIDDEN, F510_ALLOWED_CALLS) for m in F521_MODULES} == {m.name: [] for m in F521_MODULES}
     assert leaks(F521_MODULES[-1], FORBIDDEN) == []                       # `win32/screen.py`: nem título nem nome
+
+
+# ---------------------------------------------------------------- L3: a aba da reunião
+def test_the_meeting_tab_shows_the_thumbnail_marks_the_option_and_opens_the_copy(qtbot, store):
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    from PySide6.QtGui import QImage
+
+    from listener.store.suggestions import ScreenInsert
+    from listener.ui.meeting_suggestions import SuggestionsTab
+    from tests.test_suggest_store import suggestion
+
+    def jpeg(w: int, h: int) -> bytes:
+        img = QImage(w, h, QImage.Format.Format_RGB32)
+        img.fill(0x336699)
+        data = QByteArray()
+        buf = QBuffer(data)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, "JPG")
+        return bytes(data.data())
+
+    mid = store.create_meeting("Orçamento", None, None, None)
+    sent, (a, _b) = suggestion(store, mid, 65_000)
+    dark, _ = suggestion(store, mid, 90_000)
+    store._x("UPDATE suggestion_options SET screen = 1 WHERE id = ?", (a,))
+    store.suggestions.insert_screen(ScreenInsert(sent, ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams", 1600, 900, 219_000, 0,
+                                                 jpeg(320, 180), jpeg(960, 540)))
+    store.suggestions.insert_screen(ScreenInsert(dark, ScreenStatus.EMPTY, ScreenSource.CURSOR, "Monitor 1", 0, 0, 0, 0, jpeg(320, 180),
+                                                 None))
+    tab = SuggestionsTab(store, mid)
+    qtbot.addWidget(tab)
+    first, second = tab.tree.topLevelItem(0), tab.tree.topLevelItem(1)
+    assert "· com a tela ·" in first.text(0) and "· tela preta ·" in second.text(0) and not first.icon(0).isNull()
+    assert first.child(0).text(0).endswith(" [tela]") and not first.child(1).text(0).endswith("[tela]")
+    tab.tree.itemActivated.emit(first, 0)
+    qtbot.waitUntil(lambda: tab.viewer is not None, timeout=3000)
+    assert tab.viewer.findChild(QLabel_type()).pixmap().width() > 320
+    tab.viewer.close()
+
+
+def QLabel_type() -> Any:                                                         # noqa: N802 (o tipo do Qt, importado tarde)
+    from PySide6.QtWidgets import QLabel
+
+    return QLabel
+

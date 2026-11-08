@@ -186,3 +186,27 @@ def test_a_cancelled_request_estimates_the_image_too(store):
     assert r.outcome == Outcome.CANCELLED and r.cost_estimated and r.cost_usd == expected
     assert expected is not None and expected > (estimate_usd(store, cfg, req.text_chars, len('{"options": [{"kind": "Perguntar", ')) or 0)
     assert asyncio.iscoroutinefunction(scripted.aclose)
+
+
+def test_the_check_reports_the_screen_and_its_gates(store):
+    """F5.21 L3: o bloco da tela no `--check` (o Aceite): os estados, do clique à primeira opção só dos que foram com a tela e
+    terminaram bem, a parcela das opções que citam a tela, os bytes e as cópias."""
+    from listener.live.report import suggestions_report
+    from listener.model import SuggestStatus
+
+    mid = store.create_meeting("Orçamento", None, None, None)
+    assert suggestions_report(store, mid) == {"requests": 0}
+    a, (a1, _a2) = suggestion(store, mid, 60_000)
+    b, _ = suggestion(store, mid, 120_000)
+    c, _ = suggestion(store, mid, 180_000, status=SuggestStatus.CANCELLED)
+    for sid, first in ((a, 3000), (b, 9000), (c, 50_000)):
+        store._x("UPDATE suggestions SET first_ms = ? WHERE id = ?", (first, sid))
+    store._x("UPDATE suggestion_options SET screen = 1 WHERE id = ?", (a1,))
+    for sid, status, keep in ((a, ScreenStatus.SENT, b"copia"), (b, ScreenStatus.EMPTY, None), (c, ScreenStatus.SENT, None)):
+        store.suggestions.insert_screen(ScreenInsert(sid, status, ScreenSource.WINDOW, "janela do Teams", 1600, 900,
+                                                     200_000 if status == ScreenStatus.SENT else 0, 1, b"t", keep))
+    out = suggestions_report(store, mid)["screen"]
+    assert (out["requests"], out["by_status"], out["copies"], out["covered"]) == (3, {"enviada": 2, "vazia": 1}, 1, 3)
+    assert out["first_ms"]["n"] == 1 and out["first_ms"]["p50"] == 3000 and out["cites_share"] == 0.5 and out["bytes_avg"] == 200_000
+    assert out["gates"]["first_p50"]["ok"] and out["gates"]["cites"]["ok"] and out["gates"]["first_p95"]["ok"]
+

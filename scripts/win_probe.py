@@ -31,6 +31,8 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
   python scripts/win_probe.py export                          .md com o destino aberto por outro processo e copiar e sair
+  python scripts/win_probe.py tela                            F5.21: o print e o preparo de cada monitor, a interface num
+                                                              pedido com a tela, a janela excluída fora do print e o DPI
 
 app     APPDATA e LOCALAPPDATA apontam para uma pasta temporária antes de o app ler qualquer pasta: nada do perfil do
         usuário é lido nem escrito. O ícone aparece na bandeja durante a medida. A CPU parada é medida depois do
@@ -64,6 +66,7 @@ from pathlib import Path
 from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no topo (o Qt entra na chamada)
 from probe_f517 import f517_shots        # F5.17: a bandeja de legendas e o botão "Legendas" do widget
 from probe_f520 import f520_shots, f520_timings   # F5.20: o cartão, o popup, a caixa, o memorando, a aba e os tempos
+from probe_f521 import f521_screen, f521_shots     # F5.21: a tela nas sugestões (as fotos sintéticas e o Aceite em `tela`)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -481,6 +484,7 @@ def cmd_shots(args) -> None:
     f517_shots(store, shot, app)                          # F5.17: a bandeja (vazia, com o chat, a 320 px e recolhida)
     f520_shots(store, shot, app, p)                       # F5.20: a sugestão na bandeja, o popup, o warm-up, Prompts, a aba
     out("f520_tempos", dpr=screen().devicePixelRatio(), **f520_timings(store, app, p))   # F5.20 (Aceite "Interface"): < 5 ms
+    f521_shots(store, shot, app, p)                       # F5.21: a bandeja com a tela, a confirmação, a tela maior e a aba
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")
@@ -640,6 +644,22 @@ def cmd_copy_exit(_args) -> None:
     sys.exit(app.exec())
 
 
+def cmd_tela(_args) -> None:
+    """F5.21 (`scripts/probe_f521.py`): o Aceite da tela, com a tela de verdade e nada em disco."""
+    from PySide6.QtWidgets import QApplication
+
+    from listener.platform import get_platform
+    from listener.store import Store
+
+    app = QApplication(sys.argv[:1])
+    p = get_platform()
+    store = Store(Path(tempfile.mkdtemp(prefix="listener-tela-")))
+    try:
+        out("tela", **f521_screen(app, p, store))
+    finally:
+        store.close()
+
+
 def cmd_export(_args) -> None:
     from listener.rag import export
 
@@ -704,6 +724,7 @@ def main() -> None:
     p = sub.add_parser("player")
     p.add_argument("--seconds", type=float, default=20.0)
     sub.add_parser("export")
+    sub.add_parser("tela")
     p = sub.add_parser("_first", help=argparse.SUPPRESS)
     p.add_argument("--prewarm", action="store_true")
     sub.add_parser("_copy_exit", help=argparse.SUPPRESS)
@@ -711,7 +732,7 @@ def main() -> None:
     if args.cmd != "_tempos":                             # a linha JSON do filho é a última da saída dele
         out("env", python=sys.version.split()[0], platform=sys.platform, cores=os.cpu_count())
     {"app": cmd_app, "shots": cmd_shots, "tempos": cmd_tempos, "_tempos": cmd_tempos_child, "player": cmd_player,
-     "export": cmd_export, "_first": cmd_first, "_copy_exit": cmd_copy_exit}[args.cmd](args)
+     "export": cmd_export, "tela": cmd_tela, "_first": cmd_first, "_copy_exit": cmd_copy_exit}[args.cmd](args)
 
 
 if __name__ == "__main__":

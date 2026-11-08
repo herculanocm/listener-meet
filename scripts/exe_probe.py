@@ -139,8 +139,10 @@ def child() -> dict[str, Any]:
 
 
 def qt() -> dict[str, Any]:
-    """O estilo efetivo por baixo do `ThemeStyle` (o que o Qt de fato criou), o esperado pela plataforma e a tradução."""
+    """O estilo efetivo por baixo do `ThemeStyle` (o que o Qt de fato criou), o esperado pela plataforma e a tradução; F5.21
+    (A-36): o plugin JPEG do Qt, que a tela das sugestões usa (o app ainda não usava nenhum plugin de formato de imagem)."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QImageWriter
     from PySide6.QtWidgets import QApplication, QProxyStyle, QStyleFactory
 
     from listener.platform import get_platform
@@ -156,16 +158,18 @@ def qt() -> dict[str, Any]:
     base = style.baseStyle() if isinstance(style, QProxyStyle) else style
     available = QStyleFactory.keys()                           # os plugins de estilo que o Qt achou
     out = {"effective_style": base.name().lower(), "expected_style": platform.ui_style().lower(), "pt_BR": translated,
-           "styles": [k.lower() for k in available], "qpa": QApplication.platformName()}
+           "styles": [k.lower() for k in available], "qpa": QApplication.platformName(),
+           "jpeg": b"jpeg" in [bytes(f.data()) for f in QImageWriter.supportedImageFormats()]}
     theme.release(app)
     return out
 
 
 def verdict(report: dict[str, Any]) -> bool:
-    """O Aceite 5: tudo importou, o pyannote achou as classes, UTF-8 no filho, o estilo esperado, pt-BR e sem `tests`."""
+    """O Aceite 5: tudo importou, o pyannote achou as classes, UTF-8 no filho, o estilo esperado, pt-BR, o JPEG (F5.21) e sem
+    `tests`."""
     return (all(step["ok"] for step in report["stack"].values()) and report["pyannote"]["ok"]
             and report["child_utf8_mode"].get("value") == "1" and report["qt"]["effective_style"] == report["qt"]["expected_style"]
-            and report["qt"]["pt_BR"] and not report["tests_in_build"])
+            and report["qt"]["pt_BR"] and report["qt"].get("jpeg", False) and not report["tests_in_build"])
 
 
 def main(argv: list[str] | None = None) -> int:
