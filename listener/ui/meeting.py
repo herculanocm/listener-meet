@@ -65,12 +65,14 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
 
     def __init__(self, store: Store, meeting_id: int, *, player: Player | None = None, on_review: Callable[[int], Any] | None = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None, cascade: int = 0,
-                 on_chat_answer: Callable[[bool], Any] | None = None, parent: QWidget | None = None):
+                 on_chat_answer: Callable[[bool], Any] | None = None, recording: Callable[[], bool] | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
         self.player = player
         self.on_review = on_review
+        self.recording = recording                       # F5.19 (A-25): o controlador diz se há gravação em curso
         self.on_edited = on_edited
         self.setMinimumSize(*MIN_SIZE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
@@ -97,6 +99,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         lay = QVBoxLayout(self)
         lay.addLayout(head)
         lay.addWidget(self.message_bar)
+        lay.addWidget(self.media.bar)                    # F5.19 (A-15): o progresso da exportação de mídia, com "Cancelar"
         lay.addWidget(self.tabs, 1)
         if self.bar is not None:
             lay.addWidget(self.bar)
@@ -272,13 +275,17 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
 
     def shutdown(self) -> None:
         """Saída do app: o título mexido grava (A-22); o chat em voo é cancelado e esperado antes de o banco fechar (F5A-32);
-        o .docx em curso termina."""
+        a exportação de áudio ou vídeo é cancelada e esperada antes do .docx, que termina (F5.19, A-20)."""
         self._save_title()
         self.chat.shutdown()
+        self.media.shutdown()
         self.docx.shutdown()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self.media.confirm_close():               # F5.19 (U-152): o áudio ou o vídeo em curso pergunta antes
+            event.ignore()
+            return
         self._save_title()                               # A-22: fechar com o título mexido grava
         self._save_timer.stop()
         self.save_geometry()

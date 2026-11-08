@@ -3,6 +3,21 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
+- **F5.19 em implementação** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098; versão 0.12.0): o pedido do
+  dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
+  aberta ganha "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca) e "Salvar vídeo com legendas…" (MP4 H.264 e AAC,
+  1280 × 720), numa tarefa com o progresso e o "Cancelar" numa faixa própria; nenhuma dependência nova (soundfile e o
+  PyAV que já vem com o faster-whisper). Posição (gravada a cada etapa; `[x]` com o commit):
+  - [x] spec escrita, a revisão de arquitetura por um agente (A-01 a A-25, incorporada) e a aprovação registrada
+    (D-098, 8 perguntas no padrão).
+  - [x] implementação: `ui/media_audio.py`, `media_cues.py`, `media_frames.py`, `media_video.py`, `media_job.py` e
+    `media_save.py`, o `export.atomic_target`, o fio no `meeting_header.py`, no `meeting.py` e no controlador; testes
+    `test_media_export.py` (20) e `test_media_save_ui.py` (8) verdes, ruff e os dois mypy limpos. Medida na reunião 22
+    (55 min, com um job do worker rodando junto): o MP3 em 10,1 s (17 MB), o MP4 em 61,6 s (49 MB), +26 MB de memória
+    com o PyAV e cancelar a 95 % em 0,04 s sem sobrar arquivo.
+  - [ ] revisão do diff por um agente novo e as correções.
+  - [ ] fechamento: a suíte inteira, a seção Implementação da spec, D-099, a posição final e o commit.
+  Como retomar: `git log` mostra os commits da F5.19; o próximo passo é a revisão do diff (D-040).
 - **F5.18 implementada** (07/11, `features/F5.18-performance.md`, D-096, D-097; versão 0.11.0): a spec de performance
   pedida pelo dono (a D-094 (3) já pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em
   segundos (hoje em até 29 min) ao tronco do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três

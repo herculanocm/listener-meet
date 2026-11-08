@@ -4,7 +4,8 @@ pendente (pergunta 7); "Exportar" e o "⋯", com "Revisar falantes…" (sem voz 
 novo" dele, "Revisar a transcrição com IA", a troca de idioma e "Reprocessar…", que perguntam antes com o tempo e o custo
 (P-05). Embaixo, a legenda: data, duração, participantes, idioma e custo. A contagem das vozes pendentes é uma consulta
 leve por recarga (A-36). Mora aqui também o "Exportar" (copiar a ata ou a transcrição com texto e HTML; salvar o .md com
-escrita atômica ou o .docx, U-011, D-012). Um mixin da `MeetingWindow`: usa o estado e os métodos dela."""
+escrita atômica ou o .docx, U-011, D-012; F5.19: o áudio e o vídeo com legendas, `ui/media_save.py`). Um mixin da
+`MeetingWindow`: usa o estado e os métodos dela."""
 from __future__ import annotations
 
 from collections import deque
@@ -27,6 +28,7 @@ from .common import copy_rich, markdown_html
 from .components import InfoBar
 from .docx_save import DocxSaver
 from .meeting_language import MeetingLanguage
+from .media_save import MediaSaver
 from .meeting_parts import menu_button
 from .theme import METRICS, note, role
 
@@ -37,7 +39,7 @@ if TYPE_CHECKING:
 
 log = get_logger("ui.meeting")
 MORE_TIP = "Mais ações: revisar falantes, título sugerido, revisar a transcrição com IA, idioma e reprocessar"
-EXPORT_TIP = "Copiar para a área de transferência ou salvar um arquivo .md ou .docx"
+EXPORT_TIP = "Copiar para a área de transferência ou salvar a reunião em .md, .docx, áudio ou vídeo"
 
 
 def pending_voices(store: Store, meeting_id: int) -> int:
@@ -59,6 +61,7 @@ class MeetingHeaderMixin:
     llm: LlmTabsGroup
     transcript: TranscriptTab
     on_review: Callable[[int], Any] | None
+    recording: Callable[[], bool] | None                 # F5.19 (A-07): uma gravação em curso faz a exportação de mídia esperar
 
     def title_text(self) -> str:
         raise NotImplementedError
@@ -124,6 +127,11 @@ class MeetingHeaderMixin:
         menu.addSeparator()
         menu.addAction(self.act_save)
         menu.addAction(self.docx.action)
+        self.media = MediaSaver(host, self.store, self.meeting_id, message=self.show_message, saved=self._saved,   # F5.19
+                                prefer_llm=lambda: self.transcript.prefer_llm, recording=self.recording)
+        menu.addSeparator()
+        menu.addAction(self.media.act_audio)
+        menu.addAction(self.media.act_video)
         return menu
 
     def _more_menu(self) -> QMenu:
