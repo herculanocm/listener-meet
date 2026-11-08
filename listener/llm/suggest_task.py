@@ -17,6 +17,9 @@ interface por sinal.
 - O memorando (`run_memo`): com 10 avaliações novas desde o último, uma chamada sem reunião (o custo do mês) refaz
   `suggest.memo` só com estilo e abordagem.
 
+No L0 da F5.21 (A-27), os tipos e o pedido foram para `llm/suggest_ctx.py`, o dossiê para `llm/suggest_dossier.py` e o
+memorando para `llm/suggest_memo_task.py`, sem mudar nada; os nomes de antes seguem importáveis daqui.
+
 O log leva ids, contagens, tempos e custo; nunca o texto da sugestão, do fio, do objetivo, da linha nem do memorando."""
 from __future__ import annotations
 
@@ -26,13 +29,9 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, replace
-from datetime import datetime
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..config.defaults import SPECS
-from ..config.language import default_language
 from ..log import get_logger
 from ..model import Evidence, LlmCallStatus, SuggestMode, SuggestStatus
 from ..store.llm_calls import LlmCallInsert
@@ -40,241 +39,26 @@ from ..store.suggestions import OptionInsert, SuggestionInsert
 from . import partial_task, prompts, redact
 from .aio import run_async
 from .base import OFF_SCHEMA, LlmError, LLMProvider, classify_exception
-from .costs import CHARS_PER_TOKEN, cost_usd, fmt_usd, price_for
+from .costs import cost_usd, fmt_usd, price_for
 from .jobconfig import LlmJobConfig
-from .prompts.common import Marker, Person
-from .prompts.suggest import (KINDS_ORIENT, KINDS_SPEAK, MAX_FACTS, MAX_OPTIONS, OPTION_SCHEMA, SUMMARY_LIMIT, TEXT_LIMIT, RatedOption,
-                              SuggestCtx)
-from .prompts.suggest_memo import MemoCtx
-from .registry import RetryingProvider, build_provider
+from .prompts.suggest import KINDS_ORIENT, KINDS_SPEAK, OPTION_SCHEMA, SUMMARY_LIMIT, TEXT_LIMIT
+from .registry import build_provider
 from .schema import SchemaError, parse_json_text, schema_hash, validate
-from .suggest_compact import PARTICIPANT, Compacted, compact, trim
+from .suggest_compact import compact, trim
+from .suggest_ctx import (ANCHOR_WINDOW_MS, CANCELLED, MAX_ANCHOR_CHARS, MAX_INPUT_CHARS, MIN_WINDOW_MS, NO_OPTIONS, NO_PROVIDER, POLL_S,
+                          REANCHOR_EVERY_MS, TIMED_OUT, TIMEOUT_S, OnOption, Outcome, SuggestOption, SuggestResult, Window, bounded,
+                          budget_text, estimate_usd, me_label, rated, suggest_ctx, window)
+from .suggest_dossier import DOSSIER_MAX_ACTIONS, DOSSIER_MAX_CHARS, DOSSIER_MAX_MEETINGS, dossier_text
+from .suggest_memo_task import MEMO_MAX_RATED, MEMO_MIN_RATINGS, MEMO_OUTPUT_TOKENS, MemoResult, memo_due, run_memo
 from .suggest_parse import OptionsReader
 from .types import TASK_REASONING, Completion, LlmTask, Request, Usage
 
 if TYPE_CHECKING:
     from ..store import Store
-    from ..store.people import PersonRow
-    from ..store.suggestions import OptionRow
 
 log = get_logger("llm.suggest")
 
 MAX_OUTPUT_TOKENS = 700
-TIMEOUT_S = 30.0
-POLL_S = 0.2
-MIN_WINDOW_MS = 3 * 60_000
-ANCHOR_WINDOW_MS = 15 * 60_000
-REANCHOR_EVERY_MS = 20 * 60_000
-MAX_INPUT_CHARS = 8_000
-MAX_ANCHOR_CHARS = 12_000
-RATINGS_IN_PROMPT = 10
-MEMO_MIN_RATINGS = 10
-MEMO_MAX_RATED = 200
-MEMO_OUTPUT_TOKENS = 400
-DOSSIER_MAX_CHARS = 1_500
-DOSSIER_MAX_ACTIONS = 12
-DOSSIER_MAX_MEETINGS = 3
-ORIENT_OPTIONS = 3
-ME_FALLBACK = "Usuário"
-NO_PROVIDER = "sem provedor de IA com chave: as sugestões ficam de fora (Configurações, Chaves de acesso)"
-BUDGET_TEXT = "sugestões paradas nesta reunião: o custo da IA chegou a {spent}, metade do alerta de {alert}; o resto fica para a ata"
-NO_OPTIONS = "a IA não devolveu nenhuma opção válida"
-TIMED_OUT = f"prazo de {TIMEOUT_S:.0f} s esgotado"
-CANCELLED = "cancelado"
-
-type OnOption = Callable[[SuggestOption], None]
-
-
-class Outcome(StrEnum):
-    DONE = "done"                  # sugestão gravada com opções (no memorando: refeito, ou nada a refazer)
-    NO_PROVIDER = "no_provider"    # sem provedor ativo com chave
-    BUDGET = "budget"              # o custo da reunião já na metade do alerta (o teto do parcial)
-    ERROR = "error"                # rede, provedor, prazo, resposta fora do esquema ou sem opção
-    CANCELLED = "cancelled"
-    GONE = "gone"                  # a reunião não existe mais (Cancelar)
-
-
-@dataclass(frozen=True, slots=True)
-class SuggestOption:
-    idx: int
-    kind: str
-    text: str
-    facts: tuple[tuple[int, int], ...]     # (caption_id, t_ms) das legendas citadas que estão no pedido
-    evidence: Evidence
-
-
-@dataclass(frozen=True, slots=True)
-class SuggestResult:
-    outcome: Outcome
-    meeting_id: int
-    suggestion_id: int | None = None
-    call_id: int | None = None
-    options: tuple[SuggestOption, ...] = ()
-    option_ids: tuple[int, ...] = ()       # os ids de `suggestion_options`, na ordem de `options` (o cartão avalia por eles)
-    thread_summary: str | None = None
-    cost_usd: float | None = None
-    cost_estimated: bool = False
-    first_ms: int | None = None
-    total_ms: int | None = None
-    raw_chars: int = 0
-    input_chars: int = 0
-    until_caption_id: int = 0
-    t_until_ms: int = 0
-    spent_usd: float = 0.0
-    limit_usd: float = 0.0
-    error: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Window:
-    t_from_ms: int
-    anchored: bool
-    max_chars: int
-
-
-@dataclass(frozen=True, slots=True)
-class MemoResult:
-    outcome: Outcome
-    memo: str | None = None
-    ratings_used: int = 0
-    call_id: int | None = None
-    cost_usd: float | None = None
-    error: str | None = None
-
-
-# ---------------------------------------------------------------- o pedido
-def budget_text(spent: float, limit: float) -> str:
-    return BUDGET_TEXT.format(spent=fmt_usd(spent), alert=fmt_usd(limit / partial_task.PARTIAL_BUDGET_SHARE))
-
-
-def window(store: Store, meeting_id: int, t_ms: int, window_min: int) -> Window:
-    """A janela de legendas do pedido feito em `t_ms`: reancorada (15 min, teto maior) na primeira e a cada 20 min; senão desde o
-    fim da sugestão anterior, com ao menos 3 min e no máximo `window_min`."""
-    prev = store.suggestions.last_ok(meeting_id)
-    anchor_t = store.suggestions.last_anchored_t_ms(meeting_id)
-    if prev is None or anchor_t is None or t_ms - anchor_t >= REANCHOR_EVERY_MS:
-        return Window(max(0, t_ms - ANCHOR_WINDOW_MS), True, MAX_ANCHOR_CHARS)
-    since = min(int(prev.get("t_until_ms") or 0), t_ms - MIN_WINDOW_MS)
-    return Window(max(0, t_ms - window_min * 60_000, since), False, MAX_INPUT_CHARS)
-
-
-def me_label(me: PersonRow | None) -> str:
-    """O rótulo de quem pede nas legendas sem nome do canal L ("Nome — Cargo")."""
-    if me is None:
-        return ME_FALLBACK
-    role = str(me.get("role") or "").strip()
-    return f"{me['name']} — {role}" if role else str(me["name"])
-
-
-def _asker(me: PersonRow | None) -> Person:
-    if me is None:
-        return Person(0, ME_FALLBACK)
-    return Person(int(me["id"]), str(me["name"]), str(me.get("role") or ""), str(me.get("company") or ""))
-
-
-def _speakers(store: Store, rows: list[Mapping[str, Any]], in_room: bool = False) -> tuple[Person, ...]:
-    """Os falantes do R na janela (e os do L na sala presencial, R-06), com o cargo do rótulo e a empresa da ficha (o e-mail
-    nunca)."""
-    out: dict[str, Person] = {}
-    for row in rows:
-        label = str(row.get("label") or "").strip()
-        if (row.get("channel") != "R" and not in_room) or not label or label == PARTICIPANT or label in out:
-            continue
-        name, _sep, role = label.partition(" — ")
-        person = store.people.find_by_name(name.strip())
-        out[label] = Person(int(person["id"]) if person else 0, name.strip(), role.strip(), str((person or {}).get("company") or ""))
-    return tuple(out.values())
-
-
-def rated(rows: list[OptionRow]) -> tuple[RatedOption, ...]:
-    return tuple(RatedOption(str(r["kind"]), str(r["text"]), r.get("rating"), r.get("reason"), bool(r.get("used"))) for r in rows)
-
-
-def suggest_ctx(store: Store, meeting: Mapping[str, Any], me: PersonRow | None, mode: SuggestMode, options_n: int, dossier: str | None,
-                nudge: str | None, c: Compacted, rows: list[Mapping[str, Any]]) -> SuggestCtx:
-    """O contexto do pedido (C4): o cabeçalho com os marcadores e os falantes da janela, quem pede, os blocos opcionais."""
-    mid = int(meeting["id"])
-    markers = tuple(Marker(int(m["id"]), int(m["t_ms"]), str(m.get("note") or "")) for m in store.list_markers(mid))
-    head = replace(partial_task.meeting_ctx(store, meeting), markers=markers,
-                   speakers=_speakers(store, rows, bool(meeting.get("is_in_room"))))
-    previous, _last = partial_task.partial_state(store, mid)
-    prev = store.suggestions.last_ok(mid)
-    memo = str(store.get(SPECS["suggest.memo"])).strip() or None
-    goal = str(meeting.get("goal") or "").strip() or None
-    return SuggestCtx(head, _asker(me), mode, ORIENT_OPTIONS if mode == SuggestMode.ORIENT else options_n, goal, dossier or None, memo,
-                      partial_task.prompt_json(previous), (prev or {}).get("thread_summary") or None, c.lines,
-                      rated(store.suggestions.rated_for_meeting(mid, RATINGS_IN_PROMPT)), (nudge or "").strip() or None)
-
-
-def dossier_text(store: Store, meeting_id: int) -> str:
-    """U-161: as ações abertas cujo dono é um esperado ou "Você" e as três últimas reuniões com os esperados; vazio sem nada;
-    cortado no fim de uma linha em 1.500 caracteres. Só leitura; nenhuma chamada à LLM."""
-    meeting = store.get_meeting(meeting_id)
-    if meeting is None:
-        return ""
-    try:
-        expected = [int(x) for x in json.loads(str(meeting.get("expected_people_json") or "[]"))]
-    except (ValueError, TypeError):
-        expected = []
-    me = store.get_me()
-    owners = set(expected) | ({int(me["id"])} if me else set())
-    lines: list[str] = []
-    if owners:
-        for a in store.actions.list_open():
-            if a.get("owner_person_id") not in owners:
-                continue
-            title = a.get("meeting_title") or a.get("meeting_title_llm") or f"reunião {a['meeting_id']}"
-            owner = a.get("owner_name") or a.get("owner_text") or "sem dono"
-            lines.append(f"- Ação aberta: {a.get('text') or ''} · dono: {owner} · prazo: {a.get('due') or 'sem prazo'} · reunião: {title} "
-                         f"({str(a.get('started_at') or '')[:10]})")
-            if len(lines) >= DOSSIER_MAX_ACTIONS:
-                break
-    if expected:
-        ids: set[int] = set()
-        for pid in expected:
-            ids.update(store.people.meetings_of(pid))
-        ids.discard(meeting_id)
-        parts = []
-        for mid in sorted(ids, reverse=True)[:DOSSIER_MAX_MEETINGS]:
-            m = store.get_meeting(mid)
-            if m is not None:
-                parts.append(f"{m.get('title') or m.get('title_llm') or f'reunião {mid}'} ({str(m.get('started_at') or '')[:10]})")
-        if parts:
-            lines.append("Últimas reuniões com estes participantes: " + "; ".join(parts))
-    out: list[str] = []
-    total = 0
-    for line in lines:
-        extra = len(line) + (1 if out else 0)
-        if total + extra > DOSSIER_MAX_CHARS:
-            break
-        out.append(line)
-        total += extra
-    return "\n".join(out)
-
-
-def estimate_usd(store: Store, cfg: LlmJobConfig, chars_in: int, chars_out: int) -> float | None:
-    """O custo pelos caracteres (÷ 3,5 por token, o contrato), sem chamar o provedor: a dica do botão e a sugestão cancelada."""
-    price = price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, cfg.fast_model)
-    if price is None:
-        return None
-    return round((chars_in / CHARS_PER_TOKEN * price.input_usd_m + chars_out / CHARS_PER_TOKEN * price.output_usd_m) / 1e6, 6)
-
-
-def bounded(obj: Any) -> Any:
-    """R-02: a OpenAI e a Anthropic não recebem os tetos do esquema (`maxItems`, `maxLength`): as listas e os textos acima
-    deles são cortados antes da validação, como a margem do texto e do fio, em vez de reprovar a sugestão inteira."""
-    if not isinstance(obj, dict):
-        return obj
-    out = dict(obj)
-    if isinstance(out.get("facts"), list):
-        out["facts"] = out["facts"][:MAX_FACTS]
-    if isinstance(out.get("text"), str):
-        out["text"] = out["text"][:TEXT_LIMIT]
-    if isinstance(out.get("options"), list):
-        out["options"] = [bounded(o) for o in out["options"][:MAX_OPTIONS]]
-    if isinstance(out.get("thread_summary"), str):
-        out["thread_summary"] = out["thread_summary"][:SUMMARY_LIMIT]
-    return out
 
 
 # ---------------------------------------------------------------- a sugestão
@@ -424,86 +208,8 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
                          c.raw_chars, c.input_chars, c.until_caption_id, c.t_until_ms, spent, limit, error)
 
 
-# ---------------------------------------------------------------- o memorando
-def memo_due(store: Store) -> bool:
-    """Há 10 avaliações novas desde o último memorando (o gatilho, idempotente: o que falhou roda na parada seguinte): as feitas
-    depois de `suggest.memo_at` (R-08: uma reunião excluída não trava a conta, como travaria a diferença das contagens)."""
-    return store.suggestions.count_rated_since(str(store.get(SPECS["suggest.memo_at"])) or None) >= MEMO_MIN_RATINGS
-
-
-def run_memo(store: Store, *, cancelled: Callable[[], bool] | None = None, provider: LLMProvider | None = None) -> MemoResult:
-    """U-158: refaz `suggest.memo` com todas as avaliações (as mais recentes primeiro, até 200); sem 10 novas, nada."""
-    total = store.suggestions.count_rated()
-    if not memo_due(store):
-        return MemoResult(Outcome.DONE, None, total)
-    if provider is None and store.providers.active_with_key("llm") is None:
-        return MemoResult(Outcome.NO_PROVIDER, error=NO_PROVIDER)
-    cfg = LlmJobConfig.from_store(store)
-    redact.GLOBAL.add(store.providers.key(cfg.provider_id))
-    started = datetime.now().astimezone().isoformat(timespec="milliseconds")   # o formato do `rated_at`: a conta seguinte parte daqui
-    current = str(store.get(SPECS["suggest.memo"])).strip() or None
-    ctx = MemoCtx(current, rated(store.suggestions.list_rated(MEMO_MAX_RATED)), default_language(store))
-    req = Request(LlmTask.SUGGEST_MEMO, cfg.fast_model, cfg.build(LlmTask.SUGGEST_MEMO, ctx), prompts.suggest_memo.SCHEMA,
-                  max_output_tokens=MEMO_OUTPUT_TOKENS, reasoning=TASK_REASONING[LlmTask.SUGGEST_MEMO], timeout_s=TIMEOUT_S)
-    stopped = cancelled or (lambda: False)
-
-    async def go() -> tuple[Completion | None, LlmError | None, bool]:
-        p: LLMProvider | None = provider
-        try:
-            if p is None:                                      # sem retentativa de rede: a parada seguinte tenta de novo
-                p = RetryingProvider(build_provider(store, cfg.provider_id, retrying=False)[0], attempts=1)
-            call = asyncio.ensure_future(p.complete(req))
-            while True:
-                done, _pending = await asyncio.wait({call}, timeout=POLL_S)
-                if done:
-                    return call.result(), None, False
-                if stopped():
-                    call.cancel()
-                    with suppress(BaseException):
-                        await call
-                    return None, None, True
-        except Exception as e:
-            return None, classify_exception(e), False
-        finally:
-            if provider is None and p is not None:
-                with suppress(Exception):
-                    await p.aclose()
-
-    comp, err, was_cancelled = run_async(go())
-    version, digest = cfg.version(LlmTask.SUGGEST_MEMO), schema_hash(prompts.suggest_memo.SCHEMA)
-    memo: str | None = None
-    error: str | None = None
-    if was_cancelled:
-        error = CANCELLED
-    elif err is not None or comp is None:
-        error = redact.GLOBAL.redact(str(err) if err is not None else "sem resposta")
-    else:
-        try:
-            data = validate(prompts.suggest_memo.SCHEMA, comp.data if comp.data is not None else parse_json_text(comp.text))
-            memo = str(data["memo"]).strip() or None
-        except (SchemaError, ValueError) as e:
-            error = redact.GLOBAL.redact(f"{OFF_SCHEMA}: {e}")
-        if memo is None and error is None:
-            error = "memorando vazio"
-    usage = comp.usage if comp is not None else Usage()
-    cost = (cost_usd(usage, price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, comp.model))
-            if comp is not None else None)
-    call_id = store.llm_calls.insert(LlmCallInsert(None, None, str(LlmTask.SUGGEST_MEMO), cfg.provider_id,
-                                                   comp.model if comp is not None else cfg.fast_model, version, digest, usage.input_tokens,
-                                                   usage.output_tokens, usage.cached_tokens, 0, cost,
-                                                   comp.latency_ms if comp is not None else 0,
-                                                   LlmCallStatus.OK if memo is not None else LlmCallStatus.ERROR, error, "direct"),
-                                     store_payloads=False)
-    if memo is None:
-        log.warning("memorando das sugestões não refeito: %s", error)
-        return MemoResult(Outcome.CANCELLED if was_cancelled else Outcome.ERROR, None, total, call_id, cost, error)
-    store.set_setting("suggest.memo", memo)
-    store.set_setting("suggest.memo_at", started)
-    store.set_setting("suggest.memo_ratings", str(total))
-    log.info("memorando das sugestões refeito com %d avaliação(ões) (%s)", total, fmt_usd(cost))
-    return MemoResult(Outcome.DONE, memo, total, call_id, cost)
-
-
-__all__ = ["ANCHOR_WINDOW_MS", "MEMO_MIN_RATINGS", "MIN_WINDOW_MS", "REANCHOR_EVERY_MS", "TIMEOUT_S", "MemoResult", "OnOption", "Outcome",
-           "SuggestOption", "SuggestResult", "Window", "budget_text", "dossier_text", "estimate_usd", "me_label", "memo_due", "rated",
-           "run_memo", "run_suggest", "suggest_ctx", "window"]
+__all__ = ["ANCHOR_WINDOW_MS", "CANCELLED", "DOSSIER_MAX_ACTIONS", "DOSSIER_MAX_CHARS", "DOSSIER_MAX_MEETINGS", "MAX_ANCHOR_CHARS",
+           "MAX_INPUT_CHARS", "MAX_OUTPUT_TOKENS", "MEMO_MAX_RATED", "MEMO_MIN_RATINGS", "MEMO_OUTPUT_TOKENS", "MIN_WINDOW_MS",
+           "NO_OPTIONS", "NO_PROVIDER", "POLL_S", "REANCHOR_EVERY_MS", "SUMMARY_LIMIT", "TEXT_LIMIT", "TIMED_OUT", "TIMEOUT_S",
+           "MemoResult", "OnOption", "OptionsReader", "Outcome", "SuggestOption", "SuggestResult", "Window", "bounded", "budget_text",
+           "dossier_text", "estimate_usd", "me_label", "memo_due", "rated", "run_memo", "run_suggest", "suggest_ctx", "window"]

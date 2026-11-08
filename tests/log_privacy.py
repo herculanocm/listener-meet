@@ -28,7 +28,8 @@ F510_MODULES = tuple(ROOT / p for p in ("listener/rag/sandbox.py", "listener/rag
 F510_FORBIDDEN = frozenset({"question", "sql", "params", "rows", "goal", "answer", "text", "cells"})
 # F5.20 (C16; R-03 da revisão do L3): a sugestão, o fio, o objetivo, o "Como sugerir agora", o memorando, o dossiê e o primeiro
 # nome do usuário nunca vão ao log; o motivo do "Ruim" vem da lista fechada (`RatingReason`) e pode ir
-F520_MODULES = tuple(ROOT / p for p in ("listener/llm/suggest_task.py", "listener/llm/suggest_compact.py",
+F520_MODULES = tuple(ROOT / p for p in ("listener/llm/suggest_task.py", "listener/llm/suggest_ctx.py", "listener/llm/suggest_dossier.py",
+                                         "listener/llm/suggest_memo_task.py", "listener/llm/suggest_compact.py",
                                          "listener/llm/suggest_parse.py", "listener/llm/prompts/suggest.py",
                                          "listener/llm/prompts/suggest_memo.py", "listener/store/suggestions.py",
                                          "listener/ui/suggest_host.py", "listener/ui/suggest_card.py", "listener/ui/suggest_option.py",

@@ -8,7 +8,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   contexto (U-164 a U-170), com a revisão de arquitetura A-01 a A-42. A implementação segue os lotes L0 a L3, um commit
   por lote, com a revisão do diff por um agente novo (D-040); cada lote roda os testes novos e os dos arquivos tocados, e a
   suíte inteira roda no fechamento (D-102). Posição (`[x]` com o commit):
-  - [ ] L0: o `suggest_task.py` dividido, sem mudar comportamento.
+  - [x] L0: o `suggest_task.py` dividido em `suggest_ctx`, `suggest_dossier` e `suggest_memo_task`, sem mudar comportamento (o commit do L0).
   - [ ] L1: a imagem na camada de LLM, a v11, o prompt `suggest` 1.1 e a tarefa com a tela.
   - [ ] L2: a plataforma, o preparo, o host, o cartão, o chat, a janela maior, o atalho, o menu e as Configurações.
   - [ ] L3: a aba, o `--check`, a sonda, o `exe_probe`, os documentos e a versão 0.14.0.
