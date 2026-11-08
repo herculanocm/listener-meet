@@ -21,7 +21,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   - [x] L2: o cartão na bandeja, o botão "Sugerir" no widget e na bandeja, o atalho, o "Sugerir…" da bandeja do
     sistema, a caixa e o objetivo no "Antes de gravar", o grupo nas Configurações e o memorando na página Prompts (o
     commit do L2).
-  - [ ] L3: a avaliação, o memorando, o dossiê, a aba Sugestões e o `--check`.
+  - [x] L1, a revisão do diff (R-01 a R-08) aplicada (`6a2e119`).
+  - [x] L3: o dossiê, o teto partilhado com o resumo parcial, o "falaram com você", o memorando ao parar, a aba
+    Sugestões e o `--check` (o commit do L3).
   - [ ] L4: as fotos, a revisão do diff, a documentação e a versão 0.13.0.
   Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte de base tem 13 falhas do ambiente
   (o widget 1 px mais alto no offscreen, tempos dos avisos, cores do estilo, o build): a régua de cada lote é

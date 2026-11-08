@@ -33,6 +33,9 @@ TARGET_NAME_PCT = 70.0
 GAP_LIMIT_MS = 1000                 # "gravação intacta": nenhum buraco acima de 1 s entre pedaços
 MAJORITY = 0.5                      # "sobretudo": o segmento cobre ao menos metade da legenda
 PARTIAL_SLACK_MS = 20_000           # o disparo do parcial confere a cada 15 s: intervalo que fecha tão perto do fim não conta
+# F5.20 (Aceite): as sugestões ao vivo
+TARGET_FIRST_P50_S, TARGET_FIRST_P95_S, TARGET_TOTAL_P95_S = 3.0, 6.0, 10.0
+TARGET_USEFUL, TARGET_EVIDENCE, TARGET_COMPACTION = 0.5, 0.9, 0.25
 
 
 def _stats(values: Sequence[float]) -> dict[str, Any]:
@@ -232,3 +235,50 @@ def live_report(store: Store, meeting_id: int, events: Sequence[Mapping[str, Any
     return {"enabled": True, "started": [e.get("data") for e in started], "captions": {"n": len(captions), "by_model": by_model},
             "latency_ms": latency, "cpu_pct": cpu, "degraded": degraded, "stopped": stopped[-1] if stopped else None,
             "names": names, "partials": partials, "gate": gate}
+
+
+def _median(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    s = sorted(values)
+    mid = len(s) // 2
+    return round(s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2, 1)
+
+
+def _seconds(ms: float | None) -> float | None:
+    return None if ms is None else round(ms / 1000, 1)
+
+
+def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
+    """F5.20 (C14): os pedidos por modo e desfecho, o tempo até a primeira opção e até o fim (média, p50 e p95, só dos que
+    terminaram bem), as avaliações, a parcela útil (pedidos com ao menos uma "Boa" ou "Usei"), a das opções com evidência, a
+    compactação (1 - compactado ÷ cru) e o custo (o estimado à parte), cada critério do Aceite contra o alvo."""
+    rows: list[dict[str, Any]] = [dict(r) for r in store.suggestions.list_for_meeting(meeting_id)]
+    if not rows:
+        return {"requests": 0}
+    options: dict[int, list[dict[str, Any]]] = {k: [dict(o) for o in v]
+                                                 for k, v in store.suggestions.options_for_meeting(meeting_id).items()}
+    ok = [r for r in rows if r.get("status") == "ok"]
+    first = [float(r["first_ms"]) for r in ok if r.get("first_ms") is not None]
+    total = [float(r["total_ms"]) for r in ok if r.get("total_ms") is not None]
+    opts = [o for sid in options for o in options[sid]]
+    useful = sum(1 for r in ok if any(o.get("rating") == 1 or o.get("used") for o in options.get(int(r["id"]), [])))
+    raw, sent = sum(int(r.get("raw_chars") or 0) for r in rows), sum(int(r.get("input_chars") or 0) for r in rows)
+    first_stats, total_stats = {**_stats(first), "p50": _median(first)}, {**_stats(total), "p50": _median(total)}
+    out: dict[str, Any] = {
+        "requests": len(rows), "by_mode": dict(Counter(str(r.get("mode")) for r in rows)),
+        "by_status": dict(Counter(str(r.get("status")) for r in rows)), "first_ms": first_stats, "total_ms": total_stats,
+        "options": len(opts), "rated": sum(1 for o in opts if o.get("rating") is not None or o.get("used")),
+        "good": sum(1 for o in opts if o.get("rating") == 1), "bad": sum(1 for o in opts if o.get("rating") == 0),
+        "used": sum(1 for o in opts if o.get("used")), "useful_share": round(useful / len(ok), 3) if ok else None,
+        "evidence_share": round(sum(1 for o in opts if o.get("evidence") == "ok") / len(opts), 3) if opts else None,
+        "compaction": round(1 - sent / raw, 3) if raw else None,
+        "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows), 6),
+        "cost_estimated_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows if r.get("cost_estimated")), 6)}
+    out["gates"] = {"first_p50": _gate(_seconds(first_stats["p50"]), TARGET_FIRST_P50_S, unit=" s"),
+                    "first_p95": _gate(_seconds(first_stats["p95"]), TARGET_FIRST_P95_S, unit=" s"),
+                    "total_p95": _gate(_seconds(total_stats["p95"]), TARGET_TOTAL_P95_S, unit=" s"),
+                    "useful": _gate(out["useful_share"], TARGET_USEFUL, at_least=True),
+                    "evidence": _gate(out["evidence_share"], TARGET_EVIDENCE, at_least=True),
+                    "compaction": _gate(out["compaction"], TARGET_COMPACTION, at_least=True)}
+    return out

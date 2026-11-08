@@ -143,6 +143,12 @@ def meeting_report(store: Store, meeting_id: int) -> dict[str, Any]:
         out["live"] = live_report(store, meeting_id, events, channels)
     except Exception as e:                                   # o bloco do ao vivo nunca derruba o relatório da F1
         out["live"] = {"error": f"{type(e).__name__}: {e}"}
+    try:                                                     # F5.20 (C14): as sugestões ao vivo, só leitura
+        from .live.report import suggestions_report
+
+        out["suggestions"] = suggestions_report(store, meeting_id)
+    except Exception as e:                                   # o bloco das sugestões também nunca derruba o relatório
+        out["suggestions"] = {"error": f"{type(e).__name__}: {e}"}
     try:                                                     # F5 item 13: o índice da reunião (G5), só leitura
         from .rag.report import meeting_rag
 

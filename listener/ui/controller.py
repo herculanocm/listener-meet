@@ -708,7 +708,7 @@ class Controller(QObject):
                                             on_notice=functools.partial(self._notify_as, NoticeKind.ERROR),
                                             marked=self._marked_captions, speakers=self._speakers,
                                             suggest=bool(fields.get("suggest", True)), elapsed=rec.elapsed, on_info=self.notify,
-                                            parent=self)
+                                            on_budget=self._suggest_budget_stopped, parent=self)
         if self.tray:
             self.tray.set_state(AppState.RECORDING)
         self._timer.start()
@@ -1797,6 +1797,8 @@ class Controller(QObject):
             case partial_task.Outcome.BUDGET if current:
                 self._partial_stopped = res.error or partial_task.budget_text(res.spent_usd, res.limit_usd)
                 self._partial_timer.stop()
+                if self.captions is not None:            # F5.20 (A-13): o teto é partilhado; as sugestões param junto
+                    self.captions.stop_suggestions(self._partial_stopped)
                 log.warning("reunião %s: %s", meeting_id, self._partial_stopped)
                 self.notify(self._partial_stopped[:1].upper() + self._partial_stopped[1:] + ".")
                 self._set_partial({"state": "stopped", "message": self._partial_stopped})
@@ -1808,6 +1810,13 @@ class Controller(QObject):
                 self._set_partial({"state": "idle", "message": "nada novo desde o último resumo parcial"})
             case _:
                 log.debug("resumo parcial da reunião %s: %s (fora da gravação atual)", meeting_id, res.outcome)
+
+    def _suggest_budget_stopped(self, text: str) -> None:
+        """F5.20 (A-13): a sugestão bateu no teto partilhado: o resumo parcial para junto, com o mesmo texto."""
+        if not self._partial_stopped:
+            self._partial_stopped = text
+            self._partial_timer.stop()
+            self._set_partial({"state": "stopped", "message": text})
 
     def _partial_failed(self, message: str, no_provider: bool = False) -> None:
         """Sem chave ou sem rede: um aviso por gravação; a próxima tentativa é no próximo intervalo e as legendas seguem."""

@@ -43,7 +43,8 @@ class CaptionTrayHost(QObject):
     def __init__(self, store: Store, platform: Platform, widget: RecordingWidget, meeting_id: int, *, on_mark: MarkCaption,
                  on_open_live: Callable[[], Any], on_notice: Callable[[str], Any], marked: set[tuple[Any, ...]],
                  speakers: dict[str, int], live_state: str, suggest: bool = False, elapsed: Callable[[], float] | None = None,
-                 on_info: Callable[[str], Any] | None = None, parent: QObject | None = None) -> None:
+                 on_info: Callable[[str], Any] | None = None, on_budget: Callable[[str], Any] | None = None,
+                 parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.widget = widget
         self.tray = CaptionTray(store, meeting_id, parent=widget, platform=platform, anchor=functools.partial(widget_rect, widget),
@@ -60,7 +61,7 @@ class CaptionTrayHost(QObject):
         widget.set_captions_shown(True)
         log.info("bandeja de legendas aberta%s", " (recolhida)" if self.tray.collapsed else "")
         self.suggest = SuggestHost(store, platform, widget, self.tray, meeting_id, active=suggest, live_state=live_state, elapsed=elapsed,
-                                   on_notice=on_info or on_notice, parent=self) if elapsed is not None else None
+                                   on_notice=on_info or on_notice, on_budget=on_budget, parent=self) if elapsed is not None else None
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -99,6 +100,11 @@ class CaptionTrayHost(QObject):
         """F5.20: o atalho e o "Sugerir…" da bandeja do sistema."""
         if self.suggest is not None:
             self.suggest.request_from_outside()
+
+    def stop_suggestions(self, text: str) -> None:
+        """F5.20 (A-13): o resumo parcial bateu no teto partilhado: as sugestões param junto."""
+        if self.suggest is not None:
+            self.suggest.set_budget_stopped(text)
 
     def settings_changed(self) -> None:
         """F5.20: o fechar das Configurações (`suggest.enabled` e a chave valem em uso)."""

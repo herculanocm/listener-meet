@@ -39,6 +39,7 @@ from .llm_tabs import LlmTabsGroup
 from .meeting_header import MeetingHeaderMixin
 from .meeting_keys import bar_keys, player_key
 from .meeting_parts import MarkersTab, SummaryTab
+from .meeting_suggestions import SuggestionsTab
 from .player_bar import PlayerBar
 from .sound_check import no_speech_text
 from .timeline import PlaybackFollower
@@ -52,8 +53,8 @@ if TYPE_CHECKING:
 
 log = get_logger("ui.meeting")
 
-TAB_KEYS = ("ata", "resumo", "acoes", "transcricao", "marcadores", "linha", "chat")
-TAB_TITLES = ("Ata", "Resumo", "Ações", "Transcrição", "Marcadores", "Linha do tempo", "Chat")
+TAB_KEYS = ("ata", "resumo", "acoes", "transcricao", "marcadores", "sugestoes", "linha", "chat")       # F5.20: + sugestões
+TAB_TITLES = ("Ata", "Resumo", "Ações", "Transcrição", "Marcadores", "Sugestões", "Linha do tempo", "Chat")
 DEFAULT_SIZE = (1040, 720)
 MIN_SIZE = (640, 420)
 SAVE_DELAY_MS = 600
@@ -82,13 +83,15 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
 
         # --- abas ---
         self.markers = MarkersTab(store, meeting_id, play=self._play_marker)
+        self.suggestions = SuggestionsTab(store, meeting_id, play=self._play_point if player is not None else None)   # F5.20
         self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
                                     play=self._play_point if player is not None else None)
         self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)
         self.chat = ChatPanel(store, meeting_id, player=player, title=self.title_text, on_answer=on_chat_answer)
         self.tabs = QTabWidget()
         pages = self._request_pages()
-        for widget, title in zip((*pages, self.transcript, self.markers, self.timeline, self.chat), TAB_TITLES, strict=True):
+        for widget, title in zip((*pages, self.transcript, self.markers, self.suggestions, self.timeline, self.chat), TAB_TITLES,
+                                 strict=True):
             self.tabs.addTab(widget, title)
         m = store.get_meeting(meeting_id) or {}
         self.bar = PlayerBar(player, meeting_id, title=self.title_text, start=self.transcript.current_play_from,
@@ -162,6 +165,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
             if not self.transcript.reload():             # refez a lista: a linha do tempo já releu tudo pelo `modelReset`
                 self.timeline.reload()                   # falas iguais: marcadores e pausas podem ter mudado (uma vez só)
             self.markers.reload()
+            self.suggestions.reload()
             self.chat.reload()
             self.reload_header()
         except Exception as e:  # a reunião sumiu ou o banco fechou: a janela fica como está

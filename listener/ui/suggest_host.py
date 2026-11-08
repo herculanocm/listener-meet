@@ -9,25 +9,32 @@ bandeja de legendas) e lhe repassa a legenda, o estado do ao vivo, o fim e a sa�
 - "Boa", "Ruim" com o motivo e "Usei" gravam na hora; "Como sugerir agora" (os chips e o texto) vale até ser limpa; o
   "Objetivo…" grava em `meetings.goal`; o texto livre abre o popup fora da captura (`ui/suggest_popup.py`).
 - Parar: o cartão fica para as avaliações, sem pedir de novo; Descartar: a chamada em voo é cancelada.
+- O dossiê (U-161) numa `Task` ao começar, com `suggest.dossier`; o teto de custo é o do resumo parcial, partilhado (A-13):
+  quem bater nele para os dois (`on_budget` e `set_budget_stopped`); "falaram com você" (U-160) destaca o botão por 20 s
+  quando o primeiro nome de quem pede aparece numa legenda do R, sem banco e sem LLM; ao parar, com `suggest.learn` e 10
+  avaliações novas, o memorando numa `Task` (A-19; o descarte e a saída do app não o pedem).
 Sinais ligados a métodos (R-06). O log leva ids, contagens e estados; nunca o texto da sugestão, da linha nem do objetivo."""
 from __future__ import annotations
 
+import functools
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 
 from ..config.defaults import SPECS
 from ..llm import suggest_task
 from ..llm.jobconfig import LlmJobConfig
-from ..llm.suggest_task import Outcome, SuggestOption, SuggestResult, run_suggest
+from ..llm.suggest_compact import first_name, mentions
+from ..llm.suggest_task import MemoResult, Outcome, SuggestOption, SuggestResult, dossier_text, memo_due, run_memo, run_suggest
 from ..log import get_logger
 from ..model import SuggestMode
 from .llm_ask import NO_KEY_TIP, has_key
 from .suggest_card import CHIPS, SuggestCard
 from .suggest_popup import SuggestTextPopup
-from .tasks import StreamTask, run_stream
+from .tasks import StreamTask, Task, run_stream, run_task
 from .widget_parts import shortcut_text
 
 if TYPE_CHECKING:
@@ -43,17 +50,30 @@ IN_FLIGHT = "a sugestão anterior ainda está chegando"
 ENDED = "Gravação encerrada: as sugestões param aqui."
 TIP = "Sugerir o que falar agora"
 EST_IN, EST_OUT = 11_000, 600                     # os caracteres de um pedido típico, para a dica do custo
+HINT_MS = 20_000                                  # U-160: o destaque do "falaram com você"
 
 
 class SuggestHost(QObject):
     def __init__(self, store: Store, platform: Platform, widget: RecordingWidget, tray: CaptionTray, meeting_id: int, *, active: bool,
-                 live_state: str, elapsed: Callable[[], float], on_notice: Callable[[str], Any], parent: QObject | None = None) -> None:
+                 live_state: str, elapsed: Callable[[], float], on_notice: Callable[[str], Any],
+                 on_budget: Callable[[str], Any] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.store, self.platform, self.widget, self.tray, self.meeting_id = store, platform, widget, tray, meeting_id
         self.active = active                      # U-163: a caixa "Sugestões" desta gravação
         self.live_state = live_state
         self.elapsed = elapsed                    # o tempo da gravação em segundos (o relógio do gravador)
         self.on_notice = on_notice
+        self.on_budget = on_budget                # A-13: o teto partilhado; o controlador para o resumo parcial junto
+        self.budget_stopped: str | None = None
+        self.dossier: str | None = None
+        self.dossier_task: Task | None = None
+        self.hint = self.name_hint = False
+        me = store.get_me()
+        self.first = first_name(str(me["name"])) if me else ""
+        self.hint_timer = QTimer(self)
+        self.hint_timer.setSingleShot(True)
+        self.hint_timer.setInterval(HINT_MS)
+        self.hint_timer.timeout.connect(self._hint_off)
         self.task: StreamTask | None = None
         self.finished = self.closed = False
         self.mode = SuggestMode.SPEAK
@@ -75,12 +95,15 @@ class SuggestHost(QObject):
         tray.suggest_requested.connect(self.request_from_outside)
         widget.suggest_clicked.connect(self.request_from_outside)
         self.reload()
+        if self.active and self.enabled and bool(store.get(SPECS["suggest.dossier"])):         # U-161: uma leitura, sem LLM
+            self.dossier_task = run_task(functools.partial(dossier_text, store, meeting_id), store, self._dossier_done)
 
     # ---------------------------------------------------------------- estado do botão
     def reload(self) -> None:
         """As configurações e a chave relidas (o começo da gravação e o fechar das Configurações: vale em uso, CP8)."""
         try:
             self.enabled = bool(self.store.get(SPECS["suggest.enabled"]))
+            self.name_hint = bool(self.store.get(SPECS["suggest.name_hint"]))
             self.keyed = has_key(self.store)
             self.cost_tip = self._cost_tip()
         except Exception as e:                    # o banco ocupado: o estado de antes fica
@@ -103,6 +126,8 @@ class SuggestHost(QObject):
             return True, False, NO_LIVE
         if not self.keyed:
             return True, False, NO_KEY_TIP
+        if self.budget_stopped:
+            return True, False, f"{self.budget_stopped[:1].upper()}{self.budget_stopped[1:]}."
         if self.task is not None:
             return True, False, f"{IN_FLIGHT[:1].upper()}{IN_FLIGHT[1:]}."
         return True, True, self.cost_tip
@@ -112,7 +137,7 @@ class SuggestHost(QObject):
             return
         visible, can, tip = self.available()
         for view in (self.widget, self.tray):
-            view.set_suggest_state(visible, can, tip, False)
+            view.set_suggest_state(visible, can, tip, self.hint and visible)
         self.card.set_can_request(can)
 
     # ---------------------------------------------------------------- pedir
@@ -142,7 +167,7 @@ class SuggestHost(QObject):
         if not can:
             return tip
         self.mode = mode if isinstance(mode, SuggestMode) else self.mode
-        store, mid, mode_now, nudge = self.store, self.meeting_id, self.mode, self.nudge
+        store, mid, mode_now, nudge, dossier = self.store, self.meeting_id, self.mode, self.nudge, self.dossier
         t_ms = round(self.elapsed() * 1000)
         options_n = int(store.get(SPECS["suggest.options"]))
         no_news = self.last_end_ms if self.answered_until and self.newest_caption <= self.answered_until else None
@@ -150,7 +175,7 @@ class SuggestHost(QObject):
         self.card.begin(mode_now, datetime.now().astimezone().strftime("%H:%M"), self.last_end_ms, no_news)
 
         def job(_emit: Callable[[str], None], cancelled: Callable[[], bool], report: Callable[[Any], None]) -> SuggestResult:
-            return run_suggest(store, mid, mode=mode_now, t_ms=t_ms, nudge=nudge, options_n=options_n, dossier=None, on_option=report,
+            return run_suggest(store, mid, mode=mode_now, t_ms=t_ms, nudge=nudge, options_n=options_n, dossier=dossier, on_option=report,
                                cancelled=cancelled)
 
         self.task = run_stream(job, store, self._chunk, self._done, on_progress=self._option)
@@ -188,6 +213,13 @@ class SuggestHost(QObject):
                 self.card.finish(r, r.option_ids, self.adjusted())
             case Outcome.CANCELLED:
                 self.card.cancelled()
+            case Outcome.BUDGET:
+                text = r.error or "sugestões paradas nesta reunião: o custo da IA chegou à metade do alerta"
+                self.set_budget_stopped(text)
+                if self.on_budget is not None:
+                    self.on_budget(text)
+                self.on_notice(f"{text[:1].upper()}{text[1:]}.")
+                self.card.fail(text, retry=False)
             case Outcome.NO_PROVIDER:
                 self.keyed = False
                 self.card.fail(r.error or NO_KEY_TIP, retry=False)
@@ -281,6 +313,27 @@ class SuggestHost(QObject):
         end = msg.get("t_end_ms")
         if isinstance(end, int):
             self.last_end_ms = max(self.last_end_ms or 0, end)
+        if self.name_hint and msg.get("channel") == "R" and mentions(str(msg.get("text") or ""), self.first):   # U-160
+            self.hint = True
+            self.hint_timer.start()
+            self.refresh()
+
+    def _hint_off(self) -> None:
+        self.hint = False
+        self.refresh()
+
+    def _dossier_done(self, result: object) -> None:
+        self.dossier_task = None
+        if isinstance(result, str):
+            self.dossier = result or None
+            log.info("reunião %s: dossiê das sugestões com %d caracteres", self.meeting_id, len(result))
+        else:
+            log.warning("reunião %s: dossiê das sugestões não montado: %s", self.meeting_id, type(result).__name__)
+
+    def set_budget_stopped(self, text: str) -> None:
+        """A-13: o teto partilhado com o resumo parcial (a sugestão ou o parcial bateu nele): as sugestões param nesta reunião."""
+        self.budget_stopped = text
+        self.refresh()
 
     def set_live_state(self, state: str) -> None:
         if state != self.live_state:
@@ -294,14 +347,27 @@ class SuggestHost(QObject):
         self.finished = True
         self.card.set_finished()
         self.refresh()
+        if not discarded and self.enabled and bool(self.store.get(SPECS["suggest.learn"])) and memo_due(self.store):
+            cancel = threading.Event()               # A-19: a saída do app o cancela e espera (`_stop_windows`)
+            run_task(functools.partial(run_memo, self.store, cancelled=cancel.is_set), self.store, _memo_done, cancel=cancel)
+            log.info("memorando das sugestões pedido")
 
     def teardown(self) -> None:
         """O fim da gravação ou a saída do app, antes de o widget e a bandeja irem embora: o cartão sai da bandeja. A chamada em
         voo termina sozinha e grava (Parar) ou a saída a cancela e espera (`_stop_windows`)."""
         self.closed = True
+        self.hint_timer.stop()
         self.tray.set_card(None)
         self.card.deleteLater()
         self.deleteLater()
+
+
+def _memo_done(result: object) -> None:
+    """Fora do host: o memorando termina depois de o host ir embora (a gravação parou). Só o log, sem o texto."""
+    if isinstance(result, MemoResult):
+        log.info("memorando das sugestões: %s (%d avaliações)", result.outcome, result.ratings_used)
+    else:
+        log.warning("memorando das sugestões falhou: %s", type(result).__name__)
 
 
 def _usd(value: float) -> str:
