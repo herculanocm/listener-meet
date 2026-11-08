@@ -290,3 +290,20 @@ def test_the_probe_errors_carry_no_user_path():
             r"C:\Users\Fulano\AppData\Local\y; C:\Outro\z")
     assert exe_probe.scrub(text, app, home) == r"ModuleNotFoundError: <app>\_internal\x.pyd; ~\AppData\Local\y; C:\Outro\z"
     assert exe_probe.scrub("sem caminho", "", "") == "sem caminho"
+
+
+def test_the_verdict_needs_the_jpeg_plugin_of_qt(qapp, platform, monkeypatch):
+    """F5.21 (A-36; R-09 da revisão do L3): o `qt()` lê o plugin JPEG do Qt de verdade, e sem ele o `.exe` não passa."""
+    from PySide6.QtGui import QImageWriter
+
+    import listener.platform
+
+    monkeypatch.setattr(listener.platform, "get_platform", lambda: platform)    # fora do Windows, a plataforma falsa
+    report = {"stack": {"numpy": {"ok": True}}, "pyannote": {"ok": True}, "child_utf8_mode": {"value": "1"}, "tests_in_build": False,
+              "qt": {"effective_style": "fusion", "expected_style": "fusion", "pt_BR": True, "jpeg": True}}
+    assert exe_probe.verdict(report)
+    report["qt"]["jpeg"] = False
+    assert not exe_probe.verdict(report)
+    assert exe_probe.qt()["jpeg"] is True
+    monkeypatch.setattr(QImageWriter, "supportedImageFormats", staticmethod(list))
+    assert exe_probe.qt()["jpeg"] is False

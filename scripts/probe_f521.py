@@ -215,17 +215,31 @@ def _count_color(frame: Any, rgb: tuple[int, int, int]) -> int:
 
 
 def _dpi_context() -> Any:
-    """A-03: o contexto de DPI da thread (2 = por monitor; o PMv2 também dá 2) [exp]."""
+    """A-03: o contexto de DPI da thread da interface e de uma thread de trabalho, como a da tarefa que tira o print (R-10 da
+    revisão do L3); o PMv2 pelo `AreDpiAwarenessContextsEqual` com o -4 (o "2" do awareness não separa o PMv1) [exp]."""
     import ctypes
 
     if sys.platform != "win32":
         return None
-    try:
+
+    def read() -> dict[str, Any]:
         user32 = ctypes.WinDLL("user32")
+        user32.GetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.GetAwarenessFromDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
+        user32.AreDpiAwarenessContextsEqual.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
         ctx = user32.GetThreadDpiAwarenessContext()
-        return int(user32.GetAwarenessFromDpiAwarenessContext(ctypes.c_void_p(ctx)))
-    except (AttributeError, OSError):
-        return None
+        return {"awareness": int(user32.GetAwarenessFromDpiAwarenessContext(ctx)),
+                "pmv2": bool(user32.AreDpiAwarenessContextsEqual(ctx, ctypes.c_void_p(-4)))}
+
+    out: dict[str, Any] = {}
+    try:
+        out["interface"] = read()
+        worker = threading.Thread(target=lambda: out.__setitem__("tarefa", read()), name="sonda-dpi")
+        worker.start()
+        worker.join(5)
+    except (AttributeError, OSError) as e:
+        out["erro"] = type(e).__name__
+    return out
 
 
 def _exclusion(app: Any, platform: Any) -> dict[str, Any]:

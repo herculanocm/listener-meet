@@ -254,30 +254,34 @@ def _seconds(ms: float | None) -> float | None:
 def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
     """F5.20 (C14): os pedidos por modo e desfecho, o tempo até a primeira opção e até o fim (média, p50 e p95, só dos que
     terminaram bem), as avaliações, a parcela útil (pedidos com ao menos uma "Boa" ou "Usei"), a das opções com evidência, a
-    compactação (1 - compactado ÷ cru) e o custo (o estimado à parte, e o por pedido), cada critério do Aceite contra o alvo."""
+    compactação (1 - compactado ÷ cru) e o custo (o estimado à parte, e o por pedido), cada critério do Aceite contra o alvo.
+    F5.21 (R-03 da revisão do L3): os tempos, a parcela útil e o custo por pedido daqui são dos pedidos sem a tela enviada; os
+    com a tela têm os números e os alvos próprios no bloco `screen`."""
     rows: list[dict[str, Any]] = [dict(r) for r in store.suggestions.list_for_meeting(meeting_id)]
     if not rows:
         return {"requests": 0}
     options: dict[int, list[dict[str, Any]]] = {k: [dict(o) for o in v]
                                                  for k, v in store.suggestions.options_for_meeting(meeting_id).items()}
-    ok = [r for r in rows if r.get("status") == "ok"]
+    screens = store.suggestions.screens_for_meeting(meeting_id)
+    sent = {sid for sid, sc in screens.items() if sc.get("status") == "enviada"}
+    plain = [r for r in rows if int(r["id"]) not in sent]
+    ok = [r for r in plain if r.get("status") == "ok"]
     first = [float(r["first_ms"]) for r in ok if r.get("first_ms") is not None]
     total = [float(r["total_ms"]) for r in ok if r.get("total_ms") is not None]
     opts = [o for sid in options for o in options[sid]]
-    useful = sum(1 for r in ok if any(o.get("rating") == 1 or o.get("used") for o in options.get(int(r["id"]), [])))
-    raw, sent = sum(int(r.get("raw_chars") or 0) for r in rows), sum(int(r.get("input_chars") or 0) for r in rows)
+    raw, chars = sum(int(r.get("raw_chars") or 0) for r in rows), sum(int(r.get("input_chars") or 0) for r in rows)
     first_stats, total_stats = {**_stats(first), "p50": _median(first)}, {**_stats(total), "p50": _median(total)}
     out: dict[str, Any] = {
         "requests": len(rows), "by_mode": dict(Counter(str(r.get("mode")) for r in rows)),
         "by_status": dict(Counter(str(r.get("status")) for r in rows)), "first_ms": first_stats, "total_ms": total_stats,
         "options": len(opts), "rated": sum(1 for o in opts if o.get("rating") is not None or o.get("used")),
         "good": sum(1 for o in opts if o.get("rating") == 1), "bad": sum(1 for o in opts if o.get("rating") == 0),
-        "used": sum(1 for o in opts if o.get("used")), "useful_share": round(useful / len(ok), 3) if ok else None,
+        "used": sum(1 for o in opts if o.get("used")), "useful_share": _useful(ok, options),
         "evidence_share": round(sum(1 for o in opts if o.get("evidence") == "ok") / len(opts), 3) if opts else None,
-        "compaction": round(1 - sent / raw, 3) if raw else None,
+        "compaction": round(1 - chars / raw, 3) if raw else None,
         "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows), 6),
         "cost_estimated_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows if r.get("cost_estimated")), 6)}
-    out["cost_per_request_usd"] = round(out["cost_usd"] / len(rows), 6)             # o Aceite "Custo" (R-08 da revisão do L3)
+    out["cost_per_request_usd"] = _per_request(plain)                                # o Aceite "Custo" (R-08 da revisão do L3)
     out["gates"] = {"first_p50": _gate(_seconds(first_stats["p50"]), TARGET_FIRST_P50_S, unit=" s"),
                     "first_p95": _gate(_seconds(first_stats["p95"]), TARGET_FIRST_P95_S, unit=" s"),
                     "total_p95": _gate(_seconds(total_stats["p95"]), TARGET_TOTAL_P95_S, unit=" s"),
@@ -285,30 +289,44 @@ def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
                     "evidence": _gate(out["evidence_share"], TARGET_EVIDENCE, at_least=True),
                     "compaction": _gate(out["compaction"], TARGET_COMPACTION, at_least=True),
                     "cost": _gate(out["cost_per_request_usd"], TARGET_COST_USD)}
-    out["screen"] = screen_report(store, meeting_id, rows, options)
+    out["screen"] = screen_report(store, meeting_id, rows, options, screens)
     return out
 
 
+def _per_request(rows: Sequence[Mapping[str, Any]]) -> float | None:
+    return round(sum(float(r.get("cost_usd") or 0) for r in rows) / len(rows), 6) if rows else None
+
+
+def _useful(ok: Sequence[Mapping[str, Any]], options: Mapping[int, Sequence[Mapping[str, Any]]]) -> float | None:
+    """A parcela dos pedidos com ao menos uma "Boa" ou "Usei"."""
+    useful = sum(1 for r in ok if any(o.get("rating") == 1 or o.get("used") for o in options.get(int(r["id"]), [])))
+    return round(useful / len(ok), 3) if ok else None
+
+
 def screen_report(store: Store, meeting_id: int, rows: Sequence[Mapping[str, Any]],
-                  options: Mapping[int, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+                  options: Mapping[int, Sequence[Mapping[str, Any]]], screens: Mapping[int, Mapping[str, Any]]) -> dict[str, Any]:
     """F5.21 (Aceite): os pedidos com a tela por estado; do clique à primeira opção nos que terminaram bem com a tela enviada
-    (o `first_ms` conta do clique, A-19); a parcela das opções desses pedidos que citam a tela; os bytes médios do que foi
-    enviado e quantas cópias ficaram guardadas; cada critério contra o alvo."""
-    screens = store.suggestions.screens_for_meeting(meeting_id)
+    (o `first_ms` conta do clique, A-19); a parcela das opções desses pedidos que citam a tela; a utilidade e o custo por
+    pedido dos que foram com a tela (R-03 da revisão do L3); os bytes médios do que foi enviado e quantas cópias ficaram
+    guardadas; cada critério contra o alvo."""
     if not screens:
         return {"requests": 0}
     sent = {sid for sid, s in screens.items() if s.get("status") == "enviada"}
-    ok = [r for r in rows if int(r["id"]) in sent and r.get("status") == "ok"]
+    went = [r for r in rows if int(r["id"]) in sent]
+    ok = [r for r in went if r.get("status") == "ok"]
     first = [float(r["first_ms"]) for r in ok if r.get("first_ms") is not None]
     opts = [o for r in ok for o in options.get(int(r["id"]), [])]
     cites = round(sum(1 for o in opts if o.get("screen")) / len(opts), 3) if opts else None
     stats = {**_stats(first), "p50": _median(first)}
     sizes = [int(screens[sid].get("bytes") or 0) for sid in sent]
     copies = store.suggestions.count_copies(meeting_id)
+    useful, cost = _useful(ok, options), _per_request(went)
     return {"requests": len(screens), "by_status": dict(Counter(str(s.get("status")) for s in screens.values())),
             "by_source": dict(Counter(str(s.get("source")) for s in screens.values())), "first_ms": stats,
-            "cites_share": cites, "bytes_avg": round(sum(sizes) / len(sizes)) if sizes else None, "copies": int(copies),
+            "cites_share": cites, "useful_share": useful, "cost_per_request_usd": cost,
+            "bytes_avg": round(sum(sizes) / len(sizes)) if sizes else None, "copies": int(copies),
             "covered": sum(int(s.get("covered") or 0) for s in screens.values()),
             "gates": {"first_p50": _gate(_seconds(stats["p50"]), TARGET_SCREEN_FIRST_P50_S, unit=" s"),
                       "first_p95": _gate(_seconds(stats["p95"]), TARGET_SCREEN_FIRST_P95_S, unit=" s"),
-                      "cites": _gate(cites, TARGET_SCREEN_CITES, at_least=True)}}
+                      "cites": _gate(cites, TARGET_SCREEN_CITES, at_least=True), "useful": _gate(useful, TARGET_USEFUL, at_least=True),
+                      "cost": _gate(cost, TARGET_COST_USD)}}

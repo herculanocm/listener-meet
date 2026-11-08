@@ -7,29 +7,35 @@ opção (R-01 da revisão do L3: a última coluna esticada dividia a largura ao 
 linhas (`WrapDelegate`: a árvore mede a linha sem a largura da coluna, e a quebra não acontecia); sem custo conhecido, o
 pedido que não terminou bem não diz "sem preço cadastrado".
 
-F5.21 (U-167, A-34): o pedido com a tela leva a miniatura no ícone e "com a tela" (ou "tela preta", "tela não
-capturada") na linha; a opção que usou a tela leva "[tela]". O duplo clique ou o Enter no pedido abre a cópia guardada
-(960 px), lida e decodificada numa `Task` (só o pixmap nasce na thread da interface); sem a cópia (`suggest.screen_keep`
-desligada), a miniatura maior, numa janela comum que o Esc fecha. A janela da reunião não sai da captura, como as outras
-abas: a tela aparece nela depois da reunião."""
+F5.21 (U-167, A-34): o pedido com a tela leva a miniatura no ícone (decodificada uma vez por pedido e guardada entre os
+`reload`, R-06 da revisão do L3) e "com a tela" (ou "tela preta", "tela não capturada") na linha; a opção que usou a tela
+leva "[tela]". O duplo clique ou o Enter no pedido abre a cópia guardada (960 px), lida, decodificada e escalada numa `Task`
+(só o pixmap nasce na thread da interface); sem a cópia (`suggest.screen_keep` desligada), a miniatura maior. A cópia abre na
+`ScreenView` da bandeja: sem foco, fora da captura e, se a exclusão falhar, sem a imagem (R-02 da revisão do L3); o duplo
+clique não dobra o pedido (R-05). As miniaturas da árvore ficam na janela da reunião, que não sai da captura, como as outras
+abas (D-103)."""
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
-from PySide6.QtGui import QGuiApplication, QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QDialog, QHeaderView, QLabel, QStackedWidget, QStyledItemDelegate, QStyleOptionViewItem, QTreeView,
-                               QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator, QVBoxLayout, QWidget)
+from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtWidgets import (QHeaderView, QStackedWidget, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QTreeWidget,
+                               QTreeWidgetItem, QTreeWidgetItemIterator, QVBoxLayout, QWidget)
 
 from ..llm.costs import fmt_usd
 from ..llm.prompts.common import stamp
 from ..model import ScreenStatus, SuggestMode, SuggestStatus
 from .components import EmptyState
+from .screen_view import ScreenView
 from .tasks import Task, run_task
 
 if TYPE_CHECKING:
+    from ..platform.base import Platform
     from ..store import Store
 
 EMPTY = "Nenhuma sugestão pedida nesta reunião: durante a gravação, o botão Sugerir da bandeja de legendas propõe o que falar."
@@ -69,9 +75,10 @@ class WrapDelegate(QStyledItemDelegate):
 
 
 class SuggestionsTab(QWidget):
-    def __init__(self, store: Store, meeting_id: int, *, play: Callable[[int], Any] | None = None, parent: QWidget | None = None):
+    def __init__(self, store: Store, meeting_id: int, *, play: Callable[[int], Any] | None = None, platform: Platform | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
-        self.store, self.meeting_id, self.play = store, meeting_id, play
+        self.store, self.meeting_id, self.play, self.platform = store, meeting_id, play, platform
         self.tree = QTreeWidget()
         self.tree.setColumnCount(2)
         self.tree.setHeaderLabels(["Quando e o quê", "Avaliação"])
@@ -82,9 +89,13 @@ class SuggestionsTab(QWidget):
         self.tree.setItemDelegate(WrapDelegate(self.tree))
         self.tree.header().sectionResized.connect(self._relayout)        # a largura nova: as alturas medidas de novo
         self.tree.itemActivated.connect(self._activated)
+        self.tree.setExpandsOnDoubleClick(False)                        # R-05: o duplo clique abre a cópia, não dobra o pedido
         self.tree.setIconSize(ICON)
         self.copy_task: Task | None = None
-        self.viewer: QDialog | None = None
+        self.copy_when = ""
+        self.viewer: ScreenView | None = None
+        self.icons: dict[int, QIcon] = {}                               # R-06: a miniatura de cada pedido, uma vez
+        self.thumbs: dict[int, bytes] = {}
         self.empty = EmptyState("lightbulb", EMPTY)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.tree)
@@ -112,7 +123,7 @@ class SuggestionsTab(QWidget):
             top.setData(0, KEY_ROLE, ("s", int(s["id"])))
             thumb = screen.get("thumb") if screen else None
             if thumb:
-                top.setIcon(0, QIcon(QPixmap.fromImage(QImage.fromData(thumb))))
+                top.setIcon(0, self._icon(int(s["id"]), bytes(thumb)))
                 top.setData(0, SHOT_ROLE, int(s["id"]))
             for o in opts:
                 tag = " [tela]" if o.get("screen") else ""
@@ -168,37 +179,47 @@ class SuggestionsTab(QWidget):
     def _relayout(self, *_args: object) -> None:
         self.tree.doItemsLayout()
 
+    def _icon(self, sid: int, thumb: bytes) -> QIcon:
+        icon = self.icons.get(sid)
+        if icon is None:
+            image = QImage.fromData(thumb).scaled(ICON, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            icon = self.icons[sid] = QIcon(QPixmap.fromImage(image))
+            self.thumbs[sid] = thumb
+        return icon
+
     def _activated(self, item: QTreeWidgetItem, _column: int = 0) -> None:
         t = item.data(0, T_ROLE)
         if self.play is not None and isinstance(t, int):
             self.play(t)
         sid = item.data(0, SHOT_ROLE)
         if isinstance(sid, int) and self.copy_task is None:
-            store, thumb = self.store, item.icon(0)
-            self.copy_task = run_task(lambda: _decoded(store.suggestions.screen_copy(sid)), store,
-                                      lambda image: self._show_copy(image, thumb, item.text(0).split(" · ")[0]))
+            self.copy_when = item.text(0).split(" · ")[0]                # R-04: lido agora; a árvore pode ser refeita no meio
+            size = ScreenView.fit_size(self.window().frameGeometry())
+            self.copy_task = run_task(functools.partial(_copy, self.store, sid, self.thumbs.get(sid), size.width(), size.height()),
+                                      self.store, self._show_copy)
 
-    def _show_copy(self, image: object, thumb: QIcon, when: str) -> None:
-        """A cópia decodificada (ou a miniatura maior, sem a cópia), numa janela comum; o Esc ou o fechar a fecham."""
+    def _show_copy(self, image: object) -> None:
+        """A cópia decodificada (ou a miniatura maior, sem a cópia) na `ScreenView`: sem foco e fora da captura (R-02)."""
         self.copy_task = None
+        if not isinstance(image, QImage) or image.isNull():
+            return
         if self.viewer is not None:
-            self.viewer.close()
-        area = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
-        pixmap = QPixmap.fromImage(image) if isinstance(image, QImage) and not image.isNull() else thumb.pixmap(ICON * 3)
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Tela enviada {when}")
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        label = QLabel()
-        label.setPixmap(pixmap.scaled(int(area.width() * 0.7), int(area.height() * 0.7), Qt.AspectRatioMode.KeepAspectRatio,
-                                      Qt.TransformationMode.SmoothTransformation))
-        QVBoxLayout(dialog).addWidget(label)
-        self.viewer = dialog
-        dialog.show()
+            with suppress(RuntimeError):                               # R-01: a janela anterior se apaga ao fechar
+                self.viewer.close()
+        self.viewer = ScreenView(image, f"Tela enviada {self.copy_when}", self.platform, self.window().frameGeometry())
+        self.viewer.show()
 
 
-def _decoded(data: bytes | None) -> QImage | None:
-    """Na `Task`: a cópia guardada decodificada (o `QImage` roda fora da thread da interface)."""
-    return QImage.fromData(data) if data else None
+def _copy(store: Store, sid: int, thumb: bytes | None, width: int, height: int) -> QImage | None:
+    """Na `Task`: a cópia guardada (ou a miniatura, sem ela) decodificada e posta no tamanho da janela (o `QImage` roda fora da
+    thread da interface)."""
+    data = store.suggestions.screen_copy(sid) or thumb
+    if not data:
+        return None
+    image = QImage.fromData(data)
+    if image.isNull():
+        return None
+    return image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
 __all__ = ["EMPTY", "SuggestionsTab", "WrapDelegate", "verdict"]

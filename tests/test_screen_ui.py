@@ -225,46 +225,118 @@ def test_the_screen_modules_never_log_the_image_the_summary_or_the_title():
 
 
 # ---------------------------------------------------------------- L3: a aba da reunião
-def test_the_meeting_tab_shows_the_thumbnail_marks_the_option_and_opens_the_copy(qtbot, store):
+def _jpeg(w: int, h: int, color: int) -> bytes:
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice
     from PySide6.QtGui import QImage, QImageWriter
 
+    img = QImage(w, h, QImage.Format.Format_RGB32)
+    img.fill(color)
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    QImageWriter(buf, QByteArray(b"jpeg")).write(img)
+    return bytes(data.data())
+
+
+def _tab_with_screens(qtbot: Any, store: Any, platform: Any) -> tuple[Any, list[int]]:
     from listener.store.suggestions import ScreenInsert
     from listener.ui.meeting_suggestions import SuggestionsTab
     from tests.test_suggest_store import suggestion
 
-    def jpeg(w: int, h: int) -> bytes:
-        img = QImage(w, h, QImage.Format.Format_RGB32)
-        img.fill(0x336699)
-        data = QByteArray()
-        buf = QBuffer(data)
-        buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        QImageWriter(buf, QByteArray(b"jpeg")).write(img)
-        return bytes(data.data())
-
     mid = store.create_meeting("Orçamento", None, None, None)
     sent, (a, _b) = suggestion(store, mid, 65_000)
     dark, _ = suggestion(store, mid, 90_000)
+    failed, _ = suggestion(store, mid, 120_000)
     store._x("UPDATE suggestion_options SET screen = 1 WHERE id = ?", (a,))
     store.suggestions.insert_screen(ScreenInsert(sent, ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams", 1600, 900, 219_000, 0,
-                                                 jpeg(320, 180), jpeg(960, 540)))
-    store.suggestions.insert_screen(ScreenInsert(dark, ScreenStatus.EMPTY, ScreenSource.CURSOR, "Monitor 1", 0, 0, 0, 0, jpeg(320, 180),
-                                                 None))
-    tab = SuggestionsTab(store, mid)
+                                                 _jpeg(320, 180, 0x336699), _jpeg(960, 540, 0xCC3311)))
+    store.suggestions.insert_screen(ScreenInsert(dark, ScreenStatus.EMPTY, ScreenSource.CURSOR, "Monitor 1", 0, 0, 0, 0,
+                                                 _jpeg(320, 180, 0x000000), None))
+    store.suggestions.insert_screen(ScreenInsert(failed, ScreenStatus.FAILED, ScreenSource.FOREGROUND, "tela", 0, 0, 0, 0, None, None))
+    tab = SuggestionsTab(store, mid, platform=platform)
     qtbot.addWidget(tab)
-    first, second = tab.tree.topLevelItem(0), tab.tree.topLevelItem(1)
+    return tab, [sent, dark, failed]
+
+
+def _center(view: Any) -> int:
+    pixmap = view.picture.pixmap()
+    return int(pixmap.toImage().pixel(pixmap.width() // 2, pixmap.height() // 2)) & 0xFFFFFF
+
+
+def test_the_meeting_tab_shows_the_thumbnail_marks_the_option_and_opens_the_copy(qtbot, store, platform):
+    """U-167 (A-34): a miniatura e o estado em cada pedido ("tela não capturada" sem miniatura), "[tela]" na opção; o duplo
+    clique abre a cópia de 960 px (a cor dela, não a da miniatura) na janela fora da captura, sem dobrar o pedido (R-02, R-05 e
+    R-08 da revisão do L3)."""
+    tab, _ids = _tab_with_screens(qtbot, store, platform)
+    first, second, third = (tab.tree.topLevelItem(i) for i in range(3))
     assert "· com a tela ·" in first.text(0) and "· tela preta ·" in second.text(0) and not first.icon(0).isNull()
+    assert "· tela não capturada ·" in third.text(0) and third.icon(0).isNull()
     assert first.child(0).text(0).endswith(" [tela]") and not first.child(1).text(0).endswith("[tela]")
+    assert not tab.tree.expandsOnDoubleClick()
     tab.tree.itemActivated.emit(first, 0)
     qtbot.waitUntil(lambda: tab.viewer is not None, timeout=3000)
-    assert tab.viewer.findChild(QLabel_type()).pixmap().width() > 320
+    viewer: Any = tab.viewer
+    assert viewer.excluded and int(viewer.winId()) in platform.excluded and abs(_center(viewer) - 0xCC3311) < 0x080808
+    assert viewer.picture.pixmap().width() > 320 and first.isExpanded()
+    viewer.close()
+
+
+def test_the_copy_opens_again_after_closing_survives_a_reload_and_is_read_off_the_ui_thread(qtbot, store, platform, monkeypatch):
+    """R-01 (abrir, fechar e abrir de novo, sem o objeto apagado), R-04 (o `reload` no meio da `Task`; a aba fechada antes de
+    ela voltar), R-06 (os ícones guardados entre os `reload`) e R-08 (a cópia lida fora da thread da interface; sem a cópia, a
+    miniatura maior; sem a exclusão, sem a imagem)."""
+    import threading
+
+    from shiboken6 import isValid
+
+    from listener.ui import meeting_suggestions as ms
+    from listener.ui.screen_view import HIDDEN
+
+    tab, (sent, _dark, _failed) = _tab_with_screens(qtbot, store, platform)
+    icon = tab.icons[sent]
+    tab.reload()
+    assert tab.icons[sent] is icon and tab.tree.topLevelItem(0).icon(0).cacheKey() == icon.cacheKey()
+    threads: list[str] = []
+    real = ms._copy
+
+    def spy(*args: Any) -> Any:
+        threads.append(threading.current_thread().name)
+        return real(*args)
+
+    monkeypatch.setattr(ms, "_copy", spy)
+    first = tab.tree.topLevelItem(0)
+    for _ in range(2):                                                            # abre, fecha (apaga) e abre de novo
+        tab.tree.itemActivated.emit(first, 0)
+        qtbot.waitUntil(lambda: tab.copy_task is None and tab.viewer is not None, timeout=3000)
+        tab.viewer.close()
+        qtbot.wait(10)
+    assert threads and threading.main_thread().name not in threads
+    tab.tree.itemActivated.emit(first, 0)
+    task = tab.copy_task
+    tab.tree.itemActivated.emit(first, 0)                                         # com a `Task` em voo, nenhuma outra
+    assert task is not None and tab.copy_task is task
+    qtbot.waitUntil(lambda: tab.copy_task is None, timeout=3000)
+    before: Any = tab.viewer
+    tab.tree.itemActivated.emit(first, 0)                                         # aberta, a nova fecha a anterior
+    qtbot.waitUntil(lambda: tab.copy_task is None and tab.viewer is not before, timeout=3000)
+    assert not isValid(before) or not before.isVisible()                          # fechada (e apagada, `WA_DeleteOnClose`)
     tab.viewer.close()
-
-
-def QLabel_type() -> Any:                                                         # noqa: N802 (o tipo do Qt, importado tarde)
-    from PySide6.QtWidgets import QLabel
-
-    return QLabel
+    tab.tree.itemActivated.emit(tab.tree.topLevelItem(1), 0)                       # sem a cópia: a miniatura, maior
+    tab.reload()                                                                  # a árvore refeita no meio da `Task`
+    qtbot.waitUntil(lambda: tab.copy_task is None, timeout=3000)
+    viewer: Any = tab.viewer
+    assert viewer.picture.pixmap().width() > 320 and "Tela enviada [01:30]" in viewer.caption.text()
+    viewer.close()
+    platform.capture_exclusion = False
+    tab.tree.itemActivated.emit(tab.tree.topLevelItem(0), 0)
+    qtbot.waitUntil(lambda: tab.copy_task is None, timeout=3000)
+    hidden: Any = tab.viewer
+    assert hidden.picture.pixmap().isNull() and hidden.picture.text() == HIDDEN
+    hidden.close()
+    tab.tree.itemActivated.emit(tab.tree.topLevelItem(0), 0)
+    tab.close()
+    tab.deleteLater()                                                             # a aba some antes de a `Task` voltar
+    qtbot.wait(300)
 
 
 # ---------------------------------------------------------------- a revisão do diff do L2 (R-01 a R-10)

@@ -48,6 +48,7 @@ from .transcript import TranscriptTab
 from .widget_parts import _screen_rects
 
 if TYPE_CHECKING:
+    from ..platform.base import Platform
     from ..store import Store
     from .player import Player
 
@@ -67,7 +68,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
     def __init__(self, store: Store, meeting_id: int, *, player: Player | None = None, on_review: Callable[[int], Any] | None = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None, cascade: int = 0,
                  on_chat_answer: Callable[[bool], Any] | None = None, recording: Callable[[], bool] | None = None,
-                 parent: QWidget | None = None):
+                 platform: Platform | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
@@ -83,7 +84,8 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
 
         # --- abas ---
         self.markers = MarkersTab(store, meeting_id, play=self._play_marker)
-        self.suggestions = SuggestionsTab(store, meeting_id, play=self._play_point if player is not None else None)   # F5.20
+        self.suggestions = SuggestionsTab(store, meeting_id, play=self._play_point if player is not None else None,
+                                          platform=platform)   # F5.20; F5.21: a cópia da tela fora da captura
         self.timeline = TimelineTab(store, meeting_id, rows=lambda: self.transcript.model.rows,
                                     play=self._play_point if player is not None else None)
         self.transcript.model.modelReset.connect(self.timeline.reload)        # as falas mudaram (recarga, revisada/original)

@@ -351,3 +351,49 @@ def test_the_meeting_deleted_just_before_the_screen_is_recorded_leaves_nothing(s
     monkeypatch.setattr(store.suggestions, "insert_screen", late)
     r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=FakeProvider(), screen=SHOT)
     assert r.outcome == Outcome.GONE and store._q("SELECT COUNT(*) FROM suggestion_screens")[0][0] == 0
+
+
+def test_the_check_splits_the_requests_with_the_screen_and_holds_each_gate(store):
+    """R-03 e R-08 da revisão do L3: os tempos, a utilidade e o custo por pedido da F5.20 só dos pedidos sem a tela enviada;
+    no bloco da tela, a utilidade e o custo com os alvos, a `falhou` fora das enviadas, o p50 e o p95 (não a média nem o
+    máximo) entre os alvos das duas entregas, a parcela das que citam a tela, as fontes, os bytes de toda tela enviada e as
+    cópias só desta reunião."""
+    from listener.live.report import suggestions_report
+    from listener.model import SuggestStatus
+
+    def screen(sid: int, status: ScreenStatus, source: ScreenSource, size: int, copy: bytes | None = None) -> None:
+        store.suggestions.insert_screen(ScreenInsert(sid, status, source, "janela do Teams", 1600, 900, size, 0, b"t", copy))
+
+    mid = store.create_meeting("Orçamento", None, None, None)
+    plain, (p1, _p2) = suggestion(store, mid, 10_000)
+    store._x("UPDATE suggestions SET first_ms = 2000 WHERE id = ?", (plain,))
+    store._x("UPDATE suggestion_options SET rating = 1 WHERE id = ?", (p1,))
+    firsts = [3500] * 11 + [7000] * 8 + [30_000]                   # p50 3,5 s e p95 7 s; a média 6,2 s e o máximo 30 s
+    cited = 0
+    for k, first in enumerate(firsts):
+        sid, (a, b) = suggestion(store, mid, 60_000 + k * 1000)
+        store._x("UPDATE suggestions SET first_ms = ?, cost_usd = 0.002 WHERE id = ?", (first, sid))
+        for oid in (a, b)[:1 if cited >= 16 else 2]:
+            if cited < 18:
+                store._x("UPDATE suggestion_options SET screen = 1 WHERE id = ?", (oid,))
+                cited += 1
+        if k < 10:
+            store._x("UPDATE suggestion_options SET rating = 1 WHERE id = ?", (a,))
+        screen(sid, ScreenStatus.SENT, ScreenSource.WINDOW, 200_000, b"copia" if k < 5 else None)
+    gone, _ = suggestion(store, mid, 900_000, status=SuggestStatus.CANCELLED)
+    screen(gone, ScreenStatus.SENT, ScreenSource.CURSOR, 100_000)
+    failed, _ = suggestion(store, mid, 950_000)
+    store._x("UPDATE suggestions SET first_ms = 50000 WHERE id = ?", (failed,))
+    screen(failed, ScreenStatus.FAILED, ScreenSource.FOREGROUND, 0)
+    other = store.create_meeting("Outra", None, None, None)
+    elsewhere, _ = suggestion(store, other, 60_000)
+    screen(elsewhere, ScreenStatus.SENT, ScreenSource.WINDOW, 200_000, b"copia")
+    out = suggestions_report(store, mid)
+    assert out["first_ms"]["n"] == 2 and out["cost_per_request_usd"] == 0.001        # o sem tela e o da tela que falhou
+    sc = out["screen"]
+    assert (sc["requests"], sc["by_status"], sc["by_source"]) == (22, {"enviada": 21, "falhou": 1},
+                                                                    {"janela": 20, "cursor": 1, "primeiro_plano": 1})
+    assert (sc["first_ms"]["n"], sc["first_ms"]["p50"], sc["first_ms"]["p95"], sc["first_ms"]["max"]) == (20, 3500, 7000, 30_000)
+    assert sc["cites_share"] == 0.45 and sc["useful_share"] == 0.5 and sc["copies"] == 5
+    assert sc["bytes_avg"] == round((20 * 200_000 + 100_000) / 21) and sc["cost_per_request_usd"] == round((20 * 0.002 + 0.001) / 21, 6)
+    assert all(g["ok"] for g in sc["gates"].values()), sc["gates"]
