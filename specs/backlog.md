@@ -3,15 +3,16 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
-- **F5.21 em rascunho** (08/11, `features/F5.21-tela-nas-sugestoes.md`): o pedido do dono no chat, o print do monitor
-  em uso, ou do monitor escolhido, mandado como contexto da sugestão do que falar, sem precisar ver. A spec avalia e
-  melhora o pedido: o alvo padrão é a janela do app da reunião, recortada, caindo para o monitor sob o cursor; dois
-  gatilhos (o atalho `ctrl+alt+shift+t` e a chave "Com a tela" no cartão); sem prévia, mas o cartão diz qual tela foi e a
-  imagem fica guardada para ver depois; o resumo da tela reaproveitado quando ela não mudou; "[tela]" nos fatos; segredos
-  fora do prompt; U-164 a U-170. A pedido do dono (08/11), o print enviado aparece em miniatura no chat da bandeja, no
-  ponto do tempo (U-170), e os resumos das telas anteriores entram no contexto dos pedidos seguintes. A CP4 ("só áudio")
-  vira a pergunta 1, porque só o dono interpreta uma cláusula.
-  Posição: [x] rascunho; [ ] a revisão de arquitetura por um agente (D-040); [ ] a aprovação do dono (CP13).
+- **F5.21 em revisão** (08/11, `features/F5.21-tela-nas-sugestoes.md`): o pedido do dono no chat, o print do monitor
+  em uso, ou do escolhido, mandado como contexto da sugestão do que falar, sem precisar ver; e, a pedido dele, a
+  miniatura do que foi enviado no chat da bandeja, com as telas anteriores como contexto dos pedidos seguintes. O alvo
+  padrão é a janela do app da reunião, recortada, com as janelas de outros apps por cima pintadas de preto; o print sai
+  por BitBlt da plataforma na tarefa do pedido (a thread da interface fica abaixo de 5 ms); a miniatura entra no chat
+  como um item da lista, no ponto do tempo; U-164 a U-170. A revisão de arquitetura (A-01 a A-42) foi incorporada: tirou
+  o resumo reaproveitado quando "a tela não mudou" (a assinatura confunde dois slides do mesmo modelo), mudou a chave para
+  a linha de "Nova sugestão" e pôs um L0 que divide o `suggest_task.py` antes. Falta o dono: as 16 perguntas da spec, a
+  primeira sobre a CP4 ("só áudio"), e a aprovação (CP13). Posição: [x] rascunho; [x] a revisão de arquitetura (D-040);
+  [ ] a aprovação.
 - **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
   chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por
   opção e texto livre para direcionar. O "Sugerir" na bandeja de legendas, no widget, no menu da bandeja do sistema e no
@@ -176,7 +177,8 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- Nenhuma: a F5.20 está implementada (D-100, D-101); o `.exe` 0.13.0 e o push são decisões do dono.
+- As 16 perguntas da F5.21 (`features/F5.21-tela-nas-sugestoes.md`), com o padrão de cada uma; a 1 é sobre a CP4.
+- O `.exe` 0.13.0 da F5.20 e o push são decisões do dono.
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
 git.
 

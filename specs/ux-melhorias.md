@@ -182,10 +182,10 @@ Tamanho-alvo: 3 KB.
 | U-161 | Dossiê dos participantes no pedido: as ações abertas deles e suas e as últimas reuniões em comum, uma vez por gravação; desligável | LLM | implementada (F5.20, 08/11) |
 | U-162 | Aba "Sugestões" na reunião aberta e os números no `--check` | Reunião, `--check` | implementada (F5.20, 08/11) |
 | U-163 | Caixa "Sugestões" no "Antes de gravar" (por gravação) e o liga/desliga em uso nas Configurações: desligou, o botão some e o atalho fica mudo na hora | Warm-up, Configurações, bandeja, widget | implementada (F5.20, 08/11) |
-| U-164 | "Sugerir com a tela": atalho `ctrl+alt+shift+t`, item no menu da bandeja do sistema e a chave "Com a tela" no cabeçalho do cartão; ligada, o "Sugerir" de sempre manda a tela | Bandeja, menu, atalhos | proposta (F5.21) |
-| U-165 | Qual tela: automático (a janela da reunião, senão o monitor sob o cursor) ou um monitor fixo nas Configurações; a troca rápida da gravação no menu da chave, com nome e resolução, sem imagem | Configurações, bandeja | proposta (F5.21) |
-| U-166 | O título do cartão diz "com a tela" e, na dica, qual; a tela vazia vira a nota "a tela veio preta: só as legendas" | Bandeja | proposta (F5.21) |
-| U-167 | A miniatura da tela enviada em cada pedido na aba "Sugestões" da reunião; o clique abre maior | Reunião | proposta (F5.21) |
-| U-168 | A confirmação em linha no cartão na primeira vez, sem janela: "A imagem da tela vai para o <provedor>. Mandar · Agora não" | Bandeja | proposta (F5.21) |
-| U-169 | "[tela]" nos fatos da opção que usou a tela, ao lado dos [mm:ss] | Bandeja | proposta (F5.21) |
+| U-164 | "Sugerir com a tela": atalho `ctrl+alt+shift+t`, item no menu da bandeja do sistema e a chave "Com a tela" na linha de "Nova sugestão" do cartão (o cabeçalho não comporta mais nada a 320 px, A-26); ligada, o "Sugerir" de sempre manda a tela | Bandeja, menu, atalhos | proposta (F5.21) |
+| U-165 | Qual tela: automático (a janela da reunião; sem ela, o monitor da janela em primeiro plano e depois o do cursor) ou um monitor fixo nas Configurações; a troca rápida da gravação no menu da seta da chave, com "Monitor N · resolução · principal", numerados da esquerda para a direita, sem imagem | Configurações, bandeja | proposta (F5.21) |
+| U-166 | No corpo do cartão, a linha "com a tela · janela do Teams", que rola o chat até a miniatura; a tela vazia vira "a tela veio preta: só as legendas" | Bandeja | proposta (F5.21) |
+| U-167 | A miniatura da tela enviada em cada pedido na aba "Sugestões" da reunião; o clique abre a cópia guardada | Reunião | proposta (F5.21) |
+| U-168 | A confirmação em linha no cartão na primeira vez com cada provedor, sem janela: "A imagem da tela vai para o <provedor>. Mandar · Agora não" | Bandeja | proposta (F5.21) |
+| U-169 | "[tela]" nos fatos da opção que usou a tela, ao lado dos [mm:ss], e no lugar de "sem evidência" | Bandeja | proposta (F5.21) |
 | U-170 | A miniatura da tela enviada no chat da bandeja, no ponto do tempo, como um anexo seu entre as falas; o clique abre maior numa janela sem foco e fora da captura; o selo "com a tela" do cartão rola o chat até ela | Bandeja | proposta (F5.21, pedida pelo dono) |
