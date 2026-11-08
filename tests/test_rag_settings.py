@@ -17,6 +17,7 @@ from listener.llm.types import LlmTask
 from listener.model import JobStatus, LlmCallStatus
 from listener.rag import chat_global, chunker, index, search
 from listener.store import Store
+from listener.store.schema import MAIN_SCHEMA_VERSION
 from listener.store.llm_calls import LlmCallInsert
 from tests.test_main_check import _reports
 from tests.test_rag_chat import QUESTION, _llm_ready
@@ -219,7 +220,8 @@ def test_check_reports_the_g5_rag_blocks_readonly(tmp_path, capsys, monkeypatch)
     assert ra["active_model"] == MODEL and ra["last_index"]["status"] == "concluído" and ra["last_index"]["reason"] == "pipeline"
     assert rb["missing_active"] == n_b and rb["vectors"] == {} and rb["last_index"]["note"].startswith("4 trechos sem vetor: sem rede")
     overall = out[-1]["rag"]
-    assert overall["schema"] == 11 and overall["embedder"]["ready"] and overall["meetings"] == {"processed": 2, "indexed": 2, "pct": 100.0}
+    assert overall["schema"] == MAIN_SCHEMA_VERSION and overall["embedder"]["ready"]          # R-01 da F5.21: a constante, não o número
+    assert overall["meetings"] == {"processed": 2, "indexed": 2, "pct": 100.0}
     assert overall["fts"] == {"docsize": total, "chunks": total, "ok": True} and overall["vectors"]["active"] == 5
     assert overall["vectors"]["missing_active"] == n_b and overall["vectors"]["by_model"] == {MODEL: 5}
     assert [p["query"] for p in overall["fts_probes"]] == ["reunião", "orçamento", "prazo", "decisão", "próximos passos"]

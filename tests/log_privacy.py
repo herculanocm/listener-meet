@@ -37,7 +37,9 @@ F520_MODULES = tuple(ROOT / p for p in ("listener/llm/suggest_task.py", "listene
                                          "listener/ui/caption_tray_host.py", "listener/ui/meeting_suggestions.py",
                                          "listener/ui/settings_prompts.py", "listener/ui/warmup_live.py", "listener/live/report.py"))
 F520_FORBIDDEN = frozenset({"text", "nudge", "goal", "memo", "thread", "thread_summary", "dossier", "free", "first", "summary",
-                            "options", "option", "facts", "data", "messages", "prompt", "content", "title", "name"})
+                            "options", "option", "facts", "data", "messages", "prompt", "content", "title", "name",
+                            # F5.21 (R-02 da revisão do L1): o resumo da tela, a miniatura, a cópia e as imagens do pedido
+                            "screen_summary", "thumb", "copy", "images"})
 # F5.21 (A-38): a tela das sugestões; a imagem, a miniatura, o resumo da tela e o título da janela nunca vão ao log
 F521_MODULES = tuple(ROOT / p for p in ("listener/ui/screen_grab.py", "listener/ui/suggest_screen.py", "listener/ui/suggest_screen_row.py",
                                          "listener/ui/screen_view.py", "listener/ui/suggest_steer.py", "listener/platform/screen_types.py",

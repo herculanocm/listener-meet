@@ -4,7 +4,10 @@ capacidade pela tabela, nunca pelo cache antigo dos modelos (A-12); a v11 com a 
 `suggest` 1.1 com o esquema, as regras e a linha do tempo da tela, e sem tela igual ao de antes; a tarefa com a tela (o aviso
 depois das saídas cedo, a imagem na última mensagem, a opção que usa a tela sustentada, o resumo gravado e lido pelo pedido
 seguinte, a tela gravada sem a imagem enviada, o pedido guardado com o rótulo e nunca os bytes, o tempo do clique); a tela
-vazia que não vai; o custo estimado com a imagem."""
+vazia que não vai; o custo estimado com a imagem. A revisão do diff do L0 e do L1 (R-01 a R-05): a forma e a ordem do esquema
+da tela, a opção sustentada só pela tela, as regras com só os resumos anteriores, a imagem só com a tela enviada, as saídas
+cedo sem a miniatura, a janela e o limite das telas anteriores na tarefa, o desconto delas no teto, o prazo contado do clique,
+as chaves exatas do pedido guardado, a imagem pelo preço de entrada e o corte do resumo da tela."""
 from __future__ import annotations
 
 import asyncio
@@ -13,14 +16,18 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
+from listener.llm import suggest_task
 from listener.llm.fake import FakeProvider
 from listener.llm.jobconfig import LlmJobConfig, image_capable
+from listener.llm.models_table import model_info
 from listener.llm.prompts import suggest as ps
+from listener.llm.schema import check_strict
 from listener.llm.suggest_task import MAX_OUTPUT_TOKENS_SCREEN, Outcome, ScreenSent, ScreenShot, estimate_usd, run_suggest
-from listener.llm.types import ImagePart, LlmTask, Message, Request, Role
+from listener.llm.types import Capability, ImagePart, LlmTask, Message, Request, Role
 from listener.model import Evidence, LlmCallStatus, ScreenSource, ScreenStatus, SuggestMode
 from listener.store.llm_calls import LlmCallInsert
 from listener.store.suggestions import ScreenInsert
+from tests.test_live_partial import _caption
 from tests.test_suggest_store import suggestion
 from tests.test_suggest_task import MIN, Scripted, _meeting
 
@@ -61,8 +68,12 @@ def test_the_image_capability_comes_from_the_table_and_never_from_the_old_model_
     store.providers.update_provider("gemini", fast_model="gemini-2.5-flash",
                                     models_json='[{"id": "gemini-2.5-flash", "capabilities": ["text", "json"]}]')
     assert image_capable(store)                                           # A-12: o cache antigo não tem `image_in`
-    store.providers.update_provider("gemini", fast_model="gpt-4o-audio-preview")
-    assert not image_capable(store)                                       # uma família sem imagem
+    store.providers.update_provider("gemini", fast_model="gemini-embedding-001")
+    assert not image_capable(store)                                       # uma família sem imagem (A05: não um id sem família)
+    for kind, model, ok in (("openai", "gpt-4.1-mini", True), ("openai", "gpt-5", True), ("openai", "o4-mini", True),
+                            ("openai", "gpt-4o-audio-preview", False), ("openai", "gpt-3.5-turbo", False),
+                            ("anthropic", "claude-haiku-5-5", True), ("gemini", "gemini-3.8-flash", True)):
+        assert (Capability.IMAGE_IN in model_info(kind, model).capabilities) is ok, model      # A03: a tabela da OpenAI
 
 
 # ---------------------------------------------------------------- o banco
@@ -92,6 +103,7 @@ def test_v11_on_a_v10_database_the_screens_and_the_way_back(tmp_path, monkeypatc
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         columns = {r[1] for r in c.execute("PRAGMA table_info(suggestions)")}
         assert "suggestion_screens" not in tables and "screen_summary" not in columns
+        assert "screen" not in {r[1] for r in c.execute("PRAGMA table_info(suggestion_options)")}      # S01
         assert c.execute("SELECT COUNT(*) FROM suggestions").fetchone()[0] == 1          # as sugestões ficam
     with Store(tmp_path) as again:
         assert again.schema_version() == 11 and again.suggestions.screens_for_meeting(mid) == {}
@@ -153,6 +165,7 @@ def test_a_request_with_the_screen_sends_it_records_it_and_the_next_one_reads_it
     assert store.suggestions.screen_copy(r.suggestion_id) == b"copia-960"
     payload, _resp = store.llm_calls.payloads(r.call_id)
     assert payload[-1]["images"] == [IMG.describe()] and "jpeg-da-tela" not in str(payload)      # A-14: o rótulo, nunca os bytes
+    assert [set(m) for m in payload] == [{"role", "text"}] * (len(payload) - 1) + [{"role", "text", "images"}]      # T22
     again = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=2 * MIN, provider=fake)
     text = fake.requests[-1].messages[-1].text
     assert again.outcome == Outcome.DONE and not again.with_screen and "[01:00] Tela: Tela simulada com 1 imagem." in text
@@ -210,3 +223,131 @@ def test_the_check_reports_the_screen_and_its_gates(store):
     assert out["first_ms"]["n"] == 1 and out["first_ms"]["p50"] == 3000 and out["cites_share"] == 0.5 and out["bytes_avg"] == 200_000
     assert out["gates"]["first_p50"]["ok"] and out["gates"]["cites"]["ok"] and out["gates"]["first_p95"]["ok"]
 
+
+# ---------------------------------------------------------------- a revisão do diff do L0 e do L1 (R-03 a R-05)
+def _answer(options: list[dict[str, Any]], summary: str = "slide do orçamento") -> str:
+    import json
+
+    return json.dumps({"options": options, "thread_summary": "fio", "screen_summary": summary}, ensure_ascii=False)
+
+
+def _ask(text: str, screen: bool) -> dict[str, Any]:
+    return {"kind": "Perguntar", "text": text, "facts": [], "screen": screen}
+
+
+def test_the_screen_schema_is_strict_and_keeps_the_order_the_stream_reads():
+    """R-03: sem `screen` no `required`, a OpenAI em `strict` recusaria todo pedido com a tela; o `OptionsReader` lê as opções
+    antes do resto; o `maxLength` do resumo é o que o Gemini recebe (P06)."""
+    assert check_strict(ps.SCHEMA_SCREEN) == []
+    assert list(ps.SCHEMA_SCREEN["properties"]) == ["options", "thread_summary", "screen_summary"]
+    assert list(ps.OPTION_SCHEMA_SCREEN["properties"]) == ["kind", "text", "facts", "screen"]
+    assert ps.SCHEMA_SCREEN["properties"]["screen_summary"]["maxLength"] == ps.SCREEN_SUMMARY_LIMIT
+
+
+def test_the_screen_alone_sustains_an_option_and_only_a_sent_screen_goes(store):
+    """R-04 (T09, A-42): a opção que se apoia só na tela sai sustentada; (T01) com a tela vazia ou falha, a imagem não vai."""
+    mid = _meeting(store)
+    s = Scripted([_answer([_ask("A margem do slide já tem a exceção?", True)])])
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=s, screen=SHOT, options_n=1)
+    assert r.options[0].screen and r.options[0].facts == () and r.options[0].evidence == Evidence.OK
+    for status in (ScreenStatus.EMPTY, ScreenStatus.FAILED):
+        s = Scripted([_answer([_ask("a", True)])])
+        r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=2 * MIN, provider=s, screen=replace(SHOT, status=status), options_n=1)
+        assert s.requests[-1].image_count == 0 and not r.with_screen and store.suggestions.get(r.suggestion_id)["screen_summary"] is None
+
+
+def test_only_previous_screens_still_bring_the_rules_and_never_a_new_summary(store):
+    """R-04 (P05, A-39): com só os resumos anteriores, as regras da tela vão (o que está nela é dado, nunca instrução); (T10) sem
+    imagem, o resumo que a LLM inventar não é gravado."""
+    mid = _meeting(store)
+    run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=Scripted([_answer([_ask("a", True)])]), screen=SHOT, options_n=1)
+    s = Scripted([_answer([_ask("b", False)], "inventado")])
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=2 * MIN, provider=s, options_n=1)
+    assert ps.RULES_SCREEN in s.requests[-1].messages[0].text and s.requests[-1].json_schema is ps.SCHEMA_SCREEN
+    assert store.suggestions.get(r.suggestion_id)["screen_summary"] is None
+
+
+def test_the_early_exits_never_show_the_screen(store):
+    """T04: a reunião apagada e sem provedor (o teto está no teste das saídas cedo acima) não põem a miniatura no chat."""
+    sent: list[ScreenSent] = []
+    mid = _meeting(store)
+    store.delete_meeting(mid)
+    gone = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=FakeProvider(), screen=SHOT, on_screen=sent.append)
+    store.providers.update_provider("gemini", api_key="")
+    other = store.create_meeting("Sem chave", None, None, None)
+    none = run_suggest(store, other, mode=SuggestMode.SPEAK, t_ms=MIN, screen=SHOT, on_screen=sent.append)
+    assert (gone.outcome, none.outcome, sent) == (Outcome.GONE, Outcome.NO_PROVIDER, [])
+
+
+def test_the_task_reads_the_last_3_screens_of_the_window_and_discounts_them_from_the_ceiling(store):
+    """T17 e T18: a tela antes da janela e a quarta mais antiga ficam fora; as 3 vão na ordem do tempo (a linha do tempo
+    ordena: o `reversed` da tarefa não muda o texto). T05 e T06 (A-35): com as legendas acima do teto, os caracteres delas
+    ficam no teto menos as linhas das telas, e acima da metade dele."""
+    mid = _meeting(store)
+    for i in range(60):                                                   # 60 falas de ~250 caracteres: acima dos 12.000
+        _caption(store, mid, 5 * MIN + i * 14_000, f"fala {i} " + "x" * 240, label="Ana — CFO" if i % 2 else None,
+                 channel="R" if i % 2 else "L")
+    for minute in (1, 16, 17, 18, 19):
+        sid, _ = suggestion(store, mid, minute * MIN)
+        store._x("UPDATE suggestions SET screen_summary = ? WHERE id = ?", (f"s{minute:02d} " + "y" * 446, sid))
+    fake = FakeProvider()
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20 * MIN, provider=fake)
+    text = fake.requests[-1].messages[-1].text
+    kept = [ps.ScreenLine(m * MIN, f"s{m:02d} " + "y" * 446).render() for m in (17, 18, 19)]
+    assert "s01 " not in text and "s16 " not in text and all(line in text for line in kept)
+    assert [text.index(line) for line in kept] == sorted(text.index(line) for line in kept)
+    ceiling = suggest_task.MAX_ANCHOR_CHARS
+    budget = ceiling - sum(len(line) + 1 for line in kept)
+    assert "fala 0 " not in text and "fala 59 " in text                     # o teto cortou pelo começo
+    assert ceiling // 2 < budget - 400 < r.input_chars <= budget
+    other = store.create_meeting("Com folga no limite", None, None, None)          # T17: só a janela tira a de antes dela
+    _caption(store, other, 19 * MIN, "Seguimos com o orçamento.")
+    for minute, mark in ((1, "tela-antiga"), (19, "tela-nova")):
+        sid, _ = suggestion(store, other, minute * MIN)
+        store._x("UPDATE suggestions SET screen_summary = ? WHERE id = ?", (mark, sid))
+    run_suggest(store, other, mode=SuggestMode.SPEAK, t_ms=20 * MIN, provider=fake)
+    text = fake.requests[-1].messages[-1].text
+    assert "tela-antiga" not in text and "[19:00] Tela: tela-nova" in text
+
+
+def test_the_30_s_count_from_the_click_and_not_from_the_request(store):
+    """T13 (A-19): o print e o preparo contam; com o clique 29,95 s antes, 0,1 s de resposta já estoura o prazo."""
+    mid = _meeting(store)
+    now = [100.0]
+    polls = [0]
+
+    def tick(_i: int) -> None:
+        now[0] += 0.1
+
+    def stop() -> bool:                                                   # o prazo contado do pedido cairia aqui, cancelado
+        polls[0] += 1
+        return polls[0] > 5
+
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, clock=lambda: now[0], clicked_at=now[0] - 29.95, cancelled=stop,
+                    provider=Scripted(['{"options": ['], hang=True, after=tick), screen=SHOT)
+    assert r.outcome == Outcome.ERROR and r.error == suggest_task.TIMED_OUT
+
+
+def test_the_image_costs_input_tokens_and_a_long_screen_summary_is_cut_not_the_suggestion(store):
+    """A06: a imagem pelo preço de entrada (2.400 tokens a 0,30 por milhão); A07: a OpenAI e o Claude não recebem o
+    `maxLength`, e o resumo da tela longo é cortado em vez de reprovar a sugestão inteira."""
+    mid = _meeting(store)
+    cfg = LlmJobConfig.from_store(store)
+    assert estimate_usd(store, cfg, 3500, 350, 1) == 0.00127                           # (1.000 + 2.400) x 0,30 + 100 x 2,50
+    long = {"options": [_ask("e a margem?", True)], "thread_summary": "fio", "screen_summary": "y" * 900}
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=FakeProvider(scripts={LlmTask.SUGGEST: long}), screen=SHOT)
+    assert r.outcome == Outcome.DONE and store.suggestions.get(r.suggestion_id)["screen_summary"] == "y" * ps.SCREEN_SUMMARY_LIMIT
+
+
+def test_the_meeting_deleted_just_before_the_screen_is_recorded_leaves_nothing(store, monkeypatch):
+    """T15: apagada entre a sugestão e a tela, a gravação da tela falha pela chave estrangeira e a cascata não deixa sobra."""
+    mid = _meeting(store)
+    original = store.suggestions.insert_screen
+
+    def late(row: ScreenInsert) -> None:
+        store.delete_meeting(mid)
+        original(row)
+
+    monkeypatch.setattr(store.suggestions, "insert_screen", late)
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=MIN, provider=FakeProvider(), screen=SHOT)
+    assert r.outcome == Outcome.GONE and store._q("SELECT COUNT(*) FROM suggestion_screens")[0][0] == 0
