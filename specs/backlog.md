@@ -8,7 +8,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   melhora o pedido: o alvo padrão é a janela do app da reunião, recortada, caindo para o monitor sob o cursor; dois
   gatilhos (o atalho `ctrl+alt+shift+t` e a chave "Com a tela" no cartão); sem prévia, mas o cartão diz qual tela foi e a
   imagem fica guardada para ver depois; o resumo da tela reaproveitado quando ela não mudou; "[tela]" nos fatos; segredos
-  fora do prompt; U-164 a U-169. A CP4 ("só áudio") vira a pergunta 1, porque só o dono interpreta uma cláusula.
+  fora do prompt; U-164 a U-170. A pedido do dono (08/11), o print enviado aparece em miniatura no chat da bandeja, no
+  ponto do tempo (U-170), e os resumos das telas anteriores entram no contexto dos pedidos seguintes. A CP4 ("só áudio")
+  vira a pergunta 1, porque só o dono interpreta uma cláusula.
   Posição: [x] rascunho; [ ] a revisão de arquitetura por um agente (D-040); [ ] a aprovação do dono (CP13).
 - **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
   chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por
