@@ -2,7 +2,15 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
+## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
+- **F5.20 em revisão** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100): o pedido do dono no chat, um botão durante
+  a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por opção e texto livre
+  para direcionar. A spec avalia a proposta e a muda (a latência da legenda manda: a pedido e em streaming; 2 a 3
+  opções curtas com os fatos citados; "Boa"/"Ruim"/"Usei" em dois tempos, com um memorando visível; o direcionamento
+  em três camadas; o pedido comprimido por resumo rolante e compactação local; liga e desliga em uso; só na bandeja de
+  legendas, fora da captura de tela), U-153 a U-163; a revisão de arquitetura (A-01 a A-30) incorporada; as 16
+  perguntas decididas no padrão por delegação do dono (D-100). Escrita no Linux nativo: nada a verificar no Windows
+  até o código. Falta o dono: a palavra "aprovada" (CP13) para o L1 começar; depois, o uso real e o push.
 - **F5.19 implementada** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098, D-099; versão 0.12.0): o pedido
   do dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
   aberta ganhou "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca, as pausas fora) e "Salvar vídeo com legendas…"
@@ -136,8 +144,10 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-Nenhuma: as últimas (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091), e as anteriores estão em
-`decisoes.md`, nas specs e no git.
+- F5.20: só a aprovação da spec (CP13). As 16 perguntas dela foram decididas no padrão por delegação em 08/11 (D-100);
+  a palavra "aprovada" no chat libera o L1.
+As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
+git.
 
 ## Bloqueios que só o dono destrava
 Nenhum: B1, B2, B5 e B15 fecharam pelo uso real, sem os números que pediam (D-090); B3, B4 e B6 a B16 já estavam

@@ -15,7 +15,8 @@ implementadas em 03/11; U-136 a U-138 das referências de voz (F5.15), aprovadas
 da transcrição sem o token do Hugging Face (F5.16), aprovada (D-091) e implementada em 05/11; U-140 a U-146 da bandeja
 de legendas (F5.17), aprovadas (D-094) e implementadas em 06/11; U-147 a U-149 da performance (F5.18), aprovadas em
 07/11 (D-096); U-150 a U-152 da exportação do áudio e do vídeo com legendas (F5.19), aprovadas (D-098) e
-implementadas em 07/11.
+implementadas em 07/11; U-153 a U-163 das sugestões ao vivo (F5.20), propostas em 08/11 e no padrão sim por delegação
+(D-100), à espera da aprovação da spec.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -170,3 +171,14 @@ Tamanho-alvo: 3 KB.
 | U-150 | "Salvar áudio…" no Exportar: a reunião como o player toca (as pausas fora), em MP3 (padrão), FLAC ou WAV | Reunião | implementada (F5.19, 07/11) |
 | U-151 | "Salvar vídeo com legendas…": MP4 com a fala atual (o ponto na cor do falante, o nome, o cargo do dia e o texto) e a anterior apagada acima, com o título e a data no topo | Reunião | implementada (F5.19, 07/11) |
 | U-152 | A exportação de mídia com o progresso e "Cancelar" na faixa da reunião; fechar a janela no meio pergunta | Reunião | implementada (F5.19, 07/11) |
+| U-153 | "Sugerir": botão com a lâmpada na bandeja de legendas e no widget, "Sugerir…" no menu da bandeja do sistema e o atalho global; apagado sem legenda, sem a bandeja ou sem chave, com o motivo e o custo estimado na dica | Bandeja, widget, menu, atalhos | proposta (F5.20; sim por delegação, D-100) |
+| U-154 | O cartão de sugestão sob o chat da bandeja: "Sugestão · hh:mm · até [mm:ss]", 2 a 3 opções com o tipo, até duas frases, os fatos com [mm:ss] clicáveis, "sem evidência" quando a LLM não cita; "Nova sugestão", "Cancelar" e o custo | Bandeja | proposta (F5.20; sim por delegação, D-100) |
+| U-155 | "Boa", "Ruim" e "Usei" em cada opção, só de ícone, com os motivos do "Ruim" em chips dentro do cartão; "desfazer" | Bandeja | proposta (F5.20; sim por delegação, D-100) |
+| U-156 | "Meu objetivo nesta reunião" no "Antes de gravar" (uma linha, opcional, fora do preset) e "Objetivo…" no cartão, num popup fora da captura | Warm-up, bandeja | proposta (F5.20; sim por delegação, D-100) |
+| U-157 | "Como sugerir agora": chips no cartão e o texto livre num popup fora da captura; vale até ser limpa e vai gravada com cada sugestão | Bandeja | proposta (F5.20; sim por delegação, D-100) |
+| U-158 | "O que o assistente aprendeu": o memorando na página Prompts, com a data, a contagem, editável, "Limpar" e "Aprender com as avaliações" | Configurações | proposta (F5.20; sim por delegação, D-100) |
+| U-159 | Modo "Me situar" no cartão: o fio atual, o decidido e o que falta, em três linhas com [mm:ss] | Bandeja | proposta (F5.20; sim por delegação, D-100) |
+| U-160 | "Falaram com você": selo discreto no botão por 20 s quando o seu primeiro nome aparece numa legenda do R; sem chamada à LLM; desligável | Bandeja, widget | proposta (F5.20; sim por delegação, D-100) |
+| U-161 | Dossiê dos participantes no pedido: as ações abertas deles e suas e as últimas reuniões em comum, uma vez por gravação; desligável | LLM | proposta (F5.20; sim por delegação, D-100) |
+| U-162 | Aba "Sugestões" na reunião aberta e os números no `--check` | Reunião, `--check` | proposta (F5.20; sim por delegação, D-100) |
+| U-163 | Caixa "Sugestões" no "Antes de gravar" (por gravação) e o liga/desliga em uso nas Configurações: desligou, o botão some e o atalho fica mudo na hora | Warm-up, Configurações, bandeja, widget | proposta (F5.20; sim por delegação, D-100) |
