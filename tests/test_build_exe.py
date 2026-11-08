@@ -297,8 +297,11 @@ def test_the_verdict_needs_the_jpeg_plugin_of_qt(qapp, platform, monkeypatch):
     from PySide6.QtGui import QImageWriter
 
     import listener.platform
+    from listener.ui import common, theme
 
     monkeypatch.setattr(listener.platform, "get_platform", lambda: platform)    # fora do Windows, a plataforma falsa
+    for module, name in ((theme, "apply"), (theme, "release"), (common, "install_translations")):
+        monkeypatch.setattr(module, name, lambda *_a, **_k: None)               # o `QApplication` é de todos os testes
     report = {"stack": {"numpy": {"ok": True}}, "pyannote": {"ok": True}, "child_utf8_mode": {"value": "1"}, "tests_in_build": False,
               "qt": {"effective_style": "fusion", "expected_style": "fusion", "pt_BR": True, "jpeg": True}}
     assert exe_probe.verdict(report)

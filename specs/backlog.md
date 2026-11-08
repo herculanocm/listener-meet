@@ -3,15 +3,23 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
-- **F5.21 aprovada** (08/11, `features/F5.21-tela-nas-sugestoes.md`, D-102; chat: "Aprovado, siga com implementação"):
-  o print da tela mandado como contexto da sugestão do que falar, a miniatura no chat da bandeja e as telas anteriores no
-  contexto (U-164 a U-170), com a revisão de arquitetura A-01 a A-42. A implementação segue os lotes L0 a L3, um commit
-  por lote, com a revisão do diff por um agente novo (D-040); cada lote roda os testes novos e os dos arquivos tocados, e a
-  suíte inteira roda no fechamento (D-102). Posição (`[x]` com o commit):
-  - [x] L0: o `suggest_task.py` dividido em `suggest_ctx`, `suggest_dossier` e `suggest_memo_task`, sem mudar comportamento (o commit do L0).
-  - [x] L1: a imagem na camada de LLM, a v11, o prompt `suggest` 1.1 e a tarefa com a tela (o commit do L1).
-  - [x] L2: a plataforma, o preparo, o host, o cartão, o chat, a janela maior, o atalho, o menu e as Configurações (o commit do L2).
-  - [ ] L3: a aba, o `--check`, a sonda, o `exe_probe`, os documentos e a versão 0.14.0.
+- **F5.21 implementada** (08/11, `features/F5.21-tela-nas-sugestoes.md`, D-102, D-103; versão 0.14.0): o pedido do dono no
+  chat, o print da tela mandado como contexto da sugestão do que falar, sem ver antes, e a miniatura do que foi no chat da
+  bandeja. A chave "Com a tela" do cartão, o atalho `ctrl+alt+shift+t` e o "Sugerir com a tela…" do menu da bandeja do
+  sistema mandam, junto com as legendas, a janela da reunião recortada (as outras janelas por cima, pretas), o monitor em
+  uso ou um monitor fixo; a confirmação da primeira vez por provedor; a miniatura no chat no tempo do pedido, que abre maior
+  fora da captura; "[tela]" na opção que a usou; os resumos das telas anteriores no contexto dos pedidos seguintes; a tela
+  preta ou protegida que não vai; a aba da reunião com as miniaturas e a cópia; o bloco do `--check`; no Windows, por
+  ctypes (U-164 a U-170). Implementada no Linux nativo pelos lotes L0 a L3, um commit por lote, cada diff revisado por um
+  agente novo (D-040). Falta o dono: o uso real com os números do Aceite (em "Verificar no Windows"), o `.exe` 0.14.0 (no
+  Windows, com o OK dele) e o push. Posição (`[x]` com o commit):
+  - [x] spec aprovada (D-102): `1d0aea7`; L0: `3bb6aba`; L1: `d5673da` e `805908a`; a revisão do L0 e do L1 (R-01 a
+    R-05): `adc55fc`.
+  - [x] L2: `49234e8`; L3: `9f3bf16`, `a722a92`, `44925b8` (os documentos e a versão), `01572ac` e `e1fa042` (a sonda).
+  - [x] as revisões do L2 (R-01 a R-10): `a6b20cf`; do L3 (R-01 a R-10): `9da7ddc`; a D-103, a spec implementada e este
+    backlog: o commit do fechamento.
+  Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte inteira tem só as falhas do ambiente, as de antes da
+  F5.21 (`memory/maquina.md`).
 - **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
   chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por
   opção e texto livre para direcionar. O "Sugerir" na bandeja de legendas, no widget, no menu da bandeja do sistema e no
@@ -119,9 +127,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `KMP_BLOCKTIME=0` sem ganho); a spec implementada, Tamanho-alvo 55 KB (o commit final).
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
-- Código: F1 a F5.20 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+- Código: F1 a F5.21 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
-  depois (D-091); F7 é futuro. Esquema v10, versão 0.13.0 (D-081; F5.20).
+  depois (D-091); F7 é futuro. Esquema v11, versão 0.14.0 (D-081; F5.21).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
@@ -146,6 +154,18 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
+- F5.21 (o Aceite, em três reuniões reais com a tela compartilhada): `scripts/win_probe.py shots` claro e escuro, com as
+  fotos `f521-*` sem `cortados` nem `pequenos`, e a linha `f521_tempos` (cada miniatura e cada legenda com 40 delas abaixo
+  de 5 ms); `scripts/win_probe.py tela` nos monitores do dono (o print e o preparo até 150 ms num 4K a 150 %; a interface
+  até 5 ms e a miniatura até 300 ms do clique; o `buraco_ms` da thread da interface; a janela excluída com zero pixels e o
+  controle acima de zero; com o Teams aberto, a janela de outro processo por cima, preta na imagem enviada; o contexto de
+  DPI das duas threads em PMv2) e `tela --guardar PASTA` com uma planilha real aberta no 4K, para julgar se o texto pequeno
+  se lê (A-40); a janela da reunião achada no Teams novo, no Zoom e no Meet do Chrome, também com a fonte "sistema
+  inteiro"; um e-mail aberto sobre o Teams, preto; monitores com escalas diferentes; o conteúdo protegido preto que não vai
+  e o slide escuro que vai; o atalho `ctrl+alt+shift+t` registrado; a primeira opção com a tela com a LLM real (p50 até
+  4 s, p95 até 8 s) no Gemini, na OpenAI e no Claude; os números do Aceite pelo `--check` das três reuniões (o bloco
+  `screen`); o Teams compartilhando a tela sem a miniatura nem a janela maior; o `.exe` 0.14.0 (sonda `--probe`, com o
+  JPEG), com o OK do dono.
 - F5.20 (o Aceite, em três reuniões reais com headset): `scripts/win_probe.py shots` claro e escuro, com as fotos `f520-*`
   sem `cortados` nem `pequenos`, e a linha `f520_tempos` (cada legenda e cada opção abaixo de 5 ms na thread da
   interface, com `pinturas` acima de zero; nesta máquina Linux a primeira opção com 2.000 falas passou de 5 ms, e a
@@ -176,7 +196,9 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- O `.exe` 0.13.0 da F5.20 e o push são decisões do dono.
+- O `.exe` 0.13.0 da F5.20, o 0.14.0 da F5.21 e o push são decisões do dono.
+- F5.21 (D-103): as miniaturas da aba "Sugestões" ficam na janela da reunião, que sai na captura quando é compartilhada
+  (padrão: ficam, como o resto da reunião; a cópia maior abre fora da captura).
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
 git.
 
