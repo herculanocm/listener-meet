@@ -9,8 +9,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   (MP4 H.264 e AAC, 1280 × 720, a fala atual com o nome e o cargo do dia na cor do falante e a anterior acima), numa
   tarefa com o progresso e o "Cancelar" numa faixa própria, que espera parada com uma gravação em curso; nenhuma
   dependência nova (soundfile e o PyAV que já vem com o faster-whisper). Reunião 22 (55 min): o MP3 em 10,1 s (17 MB)
-  e o MP4 em 61,6 s (49 MB). Falta o dono: o uso real (em "Verificar no Windows") e o push; o `.exe` 0.12.0 espera o OK
-  dele (CP13: `scripts/build_exe.py --zip`). Posição (`[x]` com o commit):
+  e o MP4 em 61,6 s (49 MB). O `.exe` 0.12.0 e o zip saíram com o OK dele (sonda ok). Falta o dono: o uso real (em
+  "Verificar no Windows") e o push. Posição (`[x]` com o commit):
   - [x] spec, a revisão de arquitetura (A-01 a A-25) e a aprovação (D-098, 8 perguntas no padrão): `a5fb5a0`.
   - [x] `export.atomic_target` (A-23): `4951786`; implementação e testes: `d79996a`.
   - [x] revisão do diff por um agente novo (R-01 a R-04, baixas, aplicadas), D-099, a suíte inteira e a spec
@@ -99,10 +99,11 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   bandeja própria, como chat, fora do widget, com minimizar e fechar; a janela Ao vivo ganhou a mesma lista (uma
   legenda nova de 73 para 2 ms com 2.000 falas). Falta o dono: usar numa reunião (Aceite 4, em "Verificar no
   Windows").
-- O `.exe` atual é o 0.11.0 de 07/11 (`bfe8ed4`, a F5.18; 438 s, 893 MB, 4.700 arquivos; sonda `--probe` ok). Para
-  compartilhar, o `build\exe\listener-meet-0.11.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
-  Para o build, o processamento da reunião 23 (job 145) foi parado às 23:30, a pedido do dono: o worker segurava a
-  pasta do `.exe`. Ele volta à fila e retoma da última janela salva quando o app abrir.
+- O `.exe` atual é o 0.12.0 de 07/11 (`fd8b11d`, a F5.19, com o OK do dono no chat; 434 s, 893 MB, 4.700 arquivos;
+  sonda `--probe` ok; o pacote leva os seis módulos `media_*`, o FFmpeg do PyAV com o `libx264` e o libsndfile). Para
+  compartilhar, o `build\exe\listener-meet-0.12.0-win64.zip` (351 MB, a pasta inteira; D-081: `build_exe.py --zip`).
+  O processamento da reunião 23 (job 145), parado em 06/11 às 23:30 para o build da F5.18, volta à fila e retoma da
+  última janela salva quando o app abrir.
 - Sem CI: o `ci.yml` saiu do repositório (D-090); os testes rodam na máquina, antes de cada commit, em paralelo (D-091).
 
 ## Como retomar (5 minutos)
