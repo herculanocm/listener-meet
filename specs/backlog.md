@@ -3,7 +3,7 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
-- **F5.20 em revisão** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100): o pedido do dono no chat, um botão durante
+- **F5.20 aprovada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100; chat: "aprovada a spec"): o pedido do dono no chat, um botão durante
   a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por opção e texto livre
   para direcionar. A spec avalia a proposta e a muda (a latência da legenda manda: a pedido e em streaming; 2 a 3
   opções curtas com os fatos citados; "Boa"/"Ruim"/"Usei" em dois tempos, com um memorando visível; o direcionamento
@@ -14,7 +14,15 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   assinaturas, SQL da v10, esquema JSON, textos dos prompts, algoritmos da compactação e do leitor, telas com medidas,
   registro completo da tarefa), os testes por lote, os quatro lotes com o commit de cada um e o briefing do
   implementador com o que é proibido (91 KB). Escrita no Linux nativo: nada a verificar no Windows até o código.
-  Falta o dono: a palavra "aprovada" (CP13) para o L1 começar; depois, o uso real e o push.
+  Aprovada pelo dono em 08/11; a implementação segue os lotes L1 a L4 da spec, um commit por lote, com a revisão
+  do diff por um agente novo (D-040). Posição (`[x]` com o commit):
+  - [ ] L1: a v10, a tarefa `suggest`, os prompts, a compactação, o leitor e os testes.
+  - [ ] L2: o cartão na bandeja, o botão, o atalho, o menu, a caixa e o objetivo.
+  - [ ] L3: a avaliação, o memorando, o dossiê, a aba Sugestões e o `--check`.
+  - [ ] L4: as fotos, a revisão do diff, a documentação e a versão 0.13.0.
+  Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte de base tem 13 falhas do ambiente
+  (o widget 1 px mais alto no offscreen, tempos dos avisos, cores do estilo, o build): a régua de cada lote é
+  nenhuma falha nova.
 - **F5.19 implementada** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098, D-099; versão 0.12.0): o pedido
   do dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
   aberta ganhou "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca, as pausas fora) e "Salvar vídeo com legendas…"
@@ -148,8 +156,7 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- F5.20: só a aprovação da spec (CP13). As 16 perguntas dela foram decididas no padrão por delegação em 08/11 (D-100);
-  a palavra "aprovada" no chat libera o L1.
+- Nenhuma: a F5.20 foi aprovada em 08/11, com as 16 perguntas no padrão (D-100).
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
 git.
 
