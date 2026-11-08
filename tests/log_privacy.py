@@ -38,6 +38,11 @@ F520_MODULES = tuple(ROOT / p for p in ("listener/llm/suggest_task.py", "listene
                                          "listener/ui/settings_prompts.py", "listener/ui/warmup_live.py", "listener/live/report.py"))
 F520_FORBIDDEN = frozenset({"text", "nudge", "goal", "memo", "thread", "thread_summary", "dossier", "free", "first", "summary",
                             "options", "option", "facts", "data", "messages", "prompt", "content", "title", "name"})
+# F5.21 (A-38): a tela das sugestões; a imagem, a miniatura, o resumo da tela e o título da janela nunca vão ao log
+F521_MODULES = tuple(ROOT / p for p in ("listener/ui/screen_grab.py", "listener/ui/suggest_screen.py", "listener/ui/suggest_screen_row.py",
+                                         "listener/ui/screen_view.py", "listener/ui/suggest_steer.py", "listener/platform/screen_types.py",
+                                         "listener/platform/win32/screen.py"))
+F521_FORBIDDEN = F520_FORBIDDEN | frozenset({"screen_summary", "jpeg", "thumb", "image", "frame", "pixels", "copy", "titles", "service"})
 F510_ALLOWED_CALLS = frozenset({"len", "type"})
 # o título (e o mapa pid -> título), o caminho, o nome da entrada do registro e o nome do aparelho
 FORBIDDEN = frozenset({"title", "titles", "by_pid", "path", "paths", "name", "names", "device_name", "friendly"})

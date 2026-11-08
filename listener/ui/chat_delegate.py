@@ -10,14 +10,18 @@
 A altura vem do item (`SizeHintRole`, `ui/caption_list.py`): `item_size` mede o texto uma vez por texto e largura, como o
 `SpeechDelegate` (a quebra do C++, `boundingRect` com a quebra por palavra; a palavra que não cabe na linha vai para o
 `QTextLayout`, que quebra em qualquer ponto). A pintura usa as mesmas opções na mesma largura: o texto quebra igual, e só o
-balão encolhe até a linha mais larga. Sem `sizeHint` aqui: o layout fica no C++ (D-094)."""
+balão encolhe até a linha mais larga. Sem `sizeHint` aqui: o layout fica no C++ (D-094).
+
+F5.21 (U-170, A-32): o item da tela enviada (`SCREEN_ROLE`, a chave do pedido) é um anexo de quem pede, à direita: a
+miniatura em 160 x 90 com a borda dos balões e a linha "Tela enviada · janela do Teams" embaixo; a altura é fixa. Sem a
+imagem (a bandeja não saiu da captura), só a moldura e a linha; a tela que não foi aparece apagada."""
 from __future__ import annotations
 
 import math
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPointF, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QFontMetrics, QPainter, QPen, QTextLayout, QTextOption
+from PySide6.QtGui import QFontMetrics, QImage, QPainter, QPainterPath, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from ..llm.prompts.common import stamp
@@ -27,6 +31,10 @@ from .theme import Tokens, Tone, font_for, qcolor, surface_tokens
 
 MINE_ROLE = Qt.ItemDataRole.UserRole + 0x5311      # bool: a fala é sua (à direita, sem o nome)
 HEAD_ROLE = Qt.ItemDataRole.UserRole + 0x5312      # bool: o cabeçalho aparece (a primeira fala da sequência)
+SCREEN_ROLE = Qt.ItemDataRole.UserRole + 0x5314    # F5.21: o item é a tela enviada (a chave: o tempo do pedido)
+THUMB_ROLE = Qt.ItemDataRole.UserRole + 0x5315     # F5.21: o `QImage` da miniatura; nulo, só a moldura
+SENT_ROLE = Qt.ItemDataRole.UserRole + 0x5316      # F5.21: a tela foi no pedido (False: vazia ou falhou, apagada)
+SHOT_W, SHOT_H = 160, 90
 
 PAD_X, PAD_Y = 8, 3               # a margem do item dos lados e a metade do espaço entre falas
 GUTTER = 16                       # a coluna do ponto (e da bandeira) à esquerda dos balões dos outros
@@ -88,6 +96,10 @@ class ChatDelegate(QStyledItemDelegate):
         _lay_lines(layout, width)
         return layout
 
+    def screen_size(self, item_width: int) -> QSize:
+        """F5.21: a miniatura e a linha de baixo (vai para o `SizeHintRole`)."""
+        return QSize(item_width, 2 * PAD_Y + SHOT_H + HEAD_GAP + self.head_h)
+
     def item_size(self, text: str, head: bool, item_width: int) -> QSize:
         """O tamanho de uma fala na largura do item (vai para o `SizeHintRole`)."""
         height = self.measure(_flat(text) or " ", self.text_width(item_width))[0]
@@ -96,6 +108,9 @@ class ChatDelegate(QStyledItemDelegate):
     # ---------------------------------------------------------------- pintura
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        if index.data(SCREEN_ROLE) is not None:
+            self._paint_screen(painter, option, index)
+            return
         t = surface_tokens(option.widget)
         rect = option.rect
         mine = bool(index.data(MINE_ROLE))
@@ -163,9 +178,42 @@ class ChatDelegate(QStyledItemDelegate):
         painter.setPen(qcolor(t.secondary))
         painter.drawText(QPointF(left + name_w + tail_w + GAP, base), when)
 
+    def _paint_screen(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        t = surface_tokens(option.widget)
+        rect = option.rect
+        right = rect.left() + rect.width() - PAD_X
+        frame = QRectF(right - SHOT_W + 0.5, rect.top() + PAD_Y + 0.5, SHOT_W - 1, SHOT_H - 1)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(qcolor(t.window))
+        painter.drawRoundedRect(frame, RADIUS, RADIUS)
+        image = index.data(THUMB_ROLE)
+        if isinstance(image, QImage) and not image.isNull():
+            scale = min(frame.width() / image.width(), frame.height() / image.height())
+            w, h = image.width() * scale, image.height() * scale
+            clip = QPainterPath()
+            clip.addRoundedRect(frame, RADIUS, RADIUS)
+            painter.setClipPath(clip)
+            painter.setOpacity(1.0 if index.data(SENT_ROLE) else 0.35)
+            painter.drawImage(QRectF(frame.center().x() - w / 2, frame.center().y() - h / 2, w, h), image)
+            painter.setOpacity(1.0)
+            painter.setClipping(False)
+        painter.setPen(QPen(qcolor(t.stroke), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(frame, RADIUS, RADIUS)
+        painter.setFont(self.caption)
+        painter.setPen(qcolor(t.secondary))
+        line = QRect(rect.left() + PAD_X, int(frame.bottom()) + HEAD_GAP, rect.width() - 2 * PAD_X, self.head_h)
+        text = self._caption_fm.elidedText(str(index.data(Qt.ItemDataRole.DisplayRole) or ""), Qt.TextElideMode.ElideLeft, line.width())
+        painter.drawText(line, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), text)
+        painter.restore()
+
     def clear(self) -> None:
         """As medidas guardadas saem (a fonte mudou; o texto e a largura já entram na chave)."""
         self._cache.clear()
 
 
-__all__ = ["BUBBLE_X", "BUBBLE_Y", "GUTTER", "HEAD_ROLE", "MINE_ROLE", "PAD_X", "PAD_Y", "ChatDelegate"]
+__all__ = ["BUBBLE_X", "BUBBLE_Y", "GUTTER", "HEAD_ROLE", "MINE_ROLE", "PAD_X", "PAD_Y", "SCREEN_ROLE", "SENT_ROLE", "SHOT_H", "SHOT_W",
+           "THUMB_ROLE", "ChatDelegate"]

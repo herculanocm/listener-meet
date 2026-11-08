@@ -10,6 +10,9 @@ próprio, não um item da lista: botões de verdade por opção pedem widgets).
 - Nada em menu nem em dica que mostre a sugestão: são janelas fora da exclusão da captura (A-14, D-095). Os botões nunca são
   padrão (A-29): a bandeja não ativa, e o Enter não pode disparar nada; nenhum pega o foco.
 - A altura (`preferred_height`) vai de 120 px a 45 % da bandeja; recolhido, só o cabeçalho. A bandeja a aplica (`fit_card`).
+- F5.21: os widgets da tela (`ui/suggest_screen_row.py`): a chave "Com a tela" e a seta na linha de "Nova sugestão", a linha
+  "com a tela · rótulo" e a confirmação da primeira vez no corpo, acima das opções; "Tentar sem a tela" quando o pedido com a
+  tela falha (A-18).
 O cartão não grava nada: emite sinais, e o host (`ui/suggest_host.py`) grava e decide."""
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ from ..model import SuggestMode
 from .components import IconButton
 from .icons import set_icon
 from .suggest_option import BUTTON_PX, REASONS, OptionRow, chip_button, facts_html, plain
+from .suggest_screen_row import ScreenRow
 from .theme import Tone, note, role
 from .widget_parts import ElidedLabel, icon_label
 
@@ -53,6 +57,8 @@ class SuggestCard(QFrame):
     fact_clicked = Signal(int)
     collapsed_changed = Signal(bool)
     content_changed = Signal()                   # a altura preferida mudou (uma opção chegou, um estado novo)
+    plain_requested = Signal(object)             # F5.21: "Tentar sem a tela" (o modo do pedido)
+    screen_clicked = Signal()                    # F5.21: o "[tela]" de uma opção
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,6 +67,7 @@ class SuggestCard(QFrame):
         self.asked = SuggestMode.SPEAK              # o modo do pedido em curso (R-08 da revisão do L2: o seletor muda o próximo)
         self.collapsed = False
         self.rows: list[OptionRow] = []
+        self.screen_row = ScreenRow(self)
         self._build()
         self.hide()
 
@@ -96,6 +103,8 @@ class SuggestCard(QFrame):
         body.setSpacing(8)
         self.rows_box = QVBoxLayout()
         self.rows_box.setSpacing(10)
+        body.addWidget(self.screen_row.consent)
+        body.addWidget(self.screen_row.line)
         body.addLayout(self.rows_box)
         body.addLayout(self._state_row())
         body.addLayout(self._actions_row())
@@ -124,9 +133,13 @@ class SuggestCard(QFrame):
         self.btn_retry = QPushButton("Tentar de novo")
         plain(self.btn_retry).clicked.connect(self._request)
         self.btn_retry.hide()
+        self.btn_plain = QPushButton("Tentar sem a tela")
+        plain(self.btn_plain).clicked.connect(self._plain)
+        self.btn_plain.hide()
         row = QHBoxLayout()
         row.addWidget(self.state, 1)
         row.addWidget(self.btn_retry)
+        row.addWidget(self.btn_plain)
         return row
 
     def _actions_row(self) -> QHBoxLayout:
@@ -140,6 +153,8 @@ class SuggestCard(QFrame):
         row = QHBoxLayout()
         row.addWidget(self.btn_new)
         row.addWidget(self.btn_cancel)
+        row.addWidget(self.screen_row.toggle)
+        row.addWidget(self.screen_row.pick)
         row.addStretch(1)
         row.addWidget(self.cost)
         return row
@@ -201,6 +216,8 @@ class SuggestCard(QFrame):
         self.set_title(hhmm, t_until_ms)
         self._state(ASKING if no_news is None else f"{ASKING} {NO_NEWS.format(t=stamp(no_news))}")
         self.btn_retry.hide()
+        self.btn_plain.hide()
+        self.screen_row.show_line(None)
         self.btn_cancel.show()
         self.btn_new.setEnabled(False)
         self.cost.setText("")
@@ -212,6 +229,7 @@ class SuggestCard(QFrame):
         row.rated.connect(self.rated)
         row.used_toggled.connect(self.used_toggled)
         row.fact_clicked.connect(self.fact_clicked)
+        row.screen_clicked.connect(self.screen_clicked)
         self.rows.append(row)
         self.rows_box.addWidget(row)
         row.show()                                       # já: o Qt só mostraria no próximo laço, e a altura viria sem ela
@@ -236,10 +254,12 @@ class SuggestCard(QFrame):
         if result.cost_usd is not None:
             self.cost.setText(("custo estimado " if result.cost_estimated else "") + fmt_usd(result.cost_usd))
 
-    def fail(self, message: str, retry: bool) -> None:
-        """"Tentar de novo" só com "Nova sugestão" à vista: depois do Parar, os dois somem (R-07 da revisão do L2)."""
+    def fail(self, message: str, retry: bool, plain_retry: bool = False) -> None:
+        """"Tentar de novo" só com "Nova sugestão" à vista: depois do Parar, os dois somem (R-07 da revisão do L2); F5.21
+        (A-18): o pedido com a tela que falhou oferece também "Tentar sem a tela", sem uma segunda chamada sozinha."""
         self._state(f"falhou: {message}")
         self.btn_retry.setVisible(retry and not self.btn_new.isHidden())
+        self.btn_plain.setVisible(plain_retry and retry and not self.btn_new.isHidden())
         self.btn_cancel.hide()
         self.btn_new.setEnabled(retry)
         self.content_changed.emit()
@@ -264,7 +284,9 @@ class SuggestCard(QFrame):
         self.btn_new.hide()
         self.btn_cancel.hide()
         self.btn_retry.hide()
-        for b in (self.btn_speak, self.btn_orient, self.btn_text, self.btn_goal, *self.chips.values()):
+        self.btn_plain.hide()
+        for b in (self.btn_speak, self.btn_orient, self.btn_text, self.btn_goal, self.screen_row.toggle, self.screen_row.pick,
+                  *self.chips.values()):
             b.setEnabled(False)
         if not self.state.text():
             self._state(FINISHED)
@@ -309,6 +331,9 @@ class SuggestCard(QFrame):
 
     def _request(self, *_args: object) -> None:
         self.request_clicked.emit(self.mode)
+
+    def _plain(self, *_args: object) -> None:
+        self.plain_requested.emit(self.mode)
 
     def _chip_clicked(self, text: str, *_args: object) -> None:
         self.nudge_chip_toggled.emit(text, self.chips[text].isChecked())

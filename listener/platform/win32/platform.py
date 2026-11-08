@@ -31,7 +31,7 @@ from ...log import get_logger
 from ..base import (NAME_ID_PREFIX, AudioCallback, AudioDevice, ChildProcess, Endpoints, ErrorCallback, Platform, PlayingApp,
                     log_id, pick_device, text_scale_from_percent)
 from ..common import paths, portaudio, process
-from . import activity, app_loopback, endpoints, mute, output, processes, sessions, system_loopback, taskbar
+from . import activity, app_loopback, endpoints, mute, output, processes, screen, sessions, system_loopback, taskbar
 from .hotkeys import Win32Hotkeys
 from .stream import _StreamHandle
 
@@ -199,7 +199,7 @@ def _endpoint_signature() -> tuple[Any, ...] | None:
 
 
 class Win32Platform(activity.Win32Activity, output.Win32Output, app_loopback.Win32AppLoopback, taskbar.Win32Taskbar,
-                    Platform):
+                    screen.Win32Screen, Platform):
     name = "win32"
 
     def __init__(self) -> None:

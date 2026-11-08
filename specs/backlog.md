@@ -10,7 +10,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   suíte inteira roda no fechamento (D-102). Posição (`[x]` com o commit):
   - [x] L0: o `suggest_task.py` dividido em `suggest_ctx`, `suggest_dossier` e `suggest_memo_task`, sem mudar comportamento (o commit do L0).
   - [x] L1: a imagem na camada de LLM, a v11, o prompt `suggest` 1.1 e a tarefa com a tela (o commit do L1).
-  - [ ] L2: a plataforma, o preparo, o host, o cartão, o chat, a janela maior, o atalho, o menu e as Configurações.
+  - [x] L2: a plataforma, o preparo, o host, o cartão, o chat, a janela maior, o atalho, o menu e as Configurações (o commit do L2).
   - [ ] L3: a aba, o `--check`, a sonda, o `exe_probe`, os documentos e a versão 0.14.0.
 - **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
   chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por

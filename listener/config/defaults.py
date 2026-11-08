@@ -109,6 +109,7 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("hotkeys.mute", "ctrl+alt+shift+u", _NOW, "Atalho: mudo", _text),
     SettingSpec("hotkeys.history", "ctrl+alt+shift+h", _NOW, "Atalho: abrir o Histórico (cursor na busca)", _text, phase="F5"),  # U-028
     SettingSpec("hotkeys.suggest", "ctrl+alt+shift+d", _NOW, "Atalho: sugerir o que falar", _text, phase="F5.20"),  # U-153
+    SettingSpec("hotkeys.suggest_screen", "ctrl+alt+shift+t", _NOW, "Atalho: sugerir com a tela", _text, phase="F5.21"),  # U-164
     SettingSpec("log.path", "", _NOW, "Arquivo de log", _text),                 # vazio = <pasta do banco>/logs/listener.log
     SettingSpec("log.level", "INFO", _NOW, "Nível de log", _upper, choices=frozenset(LOG_LEVELS)),
     SettingSpec("ui.widget_pos", "", _NOW, "Posição do widget", _text),
@@ -213,6 +214,12 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("suggest.dossier", True, _NEXT, "Dossiê dos participantes no pedido (ações abertas e últimas reuniões)", _bool,
                 phase="F5.20"),
     SettingSpec("suggest.name_hint", True, _NOW, "Destacar o botão quando falarem o seu nome (sem chamar a IA)", _bool, phase="F5.20"),
+    # F5.21 (U-164, U-165): a tela nas sugestões; `screen_source` é "auto", "cursor" ou "monitor:<chave>" (A-30)
+    SettingSpec("suggest.screen", True, _NOW, "A tela nas sugestões (o print da reunião, só a pedido)", _bool, phase="F5.21"),
+    SettingSpec("suggest.screen_source", "auto", _NOW, "Qual tela vai nas sugestões", _text, phase="F5.21"),
+    SettingSpec("suggest.screen_keep", True, _NOW, "Guardar uma cópia menor da tela enviada (para ver na reunião)", _bool,
+                phase="F5.21"),
+    SettingSpec("suggest.screen_consent", "", _NOW, "Os provedores que já receberam a tela", _text, phase="F5.21", internal=True),
     SettingSpec("suggest.memo", "", _NOW, "O que o assistente aprendeu", _text, phase="F5.20", internal=True),
     SettingSpec("suggest.memo_at", "", _NOW, "Quando o memorando foi refeito", _text, phase="F5.20", internal=True),
     SettingSpec("suggest.memo_ratings", 0, _NOW, "Avaliações usadas no último memorando", int, low=0, phase="F5.20", internal=True),

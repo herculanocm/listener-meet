@@ -116,7 +116,7 @@ if TYPE_CHECKING:
     from ..store import Store
 
 log = get_logger("ui")
-HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history", "suggest")      # F5.20: + sugerir (U-153)
+HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history", "suggest", "suggest_screen")   # F5.20, F5.21 (U-153, U-164)
 SYSTEM_PLAY_TEXT = ("Você está gravando o som do sistema inteiro: o áudio do player entra na gravação. Tocar mesmo assim?")
 PLAYER_PAUSED_WARMUP = "pausado para o warm-up da gravação"                                    # R7-01, na barra do player
 PLAYER_PAUSED_SYSTEM = "pausado: a gravação capta o som do sistema inteiro (tocar pede confirmação)"
@@ -591,13 +591,13 @@ class Controller(QObject):
                 self.toggle_mute()
             case "history":
                 self.open_history(focus_search=True)
-            case "suggest":
-                self.request_suggestion()
+            case "suggest" | "suggest_screen":
+                self.request_suggestion(screen=name == "suggest_screen")
 
-    def request_suggestion(self) -> None:
-        """F5.20 (U-153): o atalho e o "Sugerir…" da bandeja do sistema, pelo fio da bandeja de legendas, onde o cartão mora."""
+    def request_suggestion(self, *_args: object, screen: bool = False) -> None:
+        """F5.20 (U-153): o atalho e o "Sugerir…" da bandeja do sistema, pelo fio da bandeja de legendas; F5.21: com a tela."""
         if self.captions is not None:
-            self.captions.request_suggestion()
+            self.captions.request_suggestion(screen)
         else:
             suggest_outside(self.store, self.notify)
 
@@ -705,7 +705,7 @@ class Controller(QObject):
                                             on_open_live=self._open_live_front, live_state=self.live_status,
                                             on_notice=functools.partial(self._notify_as, NoticeKind.ERROR),
                                             marked=self._marked_captions, speakers=self._speakers,
-                                            suggest=bool(fields.get("suggest", True)), elapsed=rec.elapsed, on_info=self.notify,
+                                            suggest=bool(fields.get("suggest", True)), recording=rec, on_info=self.notify,
                                             on_budget=self._suggest_budget_stopped, parent=self)
         if self.tray:
             self.tray.set_state(AppState.RECORDING)

@@ -8,7 +8,11 @@ ficarem abaixo de 400 linhas.
 - Rolagem (U-143): com o fim à vista, rola sozinha; quem subiu fica onde está, com "↓ N novas" sobre o pé do chat.
 - Clique direito (U-144): "Criar marcador neste instante" (pelo `on_mark` do controlador, uma vez por legenda; a falha vai
   ao `on_notice`) e "Copiar". O menu pede a frente à plataforma: numa janela que não ativa, ele não fecharia com o clique
-  fora nem com o Esc. E ignora o Alt que o `bring_to_front` injeta (o menu do Windows fecharia nele)."""
+  fora nem com o Esc. E ignora o Alt que o `bring_to_front` injeta (o menu do Windows fecharia nele).
+- F5.21 (U-170, A-32, A-33): a tela enviada numa sugestão entra como um anexo seu, no tempo do pedido (`add_screen`): o item
+  tem o `SCREEN_ROLE`, o `UserRole` vazio (o menu, as marcas e a rolagem até a legenda o pulam) e o grupo vazio (a fala
+  seguinte volta a ter cabeçalho); o clique pede a tela maior (`screen_clicked`). Só a bandeja: a janela Ao vivo não sai da
+  captura e nunca recebe a tela."""
 from __future__ import annotations
 
 import functools
@@ -16,14 +20,15 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, override
 
-from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QImage
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (QAbstractItemView, QFrame, QLabel, QListWidgetItem, QMenu, QPushButton, QStackedLayout, QWidget)
 
 from ..llm.prompts.common import stamp
 from ..log import get_logger
 from .caption_list import CaptionList
-from .chat_delegate import HEAD_ROLE, MINE_ROLE, ChatDelegate
+from .chat_delegate import HEAD_ROLE, MINE_ROLE, SCREEN_ROLE, SENT_ROLE, THUMB_ROLE, ChatDelegate
 from .live_text import YOU, MarkCaption, caption_key, caption_line, caption_note, speaker_parts, you_label
 from .speech_delegate import FLAG_ROLE, STAMP_ROLE, TEXT_ROLE, speech_roles
 from .theme import PRIMARY, note, set_kind
@@ -43,6 +48,7 @@ BULK = 20                         # mais falas que isto de uma vez entram com a 
 
 class CaptionChat(QWidget):
     """O chat de uma reunião. `marked` e `speakers` são os conjuntos da gravação, do controlador."""
+    screen_clicked = Signal(int)          # F5.21: a miniatura de uma tela (a chave: o tempo do pedido)
 
     def __init__(self, store: Store, meeting_id: int, *, platform: Platform | None = None, on_mark: MarkCaption | None = None,
                  on_notice: Callable[[str], Any] | None = None, marked: set[tuple[Any, ...]] | None = None,
@@ -68,6 +74,7 @@ class CaptionChat(QWidget):
         self.list.viewport().setAutoFillBackground(False)   # o fundo é o do cartão
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._context_menu)
+        self.list.itemClicked.connect(self._clicked)
         self.list.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.empty = QLabel(WAITING)
         note(self.empty)
@@ -88,7 +95,42 @@ class CaptionChat(QWidget):
         return you_label(row, self.me_id, self.in_room)
 
     def _item_size(self, item: QListWidgetItem, width: int) -> QSize:
+        if item.data(SCREEN_ROLE) is not None:
+            return self.delegate.screen_size(width)
         return self.delegate.item_size(str(item.data(TEXT_ROLE) or ""), bool(item.data(HEAD_ROLE)), width)
+
+    # ---------------------------------------------------------------- F5.21: a tela enviada
+    def add_screen(self, t_ms: int, thumb: QImage | None, text: str, sent: bool) -> None:
+        """A miniatura da tela no tempo do pedido, do lado de quem pede; antes da primeira legenda, a lista aparece (A-33)."""
+        follow = self.list.pinned
+        self.pages.setCurrentWidget(self.list)
+        item = QListWidgetItem()
+        item.setData(SCREEN_ROLE, int(t_ms))
+        item.setData(THUMB_ROLE, thumb)
+        item.setData(SENT_ROLE, sent)
+        item.setData(STAMP_ROLE, int(t_ms))
+        item.setData(MINE_ROLE, True)
+        item.setData(HEAD_ROLE, False)
+        item.setData(GROUP_ROLE, "")
+        item.setText(text)                                   # o leitor de tela e a linha de baixo
+        item.setToolTip("Clique para ver a tela maior")    # neutra: a dica fica fora da exclusão da captura (D-095)
+        pos = self.list.place((int(t_ms), 0), item)
+        self._restyle(pos + 1)
+        if follow:
+            self.list.scroll_to_end()
+
+    def scroll_to_screen(self, t_ms: int) -> bool:
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.data(SCREEN_ROLE) == t_ms:
+                self.list.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return True
+        return False
+
+    def _clicked(self, item: QListWidgetItem) -> None:
+        key = item.data(SCREEN_ROLE)
+        if key is not None:
+            self.screen_clicked.emit(int(key))
 
     # ---------------------------------------------------------------- falas
     def load_new(self) -> dict[str, Any] | None:
@@ -147,7 +189,7 @@ class CaptionChat(QWidget):
 
     def _restyle(self, i: int) -> None:
         item = self.list.item(i)
-        if item is None:
+        if item is None or item.data(SCREEN_ROLE) is not None:      # F5.21: a tela não tem cabeçalho
             return
         head = not self.continues(self.list.item(i - 1) if i > 0 else None, item)
         if bool(item.data(HEAD_ROLE)) != head:
@@ -161,7 +203,8 @@ class CaptionChat(QWidget):
             prev = None
             for i in range(self.list.count()):
                 item = self.list.item(i)
-                item.setData(HEAD_ROLE, not self.continues(prev, item))
+                if item.data(SCREEN_ROLE) is None:
+                    item.setData(HEAD_ROLE, not self.continues(prev, item))
                 prev = item
         finally:
             model.blockSignals(blocked)

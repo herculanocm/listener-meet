@@ -25,6 +25,7 @@ import numpy as np
 from listener.capture.clock import ManualClock
 from listener.platform.base import (AudioActivity, AudioCallback, AudioDevice, ChildProcess, Endpoint, Endpoints,
                                     ErrorCallback, Platform, PlayingApp, TaskbarTask, WatchedApp)
+from listener.platform.screen_types import Frame, MeetingWindow, Monitor, ScreenRect
 from tests.fake_activity import FAKE_WATCHED, FakeMicWatch
 from tests.fake_player import FakeOutput
 from tests.fake_streams import FakeChild, FakeHotkeys, FakeMute, FakeStream   # F5.9 (L1a): reexportados daqui
@@ -78,6 +79,14 @@ class FakePlatform(Platform):
         self.capture_exclusion = True                         # F5.3 (A-13): o que `exclude_from_capture` devolve
         self.excluded: list[int] = []                         # as janelas que pediram para sair da captura
         self.text_scale_factor = 1.0                          # F5.4 (A-08): o "Tamanho do texto" do sistema simulado
+        # F5.21: a tela de mentira (dois monitores, a janela da reunião no segundo, o print sintético que o teste troca)
+        self.screen_monitors = (Monitor("DISPLAY1", "Monitor 1 · 1920 x 1080 · principal", ScreenRect(0, 0, 1920, 1080), True),
+                                Monitor("DISPLAY2", "Monitor 2 · 2560 x 1440", ScreenRect(1920, 0, 2560, 1440), False))
+        self.meeting_win: MeetingWindow | None = None
+        self.active_index = 0
+        self.grab_color: tuple[int, int, int] | None = None   # None: um gradiente; senão uma cor só (a tela "vazia")
+        self.grab_fail = False
+        self.grabbed: list[ScreenRect] = []
         # F5.7 (L1): o sensor de mentira; o teste troca a leitura, faz a leitura inteira falhar e muda o indicador
         self.activity: AudioActivity | None = AudioActivity(())
         self.degraded_reading: AudioActivity | None = AudioActivity((), degraded=True)
@@ -165,6 +174,36 @@ class FakePlatform(Platform):
     @override
     def pin_hint(self) -> str | None:
         return self.pin_text
+
+    # ---------------------------------------------------------------- F5.21: a tela
+    @override
+    def meeting_window(self, pid: int | None, exe: str) -> MeetingWindow | None:
+        return self.meeting_win
+
+    @override
+    def monitors(self) -> tuple[Monitor, ...]:
+        return self.screen_monitors
+
+    @override
+    def active_monitor(self) -> Monitor | None:
+        return self.screen_monitors[self.active_index] if self.screen_monitors else None
+
+    @override
+    def grab_screen(self, rect: ScreenRect) -> Frame | None:
+        """BGRA de cima para baixo, como o BitBlt: um gradiente (uma tela "com conteúdo") ou uma cor só."""
+        self.grabbed.append(rect)
+        if self.grab_fail:
+            return None
+        h, w = rect.height, rect.width
+        img = np.empty((h, w, 4), dtype=np.uint8)
+        if self.grab_color is None:
+            img[..., 0] = (np.arange(w, dtype=np.uint32) * 255 // max(1, w - 1)).astype(np.uint8)[None, :]
+            img[..., 1] = (np.arange(h, dtype=np.uint32) * 255 // max(1, h - 1)).astype(np.uint8)[:, None]
+            img[..., 2] = 128
+        else:
+            img[..., 0], img[..., 1], img[..., 2] = self.grab_color[2], self.grab_color[1], self.grab_color[0]
+        img[..., 3] = 255
+        return Frame(img.tobytes(), w, h, w * 4)
 
     @override
     def ui_style(self) -> str:

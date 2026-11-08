@@ -411,7 +411,7 @@ def test_the_live_page_has_the_suggestions_group_and_the_hotkeys_page_the_shortc
     dlg = _dialog(qtbot, store, platform)
     assert set(SUGGEST_KEYS) <= set(dlg._editors) and "hotkeys.suggest" in dlg._editors
     assert SUGGEST_KEYS == ("suggest.enabled", "suggest.learn", "suggest.options", "suggest.window_min", "suggest.dossier",
-                            "suggest.name_hint")
+                            "suggest.name_hint", "suggest.screen", "suggest.screen_source", "suggest.screen_keep")   # F5.21
     assert dlg._editors["hotkeys.suggest"].raw() == "ctrl+alt+shift+d"
 
 

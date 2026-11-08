@@ -17,6 +17,7 @@ F5.13 (U-133): Gravar, Pausar, Marcador, Mudo, Parar e Histórico mostram o atal
 (U-131): o clique esquerdo também é o "Gravar…" do Jump List (`left_click`)."""
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -46,7 +47,7 @@ ABOUT_ITEM, SUPPORT_ITEM = f"Sobre o {about.APP_NAME}…", "Apoiar o projeto…"
 # F5.13 (U-133): o atalho (`hotkeys.<nome>`) de cada item do menu que tem um
 SHORTCUT_ITEMS: tuple[tuple[str, str], ...] = (("start", "act_record"), ("pause", "act_pause"), ("mark", "act_mark"),
                                                ("mute", "act_mute"), ("stop", "act_stop"), ("history", "act_history"),
-                                               ("suggest", "act_suggest"))                 # F5.20 (A-20)
+                                               ("suggest", "act_suggest"), ("suggest_screen", "act_suggest_screen"))   # F5.20, F5.21
 
 
 def menu_shortcuts(read: Callable[[str], str | None], failed: object) -> dict[str, str]:
@@ -131,6 +132,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_stop = QAction("Parar", self.menu)
         self.act_live = QAction("Ao vivo…", self.menu)
         self.act_suggest = QAction("Sugerir…", self.menu)          # F5.20 (U-153, A-20): pelo cartão da bandeja de legendas
+        self.act_suggest_screen = QAction("Sugerir com a tela…", self.menu)   # F5.21 (U-164): um pedido com a tela
         self.act_history = QAction("Histórico…", self.menu)
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
@@ -138,7 +140,8 @@ class TrayIcon(QSystemTrayIcon):
         self.act_support = QAction(SUPPORT_ITEM, self.menu)          # F5.12 (U-123)
         self.act_quit = QAction("Sair", self.menu)
         self._call_actions()
-        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest):
+        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest,
+                  self.act_suggest_screen):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(self.act_history)
@@ -162,6 +165,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_stop.triggered.connect(controller.stop_recording)
         self.act_live.triggered.connect(controller.open_live_window)
         self.act_suggest.triggered.connect(controller.request_suggestion)
+        self.act_suggest_screen.triggered.connect(functools.partial(controller.request_suggestion, screen=True))
         self.act_history.triggered.connect(self._open_history)
         self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
@@ -243,7 +247,7 @@ class TrayIcon(QSystemTrayIcon):
         self._apply_tip()
         recording = state in (AppState.RECORDING, AppState.PAUSED)
         self.act_record.setEnabled(state == AppState.IDLE)
-        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest):
+        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest, self.act_suggest_screen):
             a.setEnabled(recording)
 
     def _suggest_item(self) -> None:
@@ -255,6 +259,9 @@ class TrayIcon(QSystemTrayIcon):
             return
         host = getattr(getattr(self.controller, "captions", None), "suggest", None)
         self.act_suggest.setVisible(on and (host is None or bool(host.active)))
+        screen = getattr(host, "screen", None)                # F5.21 (A-29): sem o recurso da tela, o item some
+        self.act_suggest_screen.setVisible(self.act_suggest.isVisible() and (bool(screen.enabled) if screen is not None
+                                                                            else bool(self.controller.store.get(SPECS["suggest.screen"]))))
 
     def show_shortcuts(self, combos: Mapping[str, str]) -> None:
         """U-133: o atalho de cada item depois de uma tabulação, que o menu desenha na coluna de atalho ("Ctrl+Alt+Shift+H"

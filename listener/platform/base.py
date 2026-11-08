@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .screen_types import Frame, MeetingWindow, Monitor, ScreenRect
+
 import numpy as np
 
 
@@ -274,6 +276,24 @@ class Platform(Protocol):
     # F5.13 (L3, U-132): a dica de fixar o app na barra de tarefas, numa linha da última página do assistente; None quando a
     # plataforma não tem o que ensinar (até a F7)
     def pin_hint(self) -> str | None:
+        return None
+
+    # F5.21 (A-10): a tela das sugestões ao vivo, em pixels físicos (os tipos em `platform/screen_types.py`). A janela do app
+    # da reunião (o pid da fonte da gravação, ou o executável), os monitores da esquerda para a direita, o monitor em uso (o
+    # da janela em primeiro plano, senão o do cursor) e o print de um retângulo; todos rodam em qualquer thread e nunca levam
+    # título no retorno nem no log. Sem tela nesta plataforma (até a F7): nada, e a chave fica apagada
+    def meeting_window(self, pid: int | None, exe: str) -> MeetingWindow | None:
+        del pid, exe
+        return None
+
+    def monitors(self) -> tuple[Monitor, ...]:
+        return ()
+
+    def active_monitor(self) -> Monitor | None:
+        return None
+
+    def grab_screen(self, rect: ScreenRect) -> Frame | None:
+        del rect
         return None
 
     # dispositivos e apps

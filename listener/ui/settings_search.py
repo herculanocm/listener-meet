@@ -21,12 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QPushButton
 
-from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS, SUGGEST_KEYS
+from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS, SPECS, SUGGEST_KEYS
 from ..fmt import plural
 from ..llm import local_embed
 from ..model import SettingScope
 from .keys import note
 from .live_prepare import LIVE, RAG, ModelPreparer, local_status_text, missing_models, models_status_text
+from .settings_editors import ChoiceEditor
 from .settings_pages import DownloadRow, SettingsPage
 from .theme import Tone
 
@@ -138,10 +139,20 @@ class SearchMixin:
         self.prepare_btn.clicked.connect(self.prepare_models)
         form.addRow("Modelos", self.live_row)
         suggest = page.form("Sugestões")                 # F5.20: as sugestões ao vivo; valem em uso, salvo o dossiê
-        for key in SUGGEST_KEYS:
-            self._add(page, suggest, key)
+        for key in SUGGEST_KEYS:                         # F5.21 (A-30): a tela pela lista dos monitores ligados
+            self._add(page, suggest, key, self._screen_editor() if key == "suggest.screen_source" else None)
         page.finish()
         return page
+
+    def _screen_editor(self) -> ChoiceEditor:
+        """F5.21 (U-165): "Automático: a janela da reunião", "O monitor em uso" ou um monitor ligado, pelo nome e a resolução."""
+        from .suggest_screen import screen_items        # o fluxo da tela importa daqui os nomes dos provedores
+
+        current = str(self.store.get(SPECS["suggest.screen_source"]))
+        editor = ChoiceEditor("suggest.screen_source", current, screen_items(self.platform.monitors(), current))
+        editor.widget.setToolTip("A janela do app da reunião, recortada (senão o monitor em uso), ou um monitor fixo. Vale no "
+                                 "próximo pedido com a tela; a seta da chave \"Com a tela\" no cartão troca só nesta gravação.")
+        return editor
 
     def _search_page(self) -> SettingsPage:
         page = SettingsPage("Busca", SEARCH_SUBTITLE, SettingScope.NOW)

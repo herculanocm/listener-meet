@@ -55,8 +55,12 @@ def toggle_button(icon: str, name: str) -> IconButton:
 
 
 def facts_html(option: SuggestOption) -> str:
-    """Os fatos como links `fact:<caption_id>` com o [mm:ss] da legenda (o clique rola o chat até ela)."""
-    return " · ".join(f'<a href="fact:{cid}">[{html.escape(stamp(t))}]</a>' for cid, t in option.facts)
+    """Os fatos como links `fact:<caption_id>` com o [mm:ss] da legenda (o clique rola o chat até ela); F5.21 (U-169): a opção
+    que usou a tela leva "[tela]", que rola o chat até a miniatura, também no lugar de "sem evidência" (A-42)."""
+    parts = [f'<a href="fact:{cid}">[{html.escape(stamp(t))}]</a>' for cid, t in option.facts]
+    if option.screen:
+        parts.append('<a href="screen:">[tela]</a>')
+    return " · ".join(parts)
 
 
 class OptionRow(QWidget):
@@ -64,6 +68,7 @@ class OptionRow(QWidget):
     rated = Signal(int, object, object)          # option_id, nota (1, 0 ou None), motivo
     used_toggled = Signal(int, bool)
     fact_clicked = Signal(int)
+    screen_clicked = Signal()             # F5.21: o "[tela]"
 
     def __init__(self, option: SuggestOption, orient: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -162,6 +167,8 @@ class OptionRow(QWidget):
         kind, _sep, value = link.partition(":")
         if kind == "fact" and value.isdigit():
             self.fact_clicked.emit(int(value))
+        elif kind == "screen":
+            self.screen_clicked.emit()
 
 
 __all__ = ["BUTTON_PX", "REASONS", "OptionRow", "chip_button", "facts_html", "plain", "toggle_button"]
