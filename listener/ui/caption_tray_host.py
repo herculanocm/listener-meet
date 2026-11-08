@@ -9,7 +9,8 @@ logo depois de ele aparecer, com a posição, o encosto e o recolhido da última
 - O controlador repassa a legenda, o estado do ao vivo, o fim da gravação e as bandeiras; a bandeja não conhece o gravador.
 - F5.20: o host das sugestões ao vivo (`ui/suggest_host.py`) nasce aqui, porque o cartão mora na bandeja, e recebe pelo mesmo
   fio a legenda, o estado do ao vivo, o fim (o descarte cancela a chamada em voo) e a saída; o controlador só lhe passa o
-  atalho, o "Sugerir…" da bandeja do sistema e o fechar das Configurações."""
+  atalho, o "Sugerir…" da bandeja do sistema e o fechar das Configurações. Sem a bandeja, o atalho cai em `suggest_outside`:
+  com `suggest.enabled` desligada, mudo (Escopo 12)."""
 from __future__ import annotations
 
 import functools
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any, override
 from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QWidget
 
+from ..config.defaults import SPECS
 from ..log import get_logger
 from .caption_geometry import Rect
 from .caption_tray import CaptionTray
@@ -31,6 +33,20 @@ if TYPE_CHECKING:
     from .widget import RecordingWidget
 
 log = get_logger("ui.captions")
+NO_TRAY = "As sugestões só saem durante a gravação, com a legenda ao vivo e a bandeja de legendas."
+
+
+def suggest_outside(store: Store, notify: Callable[[str], Any]) -> None:
+    """F5.20: o atalho e o "Sugerir…" sem o host (fora da gravação, sem a bandeja ou sem a legenda): o aviso, ou nada com as
+    sugestões desligadas nas Configurações (Escopo 12: o atalho fica mudo; R-05 da revisão do L2)."""
+    try:
+        on = bool(store.get(SPECS["suggest.enabled"]))
+    except Exception:                                 # o banco ocupado: o aviso, que não custa nada
+        on = True
+    if on:
+        notify(NO_TRAY)
+    else:
+        log.info("sugestão pedida com as sugestões desligadas nas Configurações: nada a fazer")
 
 
 def widget_rect(widget: QWidget) -> Rect:
@@ -126,4 +142,4 @@ class CaptionTrayHost(QObject):
         self.deleteLater()
 
 
-__all__ = ["CaptionTrayHost", "widget_rect"]
+__all__ = ["NO_TRAY", "CaptionTrayHost", "suggest_outside", "widget_rect"]

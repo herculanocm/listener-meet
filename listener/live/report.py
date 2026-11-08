@@ -36,6 +36,7 @@ PARTIAL_SLACK_MS = 20_000           # o disparo do parcial confere a cada 15 s: 
 # F5.20 (Aceite): as sugestões ao vivo
 TARGET_FIRST_P50_S, TARGET_FIRST_P95_S, TARGET_TOTAL_P95_S = 3.0, 6.0, 10.0
 TARGET_USEFUL, TARGET_EVIDENCE, TARGET_COMPACTION = 0.5, 0.9, 0.25
+TARGET_COST_USD = 0.01                 # por pedido, com o modelo rápido
 
 
 def _stats(values: Sequence[float]) -> dict[str, Any]:
@@ -252,7 +253,7 @@ def _seconds(ms: float | None) -> float | None:
 def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
     """F5.20 (C14): os pedidos por modo e desfecho, o tempo até a primeira opção e até o fim (média, p50 e p95, só dos que
     terminaram bem), as avaliações, a parcela útil (pedidos com ao menos uma "Boa" ou "Usei"), a das opções com evidência, a
-    compactação (1 - compactado ÷ cru) e o custo (o estimado à parte), cada critério do Aceite contra o alvo."""
+    compactação (1 - compactado ÷ cru) e o custo (o estimado à parte, e o por pedido), cada critério do Aceite contra o alvo."""
     rows: list[dict[str, Any]] = [dict(r) for r in store.suggestions.list_for_meeting(meeting_id)]
     if not rows:
         return {"requests": 0}
@@ -275,10 +276,12 @@ def suggestions_report(store: Store, meeting_id: int) -> dict[str, Any]:
         "compaction": round(1 - sent / raw, 3) if raw else None,
         "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows), 6),
         "cost_estimated_usd": round(sum(float(r.get("cost_usd") or 0) for r in rows if r.get("cost_estimated")), 6)}
+    out["cost_per_request_usd"] = round(out["cost_usd"] / len(rows), 6)             # o Aceite "Custo" (R-08 da revisão do L3)
     out["gates"] = {"first_p50": _gate(_seconds(first_stats["p50"]), TARGET_FIRST_P50_S, unit=" s"),
                     "first_p95": _gate(_seconds(first_stats["p95"]), TARGET_FIRST_P95_S, unit=" s"),
                     "total_p95": _gate(_seconds(total_stats["p95"]), TARGET_TOTAL_P95_S, unit=" s"),
                     "useful": _gate(out["useful_share"], TARGET_USEFUL, at_least=True),
                     "evidence": _gate(out["evidence_share"], TARGET_EVIDENCE, at_least=True),
-                    "compaction": _gate(out["compaction"], TARGET_COMPACTION, at_least=True)}
+                    "compaction": _gate(out["compaction"], TARGET_COMPACTION, at_least=True),
+                    "cost": _gate(out["cost_per_request_usd"], TARGET_COST_USD)}
     return out

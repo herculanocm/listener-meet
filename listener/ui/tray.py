@@ -25,6 +25,7 @@ from PySide6.QtGui import QAction, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import about
+from ..config.defaults import SPECS
 from ..model import AppState
 from . import icons
 from .common import STATE_TONES
@@ -149,6 +150,7 @@ class TrayIcon(QSystemTrayIcon):
         self.menu.addSeparator()
         self._heart()
         self.menu.aboutToShow.connect(self._heart)
+        self.menu.aboutToShow.connect(self._suggest_item)
         self.menu.addAction(self.act_quit)
         self.queue_tip = ""
         self._state = AppState.IDLE
@@ -243,6 +245,16 @@ class TrayIcon(QSystemTrayIcon):
         self.act_record.setEnabled(state == AppState.IDLE)
         for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest):
             a.setEnabled(recording)
+
+    def _suggest_item(self) -> None:
+        """F5.20 (Escopo 6; R-05 da revisão do L2): "Sugerir…" ausente com `suggest.enabled` desligada ou com a caixa
+        "Sugestões" desta gravação desmarcada; lido ao abrir o menu, porque os dois mudam em uso."""
+        try:
+            on = bool(self.controller.store.get(SPECS["suggest.enabled"]))
+        except Exception:                             # o banco ocupado: o item fica como estava
+            return
+        host = getattr(getattr(self.controller, "captions", None), "suggest", None)
+        self.act_suggest.setVisible(on and (host is None or bool(host.active)))
 
     def show_shortcuts(self, combos: Mapping[str, str]) -> None:
         """U-133: o atalho de cada item depois de uma tabulação, que o menu desenha na coluna de atalho ("Ctrl+Alt+Shift+H"

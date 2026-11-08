@@ -17,8 +17,10 @@ de 400 linhas: as caixas "Legenda ao vivo", "Nomes ao vivo" e "Resumo parcial", 
   marcada (os nomes e o parcial, como o rodapé da transcrição): o pedido do preset ou das Configurações fica guardado por
   dentro (`names_wanted`, `partial_wanted`) e volta quando a caixa acende.
 - F5.20 (U-163, U-156): "Sugestões" (o botão Sugerir desta gravação), marcada por `suggest.enabled`, acesa só com a legenda,
-  a bandeja de legendas e a chave, fora do preset; e "Meu objetivo nesta reunião", uma linha opcional, abaixo das caixas. Vão
-  em `fields["suggest"]` e `fields["goal"]`. Moram aqui, não no `warmup.py`, que já passa de 400 linhas (A-12).
+  a bandeja de legendas, a chave e `suggest.enabled` ligada (R-05 da revisão do L2: desligada, a caixa marcada não faria
+  nada; religada com o diálogo aberto, a caixa volta marcada), fora do preset; e "Meu objetivo nesta reunião", uma linha
+  opcional, abaixo das caixas. Vão em `fields["suggest"]` e `fields["goal"]`. Moram aqui, não no `warmup.py`, que já passa
+  de 400 linhas (A-12).
 Sinais ligados a métodos (R-06)."""
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ NAMES_NEED_VOICES = "Nomes ao vivo precisa dos modelos de voz, que chegam com o 
 SUGGEST_TIP = "Sugestões do que falar pela LLM, a pedido, na bandeja de legendas; tem custo por clique."
 SUGGEST_OFF_TIP = "A sugestão lê a legenda ao vivo: ligue-a."
 SUGGEST_NEED_TRAY = "Ligue a bandeja de legendas (Configurações, Ao vivo): o cartão da sugestão mora nela."
+SUGGEST_NEED_SETTING = "As sugestões estão desligadas: ligue \"Sugestões ao vivo\" nas Configurações (Ao vivo)."
 GOAL_HINT = "Meu objetivo nesta reunião (opcional; a IA o lê nas sugestões)"
 GOAL_MAX = 300
 
@@ -82,7 +85,8 @@ class LiveBoxes(QObject):
         self.names_check.setToolTip(NAMES_TIP)
         self.partial_check = QCheckBox("Resumo parcial")
         self.suggest_check = QCheckBox("Sugestões")                                  # F5.20 (U-163)
-        self.suggest_wanted = bool(store.get(SPECS["suggest.enabled"]))
+        self.suggest_on = bool(store.get(SPECS["suggest.enabled"]))
+        self.suggest_wanted = self.suggest_on
         self.goal_edit = QLineEdit()                                                 # F5.20 (U-156)
         self.goal_edit.setPlaceholderText(GOAL_HINT)
         self.goal_edit.setMaxLength(GOAL_MAX)
@@ -173,13 +177,17 @@ class LiveBoxes(QObject):
         self.partial_check.setToolTip(NO_KEY_TIP if not self.key else PARTIAL_TIP if on else PARTIAL_OFF_TIP)
 
     def _suggest_state(self) -> None:
-        """F5.20: acesa só com a legenda, a bandeja de legendas e a chave; apagada, desmarcada, com o motivo na dica."""
-        tray = bool(self.store.get(SPECS["live.caption_tray"]))
-        lit = self.live_check.isChecked() and self.key and tray
+        """F5.20: acesa só com a legenda, a bandeja de legendas, a chave e `suggest.enabled`; apagada, desmarcada, com o motivo
+        na dica. Religada nas Configurações com o diálogo aberto, o padrão dela volta (a caixa marcada)."""
+        on, tray = bool(self.store.get(SPECS["suggest.enabled"])), bool(self.store.get(SPECS["live.caption_tray"]))
+        if on and not self.suggest_on:
+            self.suggest_wanted = True
+        self.suggest_on = on
+        lit = self.live_check.isChecked() and self.key and tray and on
         self.suggest_check.setEnabled(lit)
         self.suggest_check.setChecked(lit and self.suggest_wanted)
-        self.suggest_check.setToolTip(SUGGEST_TIP if lit else NO_KEY_TIP if not self.key else SUGGEST_NEED_TRAY if not tray
-                                      else SUGGEST_OFF_TIP)
+        self.suggest_check.setToolTip(SUGGEST_TIP if lit else SUGGEST_NEED_SETTING if not on else NO_KEY_TIP if not self.key
+                                      else SUGGEST_NEED_TRAY if not tray else SUGGEST_OFF_TIP)
 
     def fields(self) -> dict[str, bool | str | None]:
         """O que vai para o controlador (CP6): a legenda, os nomes (só quando saem, U-111) e o parcial (só com a legenda e a

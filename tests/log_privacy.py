@@ -26,6 +26,17 @@ F510_MODULES = tuple(ROOT / p for p in ("listener/rag/sandbox.py", "listener/rag
                                          "listener/llm/prompts/rag_sql.py", "listener/llm/prompts/rag_answer.py",
                                          "listener/store/downgrade.py", "listener/ui/history_ask.py", "listener/ui/ask_data.py"))
 F510_FORBIDDEN = frozenset({"question", "sql", "params", "rows", "goal", "answer", "text", "cells"})
+# F5.20 (C16; R-03 da revisão do L3): a sugestão, o fio, o objetivo, o "Como sugerir agora", o memorando, o dossiê e o primeiro
+# nome do usuário nunca vão ao log; o motivo do "Ruim" vem da lista fechada (`RatingReason`) e pode ir
+F520_MODULES = tuple(ROOT / p for p in ("listener/llm/suggest_task.py", "listener/llm/suggest_compact.py",
+                                         "listener/llm/suggest_parse.py", "listener/llm/prompts/suggest.py",
+                                         "listener/llm/prompts/suggest_memo.py", "listener/store/suggestions.py",
+                                         "listener/ui/suggest_host.py", "listener/ui/suggest_card.py", "listener/ui/suggest_option.py",
+                                         "listener/ui/suggest_popup.py", "listener/ui/caption_tray_card.py",
+                                         "listener/ui/caption_tray_host.py", "listener/ui/meeting_suggestions.py",
+                                         "listener/ui/settings_prompts.py", "listener/ui/warmup_live.py", "listener/live/report.py"))
+F520_FORBIDDEN = frozenset({"text", "nudge", "goal", "memo", "thread", "thread_summary", "dossier", "free", "first", "summary",
+                            "options", "option", "facts", "data", "messages", "prompt", "content", "title", "name"})
 F510_ALLOWED_CALLS = frozenset({"len", "type"})
 # o título (e o mapa pid -> título), o caminho, o nome da entrada do registro e o nome do aparelho
 FORBIDDEN = frozenset({"title", "titles", "by_pid", "path", "paths", "name", "names", "device_name", "friendly"})

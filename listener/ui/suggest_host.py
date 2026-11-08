@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from PySide6.QtCore import QObject, QTimer
 
 from ..config.defaults import SPECS
 from ..llm import suggest_task
+from ..llm.costs import fmt_usd
 from ..llm.jobconfig import LlmJobConfig
 from ..llm.suggest_compact import first_name, mentions
 from ..llm.suggest_task import MemoResult, Outcome, SuggestOption, SuggestResult, dossier_text, memo_due, run_memo, run_suggest
@@ -113,7 +115,7 @@ class SuggestHost(QObject):
     def _cost_tip(self) -> str:
         cost = suggest_task.estimate_usd(self.store, LlmJobConfig.from_store(self.store), EST_IN, EST_OUT) if self.keyed else None
         shortcut = shortcut_text(self.store.get_setting("hotkeys.suggest") or "")
-        parts = [TIP] + ([f"({shortcut})"] if shortcut else []) + ([f"· ~{_usd(cost)} por pedido"] if cost is not None else [])
+        parts = [TIP] + ([f"({shortcut})"] if shortcut else []) + ([f"· ~{fmt_usd(cost)} por pedido"] if cost is not None else [])
         return " ".join(parts)
 
     def available(self) -> tuple[bool, bool, str]:
@@ -147,7 +149,11 @@ class SuggestHost(QObject):
 
     def request_from_outside(self, *_args: object) -> None:
         """O botão "Sugerir" (widget e bandeja), o atalho e o menu da bandeja do sistema: a bandeja fechada volta e a
-        recolhida restaura antes do pedido; indisponível, o motivo num aviso."""
+        recolhida restaura antes do pedido; indisponível, o motivo num aviso. Com `suggest.enabled` desligada, o atalho fica
+        mudo (Escopo 12; R-05 da revisão do L2): o botão e o item do menu já somem, e só o log fica."""
+        if not self.enabled:
+            log.info("sugestão pedida com as sugestões desligadas nas Configurações: nada a fazer")
+            return
         visible, can, tip = self.available()
         if not visible or not can:
             self.on_notice(tip or "As sugestões estão desligadas nesta gravação.")
@@ -212,6 +218,7 @@ class SuggestHost(QObject):
                 self.card.set_title(datetime.now().astimezone().strftime("%H:%M"), r.t_until_ms or self.last_end_ms)
                 self.card.finish(r, r.option_ids, self.adjusted())
             case Outcome.CANCELLED:
+                self.card.keep(r, r.option_ids)
                 self.card.cancelled()
             case Outcome.BUDGET:
                 text = r.error or "sugestões paradas nesta reunião: o custo da IA chegou à metade do alerta"
@@ -219,13 +226,14 @@ class SuggestHost(QObject):
                 if self.on_budget is not None:
                     self.on_budget(text)
                 self.on_notice(f"{text[:1].upper()}{text[1:]}.")
-                self.card.fail(text, retry=False)
+                self.card.stopped(text)
             case Outcome.NO_PROVIDER:
                 self.keyed = False
                 self.card.fail(r.error or NO_KEY_TIP, retry=False)
             case Outcome.GONE:
                 self.card.fail("a reunião não existe mais", retry=False)
             case _:
+                self.card.keep(r, r.option_ids)
                 self.card.fail(r.error or "falha", retry=True)
 
     # ---------------------------------------------------------------- avaliar e direcionar
@@ -283,22 +291,24 @@ class SuggestHost(QObject):
 
     def edit_nudge(self) -> None:
         text = self._ask("Como sugerir", self.free, "como a IA deve sugerir (Enter salva, Esc cancela)")
-        if text is not None:
+        if text is not None and not self.closed:
             self.free = text
             self.card.set_nudge(self.nudge)
 
     def edit_goal(self) -> None:
         meeting = self.store.get_meeting(self.meeting_id) or {}
         text = self._ask("Objetivo", str(meeting.get("goal") or ""), "meu objetivo nesta reunião (Enter salva, Esc cancela)")
-        if text is not None and self.store.meetings.set_goal(self.meeting_id, text or None):
-            log.info("reunião %s: objetivo %s", self.meeting_id, "trocado" if text else "apagado")
+        if text is not None and not self.closed and self.store.meetings.set_goal(self.meeting_id, text or None):
+            what = "trocado" if text else "apagado"           # o log nunca leva o objetivo (D-053; `tests/log_privacy.py`)
+            log.info("reunião %s: objetivo %s", self.meeting_id, what)
 
     def _ask(self, title: str, text: str, placeholder: str) -> str | None:
         popup = SuggestTextPopup(title, text, placeholder, self.platform, self.tray)
         try:
             return popup.value() if popup.exec() == SuggestTextPopup.DialogCode.Accepted else None
         finally:
-            popup.deleteLater()
+            with suppress(RuntimeError):          # R-10 da revisão do L2: a bandeja (a mãe) saiu no meio do `exec()`
+                popup.deleteLater()
 
     def show_fact(self, caption_id: int) -> None:
         if self.tray.collapsed:
@@ -341,13 +351,22 @@ class SuggestHost(QObject):
             self.refresh()
 
     def on_stopped(self, discarded: bool = False) -> None:
-        """Parar ou Descartar: sem pedir de novo; no descarte, a chamada em voo é cancelada (a reunião vai ser apagada)."""
+        """Parar ou Descartar: sem pedir de novo; no descarte, a chamada em voo é cancelada (a reunião vai ser apagada). O
+        memorando é decidido com o banco protegido: o Parar roda isto antes de parar o gravador, e um banco ocupado não pode
+        travá-lo (R-02 da revisão do L3); sem a leitura, o memorando fica para o próximo Parar."""
         if discarded:
             self.cancel()
         self.finished = True
         self.card.set_finished()
         self.refresh()
-        if not discarded and self.enabled and bool(self.store.get(SPECS["suggest.learn"])) and memo_due(self.store):
+        if discarded or not self.enabled:
+            return
+        try:
+            due = bool(self.store.get(SPECS["suggest.learn"])) and memo_due(self.store)
+        except Exception as e:
+            log.warning("memorando das sugestões não decidido: %s", type(e).__name__)
+            return
+        if due:
             cancel = threading.Event()               # A-19: a saída do app o cancela e espera (`_stop_windows`)
             run_task(functools.partial(run_memo, self.store, cancelled=cancel.is_set), self.store, _memo_done, cancel=cancel)
             log.info("memorando das sugestões pedido")
@@ -368,10 +387,6 @@ def _memo_done(result: object) -> None:
         log.info("memorando das sugestões: %s (%d avaliações)", result.outcome, result.ratings_used)
     else:
         log.warning("memorando das sugestões falhou: %s", type(result).__name__)
-
-
-def _usd(value: float) -> str:
-    return f"US$ {value:.3f}".replace(".", ",") if value < 0.01 else f"US$ {value:.2f}".replace(".", ",")
 
 
 __all__ = ["ENDED", "IN_FLIGHT", "LIVE_OK", "NO_LIVE", "SuggestHost"]

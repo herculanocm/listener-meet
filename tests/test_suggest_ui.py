@@ -60,6 +60,56 @@ def test_the_card_is_born_hidden_and_a_request_shows_the_options_as_they_come(qt
     assert card.add_option(OPTION).used.isHidden()                       # "Me situar": sem "Usei"
 
 
+def test_a_new_request_hides_the_old_options_before_the_deferred_delete(qtbot):
+    """L4 (a sonda dos tempos): a linha fora do layout seguia à vista, pintada por cima das novas, até a volta ao laço."""
+    card = _card(qtbot)
+    card.show()
+    card.begin(SuggestMode.SPEAK, "14:05", 65_000)
+    old = [card.add_option(OPTION), card.add_option(BARE)]
+    assert all(row.isVisible() for row in old)
+    card.begin(SuggestMode.SPEAK, "14:06", 70_000)                      # sem voltar ao laço: o deleteLater ainda não rodou
+    assert card.rows == [] and not any(row.isVisible() for row in old)
+
+
+def test_a_request_opens_a_collapsed_card_and_keeps_the_mode_it_asked_for(qtbot):
+    """R-01 e R-08 da revisão do L2: o pedido pago não chega escondido; o seletor muda o próximo pedido, não o que chega."""
+    card = _card(qtbot)
+    card.begin(SuggestMode.SPEAK, "14:05", 65_000)
+    card.set_collapsed(True)
+    card.begin(SuggestMode.SPEAK, "14:06", 70_000)
+    assert not card.collapsed and not card.body_area.isHidden()
+    card.btn_orient.click()
+    assert card.mode == SuggestMode.ORIENT and not card.add_option(OPTION).used.isHidden()
+    card.begin(card.mode, "14:07", 70_000)
+    assert card.add_option(OPTION).used.isHidden()                       # o pedido seguinte já é "Me situar"
+
+
+def test_the_options_of_a_failed_or_cancelled_request_can_be_rated_and_the_budget_has_its_own_state(qtbot):
+    """R-07 da revisão do L2 (o L1 grava as opções que chegaram) e R-04 da do L3 (o teto não é "falhou")."""
+    card = _card(qtbot)
+    card.begin(SuggestMode.SPEAK, "14:05", 65_000)
+    row = card.add_option(OPTION)
+    card.keep(_result(outcome=Outcome.ERROR, cost_usd=0.0003, cost_estimated=True), [21])
+    card.fail("prazo de 30 s esgotado", retry=True)
+    assert row.option_id == 21 and row.good.isEnabled() and card.cost.text() == "custo estimado US$ 0,0003"
+    assert card.state.text() == "falhou: prazo de 30 s esgotado" and not card.btn_retry.isHidden()
+    card.keep(_result(outcome=Outcome.ERROR, cost_usd=None), [])         # sem custo conhecido, o de antes fica
+    assert card.cost.text() == "custo estimado US$ 0,0003"
+    card.stopped("sugestões paradas nesta reunião: o custo da IA chegou à metade do alerta")
+    assert card.state.text().startswith("sugestões paradas") and card.btn_retry.isHidden() and not card.btn_new.isEnabled()
+    card.set_finished()
+    card.fail("prazo de 30 s esgotado", retry=True)                      # o erro de um pedido que termina depois do Parar
+    assert card.btn_retry.isHidden() and card.btn_new.isHidden()
+
+
+def test_the_collapsed_card_fits_its_line_and_its_head(qtbot):
+    """R-09 da revisão do L2: a conta à mão cortava 2 px do "Expandir"."""
+    card = _card(qtbot)
+    card.begin(SuggestMode.SPEAK, "14:05", 65_000)
+    card.set_collapsed(True)
+    assert card.preferred_height(600) >= card.layout().minimumSize().height() > card.btn_collapse.height()
+
+
 def test_good_and_bad_are_exclusive_the_reasons_come_with_bad_and_used_is_apart(qtbot):
     card = _card(qtbot)
     card.begin(SuggestMode.SPEAK, "14:05", None)
@@ -226,9 +276,52 @@ def test_a_low_tray_grows_up_for_the_card_without_saving_that_height(qtbot, stor
     card.begin(SuggestMode.SPEAK, "14:05", None)
     assert tray.height() == MIN_H + CARD_MIN_H and tray.y() + tray.height() == bottom and tray.full_height == MIN_H
     tray.save_geometry()
-    assert store.get_setting("ui.caption_tray_geometry").endswith(f",{MIN_H}")
+    assert store.get_setting("ui.caption_tray_geometry") == f"100,400,360,{MIN_H}"      # pela borda de baixo (R-03 do L2)
     tray.hide_card()
     assert tray.height() == MIN_H and tray.card_extra == 0
+
+
+def test_the_title_leaves_earlier_with_the_suggest_button(qtbot, store, platform):
+    """R-02 da revisão do L2: com o "Sugerir", o cabeçalho tem um botão a mais, e o selo saía cortado."""
+    from listener.ui.caption_tray import BUTTON_PX, SPACING, TITLE_MIN_W
+
+    tray = _tray(qtbot, store, platform)
+    tray.set_live_state("degraded")
+    tray.resize(TITLE_MIN_W + 10, 400)
+    assert tray.title.isVisibleTo(tray)
+    tray.set_suggest_state(True, True, "Sugerir o que falar agora", False)
+    assert not tray.title.isVisibleTo(tray)
+    tray.resize(TITLE_MIN_W + BUTTON_PX + SPACING, 400)
+    assert tray.title.isVisibleTo(tray)
+    tray.set_suggest_state(False, False, "", False)
+    tray.resize(TITLE_MIN_W + 10, 400)
+    assert tray.title.isVisibleTo(tray)
+
+
+def test_dragging_the_top_edge_with_the_card_keeps_the_bottom(qtbot, qapp, store, platform):
+    """R-04 da revisão do L2: o mínimo do arrasto é o do layout com o cartão, e o Qt não cresce a bandeja para baixo."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    def mouse(kind: QEvent.Type, local: tuple[int, int], glob: tuple[int, int]) -> QMouseEvent:
+        return QMouseEvent(kind, QPointF(*local), QPointF(*glob), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.NoModifier)
+
+    tray = _tray(qtbot, store, platform)
+    tray.dock = None
+    tray.full_height = 400
+    tray.setGeometry(100, 300, 360, 400)
+    card = _card(qtbot)
+    tray.set_card(card)
+    tray.show_card()
+    card.begin(SuggestMode.SPEAK, "14:05", None)
+    card.add_option(OPTION)
+    qapp.processEvents()
+    bottom = tray.y() + tray.height()
+    tray.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, (180, 2), (280, 302)))
+    tray.mouseMoveEvent(mouse(QEvent.Type.MouseMove, (180, 302), (280, 602)))
+    qapp.processEvents()
+    assert tray.y() + tray.height() == bottom and tray.height() < 400
 
 
 def test_the_widget_has_the_suggest_button_between_captions_and_stop_and_stays_under_400_lines(qtbot):
@@ -247,13 +340,14 @@ def test_the_widget_has_the_suggest_button_between_captions_and_stop_and_stays_u
     w.set_suggest_state(True, False, "motivo", False)
     w.update_state(2.0, {}, {}, paused=False, muted=False, markers=0)      # o estado da gravação não o religa
     assert pressed == [1] and not w.btn_suggest.isEnabled()
-    assert len((ROOT / "listener" / "ui" / "widget.py").read_text(encoding="utf-8").splitlines()) < 400
+    for name in ("widget.py", "suggest_card.py", "suggest_option.py", "suggest_host.py", "caption_tray.py"):   # R-12 do L2
+        assert len((ROOT / "listener" / "ui" / name).read_text(encoding="utf-8").splitlines()) < 400, name
 
 
 # ---------------------------------------------------------------- o "Antes de gravar"
 def test_the_warmup_box_lights_only_with_captions_key_and_tray_and_carries_the_goal(qtbot, store, monkeypatch):
     from listener.ui.llm_ask import NO_KEY_TIP
-    from listener.ui.warmup_live import SUGGEST_NEED_TRAY, SUGGEST_OFF_TIP, SUGGEST_TIP, LiveBoxes
+    from listener.ui.warmup_live import SUGGEST_NEED_SETTING, SUGGEST_NEED_TRAY, SUGGEST_OFF_TIP, SUGGEST_TIP, LiveBoxes
     from tests.test_live_partial import _ready
 
     monkeypatch.setenv("LISTENER_LIVE", "fake")
@@ -275,6 +369,14 @@ def test_the_warmup_box_lights_only_with_captions_key_and_tray_and_carries_the_g
     assert not boxes.suggest_check.isEnabled() and boxes.suggest_check.toolTip() == SUGGEST_NEED_TRAY
     boxes.goal_edit.setText("   ")
     assert boxes.fields()["goal"] is None
+    store.set_setting("live.caption_tray", True)
+    store.set_setting("suggest.enabled", False)                           # R-05 do L2: desligada, marcar não faria nada
+    boxes.refresh_key()
+    assert not boxes.suggest_check.isEnabled() and boxes.suggest_check.toolTip() == SUGGEST_NEED_SETTING
+    assert boxes.fields()["suggest"] is False and not LiveBoxes(store).suggest_check.isChecked()
+    store.set_setting("suggest.enabled", True)                            # religada com o diálogo aberto: o padrão dela
+    boxes.refresh_key()
+    assert boxes.suggest_check.isEnabled() and boxes.suggest_check.isChecked()
 
 
 # ---------------------------------------------------------------- as Configurações e o menu da bandeja
@@ -326,6 +428,17 @@ def test_the_system_tray_menu_has_suggest_with_its_shortcut(qtbot, qapp, platfor
     assert notices and "durante a gravação" in notices[0]
     tray.set_state(AppState.RECORDING)
     assert tray.act_suggest.isEnabled()
+    tray.menu.aboutToShow.emit()
+    assert tray.act_suggest.isVisible()
+    tray.act_suggest.trigger()                                            # o item pede pelo controlador (R-11 do L2)
+    assert len(notices) == 2
+    store.set_setting("suggest.enabled", False)                           # R-05 do L2: desligadas, sem o item e o atalho mudo
+    tray.menu.aboutToShow.emit()
+    c.request_suggestion()
+    assert not tray.act_suggest.isVisible() and len(notices) == 2
+    store.set_setting("suggest.enabled", True)
+    tray.menu.aboutToShow.emit()
+    assert tray.act_suggest.isVisible()
     assert menu_shortcuts(store.get_setting, {})["suggest"] == "ctrl+alt+shift+d"
     tray.hide()
     tray.deleteLater()

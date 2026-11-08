@@ -2,7 +2,8 @@
 voltam e avançam 10 s, com a reunião em foco.
 
 A tecla chega pelo `keyPressEvent` da janela, que só recebe o que o widget com o foco não usou; e, com o foco num campo de
-texto, botão, caixa, combo, tabela ou nas abas, o atalho não age (A-38: nada é roubado). Desvio do A-25, pela leitura mais
+texto, botão, caixa, combo, tabela, árvore (F5.20, a aba Sugestões: ← e → abrem e fecham; R-07 da revisão do L3) ou nas abas,
+o atalho não age (A-38: nada é roubado). Desvio do A-25, pela leitura mais
 segura: o `QShortcut` tomaria a tecla de todos e teria de devolvê-la a quem a usa; aqui ela nunca sai de quem a usa. Na lista
 de falas, Espaço, ← e → chegam ao player pela própria transcrição (`player_keys`, P-06; R-02 da revisão: a lista não usa ←
 e →, e a janela abre com o foco nela, não no título)."""
@@ -14,12 +15,12 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit, QPlainTextEdit, QTabBar, QTableView, QTextEdit,
-                               QWidget)
+                               QTreeView, QWidget)
 
 if TYPE_CHECKING:
     from .player_bar import PlayerBar
 
-OWN_KEYS = (QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit, QPlainTextEdit, QTabBar, QTableView, QTextEdit)
+OWN_KEYS = (QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit, QPlainTextEdit, QTabBar, QTableView, QTextEdit, QTreeView)
 
 
 def player_key(window: QWidget, bar: PlayerBar | None, event: QKeyEvent) -> bool:

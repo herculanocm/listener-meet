@@ -46,7 +46,7 @@ FLAGS = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.
 BUTTON_PX = 32                    # como o fechar do aviso (U-068)
 MARGINS = (10, 8, 10, 10)         # as bordas que redimensionam (6 px) ficam dentro destas margens
 SPACING = 6
-TITLE_MIN_W = 340                 # abaixo disto o título sai (o selo e os botões ficam)
+TITLE_MIN_W = 340                 # abaixo disto o título sai (o selo e os botões ficam); com o "Sugerir", um botão a mais
 END_TEXT = {"stopping": "encerrando", "stopped": "encerrado"}
 LINE_TIP = "Clique para abrir o chat"
 CURSORS = {Edge.LEFT: Qt.CursorShape.SizeHorCursor, Edge.RIGHT: Qt.CursorShape.SizeHorCursor,
@@ -276,7 +276,7 @@ class CaptionTray(TrayCardMixin, QWidget):
 
     def save_geometry(self) -> None:
         x, y, w, h = self._rect()
-        if self.collapsed:
+        if h != self.full_height:                         # recolhida ou crescida pelo cartão (R-03 da revisão do L2 da F5.20):
             y = y + h - self.full_height                  # a aberta, pela borda de baixo
         with suppress(Exception):                        # banco já fechado na saída: a posição anterior fica
             self.store.set_setting("ui.caption_tray_geometry", rect_text((x, y, w, self.full_height)))
@@ -314,7 +314,7 @@ class CaptionTray(TrayCardMixin, QWidget):
         edges, start, rect = self._press
         d = event.globalPosition().toPoint() - start
         if edges:
-            minimum = (MIN_W, self.collapsed_height() if self.collapsed else MIN_H)
+            minimum = (MIN_W, self.collapsed_height() if self.collapsed else max(MIN_H, self.minimumHeight()))   # F5.20, R-04
             self.setGeometry(*resized(rect, edges, d.x(), d.y(), minimum))
         else:
             self.move(rect[0] + d.x(), rect[1] + d.y())
@@ -353,8 +353,14 @@ class CaptionTray(TrayCardMixin, QWidget):
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        self.title.setVisible(self.width() >= TITLE_MIN_W)
+        self.fit_title()
         self.fit_card()
+
+    def fit_title(self) -> None:
+        """O título sai abaixo de `TITLE_MIN_W`, mais um botão com o "Sugerir" à vista (F5.20; R-02 da revisão do L2: o selo
+        saía cortado); o selo e os botões ficam."""
+        extra = BUTTON_PX + SPACING if not self.btn_suggest.isHidden() else 0
+        self.title.setVisible(self.width() >= TITLE_MIN_W + extra)
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:

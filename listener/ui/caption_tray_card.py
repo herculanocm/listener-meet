@@ -33,6 +33,7 @@ class TrayCardMixin:
         def isHidden(self) -> bool: ...
         def _rect(self) -> Rect: ...
         def _apply_height(self, before: Rect) -> None: ...
+        def fit_title(self) -> None: ...
 
     card: SuggestCard | None = None
     card_extra = 0                # a altura somada à da aberta enquanto o cartão está à vista numa bandeja baixa
@@ -40,6 +41,7 @@ class TrayCardMixin:
 
     def set_suggest_state(self, visible: bool, enabled: bool, tip: str, hint: bool) -> None:
         apply_suggest_state(self.btn_suggest, visible, enabled, tip, hint)
+        self.fit_title()                              # o botão a mais tira o título mais cedo (R-02)
 
     def set_card(self, card: SuggestCard | None) -> None:
         """O cartão do host (None tira o de agora, que o host apaga)."""

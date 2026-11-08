@@ -84,7 +84,7 @@ from ..pipeline import llm_requests, review
 from ..platform.base import log_id
 from ..platform.common import process
 from .call_sensor import abandon
-from .caption_tray_host import CaptionTrayHost
+from .caption_tray_host import CaptionTrayHost, suggest_outside
 from .donate import Support
 from .glossary_link import LateGlossaryLink
 from .history import HistoryWindow
@@ -311,8 +311,7 @@ class Controller(QObject):
         log.info("app iniciado; %d gravação(ões) interrompida(s); %d reunião(ões) sem revisão", interrupted, len(waiting))
 
     def _adopt_legacy_language(self) -> None:
-        """A-03: o idioma das saídas da F3 em inglês vira o idioma padrão, uma vez; falhar não impede a abertura (fica o
-        padrão pt-BR)."""
+        """A-03: o idioma das saídas da F3 em inglês vira o idioma padrão, uma vez; falhar não impede a abertura (fica o padrão pt-BR)."""
         try:
             language.adopt_legacy(self.store)
         except Exception as e:
@@ -486,8 +485,7 @@ class Controller(QObject):
         task.finished.connect(functools.partial(self._sweeps.discard, task))   # o `release` destrói a QThread depois
 
     def _stop_sweeps(self) -> None:
-        """Interrompe a varredura e espera a `Task` terminar: fechar o banco com a QThread rodando derruba o processo no
-        Windows (F3.1)."""
+        """Interrompe a varredura e espera a `Task` terminar: fechar o banco com a QThread rodando derruba o processo no Windows (F3.1)."""
         self._sweep_stop.set()
         for task in list(self._sweeps):
             with suppress(RuntimeError):                 # já destruída pelo `release`
@@ -601,7 +599,7 @@ class Controller(QObject):
         if self.captions is not None:
             self.captions.request_suggestion()
         else:
-            self.notify("As sugestões só saem durante a gravação, com a legenda ao vivo e a bandeja de legendas.")
+            suggest_outside(self.store, self.notify)
 
     # ---------------------------------------------------------------- gravação
     @property
@@ -1794,6 +1792,8 @@ class Controller(QObject):
                     self._partial_backlog = res.left > 0
                 self._set_partial({"state": "done", "summary_id": res.summary_id, "t_until_ms": res.t_until_ms,
                                    "left": res.left}, meeting_id)       # a janela da reunião recarrega, mesmo depois de Parar
+                if current and self._partial_stopped:     # F5.20 (R-05 do L3): o teto que a sugestão acendeu no meio fica
+                    self._set_partial({"state": "stopped", "message": self._partial_stopped})
             case partial_task.Outcome.BUDGET if current:
                 self._partial_stopped = res.error or partial_task.budget_text(res.spent_usd, res.limit_usd)
                 self._partial_timer.stop()
