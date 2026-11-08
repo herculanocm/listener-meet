@@ -11,8 +11,8 @@ import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from listener.llm import suggest_task
-from listener.llm.base import LlmStream
+from listener.llm import redact, suggest_task
+from listener.llm.base import LlmStream, TransientError
 from listener.llm.fake import FakeProvider
 from listener.llm.suggest_task import Outcome, dossier_text, run_memo, run_suggest, window
 from listener.llm.types import Capability, Completion, LlmTask, ProviderKind, Request, Usage
@@ -20,6 +20,7 @@ from listener.model import ActionStatus, Evidence, LlmCallStatus, SuggestMode, S
 from listener.store.actions import ActionInsert
 from listener.store.llm_calls import LlmCallInsert
 from listener.store.summaries import SummaryInsert
+from listener.llm.jobconfig import LlmJobConfig
 from tests.test_live_partial import _caption, _ready
 from tests.test_suggest_store import suggestion
 
@@ -49,6 +50,8 @@ class Scripted:
                         if self.gate(i):
                             break
                         await asyncio.sleep(0.01)
+                    else:                                         # R-05: o portão fechado é falha, não um "segue mesmo assim"
+                        raise AssertionError(f"o pedaço {i} esperou 2 s por uma condição que não veio")
                 yield piece
                 if self.after is not None:
                     self.after(i)
@@ -250,3 +253,107 @@ def test_the_memo_runs_only_with_10_new_ratings_and_has_no_meeting(store):
     assert store.get_setting("suggest.memo_at") and store.llm_calls.get(r.call_id)["meeting_id"] is None
     assert "- Usei · Perguntar: opção 9" in fake.requests[0].messages[1].text
     assert run_memo(store, provider=fake).memo is None and len(fake.requests) == 1                    # nada novo desde então
+
+
+# ---------------------------------------------------------------- a revisão do diff do L1 (R-02, R-05, R-06, R-08)
+def test_the_lists_and_texts_over_the_schema_ceiling_are_cut_not_the_suggestion(store):
+    """R-02: a OpenAI e a Anthropic não recebem os tetos; 7 fatos, 5 opções com 4 pedidas e o texto longo são cortados."""
+    mid = _meeting(store)
+    many = {"options": [{"kind": "Perguntar", "text": "x" * 500, "facts": [1, 2, 4, 1, 2, 4, 1]}] +
+                       [{"kind": "Posicionar", "text": f"opção {i}", "facts": []} for i in range(4)], "thread_summary": "y" * 900}
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, options_n=4, provider=FakeProvider(scripts={LlmTask.SUGGEST: many}))
+    assert r.outcome == Outcome.DONE and len(r.options) == 4 and len(r.options[0].text) == suggest_task.TEXT_LIMIT
+    assert r.options[0].facts == ((1, 1000), (2, 5000), (4, 12_000)) and r.thread_summary == "y" * suggest_task.SUMMARY_LIMIT
+
+
+def test_a_cited_caption_the_request_never_carried_is_no_evidence(store):
+    """R-05: o "Ok." saiu na compactação; citado, não vale como fato (a LLM não o viu)."""
+    mid = _meeting(store)
+    fake = FakeProvider(scripts={LlmTask.SUGGEST: json.loads(_options(("Perguntar", "E o prazo?", [3])))})
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, provider=fake)
+    assert r.options[0].facts == () and r.options[0].evidence == Evidence.NONE
+
+
+def test_never_more_options_than_asked_and_the_estimate_by_characters(store):
+    mid = _meeting(store)
+    four = json.loads(_options(*(("Perguntar", f"o{i}", []) for i in range(4))))
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, options_n=3, provider=FakeProvider(scripts={LlmTask.SUGGEST: four}))
+    assert [o.text for o in r.options] == ["o0", "o1", "o2"]
+    assert suggest_task.estimate_usd(store, LlmJobConfig.from_store(store), 3500, 350) == 0.00055   # 1.000 e 100 tokens a 0,30 e 2,50
+
+
+def test_the_partial_goes_in_the_request_and_only_r_speakers_outside_the_room(store):
+    from listener.model import SummaryKind as Kind
+
+    mid = _meeting(store)
+    store.captions.insert(__import__("listener.store.captions", fromlist=["CaptionInsert"]).CaptionInsert(
+        mid, "L", 14_000, 16_000, "Eu concordo com o corte.", None, "Carla — CTO", 0.9, "fake:small", 6000))
+    store.summaries.insert(SummaryInsert(mid, Kind.PARTIAL, json.dumps({"summary": "O corte de 8 %.", "decisions": [], "actions": [],
+                                                                        "last_caption_id": 4}), "## Parcial", "fake", "m",
+                                         "partial/2.0", None, None, "pt-BR"))
+    fake = FakeProvider()
+    run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, provider=fake)
+    text = _user_text(fake)
+    assert 'Resumo parcial atual (JSON):\n{"summary":"O corte de 8 %.","decisions":[],"actions":[]}' in text
+    assert "(0) Ana — CFO" in text and "Carla — CTO, " not in text.split("Falantes identificados")[1].split("\n")[0]
+    store._x("UPDATE meetings SET is_in_room = 1 WHERE id = ?", (mid,))                     # R-06: na sala, o L também
+    run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=40_000, provider=fake)
+    assert "Carla — CTO" in _user_text(fake).split("Falantes identificados")[1].split("\n")[0]
+
+
+def test_the_dossier_keeps_at_most_12_actions(store):
+    ana = store.people.create_person("Ana Souza", role="CFO")
+    old = store.create_meeting("Antiga", None, None, None, expected_people_json=json.dumps([ana]))
+    sid = store.summaries.insert(SummaryInsert(old, SummaryKind.MINUTES, "{}", "## Ata", "fake", "m", "minutes/2.0", None, None, "pt-BR"))
+    store.actions.insert_many([ActionInsert(old, sid, f"ação {i}", None, ana, None, i, None, None) for i in range(15)])
+    now = store.create_meeting("Agora", None, None, None, expected_people_json=json.dumps([ana]))
+    assert dossier_text(store, now).count("- Ação aberta:") == suggest_task.DOSSIER_MAX_ACTIONS == 12
+
+
+def test_the_key_never_reaches_the_recorded_error(store):
+    """CP10: a chave da sugestão entra na redação antes da chamada (uma chave só deste teste, fora do registro global)."""
+    mid = _meeting(store)
+    key = "AIzaSy-chave-so-da-sugestao-QWERTY987654"
+    store.providers.update_provider("gemini", api_key=key)
+    fake = FakeProvider()
+    fake.fail_next(TransientError(f"falhou com {key}"), LlmTask.SUGGEST)
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, provider=fake)
+    call = store.llm_calls.get(r.call_id)
+    assert r.outcome == Outcome.ERROR and key not in (call["error"] or "") and key not in (r.error or "")
+    assert redact.GLOBAL.redact(key) != key
+
+
+def test_the_options_come_from_the_whole_text_when_the_reader_finds_none(store, monkeypatch):
+    mid = _meeting(store)
+    monkeypatch.setattr(suggest_task.OptionsReader, "feed", lambda self, piece: (self._parts.append(piece), [])[1])
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=20_000, provider=FakeProvider())
+    assert r.outcome == Outcome.DONE and len(r.options) == 3
+
+
+def test_the_memo_trigger_survives_a_deleted_meeting(store):
+    """R-08: o memorando de antes usou 20 avaliações; a reunião excluída leva 5 delas; 10 novas bastam (pela diferença das
+    contagens, 15 + 10 contra 20, faltariam 5)."""
+    mid, gone = _meeting(store), store.create_meeting("Excluída", None, None, None)
+    _s, old = suggestion(store, mid, options=15)
+    _g, lost = suggestion(store, gone, options=5)
+    for option_id in old + lost:
+        store.suggestions.set_rating(option_id, 1)
+    store._x("UPDATE suggestion_options SET rated_at = '2026-01-01T10:00:00.000-03:00'")
+    store.set_setting("suggest.memo_at", "2026-06-01T10:00:00.000-03:00")
+    store.set_setting("suggest.memo_ratings", "20")
+    store.delete_meeting(gone)
+    _n, new = suggestion(store, mid, options=10)
+    for option_id in new[:9]:
+        store.suggestions.set_rating(option_id, 0)
+    assert not suggest_task.memo_due(store)
+    store.suggestions.set_used(new[9], True)
+    assert suggest_task.memo_due(store) and store.suggestions.count_rated() == 25
+
+
+def test_the_memo_never_reaches_the_log(store, caplog):
+    """R-03: o memorando é texto livre; o log da configuração leva só o tamanho."""
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="listener"):
+        store.set_setting("suggest.memo", "PALAVRA-DO-MEMORANDO-77")
+    assert "PALAVRA-DO-MEMORANDO-77" not in caplog.text and "texto com 23 caracteres" in caplog.text

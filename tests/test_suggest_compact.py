@@ -37,6 +37,21 @@ def test_an_exact_repeat_within_10_s_goes_and_at_11_s_stays():
     assert _texts(after) == ["O corte fica.", "Outra coisa. Outra coisa."]  # 11 s depois fica (e junta: o mesmo falante)
 
 
+def test_two_people_agreeing_both_stay_and_yes_no_and_numbers_never_go_as_repeats():
+    """R-04: a repetição só sai do mesmo falante (alucinação) ou do outro canal (eco); "sim", "não" e números nunca."""
+    rows = [_row(1, 0, "Sim.", "Ana"), _row(2, 2000, "Sim.", "Bruno"), _row(3, 4000, "Não!", "Davi"), _row(4, 6000, "não", "Eva"),
+            _row(5, 7000, "15", "Ana"), _row(6, 8000, "15?", "Bruno"), _row(7, 9000, "Sim.", "Ana"), _row(8, 9500, "sim", None, "L")]
+    assert [ln.segment_id for ln in compact(rows, ME).lines] == [1, 2, 3, 4, 5, 6, 7, 8]
+    same = [_row(1, 0, "O prazo é sexta.", "Ana"), _row(2, 3000, "O prazo é sexta.", "Ana"), _row(3, 4000, "O prazo é sexta.", "Bruno")]
+    assert [ln.segment_id for ln in compact(same, ME).lines] == [1, 3]       # a do mesmo falante sai; a do Bruno fica
+
+
+def test_in_the_room_the_l_without_a_label_is_a_participant():
+    """R-06: na sala presencial o L é a sala; sem rótulo, "Participante", como no R."""
+    rows = [_row(1, 0, "Bom dia a todos.", None, "L")]
+    assert compact(rows, ME).lines[0].speaker == ME and compact(rows, ME, in_room=True).lines[0].speaker == PARTICIPANT
+
+
 def test_the_echo_between_l_and_r_within_10_s_goes():
     rows = [_row(1, 5000, "O corte fica em oito por cento."), _row(2, 6000, "o corte fica em oito por cento", None, "L")]
     c = compact(rows, ME)

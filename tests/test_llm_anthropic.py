@@ -248,6 +248,27 @@ def test_the_chat_stream_carries_thinking_and_a_refusal_raises_at_the_end(caplog
     assert "fallbacks" not in kw and "o Claude recusou chat em claude-opus-5-5 (bio)" in caplog.text
 
 
+def test_the_forced_tool_family_streams_the_json_of_the_tool():
+    """F5.20 (R-01): nas famílias de ferramenta forçada, o JSON chega em `input_json_delta`; o streaming o repassa como texto
+    (a sugestão ao vivo é o primeiro uso do `stream()` com esquema)."""
+    text = json.dumps(PAYLOAD)
+    start = SimpleNamespace(type="message_start", message=SimpleNamespace(usage=_usage(50, 1), model="claude-sonnet-4-6", id="m3"))
+    pieces = [SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="input_json_delta", partial_json=part))
+              for part in (text[:10], text[10:])]
+    end = SimpleNamespace(type="message_delta", delta=SimpleNamespace(stop_reason="tool_use", stop_details=None),
+                          usage=SimpleNamespace(output_tokens=7))
+    stub = ClaudeStub(events=[start, *pieces, end])
+    provider = AnthropicProvider("k", client=stub)
+
+    async def consume() -> Any:
+        s = provider.stream(_req("claude-sonnet-4-6"))
+        parts = [p async for p in s]
+        return parts, s.result
+
+    parts, result = run(consume())
+    assert "".join(parts) == text and result.text == text and stub.calls[0][1]["tool_choice"]["type"] == "tool"
+
+
 # ---------------------------------------------------------------- rede: o PEM como contexto TLS (item 9)
 def test_the_pem_becomes_a_tls_context_shared_by_every_client():
     certifi = pytest.importorskip("certifi")

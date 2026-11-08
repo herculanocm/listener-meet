@@ -43,7 +43,8 @@ from .base import OFF_SCHEMA, LlmError, LLMProvider, classify_exception
 from .costs import CHARS_PER_TOKEN, cost_usd, fmt_usd, price_for
 from .jobconfig import LlmJobConfig
 from .prompts.common import Marker, Person
-from .prompts.suggest import KINDS_ORIENT, KINDS_SPEAK, OPTION_SCHEMA, SUMMARY_LIMIT, RatedOption, SuggestCtx
+from .prompts.suggest import (KINDS_ORIENT, KINDS_SPEAK, MAX_FACTS, MAX_OPTIONS, OPTION_SCHEMA, SUMMARY_LIMIT, TEXT_LIMIT, RatedOption,
+                              SuggestCtx)
 from .prompts.suggest_memo import MemoCtx
 from .registry import RetryingProvider, build_provider
 from .schema import SchemaError, parse_json_text, schema_hash, validate
@@ -171,12 +172,13 @@ def _asker(me: PersonRow | None) -> Person:
     return Person(int(me["id"]), str(me["name"]), str(me.get("role") or ""), str(me.get("company") or ""))
 
 
-def _speakers(store: Store, rows: list[Mapping[str, Any]]) -> tuple[Person, ...]:
-    """Os falantes do R na janela, com o cargo do rótulo e a empresa da ficha (o e-mail nunca)."""
+def _speakers(store: Store, rows: list[Mapping[str, Any]], in_room: bool = False) -> tuple[Person, ...]:
+    """Os falantes do R na janela (e os do L na sala presencial, R-06), com o cargo do rótulo e a empresa da ficha (o e-mail
+    nunca)."""
     out: dict[str, Person] = {}
     for row in rows:
         label = str(row.get("label") or "").strip()
-        if row.get("channel") != "R" or not label or label == PARTICIPANT or label in out:
+        if (row.get("channel") != "R" and not in_room) or not label or label == PARTICIPANT or label in out:
             continue
         name, _sep, role = label.partition(" — ")
         person = store.people.find_by_name(name.strip())
@@ -193,7 +195,8 @@ def suggest_ctx(store: Store, meeting: Mapping[str, Any], me: PersonRow | None, 
     """O contexto do pedido (C4): o cabeçalho com os marcadores e os falantes da janela, quem pede, os blocos opcionais."""
     mid = int(meeting["id"])
     markers = tuple(Marker(int(m["id"]), int(m["t_ms"]), str(m.get("note") or "")) for m in store.list_markers(mid))
-    head = replace(partial_task.meeting_ctx(store, meeting), markers=markers, speakers=_speakers(store, rows))
+    head = replace(partial_task.meeting_ctx(store, meeting), markers=markers,
+                   speakers=_speakers(store, rows, bool(meeting.get("is_in_room"))))
     previous, _last = partial_task.partial_state(store, mid)
     prev = store.suggestions.last_ok(mid)
     memo = str(store.get(SPECS["suggest.memo"])).strip() or None
@@ -257,6 +260,23 @@ def estimate_usd(store: Store, cfg: LlmJobConfig, chars_in: int, chars_out: int)
     return round((chars_in / CHARS_PER_TOKEN * price.input_usd_m + chars_out / CHARS_PER_TOKEN * price.output_usd_m) / 1e6, 6)
 
 
+def bounded(obj: Any) -> Any:
+    """R-02: a OpenAI e a Anthropic não recebem os tetos do esquema (`maxItems`, `maxLength`): as listas e os textos acima
+    deles são cortados antes da validação, como a margem do texto e do fio, em vez de reprovar a sugestão inteira."""
+    if not isinstance(obj, dict):
+        return obj
+    out = dict(obj)
+    if isinstance(out.get("facts"), list):
+        out["facts"] = out["facts"][:MAX_FACTS]
+    if isinstance(out.get("text"), str):
+        out["text"] = out["text"][:TEXT_LIMIT]
+    if isinstance(out.get("options"), list):
+        out["options"] = [bounded(o) for o in out["options"][:MAX_OPTIONS]]
+    if isinstance(out.get("thread_summary"), str):
+        out["thread_summary"] = out["thread_summary"][:SUMMARY_LIMIT]
+    return out
+
+
 # ---------------------------------------------------------------- a sugestão
 def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, nudge: str = "", options_n: int = 3,
                 dossier: str | None = None, on_option: OnOption | None = None, cancelled: Callable[[], bool] | None = None,
@@ -277,7 +297,7 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
     w = window(store, meeting_id, t_ms, int(store.get(SPECS["suggest.window_min"])))
     rows: list[Mapping[str, Any]] = [dict(r) for r in store.captions.list_from(meeting_id, w.t_from_ms)]
     me = store.get_me()
-    c = trim(compact(rows, me_label(me)), w.max_chars)
+    c = trim(compact(rows, me_label(me), bool(meeting.get("is_in_room"))), w.max_chars)
     ctx = suggest_ctx(store, meeting, me, mode, options_n, dossier, nudge, c, rows)
     req = Request(LlmTask.SUGGEST, cfg.fast_model, cfg.build(LlmTask.SUGGEST, ctx), prompts.suggest.SCHEMA,
                   max_output_tokens=MAX_OUTPUT_TOKENS, reasoning=TASK_REASONING[LlmTask.SUGGEST], timeout_s=TIMEOUT_S)
@@ -292,7 +312,7 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
         if len(emitted) >= ctx.options:
             return
         try:
-            data = validate(OPTION_SCHEMA, obj)
+            data = validate(OPTION_SCHEMA, bounded(obj))
         except SchemaError:
             reader.dropped += 1
             return
@@ -362,7 +382,7 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
         usage = comp.usage
         cost = cost_usd(usage, price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, comp.model))
         try:
-            data = validate(prompts.suggest.SCHEMA, parse_json_text(comp.text))
+            data = validate(prompts.suggest.SCHEMA, bounded(parse_json_text(comp.text)))
         except (SchemaError, ValueError) as e:
             status, error = SuggestStatus.ERROR, redact.GLOBAL.redact(f"{OFF_SCHEMA}: {e}")
         else:
@@ -406,8 +426,9 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
 
 # ---------------------------------------------------------------- o memorando
 def memo_due(store: Store) -> bool:
-    """Há 10 avaliações novas desde o último memorando (o gatilho, idempotente: o que falhou roda na parada seguinte)."""
-    return store.suggestions.count_rated() - int(store.get(SPECS["suggest.memo_ratings"])) >= MEMO_MIN_RATINGS
+    """Há 10 avaliações novas desde o último memorando (o gatilho, idempotente: o que falhou roda na parada seguinte): as feitas
+    depois de `suggest.memo_at` (R-08: uma reunião excluída não trava a conta, como travaria a diferença das contagens)."""
+    return store.suggestions.count_rated_since(str(store.get(SPECS["suggest.memo_at"])) or None) >= MEMO_MIN_RATINGS
 
 
 def run_memo(store: Store, *, cancelled: Callable[[], bool] | None = None, provider: LLMProvider | None = None) -> MemoResult:
@@ -419,6 +440,7 @@ def run_memo(store: Store, *, cancelled: Callable[[], bool] | None = None, provi
         return MemoResult(Outcome.NO_PROVIDER, error=NO_PROVIDER)
     cfg = LlmJobConfig.from_store(store)
     redact.GLOBAL.add(store.providers.key(cfg.provider_id))
+    started = datetime.now().astimezone().isoformat(timespec="milliseconds")   # o formato do `rated_at`: a conta seguinte parte daqui
     current = str(store.get(SPECS["suggest.memo"])).strip() or None
     ctx = MemoCtx(current, rated(store.suggestions.list_rated(MEMO_MAX_RATED)), default_language(store))
     req = Request(LlmTask.SUGGEST_MEMO, cfg.fast_model, cfg.build(LlmTask.SUGGEST_MEMO, ctx), prompts.suggest_memo.SCHEMA,
@@ -476,7 +498,7 @@ def run_memo(store: Store, *, cancelled: Callable[[], bool] | None = None, provi
         log.warning("memorando das sugestões não refeito: %s", error)
         return MemoResult(Outcome.CANCELLED if was_cancelled else Outcome.ERROR, None, total, call_id, cost, error)
     store.set_setting("suggest.memo", memo)
-    store.set_setting("suggest.memo_at", datetime.now().astimezone().isoformat(timespec="seconds"))
+    store.set_setting("suggest.memo_at", started)
     store.set_setting("suggest.memo_ratings", str(total))
     log.info("memorando das sugestões refeito com %d avaliação(ões) (%s)", total, fmt_usd(cost))
     return MemoResult(Outcome.DONE, memo, total, call_id, cost)

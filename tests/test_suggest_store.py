@@ -104,9 +104,10 @@ def test_last_ok_anchored_and_the_options_by_suggestion(store):
     first, _ = suggestion(store, mid, 60_000, anchored=True)
     suggestion(store, mid, 120_000, status=SuggestStatus.ERROR, anchored=True)              # a falha não deixa fio
     third, _ = suggestion(store, mid, 180_000, options=3)
+    suggestion(store, mid, 240_000, status=SuggestStatus.CANCELLED)                         # a mais nova cancelada: sem fio
     assert store.suggestions.last_ok(mid)["id"] == third and store.suggestions.last_anchored_t_ms(mid) == 60_000
     grouped = store.suggestions.options_for_meeting(mid)
-    assert [len(grouped[s["id"]]) for s in store.suggestions.list_for_meeting(mid)] == [2, 2, 3] and first in grouped
+    assert [len(grouped[s["id"]]) for s in store.suggestions.list_for_meeting(mid)] == [2, 2, 3, 2] and first in grouped
     assert [o["idx"] for o in store.suggestions.options_for(third)] == [0, 1, 2]
 
 

@@ -88,7 +88,7 @@ class SettingsRepo:
 
 
 SECRET_HINTS = ("key", "token", "secret", "password", "senha")
-FREE_TEXT_HINTS = ("glossary", "notes", "participants", "title")     # R-04: texto livre pode ter nome de pessoa
+FREE_TEXT_HINTS = ("glossary", "notes", "participants", "title", "memo")   # R-04: texto livre pode ter nome de pessoa (F5.20: o memorando)
 DEVICE_NAME_HINTS = ("device_name",)     # F5.3 (A-22, R-05): o nome do aparelho ("AirPods de Fulano") e o id `name:<nome>`
 SHOWN_MAX = 80
 

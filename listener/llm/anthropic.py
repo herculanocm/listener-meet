@@ -195,8 +195,11 @@ class AnthropicProvider:
                         state["id"] = getattr(msg, "id", None)
                     elif kind == "content_block_delta":
                         delta = getattr(ev, "delta", None)
-                        if str(getattr(delta, "type", "")) == "text_delta":     # o pensamento (thinking_delta) fica de fora
-                            yield str(getattr(delta, "text", "") or "")
+                        match str(getattr(delta, "type", "")):                 # o pensamento (thinking_delta) fica de fora
+                            case "text_delta":
+                                yield str(getattr(delta, "text", "") or "")
+                            case "input_json_delta":                           # F5.20 (R-01): o JSON da ferramenta forçada
+                                yield str(getattr(delta, "partial_json", "") or "")
                     elif kind == "message_delta":
                         self._stream_end(req, ev, state)
             except Exception as e:

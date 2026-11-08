@@ -184,6 +184,13 @@ class SuggestionsRepo:
         """Quantas opções foram avaliadas, em todas as reuniões (o gatilho do memorando)."""
         return int(self.core.q(f"SELECT COUNT(*) FROM suggestion_options o WHERE {RATED}")[0][0])  # noqa: S608
 
+    def count_rated_since(self, since: str | None) -> int:
+        """As avaliações feitas depois de `since` (o `suggest.memo_at` do último memorando; nulo, todas): o gatilho do memorando
+        (R-08 da revisão do L1: excluir uma reunião não mexe nesta conta, como mexeria na diferença das contagens)."""
+        if not since:
+            return self.count_rated()
+        return int(self.core.q(f"SELECT COUNT(*) FROM suggestion_options o WHERE {RATED} AND o.rated_at > ?", (since,))[0][0])  # noqa: S608
+
     def list_rated(self, limit: int) -> list[OptionRow]:
         """As opções avaliadas de todas as reuniões, as mais recentes primeiro (o que vai ao memorando)."""
         rows = self.core.q(f"SELECT o.* FROM suggestion_options o WHERE {RATED} ORDER BY o.rated_at DESC, o.id DESC LIMIT ?",  # noqa: S608

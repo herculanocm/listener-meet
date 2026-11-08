@@ -247,6 +247,7 @@ def test_every_main_table_is_classified_and_no_dependency_touches_the_deny_list(
             "rag_vectors", "job_artifacts", "voice_profiles", "voice_embeddings", "suggestions",
             "suggestion_options"} <= set(dictionary.DENIED)
     assert deps["pessoas"] == frozenset() and "people" in dictionary.DENIED                   # D-075: nenhuma visão lê people
+    assert never("meetings", "goal") and never("meetings", "notes")                           # F5.20: o objetivo, como as notas
     assert all(t != "people" for pairs in deps.values() for t, _c in pairs)
 
 
