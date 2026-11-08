@@ -3,16 +3,15 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
-- **F5.21 em revisão** (08/11, `features/F5.21-tela-nas-sugestoes.md`): o pedido do dono no chat, o print do monitor
-  em uso, ou do escolhido, mandado como contexto da sugestão do que falar, sem precisar ver; e, a pedido dele, a
-  miniatura do que foi enviado no chat da bandeja, com as telas anteriores como contexto dos pedidos seguintes. O alvo
-  padrão é a janela do app da reunião, recortada, com as janelas de outros apps por cima pintadas de preto; o print sai
-  por BitBlt da plataforma na tarefa do pedido (a thread da interface fica abaixo de 5 ms); a miniatura entra no chat
-  como um item da lista, no ponto do tempo; U-164 a U-170. A revisão de arquitetura (A-01 a A-42) foi incorporada: tirou
-  o resumo reaproveitado quando "a tela não mudou" (a assinatura confunde dois slides do mesmo modelo), mudou a chave para
-  a linha de "Nova sugestão" e pôs um L0 que divide o `suggest_task.py` antes. Falta o dono: as 16 perguntas da spec, a
-  primeira sobre a CP4 ("só áudio"), e a aprovação (CP13). Posição: [x] rascunho; [x] a revisão de arquitetura (D-040);
-  [ ] a aprovação.
+- **F5.21 aprovada** (08/11, `features/F5.21-tela-nas-sugestoes.md`, D-102; chat: "Aprovado, siga com implementação"):
+  o print da tela mandado como contexto da sugestão do que falar, a miniatura no chat da bandeja e as telas anteriores no
+  contexto (U-164 a U-170), com a revisão de arquitetura A-01 a A-42. A implementação segue os lotes L0 a L3, um commit
+  por lote, com a revisão do diff por um agente novo (D-040); cada lote roda os testes novos e os dos arquivos tocados, e a
+  suíte inteira roda no fechamento (D-102). Posição (`[x]` com o commit):
+  - [ ] L0: o `suggest_task.py` dividido, sem mudar comportamento.
+  - [ ] L1: a imagem na camada de LLM, a v11, o prompt `suggest` 1.1 e a tarefa com a tela.
+  - [ ] L2: a plataforma, o preparo, o host, o cartão, o chat, a janela maior, o atalho, o menu e as Configurações.
+  - [ ] L3: a aba, o `--check`, a sonda, o `exe_probe`, os documentos e a versão 0.14.0.
 - **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
   chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por
   opção e texto livre para direcionar. O "Sugerir" na bandeja de legendas, no widget, no menu da bandeja do sistema e no
@@ -177,7 +176,6 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- As 16 perguntas da F5.21 (`features/F5.21-tela-nas-sugestoes.md`), com o padrão de cada uma; a 1 é sobre a CP4.
 - O `.exe` 0.13.0 da F5.20 e o push são decisões do dono.
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
 git.
