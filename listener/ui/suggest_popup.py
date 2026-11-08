@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 log = get_logger("ui.suggest")
 MAX_CHARS = 300
+MIN_FIELD_W = 320                 # como o do marcador; cresce até caber a dica (R-03 da revisão do L4: "…Esc c…" cortado)
+FIELD_PAD = 24                    # a moldura e as margens do texto no campo
 
 
 class SuggestTextPopup(QDialog):
@@ -31,7 +33,7 @@ class SuggestTextPopup(QDialog):
         self.edit.setMaxLength(MAX_CHARS)
         self.edit.setPlaceholderText(placeholder)
         self.edit.setAccessibleName(title)
-        self.edit.setMinimumWidth(320)
+        self.edit.setMinimumWidth(max(MIN_FIELD_W, self.edit.fontMetrics().horizontalAdvance(placeholder) + FIELD_PAD))
         self.edit.returnPressed.connect(self.accept)
         self.title = QLabel(title)
         note(self.title)

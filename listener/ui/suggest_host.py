@@ -52,6 +52,8 @@ IN_FLIGHT = "a sugestão anterior ainda está chegando"
 ENDED = "Gravação encerrada: as sugestões param aqui."
 TIP = "Sugerir o que falar agora"
 EST_IN, EST_OUT = 11_000, 600                     # os caracteres de um pedido típico, para a dica do custo
+NUDGE_ASK = ("Como sugerir", "como a IA deve sugerir (Enter salva, Esc cancela)")       # o título e a dica dos popups
+GOAL_ASK = ("Objetivo", "meu objetivo nesta reunião (Enter salva, Esc cancela)")
 HINT_MS = 20_000                                  # U-160: o destaque do "falaram com você"
 
 
@@ -290,14 +292,14 @@ class SuggestHost(QObject):
         self.card.set_nudge("")
 
     def edit_nudge(self) -> None:
-        text = self._ask("Como sugerir", self.free, "como a IA deve sugerir (Enter salva, Esc cancela)")
+        text = self._ask(NUDGE_ASK[0], self.free, NUDGE_ASK[1])
         if text is not None and not self.closed:
             self.free = text
             self.card.set_nudge(self.nudge)
 
     def edit_goal(self) -> None:
         meeting = self.store.get_meeting(self.meeting_id) or {}
-        text = self._ask("Objetivo", str(meeting.get("goal") or ""), "meu objetivo nesta reunião (Enter salva, Esc cancela)")
+        text = self._ask(GOAL_ASK[0], str(meeting.get("goal") or ""), GOAL_ASK[1])
         if text is not None and not self.closed and self.store.meetings.set_goal(self.meeting_id, text or None):
             what = "trocado" if text else "apagado"           # o log nunca leva o objetivo (D-053; `tests/log_privacy.py`)
             log.info("reunião %s: objetivo %s", self.meeting_id, what)
@@ -389,4 +391,4 @@ def _memo_done(result: object) -> None:
         log.warning("memorando das sugestões falhou: %s", type(result).__name__)
 
 
-__all__ = ["ENDED", "IN_FLIGHT", "LIVE_OK", "NO_LIVE", "SuggestHost"]
+__all__ = ["ENDED", "GOAL_ASK", "IN_FLIGHT", "LIVE_OK", "NO_LIVE", "NUDGE_ASK", "SuggestHost"]

@@ -22,7 +22,10 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               e o Ao vivo; F5.11: a lista da saída, "Falta configurar" parada
                                                               e baixando, o "Avançado" e a reunião sem fala (L5); F5.17
                                                               (`scripts/probe_f517.py`): a bandeja de legendas e o botão
-                                                              "Legendas" do widget
+                                                              "Legendas" do widget; F5.20 (`scripts/probe_f520.py`): o
+                                                              cartão da sugestão, o popup, a caixa, o memorando, a aba e
+                                                              a linha `f520_tempos` (cada legenda e cada opção na thread
+                                                              da interface)
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
@@ -60,6 +63,7 @@ import time
 from pathlib import Path
 from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no topo (o Qt entra na chamada)
 from probe_f517 import f517_shots        # F5.17: a bandeja de legendas e o botão "Legendas" do widget
+from probe_f520 import f520_shots, f520_timings   # F5.20: o cartão, o popup, a caixa, o memorando, a aba e os tempos
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -475,6 +479,8 @@ def cmd_shots(args) -> None:
     l4_shots(store, p, shot, tabs_of, app, Path(tempfile.mkdtemp(prefix="listener-shots-l4-")))   # F5.4 L4
     f56_shots(store, shot, app, p)                        # F5.6: L3 (Histórico) e L1b (caixas, popup, barra, warm-up)
     f517_shots(store, shot, app)                          # F5.17: a bandeja (vazia, com o chat, a 320 px e recolhida)
+    f520_shots(store, shot, app, p)                       # F5.20: a sugestão na bandeja, o popup, o warm-up, Prompts, a aba
+    out("f520_tempos", dpr=screen().devicePixelRatio(), **f520_timings(store, app, p))   # F5.20 (Aceite "Interface"): < 5 ms
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")

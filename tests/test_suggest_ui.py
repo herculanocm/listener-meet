@@ -236,6 +236,30 @@ def _tray(qtbot: Any, store: Any, platform: Any) -> Any:
     return tray
 
 
+def test_the_host_popups_fit_their_whole_hint(qtbot, qapp):
+    """R-03 da revisão do L4: com a fonte do tema (14 px), a dica do "Objetivo" pedia 345 px num campo de 318 e saía cortada
+    em "…Esc c…"; o campo cresce até caber a dica, em qualquer fonte."""
+    from PySide6.QtGui import QFont
+
+    from listener.ui.suggest_host import GOAL_ASK, NUDGE_ASK
+    from listener.ui.suggest_popup import FIELD_PAD, MIN_FIELD_W, SuggestTextPopup
+
+    before = qapp.font()
+    themed = QFont(before)
+    themed.setPixelSize(14)
+    qapp.setFont(themed)
+    try:
+        needs = []
+        for title, hint in (NUDGE_ASK, GOAL_ASK):
+            popup = SuggestTextPopup(title, "", hint)
+            qtbot.addWidget(popup)
+            needs.append(popup.edit.fontMetrics().horizontalAdvance(hint) + FIELD_PAD)
+            assert popup.edit.minimumWidth() == max(MIN_FIELD_W, needs[-1]), title
+        assert max(needs) > MIN_FIELD_W                                   # a do objetivo não caberia nos 320 px
+    finally:
+        qapp.setFont(before)
+
+
 def test_the_tray_holds_the_card_between_the_chat_and_the_line_and_the_suggest_button(qtbot, store, platform):
     tray = _tray(qtbot, store, platform)
     card = _card(qtbot)

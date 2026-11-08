@@ -14,7 +14,8 @@ audio_tokens=0, cache_write_tokens=0)` · `Completion(text, data: Mapping | None
 raw_id)` · `ModelInfo(id, display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok,
 latency_ms, model, error)` ·
 `Capability`: TEXT, JSON, AUDIO_IN, EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary, identify, minutes,
-executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5) · `Reasoning`:
+executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5), rag_sql e rag_answer
+(F5.10), suggest e suggest_memo (F5.20, classe rápida) · `Reasoning`:
 none, low, high · `ProviderKind`: gemini, openai, anthropic, local (F5.1: só embeddings) · `SummaryKind`: pre_summary,
 minutes, executive, partial (F4) · `SummaryStatus`: atual, superada, erro ·
 `ActionStatus`: aberta, feita, descartada, superada · `DecisionSource`: auto, usuario, usuario_pyannote, usuario_llm,
@@ -86,6 +87,9 @@ nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga d
 - `rag_chat` (F5, chat global, rápido): trechos de até `rag.top_k` por reunião com apelido (`[R1] título — data —
   participantes`, linhas `#segment_id [mm:ss] Nome — Cargo: texto` dos segmentos vigentes); a resposta cita `[R1 12:03]`
   e o projeto liga à reunião e à linha enviada mais próxima (≤ 5 s); o histórico volta ao prompt sem apelidos.
+- `suggest` (F5.20): `{options: [{kind, text, facts: [caption_id]}], thread_summary}` em streaming, lido opção a opção pelo
+  projeto; os tetos (`maxItems`, `maxLength`) são cortados antes da validação, porque a OpenAI e a Anthropic não os recebem;
+  `suggest_memo`: `{memo}`. Nas famílias do Claude de ferramenta forçada, o `stream()` repassa o `input_json_delta`.
 - Embeddings (F5): `embed` passa pela retentativa e pelo timeout do `RetryingProvider`; o índice normaliza sempre (a
   OpenAI não normaliza); documentos com `task=document` em lotes de 64, consulta com `task=query`; `rag_embed` em
   `llm_calls` por lote.

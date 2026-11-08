@@ -30,6 +30,14 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
   ficou na pasta temporária da sessão e sumiu: recriar com `python3 -m venv <pasta>` e `pip install
   faster-whisper==1.2.1 soundfile scipy`. No `.venv` do projeto ele quebraria o teste do worker "real" (que baixaria o
   `large-v3-turbo`).
+- Linux de desenvolvimento, 08/11 (a F5.20): outra máquina Ubuntu 24.04.5 **nativa** (Core i7-8565U de 1,8 GHz, 8 threads,
+  15 GB de RAM), sem PortAudio, sem PyInstaller e sem sudo. O `.venv` do projeto (Python 3.12.3, PySide6 6.12.0, SQLite
+  3.45.1) foi criado com `pip install -c requirements/windows.txt -e ".[dev,llm,docx]"`, sem o `[pipeline]`. A suíte
+  inteira (`--tudo -n 4 --dist loadgroup`) tem 13 falhas do ambiente, as mesmas antes da F5.20: o build do `.exe` (3),
+  o widget 1 px mais alto no offscreen (3), os tempos dos avisos (2) e do cartão de chamada (1), as cores do estilo (2),
+  o cabeçalho dos preços cortado pelas fontes do offscreen (1) e o app que sai com o sensor preso (1); a régua de cada lote
+  é nenhuma falha nova, comparada à lista de base. Instáveis aqui, também no código de antes da F5.20: o cartão de chamada
+  com um modal aberto (`test_call_answers`) e, por ordem no worker do xdist, a regra dos modelos (`test_runner`).
 - WSL (Ubuntu 24.04): `.venv/` com Python 3.12.3, numpy, scipy, soundfile, pytest, ruff, mypy, pytest-qt, PySide6 e, desde
   a F3, google-genai 2.33, openai 3.37, anthropic 2.3, truststore e httpx nas versões do Windows: roda os 193 testes em ~7 s
   (interface em `QT_QPA_PLATFORM=offscreen`; `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs, sem rede) e

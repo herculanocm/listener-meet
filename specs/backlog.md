@@ -3,31 +3,27 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
-- **F5.20 aprovada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100; chat: "aprovada a spec"): o pedido do dono no chat, um botão durante
-  a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por opção e texto livre
-  para direcionar. A spec avalia a proposta e a muda (a latência da legenda manda: a pedido e em streaming; 2 a 3
-  opções curtas com os fatos citados; "Boa"/"Ruim"/"Usei" em dois tempos, com um memorando visível; o direcionamento
-  em três camadas; o pedido comprimido por resumo rolante e compactação local; liga e desliga em uso; só na bandeja de
-  legendas, fora da captura de tela), U-153 a U-163; a revisão de arquitetura (A-01 a A-30) incorporada; as 16
-  perguntas decididas no padrão por delegação do dono (D-100). A pedido dele (08/11, "faça detalhado a spec pois será
-  implementada por outra llm que é o opus"), a spec virou o contrato de implementação: os contratos C1 a C16 (nomes,
-  assinaturas, SQL da v10, esquema JSON, textos dos prompts, algoritmos da compactação e do leitor, telas com medidas,
-  registro completo da tarefa), os testes por lote, os quatro lotes com o commit de cada um e o briefing do
-  implementador com o que é proibido (91 KB). Escrita no Linux nativo: nada a verificar no Windows até o código.
-  Aprovada pelo dono em 08/11; a implementação segue os lotes L1 a L4 da spec, um commit por lote, com a revisão
-  do diff por um agente novo (D-040). Posição (`[x]` com o commit):
-  - [x] L1: a v10 (com volta), a tarefa `suggest` e a do memorando, os prompts, a compactação, o leitor incremental e
-    os testes (o commit do L1); falta a revisão do diff por um agente novo, antes do L2.
-  - [x] L2: o cartão na bandeja, o botão "Sugerir" no widget e na bandeja, o atalho, o "Sugerir…" da bandeja do
-    sistema, a caixa e o objetivo no "Antes de gravar", o grupo nas Configurações e o memorando na página Prompts (o
-    commit do L2).
-  - [x] L1, a revisão do diff (R-01 a R-08) aplicada (`6a2e119`).
-  - [x] L3: o dossiê, o teto partilhado com o resumo parcial, o "falaram com você", o memorando ao parar, a aba
-    Sugestões e o `--check` (o commit do L3).
-  - [ ] L4: as fotos, a revisão do diff, a documentação e a versão 0.13.0.
-  Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte de base tem 13 falhas do ambiente
-  (o widget 1 px mais alto no offscreen, tempos dos avisos, cores do estilo, o build): a régua de cada lote é
-  nenhuma falha nova.
+- **F5.20 implementada** (08/11, `features/F5.20-sugestoes-ao-vivo.md`, D-100, D-101; versão 0.13.0): o pedido do dono no
+  chat, um botão durante a reunião que sugira o que falar, com o cargo da ficha e o contexto das legendas, avaliação por
+  opção e texto livre para direcionar. O "Sugerir" na bandeja de legendas, no widget, no menu da bandeja do sistema e no
+  atalho `ctrl+alt+shift+d` pede 2 a 3 opções curtas pela LLM rápida, em streaming, com os fatos citados por legenda;
+  "Boa", "Ruim" com o motivo e "Usei" agem no pedido seguinte e, ao parar com 10 avaliações novas, num memorando
+  visível e editável na página Prompts; o direcionamento em três camadas (Prompts, o objetivo da reunião e "Como
+  sugerir agora"); "Me situar"; o dossiê dos participantes; o "falaram com você"; a aba "Sugestões" da reunião e o
+  bloco do `--check`; o pedido comprimido (resumo rolante e compactação local) e o teto de custo partilhado com o resumo
+  parcial; tudo fora da captura de tela e ligável em uso (U-153 a U-163). Implementada no Linux nativo pelos lotes L1 a
+  L4, um commit por lote, cada diff revisado por um agente novo (D-040). Falta o dono: o uso real com os números do
+  Aceite (em "Verificar no Windows"), o `.exe` 0.13.0 (no Windows, com o OK dele) e o push. Posição (`[x]` com o
+  commit):
+  - [x] spec aprovada (D-100): `9a438f9`; L1, a v10, as tarefas, os prompts, a compactação e o leitor: `3082e1a`; a
+    revisão do L1 (R-01 a R-08): `6a2e119`.
+  - [x] L2, o cartão, o botão, o atalho, o menu, a caixa e o objetivo: `4ad3731`; L3, o dossiê, o teto, o nome, o
+    memorando, a aba e o `--check`: `23c2b7b`; as revisões do L2 (R-01 a R-12) e do L3 (R-01 a R-08): `e9e2ef9`.
+  - [x] L4, a sonda das fotos e dos tempos, a revisão do diff, os documentos, a D-101 e a versão 0.13.0: o commit do
+    fechamento.
+  Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte tem 13 falhas do ambiente, as mesmas de antes da
+  F5.20 (o widget 1 px mais alto no offscreen, os tempos dos avisos e do cartão de chamada, as cores do estilo, o build):
+  a régua de cada lote foi nenhuma falha nova (`memory/maquina.md`).
 - **F5.19 implementada** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098, D-099; versão 0.12.0): o pedido
   do dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
   aberta ganhou "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca, as pausas fora) e "Salvar vídeo com legendas…"
@@ -114,9 +110,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `KMP_BLOCKTIME=0` sem ganho); a spec implementada, Tamanho-alvo 55 KB (o commit final).
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
-- Código: F1 a F5.19 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+- Código: F1 a F5.20 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
-  depois (D-091); F7 é futuro. Esquema v9, versão 0.12.0 (D-081; F5.19).
+  depois (D-091); F7 é futuro. Esquema v10, versão 0.13.0 (D-081; F5.20).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
@@ -141,6 +137,16 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
+- F5.20 (o Aceite, em três reuniões reais com headset): `scripts/win_probe.py shots` claro e escuro, com as fotos `f520-*`
+  sem `cortados` nem `pequenos`, e a linha `f520_tempos` (cada legenda e cada opção abaixo de 5 ms na thread da
+  interface, com `pinturas` acima de zero; nesta máquina Linux a primeira opção com 2.000 falas passou de 5 ms, e a
+  alavanca está na spec); o Teams compartilhando a tela sem o cartão e sem o popup do "Como sugerir agora" ou do "Objetivo…"; os
+  cliques no cartão e no "Sugerir" sem tirar o foco do app de reunião; o atalho `ctrl+alt+shift+d` registrado (o aviso,
+  se outro app o tiver); a primeira opção com a LLM real (p50 até 3 s e p95 até 6 s; a sugestão inteira com p95 até
+  10 s), no Gemini com o JSON em streaming (A-27) e numa família do Claude de ferramenta forçada (R-01 do L1); os números
+  do Aceite pelo `--check` das três reuniões (a parcela útil, a evidência, a compactação e o custo por pedido); o
+  memorando depois de 10 avaliações, visível e editável na página Prompts; o `.exe` 0.13.0 (sonda `--probe`), com o OK
+  do dono.
 - F5.19 (Aceite 4, no uso): salvar o áudio (MP3) e o vídeo de uma reunião processada e abrir no player do Windows e
   num celular (WhatsApp ou Teams): a legenda no tempo da fala, os nomes e cargos certos, o MP3 tocando; fechar a
   janela no meio (a pergunta); começar a gravar outra reunião com uma exportação em curso (a faixa diz "Na espera").
@@ -161,7 +167,7 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- Nenhuma: a F5.20 foi aprovada em 08/11, com as 16 perguntas no padrão (D-100).
+- Nenhuma: a F5.20 está implementada (D-100, D-101); o `.exe` 0.13.0 e o push são decisões do dono.
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
 git.
 
@@ -245,7 +251,7 @@ fechados (as decisões em `decisoes.md`).
   fatura e cadastrar em Configurações › LLM › Gemini. No log, o "Windows fatal exception: code 0x8001010d" é o
   faulthandler registrando uma exceção COM já tratada: ruído, não queda (D-055).
 - Código acima de 400 linhas, dividir ao mexer: `controller.py`, `live/proc.py`, `player.py`, `recorder.py`,
-  `llm_steps.py` e outros; `rag/agent.py`, `ui/history_ask.py` e `rag/sandbox.py` perto do limite; o
+  `llm_steps.py`, `llm/suggest_task.py` (F5.20, 509 linhas: o memorando e o dossiê podem sair) e outros; `rag/agent.py`, `ui/history_ask.py` e `rag/sandbox.py` perto do limite; o
   `MeetingWindow.__init__` com ~88 linhas efetivas.
 - Interface: a 640 px o campo do título da reunião rola e esconde a primeira letra; a sonda às vezes acusa o índice do
   Histórico cortado no print `historico-abrindo` (o texto chega antes do layout do canto das abas; no print seguinte
