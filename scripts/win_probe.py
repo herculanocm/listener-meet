@@ -25,14 +25,19 @@ linhas JSON; os números vão para specs/decisoes.md (Medições).
                                                               "Legendas" do widget; F5.20 (`scripts/probe_f520.py`): o
                                                               cartão da sugestão, o popup, a caixa, o memorando, a aba e
                                                               a linha `f520_tempos` (cada legenda e cada opção na thread
-                                                              da interface)
+                                                              da interface); F5.21 (`scripts/probe_f521.py`): a bandeja
+                                                              com a tela, a confirmação, a tela maior, a aba e a linha
+                                                              `f521_tempos` (cada miniatura e cada legenda com 40 delas)
   python scripts/win_probe.py tempos [--base PASTA]           F5.4 (A-21): a abertura das janelas e o tique do widget
   python scripts/win_probe.py player [--seconds 20]           o player no dispositivo de saída padrão tocando SILÊNCIO:
                                                               primeiro som a frio e pré-aquecido, buracos sem carga e com
                                                               a CPU ocupada abaixo do normal, pausa confirmada
   python scripts/win_probe.py export                          .md com o destino aberto por outro processo e copiar e sair
-  python scripts/win_probe.py tela                            F5.21: o print e o preparo de cada monitor, a interface num
-                                                              pedido com a tela, a janela excluída fora do print e o DPI
+  python scripts/win_probe.py tela [--guardar PASTA]          F5.21: o print e o preparo de cada monitor e da janela da
+                                                              reunião, do clique à miniatura no chat (com o provedor
+                                                              falso), a janela excluída fora do print, a janela de outro
+                                                              app por cima pintada de preto e o DPI; com --guardar, as
+                                                              imagens como iriam ao provedor, para julgar a planilha
 
 app     APPDATA e LOCALAPPDATA apontam para uma pasta temporária antes de o app ler qualquer pasta: nada do perfil do
         usuário é lido nem escrito. O ícone aparece na bandeja durante a medida. A CPU parada é medida depois do
@@ -66,7 +71,7 @@ from pathlib import Path
 from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no topo (o Qt entra na chamada)
 from probe_f517 import f517_shots        # F5.17: a bandeja de legendas e o botão "Legendas" do widget
 from probe_f520 import f520_shots, f520_timings   # F5.20: o cartão, o popup, a caixa, o memorando, a aba e os tempos
-from probe_f521 import f521_screen, f521_shots     # F5.21: a tela nas sugestões (as fotos sintéticas e o Aceite em `tela`)
+from probe_f521 import f521_screen, f521_shots, f521_timings   # F5.21: a tela nas sugestões (as fotos, os tempos e `tela`)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -485,6 +490,7 @@ def cmd_shots(args) -> None:
     f520_shots(store, shot, app, p)                       # F5.20: a sugestão na bandeja, o popup, o warm-up, Prompts, a aba
     out("f520_tempos", dpr=screen().devicePixelRatio(), **f520_timings(store, app, p))   # F5.20 (Aceite "Interface"): < 5 ms
     f521_shots(store, shot, app, p)                       # F5.21: a bandeja com a tela, a confirmação, a tela maior e a aba
+    out("f521_tempos", dpr=screen().devicePixelRatio(), **f521_timings(store, app, p))   # F5.21: a miniatura no chat, < 5 ms
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")
@@ -644,8 +650,8 @@ def cmd_copy_exit(_args) -> None:
     sys.exit(app.exec())
 
 
-def cmd_tela(_args) -> None:
-    """F5.21 (`scripts/probe_f521.py`): o Aceite da tela, com a tela de verdade e nada em disco."""
+def cmd_tela(args) -> None:
+    """F5.21 (`scripts/probe_f521.py`): o Aceite da tela, com a tela de verdade; nada em disco, salvo com `--guardar` (A-40)."""
     from PySide6.QtWidgets import QApplication
 
     from listener.platform import get_platform
@@ -655,7 +661,7 @@ def cmd_tela(_args) -> None:
     p = get_platform()
     store = Store(Path(tempfile.mkdtemp(prefix="listener-tela-")))
     try:
-        out("tela", **f521_screen(app, p, store))
+        out("tela", **f521_screen(app, p, store, Path(args.guardar) if args.guardar else None))
     finally:
         store.close()
 
@@ -724,7 +730,8 @@ def main() -> None:
     p = sub.add_parser("player")
     p.add_argument("--seconds", type=float, default=20.0)
     sub.add_parser("export")
-    sub.add_parser("tela")
+    p = sub.add_parser("tela")
+    p.add_argument("--guardar", default=None, help="grava nesta pasta as imagens como iriam ao provedor (A-40)")
     p = sub.add_parser("_first", help=argparse.SUPPRESS)
     p.add_argument("--prewarm", action="store_true")
     sub.add_parser("_copy_exit", help=argparse.SUPPRESS)
