@@ -17,7 +17,8 @@ from .components import IconButton
 from .suggest_option import BUTTON_PX, plain
 from .theme import note
 
-TOGGLE_TIP = "Mandar a tela junto nos próximos pedidos (Ctrl+Alt+Shift+T manda só no próximo)"
+TOGGLE_TIP = "Mandar a tela junto nos próximos pedidos"
+SHORTCUT_TIP = " ({shortcut} manda só no próximo)"          # R-09: o atalho configurado, não o de fábrica
 PICK_TIP = "Qual tela vai junto"
 LINE_TIP = "Mostrar a miniatura no chat"
 CONSENT = "A imagem da tela vai para o {provider} junto com o pedido."
@@ -61,12 +62,13 @@ class ScreenRow(QObject):
         row.addWidget(self.btn_skip)
         self.consent.hide()
 
-    def set_state(self, visible: bool, enabled: bool, tip: str) -> None:
+    def set_state(self, visible: bool, enabled: bool, tip: str, shortcut: str = "") -> None:
         """À vista com `suggest.screen`; apagada com o motivo na dica (sem o modelo de imagem, fora do Windows)."""
         for w in (self.toggle, self.pick):
             w.setVisible(visible)
             w.setEnabled(enabled)
-        self.toggle.setToolTip(TOGGLE_TIP if enabled else tip)
+        on_tip = TOGGLE_TIP + (SHORTCUT_TIP.format(shortcut=shortcut) if shortcut else "")
+        self.toggle.setToolTip(on_tip if enabled or not tip else tip)
 
     def set_on(self, on: bool) -> None:
         self.toggle.setChecked(on)
@@ -95,4 +97,4 @@ class ScreenRow(QObject):
         self.consent_answered.emit(False)
 
 
-__all__ = ["CONSENT", "LINE_TIP", "PICK_TIP", "TOGGLE_TIP", "ScreenRow"]
+__all__ = ["CONSENT", "LINE_TIP", "PICK_TIP", "SHORTCUT_TIP", "TOGGLE_TIP", "ScreenRow"]

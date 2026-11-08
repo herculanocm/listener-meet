@@ -43,8 +43,9 @@ class MeetingWindow:
 
 @dataclass(frozen=True, slots=True)
 class Frame:
-    """O print de um retângulo: BGRA de 32 bits, de cima para baixo (o alfa do BitBlt é indefinido, A-02)."""
-    data: bytes
+    """O print de um retângulo: BGRA de 32 bits, de cima para baixo (o alfa do BitBlt é indefinido, A-02). No Windows, o buffer
+    gravável copiado uma vez da memória do BitBlt sem o GIL (R-06 da revisão do L2: o preparo pinta e lê nele, sem outra cópia)."""
+    data: bytes | bytearray | memoryview
     width: int
     height: int
     stride: int

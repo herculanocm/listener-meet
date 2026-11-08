@@ -7,25 +7,32 @@ tarefas), sem UI Automation (CP4) nem WinRT (CP14). Tudo em pixels físicos: o p
   o nome amigável do monitor repete em dois iguais, A-01).
 - `active_monitor()`: o monitor da janela em primeiro plano (a bandeja não ativa: é o app que o usuário está usando); sem ela,
   o do cursor (A-08).
-- `meeting_window(pid, exe)`: as janelas do grupo do app (os pids com o mesmo `app_root`, que sobe pelo WebView2 do Teams
-  novo) na ordem z do `EnumWindows`, do topo para baixo: a primeira visível, sem `IsIconic`, sem `DWMWA_CLOAKED` (outra área
-  de trabalho) e com ao menos 640 x 360 px; no navegador, primeiro a que casa o serviço de reunião (o título só em memória,
-  como o sensor da F5.7). O retângulo é o `DWMWA_EXTENDED_FRAME_BOUNDS` (sem a borda invisível do `GetWindowRect`), cortado no
-  monitor dela; as janelas de outros apps acima dela na ordem z, visíveis e opacas, vão em `covered` para sair pretas (A-09):
-  ficam de fora as do app (já saem da captura), as transparentes ou em camadas e as do próprio grupo (a borda do
-  compartilhamento do Teams).
-- `grab_screen(rect)`: BitBlt (`SRCCOPY | CAPTUREBLT`) só do retângulo, num DIB de 32 bits de cima para baixo (A-02); as
-  janelas com `WDA_EXCLUDEFROMCAPTURE` não saem no Windows 10 2004 ou mais novo [fato: Microsoft; que o BitBlt respeita, exp].
+- `meeting_window(pid, exe, apps)`: as janelas do grupo do app (os pids com o mesmo `app_root`, que sobe pelo WebView2 do
+  Teams novo) na ordem z do `EnumWindows`, do topo para baixo: a primeira visível, sem `IsIconic`, sem `DWMWA_CLOAKED` (outra
+  área de trabalho) e com ao menos 640 x 360 px; no navegador, primeiro a que casa o serviço de reunião (o título só em memória,
+  como o sensor da F5.7). Procura o app do pid, depois o do executável e depois cada um dos `apps`, na ordem (o `fallback_exe`
+  e os apps de reunião da lista de fábrica: a fonte "sistema inteiro", R-03 da revisão do L2), com uma leitura dos processos
+  e uma das janelas. O retângulo é o `DWMWA_EXTENDED_FRAME_BOUNDS` (sem a borda invisível do `GetWindowRect`), cortado no monitor
+  dela. As janelas acima dela na ordem z vão em `covered`, para sair pretas (A-09), salvo: as transparentes ao clique ou em
+  camadas (a borda, a dica, a notificação); as excluídas da captura (`WDA_EXCLUDEFROMCAPTURE`: a bandeja e os popups deste
+  app, que nem saem no print); e, do próprio app da reunião, as possuídas pela janela dela e as pequenas (o menu, a barra do
+  compartilhamento). As outras janelas do mesmo app (o Gmail sobre o Meet no mesmo Chrome) e as deste app que saem na
+  captura (o Histórico, as Configurações, o widget) saem pretas (R-02 da revisão do L2).
+- `grab_screen(rect)`: BitBlt (`SRCCOPY | CAPTUREBLT`) só do retângulo, num DIB de 32 bits de cima para baixo (A-02), copiado
+  uma vez por `memmove` (sem o GIL) para um buffer gravável (R-06); as janelas com `WDA_EXCLUDEFROMCAPTURE` não saem no
+  Windows 10 2004 ou mais novo [fato: Microsoft; que o BitBlt respeita, exp].
 Roda em qualquer thread (a do pedido, nunca a da interface). Nada daqui roda fora do Windows: as DLLs e os tipos de callback
 nascem na primeira chamada. O log leva dimensões, pids e ms; nunca título (D-053)."""
 from __future__ import annotations
 
 import ctypes
 import functools
-import os
 import sys
 import time
+from collections.abc import Sequence
 from typing import Any
+
+import numpy as np
 
 from ...log import get_logger
 from ..screen_types import Frame, MeetingWindow, Monitor, ScreenRect
@@ -40,6 +47,9 @@ MONITORINFOF_PRIMARY = 1
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT, WS_EX_LAYERED = 0x00000020, 0x00080000
 SRCCOPY, CAPTUREBLT = 0x00CC0020, 0x40000000
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+GW_OWNER = 4
+SMALL_AREA = MIN_W * MIN_H // 2               # R-02: a janela do próprio app menor que isto não cobre (o menu, a barra)
 BROWSERS = frozenset({"msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"})
 
 
@@ -84,6 +94,9 @@ def _api() -> Any:
     u32.GetWindowLongW.restype = wintypes.LONG
     u32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
     u32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    u32.GetWindowDisplayAffinity.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    u32.GetWindow.argtypes = (wintypes.HWND, wintypes.UINT)
+    u32.GetWindow.restype = wintypes.HWND
     u32.GetDC.argtypes = (wintypes.HWND,)
     u32.GetDC.restype = wintypes.HDC
     u32.ReleaseDC.argtypes = (wintypes.HWND, wintypes.HDC)
@@ -138,6 +151,65 @@ def _title(api: Any, hwnd: Any) -> str:
     return buf.value
 
 
+def _z_order(api: Any) -> list[tuple[Any, int, ScreenRect]]:
+    """As janelas visíveis, sem `IsIconic` nem `DWMWA_CLOAKED`, com o pid e o retângulo, do topo para baixo [exp]."""
+    order: list[tuple[Any, int, ScreenRect]] = []
+
+    def each(hwnd: Any, _lp: Any) -> bool:
+        if not api.u32.IsWindowVisible(hwnd) or api.u32.IsIconic(hwnd) or _cloaked(api, hwnd):
+            return True
+        rect = _frame_bounds(api, hwnd)
+        if rect is not None:
+            wpid = api.wt.DWORD()
+            api.u32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+            order.append((hwnd, int(wpid.value), rect))
+        return True
+
+    api.u32.EnumWindows(api.win_proc(each), 0)
+    return order
+
+
+def _pick(api: Any, order: list[tuple[Any, int, ScreenRect]], procs: dict[int, Any], root_of: dict[int, int],
+          roots: set[int]) -> tuple[int, str] | None:
+    """A janela da reunião entre as dos `roots`: a mais de cima com o tamanho mínimo; no navegador, a do serviço de reunião.
+    Devolve o índice na ordem z e o rótulo (o executável do app, ou o serviço)."""
+    mine = [i for i, (_h, p, r) in enumerate(order) if root_of.get(p, p) in roots and r.width >= MIN_W and r.height >= MIN_H]
+    if not mine:
+        return None
+    root = root_of.get(order[mine[0]][1], order[mine[0]][1])
+    name = procs[root].name if root in procs else ""
+    if name.lower() in BROWSERS:                             # no navegador, a janela do serviço de reunião primeiro
+        from .activity import match_service
+
+        for i in mine:
+            service = match_service(_title(api, order[i][0]))
+            if service:
+                return i, service
+    return mine[0], name
+
+
+def _covers(api: Any, hwnd: Any, same_app: bool, rect: ScreenRect, target: Any) -> bool:
+    """A janela acima da reunião sai preta (A-09), salvo a transparente ao clique ou em camadas, a excluída da captura e, do
+    próprio app da reunião, a possuída pela janela dela ou a pequena (R-02 da revisão do L2)."""
+    if int(api.u32.GetWindowLongW(hwnd, GWL_EXSTYLE)) & (WS_EX_TRANSPARENT | WS_EX_LAYERED):
+        return False
+    affinity = api.wt.DWORD()
+    if api.u32.GetWindowDisplayAffinity(hwnd, ctypes.byref(affinity)) and affinity.value == WDA_EXCLUDEFROMCAPTURE:
+        return False
+    return not same_app or not (_owned_by(api, hwnd, target) or rect.area < SMALL_AREA)
+
+
+def _owned_by(api: Any, hwnd: Any, target: Any) -> bool:
+    owner = hwnd
+    for _ in range(8):                                       # o menu do popup da janela: a cadeia de donos é curta
+        owner = api.u32.GetWindow(owner, GW_OWNER)
+        if not owner:
+            return False
+        if owner == target:
+            return True
+    return False
+
+
 class Win32Screen:
     def monitors(self) -> tuple[Monitor, ...]:
         try:
@@ -178,7 +250,7 @@ class Win32Screen:
             log.debug("monitor em uso não lido: %s", e)
             return None
 
-    def meeting_window(self, pid: int | None, exe: str) -> MeetingWindow | None:
+    def meeting_window(self, pid: int | None, exe: str, apps: Sequence[str] = ()) -> MeetingWindow | None:
         t0 = time.perf_counter()
         try:
             api = _api()
@@ -186,56 +258,31 @@ class Win32Screen:
         except OSError as e:
             log.debug("janela da reunião não procurada: %s", e)
             return None
-        roots = {processes.app_root(pid, procs)} if pid and pid in procs else set()
-        name = procs[pid].name if pid and pid in procs else exe
-        if not roots and exe:
-            low = exe.lower()
-            roots = {processes.app_root(p, procs) for p, info in procs.items() if info.name.lower() == low}
-        if not roots:
+        root_of = {p: processes.app_root(p, procs) for p in procs}
+        tries: list[set[int]] = [{root_of[pid]}] if pid and pid in procs else []
+        for name in (exe, *apps):                           # o executável da fonte e depois cada app, na ordem (R-03)
+            low = name.lower()
+            roots = {root_of[p] for p, info in procs.items() if low and info.name.lower() == low}
+            if roots and roots not in tries:
+                tries.append(roots)
+        if not tries:
             return None
-        group = {p for p in procs if processes.app_root(p, procs) in roots}
-        own = os.getpid()
-        order: list[tuple[Any, int, ScreenRect]] = []
-
-        def each(hwnd: Any, _lp: Any) -> bool:
-            if not api.u32.IsWindowVisible(hwnd) or api.u32.IsIconic(hwnd) or _cloaked(api, hwnd):
-                return True
-            rect = _frame_bounds(api, hwnd)
-            if rect is not None:
-                wpid = api.wt.DWORD()
-                api.u32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
-                order.append((hwnd, int(wpid.value), rect))
-            return True
-
-        api.u32.EnumWindows(api.win_proc(each), 0)          # do topo para baixo na ordem z [exp]
-        mine = [i for i, (_h, p, r) in enumerate(order) if p in group and r.width >= MIN_W and r.height >= MIN_H]
-        if not mine:
+        order = _z_order(api)
+        hit = next((h for h in (_pick(api, order, procs, root_of, roots) for roots in tries) if h is not None), None)
+        if hit is None:
             return None
-        app = name
-        pick = mine[0]
-        if name.lower() in BROWSERS:                         # no navegador, a janela do serviço de reunião primeiro
-            from .activity import match_service
-
-            for i in mine:
-                service = match_service(_title(api, order[i][0]))
-                if service:
-                    pick, app = i, service
-                    break
-        hwnd, _p, rect = order[pick]
+        pick, app = hit
+        hwnd, wpid, rect = order[pick]
         monitor = self._monitor_of(api, api.u32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST))
         if monitor is None:
             return None
         rect = rect.clip(monitor.rect) or rect
-        covered = tuple(c for h, p, r in order[:pick] if p not in group and p != own and not self._passthrough(api, h)
+        root = root_of.get(wpid, wpid)
+        covered = tuple(c for h, p, r in order[:pick] if _covers(api, h, root_of.get(p, p) == root, r, hwnd)
                         for c in (r.clip(rect),) if c is not None)
-        log.debug("janela da reunião: pid %s, %dx%d, %d por cima, em %.1f ms", pid, rect.width, rect.height, len(covered),
+        log.debug("janela da reunião: pid %s, %dx%d, %d por cima, em %.1f ms", wpid, rect.width, rect.height, len(covered),
                   (time.perf_counter() - t0) * 1000)
         return MeetingWindow(rect, monitor, covered, app)
-
-    @staticmethod
-    def _passthrough(api: Any, hwnd: Any) -> bool:
-        """A janela transparente ao clique ou em camadas não sai preta (A-09: a borda, a dica, a notificação)."""
-        return bool(int(api.u32.GetWindowLongW(hwnd, GWL_EXSTYLE)) & (WS_EX_TRANSPARENT | WS_EX_LAYERED))
 
     def grab_screen(self, rect: ScreenRect) -> Frame | None:
         if rect.width <= 0 or rect.height <= 0:
@@ -257,13 +304,16 @@ class Win32Screen:
         bmi.bmiHeader.biPlanes, bmi.bmiHeader.biBitCount = 1, 32
         bits = ctypes.c_void_p()
         dib = g32.CreateDIBSection(mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
-        data: bytes | None = None
+        data: memoryview | None = None
         try:
             if dib and bits.value:
                 old = g32.SelectObject(mem, dib)
                 try:
                     if g32.BitBlt(mem, 0, 0, rect.width, rect.height, screen, rect.x, rect.y, SRCCOPY | CAPTUREBLT):
-                        data = ctypes.string_at(bits.value, rect.width * rect.height * 4)
+                        n = rect.width * rect.height * 4
+                        out = np.empty(n, dtype=np.uint8)            # sem zerar: o memmove escreve tudo
+                        ctypes.memmove(out.ctypes.data, bits.value, n)   # R-06: uma cópia, sem o GIL (o `string_at` o prendia)
+                        data = memoryview(out)
                 finally:
                     g32.SelectObject(mem, old)
         finally:

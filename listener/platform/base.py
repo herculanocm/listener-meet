@@ -279,11 +279,11 @@ class Platform(Protocol):
         return None
 
     # F5.21 (A-10): a tela das sugestões ao vivo, em pixels físicos (os tipos em `platform/screen_types.py`). A janela do app
-    # da reunião (o pid da fonte da gravação, ou o executável), os monitores da esquerda para a direita, o monitor em uso (o
+    # da reunião (o pid da fonte da gravação, o executável e depois os `apps`, R-03), os monitores, o monitor em uso (o
     # da janela em primeiro plano, senão o do cursor) e o print de um retângulo; todos rodam em qualquer thread e nunca levam
     # título no retorno nem no log. Sem tela nesta plataforma (até a F7): nada, e a chave fica apagada
-    def meeting_window(self, pid: int | None, exe: str) -> MeetingWindow | None:
-        del pid, exe
+    def meeting_window(self, pid: int | None, exe: str, apps: Sequence[str] = ()) -> MeetingWindow | None:
+        del pid, exe, apps
         return None
 
     def monitors(self) -> tuple[Monitor, ...]:

@@ -51,7 +51,7 @@ def test_the_target_and_the_preparation(qtbot, platform):
                                          "ms-teams.exe")
     window = pick_target(platform, "auto", 4242, "ms-teams.exe", watched)
     assert window is not None and window.source == ScreenSource.WINDOW and window.app == "janela do Teams" and window.covered
-    assert pick_target(platform, "cursor", 4242, "ms-teams.exe", watched).source == ScreenSource.FOREGROUND     # pula a janela
+    assert pick_target(platform, "cursor", 4242, "ms-teams.exe", watched).source == ScreenSource.CURSOR    # pula a janela (R-08)
     fixed = pick_target(platform, "monitor:DISPLAY2", None, "", watched)
     assert (fixed.source, fixed.app, fixed.rect) == (ScreenSource.MONITOR, "Monitor 2", platform.screen_monitors[1].rect)
     gone = pick_target(platform, "monitor:DISPLAY9", 4242, "ms-teams.exe", watched)
@@ -122,13 +122,17 @@ def test_with_the_screen_the_thumbnail_goes_to_the_chat_the_option_cites_it_and_
     sid = store.suggestions.list_for_meeting(host.meeting_id)[-1]["id"]
     assert store.suggestions.screens_for_meeting(host.meeting_id)[sid]["source"] == "primeiro_plano"
     host.tray.chat.screen_clicked.emit(shots[0].data(SCREEN_ROLE))
-    view = host.screen.view
-    assert view is not None and view.excluded and not view.picture.pixmap().isNull() and int(view.winId()) in platform.excluded
+    assert host.screen.view is None and host.screen.view_task is not None         # R-07: decodificada numa `Task`
+    qtbot.waitUntil(lambda: host.screen.view is not None, timeout=3000)
+    view: Any = host.screen.view                                                  # o `waitUntil` muda o que o mypy estreitou
+    assert view.excluded and not view.picture.pixmap().isNull() and int(view.winId()) in platform.excluded
     view.close()
     platform.capture_exclusion = False                                            # a exclusão falhou: sem a imagem
     host.tray.chat.screen_clicked.emit(shots[0].data(SCREEN_ROLE))
-    assert host.screen.view.picture.pixmap().isNull() and "escondida" in host.screen.view.picture.text()
-    host.screen.view.close()
+    qtbot.waitUntil(lambda: host.screen.view is not view, timeout=3000)
+    hidden: Any = host.screen.view
+    assert hidden.picture.pixmap().isNull() and "escondida" in hidden.picture.text()
+    hidden.close()
 
 
 def test_the_first_time_with_a_provider_the_card_asks_and_the_request_waits(qtbot, store, platform, monkeypatch):
@@ -262,3 +266,278 @@ def QLabel_type() -> Any:                                                       
 
     return QLabel
 
+
+# ---------------------------------------------------------------- a revisão do diff do L2 (R-01 a R-10)
+def _bgra(w: int, h: int, gray: int) -> Any:
+    import numpy as np
+
+    px = np.zeros((h, w, 4), dtype=np.uint8)
+    px[..., :3] = gray
+    px[..., 3] = 255
+    return px
+
+
+def _text(px: Any, x: int, y: int, lines: list[int], size: int, color: int = 255) -> None:
+    """Linhas de "texto": dois traços finos por letra, da altura da fonte (o slide, o terminal)."""
+    for k, letters in enumerate(lines):
+        top = y + int(k * size * 1.5)
+        for c in range(letters):
+            for dx in (0, int(size * 0.3)):
+                x0 = x + c * int(size * 0.6) + dx
+                px[top:top + size, x0:x0 + max(1, size // 8), :3] = color
+
+
+def _frame(px: Any) -> Frame:
+    h, w = px.shape[:2]
+    return Frame(px.tobytes(), w, h, w * 4)
+
+
+def test_the_dark_slide_goes_and_the_protected_or_covered_screen_does_not(platform):
+    """R-04 (A-37): o slide preto com texto, o de seção, o terminal, o editor escuro e a planilha clara vão; o protegido
+    preto no meio da moldura do Teams (82 %), a tela quase preta e a de uma cor só não vão; a reunião coberta em 80 % ou mais
+    por outras janelas não vai, com a nota própria, e a coberta pela metade vai."""
+    import numpy as np
+
+    from listener.ui.screen_grab import COVERED_NOTE, Target, prepare
+
+    whole = Target(ScreenRect(0, 0, 1280, 720), ScreenSource.MONITOR, "Monitor 1")
+    slide = _bgra(1280, 720, 0)
+    _text(slide, 80, 60, [30], 40)
+    _text(slide, 100, 200, [25, 22, 18, 20], 26)
+    section = _bgra(1280, 720, 0)
+    _text(section, 380, 320, [15], 60)
+    terminal = _bgra(1280, 720, 0)
+    _text(terminal, 8, 8, [40] * 12, 12, 204)
+    editor = _bgra(1280, 720, 30)
+    _text(editor, 40, 20, [32] * 20, 14, 212)
+    sheet = _bgra(1280, 720, 255)
+    sheet[::22, :, :3] = 210
+    sheet[:, ::100, :3] = 210
+    protected = _bgra(1280, 720, 31)
+    protected[60:680, 40:1240, :3] = 3                                            # o preto do compositor, quase zero
+    near_black = _bgra(1280, 720, 0)                                              # um degradê fraco: nada acima de 15
+    near_black[..., :3] = (6 + np.arange(1280) * 10 // 1280).astype(np.uint8)[None, :, None]
+    for px in (slide, section, terminal, editor, sheet):
+        assert prepare(_frame(px), whole, keep=False).status == ScreenStatus.SENT
+    for px in (protected, near_black, _bgra(1280, 720, 128)):
+        shot = prepare(_frame(px), whole, keep=False)
+        assert shot.status == ScreenStatus.EMPTY and shot.image is None and shot.thumb and shot.note == ""
+    rect = ScreenRect(0, 0, 1280, 720)
+    covered = prepare(_frame(sheet), Target(rect, ScreenSource.WINDOW, "janela do Teams", (ScreenRect(0, 0, 1180, 680),)), keep=False)
+    assert covered.status == ScreenStatus.EMPTY and covered.note == COVERED_NOTE and covered.covered == 1
+    half = prepare(_frame(sheet), Target(rect, ScreenSource.WINDOW, "janela do Teams", (ScreenRect(0, 0, 640, 720),)), keep=False)
+    assert half.status == ScreenStatus.SENT and half.note == ""
+
+
+def test_the_covered_window_is_painted_black_at_any_offset_in_the_same_buffer_and_in_the_thumbnail(platform):
+    """R-10 (o alvo com y diferente de zero; a miniatura, que fica no banco e no chat, também preta) e R-06 (o preparo pinta
+    no próprio buffer gravável do print, sem outra cópia)."""
+    import numpy as np
+    from PySide6.QtGui import QColor, QImage
+
+    from listener.ui.screen_grab import Target, prepare
+
+    rect = ScreenRect(100, 200, 1280, 720)
+    target = Target(rect, ScreenSource.WINDOW, "janela do Teams", (ScreenRect(300, 400, 400, 200),))
+    raw = np.frombuffer(bytearray(platform.grab_screen(rect).data), dtype=np.uint8)
+    shot = prepare(Frame(memoryview(raw), 1280, 720, 1280 * 4), target, keep=False)
+    px = raw.reshape(720, 1280, 4)
+    assert int(px[300, 400, :3].max()) == 0 and int(px[100, 100, :3].max()) > 60    # em (200, 200) do alvo, no buffer dado
+    sent, thumb = QImage.fromData(shot.image.data), QImage.fromData(shot.thumb)
+    assert QColor(sent.pixel(400, 300)).value() < 30 and QColor(sent.pixel(100, 100)).value() > 60
+    assert QColor(thumb.pixel(100, 75)).value() < 30 and QColor(thumb.pixel(25, 25)).value() > 60
+
+
+def test_the_system_source_looks_for_the_meeting_apps_and_a_failure_keeps_the_target(qtbot, store, platform, monkeypatch):
+    """R-03: a fonte "sistema inteiro" procura o `fallback_exe` e depois os apps de reunião da lista; R-08: a falha guarda a
+    fonte e o rótulo do alvo; sem monitor, a da escolha."""
+    from types import SimpleNamespace
+
+    from listener.capture.recorder import SourceSpec
+    from listener.ui.screen_grab import capture
+
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch)
+    platform.meeting_win = MeetingWindow(ScreenRect(1920, 0, 1600, 900), platform.screen_monitors[1], (), "ms-teams.exe")
+    host.recording = SimpleNamespace(source=SourceSpec("system", fallback_exe="Zoom.exe"), elapsed=lambda: 60.0)
+    shot = host.screen.capturer()()
+    assert platform.meeting_asks[-1] == (None, "", ("zoom.exe", "ms-teams.exe", "slack.exe"))      # sem os navegadores
+    assert (shot.status, shot.source, shot.app) == (ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams")
+    watched = platform.watched_apps()
+    platform.grab_fail = True
+    failed = capture(platform, "auto", None, "", watched, True)
+    assert (failed.status, failed.source, failed.app) == (ScreenStatus.FAILED, ScreenSource.WINDOW, "janela do Teams")
+    platform.grab_fail = False
+    def broken(_rect: ScreenRect) -> Frame:
+        raise RuntimeError("o GDI falhou")
+
+    monkeypatch.setattr(platform, "grab_screen", broken)
+    boom = capture(platform, "auto", None, "", watched, True)
+    assert (boom.status, boom.source, boom.app) == (ScreenStatus.FAILED, ScreenSource.WINDOW, "janela do Teams")
+    platform.meeting_win, platform.screen_monitors = None, ()
+    assert capture(platform, "cursor", None, "", watched, True).source == ScreenSource.CURSOR
+    assert capture(platform, "auto", None, "", watched, True).source == ScreenSource.FOREGROUND
+
+
+def test_the_card_line_carries_the_note_and_the_chat_reads_the_time(qtbot, store, platform, monkeypatch):
+    """R-08: o monitor fixo que sumiu (A-30) e a reunião coberta dizem por que no cartão; o leitor de tela da miniatura diz
+    "Tela enviada [mm:ss] · rótulo"."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui.screen_grab import COVERED_NOTE, NO_MONITOR
+
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch)
+    row = host.card.screen_row
+    store.set_setting("suggest.screen_source", "monitor:DISPLAY9")
+    platform.meeting_win = MeetingWindow(ScreenRect(1920, 0, 1600, 900), platform.screen_monitors[1], (), "ms-teams.exe")
+    host.reload()
+    row.toggle.click()
+    host.request()
+    qtbot.waitUntil(lambda: host.task is None, timeout=5000)
+    assert "com a tela · janela do Teams" in row.line.text() and NO_MONITOR in row.line.text()
+    item = _screen_items(host.tray.chat)[-1]
+    assert item.data(Qt.ItemDataRole.AccessibleTextRole) == "Tela enviada [01:00] · janela do Teams"
+    store.set_setting("suggest.screen_source", "auto")
+    platform.meeting_win = MeetingWindow(ScreenRect(1920, 0, 1600, 900), platform.screen_monitors[1],
+                                         (ScreenRect(1920, 0, 1600, 850),), "ms-teams.exe")
+    host.reload()
+    host.request()
+    qtbot.waitUntil(lambda: host.task is None, timeout=5000)
+    assert COVERED_NOTE in row.line.text() and _screen_items(host.tray.chat)[-1].text() == "Tela coberta · não enviada"
+
+
+def test_the_question_follows_the_card_and_never_outlives_a_new_request_or_the_stop(qtbot, store, platform, monkeypatch):
+    """R-05: o cartão recolhido abre para a pergunta; um pedido sem a tela e o Parar a tiram da vista; o fechar das
+    Configurações não reacende a chave no cartão encerrado."""
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch, consent=False)
+    row = host.card.screen_row
+    host.card.begin(host.mode, "14:00", None)
+    host.card.set_collapsed(True)
+    host.request_from_outside(screen=True)
+    assert host.screen.pending is not None and not host.card.collapsed and row.consent.isVisibleTo(host.tray)
+    assert host.request(screen=False) == "pedindo…"                               # o "Sugerir" sem a tela, no meio
+    assert host.screen.pending is None and row.consent.isHidden()
+    qtbot.waitUntil(lambda: host.task is None, timeout=5000)
+    assert host.request(screen=True) == "confirme a tela"
+    host.on_stopped()
+    assert host.screen.pending is None and row.consent.isHidden()
+    host.reload()
+    assert not row.toggle.isEnabled() and not row.pick.isEnabled()
+    assert store.get_setting("suggest.screen_consent") == ""
+
+
+def test_the_tip_has_the_shortcut_of_the_settings_and_off_the_screen_shortcut_is_mute_outside(qtbot, store, platform, monkeypatch):
+    """R-09: a dica da chave leva o atalho configurado; fora da gravação, o atalho da tela fica mudo com `suggest.screen`
+    desligada, e o "Sugerir" de sempre avisa."""
+    from listener.ui.caption_tray_host import NO_TRAY, suggest_outside
+    from listener.ui.suggest_screen_row import SHORTCUT_TIP, TOGGLE_TIP
+    from listener.ui.widget_parts import shortcut_text
+
+    store.set_setting("hotkeys.suggest_screen", "ctrl+alt+shift+y")
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch)
+    assert host.card.screen_row.toggle.toolTip() == TOGGLE_TIP + SHORTCUT_TIP.format(shortcut=shortcut_text("ctrl+alt+shift+y"))
+    said: list[str] = []
+    store.set_setting("suggest.screen", False)
+    suggest_outside(store, said.append, screen=True)
+    suggest_outside(store, said.append)
+    assert said == [NO_TRAY]
+
+
+def test_the_view_and_the_chat_follow_the_capture_exclusion_and_the_teardown(qtbot, store, platform, monkeypatch):
+    """R-10: a miniatura no chat sem a imagem quando a bandeja não saiu da captura (pergunta 15); o `teardown` fecha a janela
+    maior; a janela nativa refeita pede a exclusão de novo, e a falha esconde a imagem; fora do Windows, a chave apagada."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtGui import QImage
+
+    from listener.llm.suggest_task import ScreenSent, ScreenShot
+    from listener.llm.types import ImagePart
+    from listener.ui.chat_delegate import THUMB_ROLE
+    from listener.ui.screen_view import HIDDEN, ScreenView
+    from listener.ui.suggest_screen import ONLY_WINDOWS
+
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch)
+    thumb = QImage(320, 180, QImage.Format.Format_RGB32)
+    thumb.fill(0x336699)
+    host.tray.excluded = False
+    host.screen.sent(ScreenSent(70_000, ScreenShot(ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams", None, b"x", None, 0)))
+    assert _screen_items(host.tray.chat)[-1].data(THUMB_ROLE) is None
+    image = ImagePart(b"jpeg", "image/jpeg", 16, 9, "tela: janela do Teams")
+    for k in range(12):                                                           # as 10 últimas na memória, para a janela maior
+        host.screen.sent(ScreenSent(80_000 + k, ScreenShot(ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams", image, b"x")))
+    assert sorted(host.screen.images) == [80_000 + k for k in range(2, 12)]
+    host.card.screen_row.show_line("com a tela · <b>x</b>")
+    assert "&lt;b&gt;" in host.card.screen_row.line.text()                       # o rótulo vai como texto, nunca como HTML
+    view = ScreenView(thumb, "Tela enviada", platform)
+    host.screen.view = view
+    view.show()
+    host.screen.teardown()
+    assert not view.isVisible()
+    again = ScreenView(thumb, "Tela enviada", platform)
+    qtbot.addWidget(again)
+    asked = len(platform.excluded)
+    platform.capture_exclusion = False
+    QCoreApplication.sendEvent(again, QEvent(QEvent.Type.WinIdChange))
+    qtbot.waitUntil(lambda: again.picture.text() == HIDDEN, timeout=2000)
+    assert len(platform.excluded) == asked + 1 and again.picture.pixmap().isNull()
+    platform.screen_monitors = ()
+    host.reload()
+    assert not host.card.screen_row.toggle.isEnabled() and host.card.screen_row.toggle.toolTip() == ONLY_WINDOWS
+
+
+def test_the_label_the_retry_and_the_thumbnail_in_an_empty_or_long_chat(qtbot, store, platform, monkeypatch):
+    """R-10: o rótulo do serviço no navegador; "Tentar sem a tela" só depois de um pedido com a tela; a miniatura troca a
+    página do chat antes da primeira legenda (A-33), é pintada, e segue o fim da lista presa a ele."""
+    from PySide6.QtGui import QImage
+
+    from listener.ui.screen_grab import app_label
+    from tests.test_live_partial import _caption
+    from tests.test_suggest_ui import _tray
+
+    assert app_label("Google Meet", platform.watched_apps()) == "janela do Google Meet"
+    host, _n = _screen_host(qtbot, store, platform, monkeypatch)
+    host.card.begin(host.mode, "14:05", None)
+    host._done(SuggestResult(Outcome.ERROR, host.meeting_id, error="falha", with_screen=False))
+    assert host.card.btn_plain.isHidden() and not host.card.btn_retry.isHidden()
+    tray = _tray(qtbot, store, platform)
+    chat = tray.chat
+    thumb = QImage(320, 180, QImage.Format.Format_RGB32)
+    thumb.fill(0x336699)
+    assert chat.pages.currentWidget() is not chat.list
+    chat.add_screen(5_000, thumb, "Tela enviada · janela do Teams", True)
+    assert chat.pages.currentWidget() is chat.list
+    qtbot.wait(30)
+    shot = chat.list.viewport().grab().toImage()
+    box = chat.list.visualItemRect(chat.list.item(0))
+    cells = ((x, y) for x in range(box.left(), box.right(), 3) for y in range(box.top(), box.bottom(), 3))
+    assert any(shot.pixel(x, y) & 0xFFFFFF == 0x336699 for x, y in cells)          # o delegate pinta a miniatura
+    for i in range(40):
+        _caption(store, chat.meeting_id, 10_000 + i * 3000, f"fala {i} sobre o orçamento de 2027", label="Ana — CFO")
+    tray.load_new()
+    bar = chat.list.verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() == bar.maximum(), timeout=2000)
+    chat.add_screen(400_000, thumb, "Tela enviada · janela do Teams", True)
+    qtbot.waitUntil(lambda: bar.value() == bar.maximum(), timeout=1000)
+
+
+def test_the_tray_host_gives_the_suggestions_the_recording_clock_and_source(qtbot, store, platform, monkeypatch):
+    """R-10 (A-05): o controlador passa só a gravação; o host das sugestões nasce com o relógio dela e lê a fonte a cada
+    pedido com a tela."""
+    from types import SimpleNamespace
+
+    from listener.capture.recorder import SourceSpec
+    from listener.ui.caption_tray_host import CaptionTrayHost
+    from listener.ui.widget import RecordingWidget
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    mid = store.create_meeting("Orçamento", "meeting", None, None)
+    widget = RecordingWidget(captions_button=True)
+    qtbot.addWidget(widget)
+    rec = SimpleNamespace(elapsed=lambda: 123.0, source=SourceSpec("app", pid=4242, exe="ms-teams.exe"))
+    host = CaptionTrayHost(store, platform, widget, mid, on_mark=lambda *_a: None, on_open_live=lambda: None,
+                           on_notice=lambda _t: None, marked=set(), speakers={}, live_state="live", suggest=True, recording=rec)
+    try:
+        assert host.suggest is not None and host.suggest.elapsed() == 123.0 and host.suggest.recording is rec
+        host.suggest.screen.capturer()()
+        assert platform.meeting_asks[-1][:2] == (4242, "ms-teams.exe")
+    finally:
+        if host.suggest is not None:
+            host.suggest.teardown()

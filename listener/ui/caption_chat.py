@@ -112,7 +112,9 @@ class CaptionChat(QWidget):
         item.setData(MINE_ROLE, True)
         item.setData(HEAD_ROLE, False)
         item.setData(GROUP_ROLE, "")
-        item.setText(text)                                   # o leitor de tela e a linha de baixo
+        item.setText(text)                                   # a linha de baixo
+        what, _sep, label = text.partition(" · ")            # R-08: o leitor de tela diz "Tela enviada [mm:ss] · rótulo"
+        item.setData(Qt.ItemDataRole.AccessibleTextRole, f"{what} [{stamp(int(t_ms))}]" + (f" · {label}" if label else ""))
         item.setToolTip("Clique para ver a tela maior")    # neutra: a dica fica fora da exclusão da captura (D-095)
         pos = self.list.place((int(t_ms), 0), item)
         self._restyle(pos + 1)

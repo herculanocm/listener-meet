@@ -83,6 +83,7 @@ class FakePlatform(Platform):
         self.screen_monitors = (Monitor("DISPLAY1", "Monitor 1 · 1920 x 1080 · principal", ScreenRect(0, 0, 1920, 1080), True),
                                 Monitor("DISPLAY2", "Monitor 2 · 2560 x 1440", ScreenRect(1920, 0, 2560, 1440), False))
         self.meeting_win: MeetingWindow | None = None
+        self.meeting_asks: list[tuple[int | None, str, tuple[str, ...]]] = []   # (pid, exe, apps) de cada procura
         self.active_index = 0
         self.grab_color: tuple[int, int, int] | None = None   # None: um gradiente; senão uma cor só (a tela "vazia")
         self.grab_fail = False
@@ -177,7 +178,8 @@ class FakePlatform(Platform):
 
     # ---------------------------------------------------------------- F5.21: a tela
     @override
-    def meeting_window(self, pid: int | None, exe: str) -> MeetingWindow | None:
+    def meeting_window(self, pid: int | None, exe: str, apps: Sequence[str] = ()) -> MeetingWindow | None:
+        self.meeting_asks.append((pid, exe, tuple(apps)))
         return self.meeting_win
 
     @override

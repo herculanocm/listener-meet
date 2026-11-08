@@ -17,6 +17,7 @@ salvo com `--guardar PASTA` (A-40): as imagens de cada monitor e da janela da re
 julgar se o texto pequeno de uma planilha aberta num monitor 4K ainda se lê. Nenhum título de janela sai daqui."""
 from __future__ import annotations
 
+import itertools
 import os
 import queue
 import subprocess
@@ -345,7 +346,11 @@ def _window(platform: Any, found: tuple[Any, Any] | None, keep: Path | None) -> 
 
 def _click_to_thumb(app: Any, platform: Any, store: Any) -> dict[str, Any]:
     """Um pedido com a tela pelo host do app, com a resposta do provedor falso (nada sai da máquina): a thread da interface no
-    clique e o tempo do clique à miniatura no chat (o alvo, o print e o preparo correm na tarefa, antes da chamada)."""
+    clique, o tempo do clique à miniatura no chat (o alvo, o print e o preparo correm na tarefa, antes da chamada) e o maior
+    buraco da thread da interface enquanto a tarefa roda (um timer de 1 ms: o GIL preso pelo preparo aparece aqui, R-06 da
+    revisão do L2)."""
+    from PySide6.QtCore import Qt, QTimer
+
     from listener.ui.caption_tray import CaptionTray
     from listener.ui.suggest_host import SuggestHost
     from listener.ui.widget import RecordingWidget
@@ -369,6 +374,12 @@ def _click_to_thumb(app: Any, platform: Any, store: Any) -> dict[str, Any]:
         real(t_ms, thumb, text, sent)
 
     tray.chat.add_screen = timed                     # type: ignore[method-assign]
+    ticks: list[float] = []
+    beat = QTimer()
+    beat.setTimerType(Qt.TimerType.PreciseTimer)
+    beat.setInterval(1)
+    beat.timeout.connect(lambda: ticks.append(time.perf_counter()))
+    beat.start()
     t0 = time.perf_counter()
     try:
         state = host.request(screen=True)
@@ -379,6 +390,7 @@ def _click_to_thumb(app: Any, platform: Any, store: Any) -> dict[str, Any]:
                 break
             time.sleep(0.002)
     finally:
+        beat.stop()
         host.teardown()
         _discard(tray)
         _discard(widget)
@@ -388,7 +400,8 @@ def _click_to_thumb(app: Any, platform: Any, store: Any) -> dict[str, Any]:
         else:
             os.environ["LISTENER_LLM"] = before
     thumb_ms = round((added[0] - t0) * 1000, 1) if added else None
-    return {"pedido": state, "interface_ms": round(ui_ms, 2), "miniatura_ms": thumb_ms, "meta_interface_ms": UI_GOAL_MS,
+    gap = round(max((b - a for a, b in itertools.pairwise(ticks)), default=0.0) * 1000, 1)
+    return {"pedido": state, "interface_ms": round(ui_ms, 2), "miniatura_ms": thumb_ms, "buraco_ms": gap, "meta_interface_ms": UI_GOAL_MS,
             "meta_miniatura_ms": THUMB_GOAL_MS, "ok": ui_ms <= UI_GOAL_MS and thumb_ms is not None and thumb_ms <= THUMB_GOAL_MS}
 
 

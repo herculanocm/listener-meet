@@ -2,13 +2,14 @@
 (ferramenta, sem moldura, por cima e sem foco) e `WA_ShowWithoutActivating`: o clique não tira o foco do app de reunião. A
 exclusão da captura de tela é pedida no `__init__`, pelo `winId()`, antes de a janela aparecer, e de novo no `WinIdChange`
 (como a bandeja); se a exclusão falhar, a janela não mostra a imagem, só o aviso (pergunta 15). Fecha no clique; ocupa até
-70 % da área livre da tela onde está a bandeja."""
+70 % da área livre da tela onde está a bandeja. A imagem chega decodificada e escalada por `fitted`, numa `Task` (R-07 da
+revisão do L2): aqui só nasce o pixmap; maior que a área (quem não passou pela `Task`), ela é escalada aqui."""
 from __future__ import annotations
 
 from contextlib import suppress
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QEvent, QRect, Qt, QTimer
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QImage, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -45,16 +46,23 @@ class ScreenView(QWidget):
         lay.setSpacing(6)
         lay.addWidget(self.picture, 1)
         lay.addWidget(self.caption)
-        screen = QGuiApplication.screenAt(near.center()) if near is not None else None
-        area = (screen or QGuiApplication.primaryScreen()).availableGeometry()
+        area = _area(near)
         if self.excluded and not image.isNull():
-            pixmap = QPixmap.fromImage(image).scaled(int(area.width() * SHARE), int(area.height() * SHARE),
-                                                     Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pixmap = QPixmap.fromImage(image)
+            box = self.fit_size(near)
+            if pixmap.width() > box.width() or pixmap.height() > box.height():
+                pixmap = pixmap.scaled(box, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             self.picture.setPixmap(pixmap)
         else:
             self.picture.setText(HIDDEN)
         self.adjustSize()
         self.move(area.center() - self.rect().center())
+
+    @staticmethod
+    def fit_size(near: QRect | None) -> QSize:
+        """O tamanho máximo da imagem: 70 % da área livre da tela onde está `near` (a bandeja)."""
+        area = _area(near)
+        return QSize(int(area.width() * SHARE), int(area.height() * SHARE))
 
     def exclude_from_capture(self) -> bool:
         if self.platform is None:
@@ -83,4 +91,18 @@ class ScreenView(QWidget):
         self.close()
 
 
-__all__ = ["HIDDEN", "ScreenView"]
+def _area(near: QRect | None) -> QRect:
+    screen = QGuiApplication.screenAt(near.center()) if near is not None else None
+    return (screen or QGuiApplication.primaryScreen()).availableGeometry()
+
+
+def fitted(data: bytes, width: int, height: int) -> QImage:
+    """Na `Task` (R-07): a imagem guardada decodificada e, maior que `width` x `height`, escalada (o `QImage` roda fora da
+    thread da interface; o `QPixmap`, não)."""
+    image = QImage.fromData(data)
+    if image.isNull() or (image.width() <= width and image.height() <= height):
+        return image
+    return image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+
+__all__ = ["HIDDEN", "ScreenView", "fitted"]

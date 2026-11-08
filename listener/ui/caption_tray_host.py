@@ -36,11 +36,12 @@ log = get_logger("ui.captions")
 NO_TRAY = "As sugestões só saem durante a gravação, com a legenda ao vivo e a bandeja de legendas."
 
 
-def suggest_outside(store: Store, notify: Callable[[str], Any]) -> None:
+def suggest_outside(store: Store, notify: Callable[[str], Any], screen: bool = False) -> None:
     """F5.20: o atalho e o "Sugerir…" sem o host (fora da gravação, sem a bandeja ou sem a legenda): o aviso, ou nada com as
-    sugestões desligadas nas Configurações (Escopo 12: o atalho fica mudo; R-05 da revisão do L2)."""
+    sugestões desligadas nas Configurações (Escopo 12: o atalho fica mudo; R-05 da revisão do L2). F5.21: o atalho da tela
+    fica mudo também com `suggest.screen` desligada (R-09 da revisão do L2 da F5.21)."""
     try:
-        on = bool(store.get(SPECS["suggest.enabled"]))
+        on = bool(store.get(SPECS["suggest.enabled"])) and (not screen or bool(store.get(SPECS["suggest.screen"])))
     except Exception:                                 # o banco ocupado: o aviso, que não custa nada
         on = True
     if on:

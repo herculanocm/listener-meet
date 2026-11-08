@@ -190,6 +190,7 @@ class SuggestHost(SteerMixin, QObject):
         with_screen = self.screen.enabled and (self.screen.on if screen is None else screen)
         if with_screen and self.screen.needs_consent(self.mode):
             return "confirme a tela"
+        self.screen.drop_pending()                # R-05: o pedido que começa tira a pergunta da vista
         capture = self.screen.capturer() if with_screen else None
         clicked = time.monotonic()                # A-19: o tempo conta do clique, com o print e o preparo
         store, mid, mode_now, nudge, dossier = self.store, self.meeting_id, self.mode, self.nudge, self.dossier
@@ -303,6 +304,7 @@ class SuggestHost(SteerMixin, QObject):
             self.cancel()
         self.finished = True
         self.card.set_finished()
+        self.screen.drop_pending()
         self.refresh()
         if discarded or not self.enabled:
             return

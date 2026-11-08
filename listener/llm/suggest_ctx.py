@@ -97,7 +97,8 @@ class SuggestResult:
 class ScreenShot:
     """F5.21: a tela de um pedido, preparada fora da thread da interface: a imagem a enviar (nula se vazia ou se falhou), a
     miniatura (sempre que houve print), a cópia de 960 px (com `suggest.screen_keep`), de onde saiu e quantas janelas por
-    cima saíram pretas. `app` é o rótulo ("janela do Teams", "monitor 2"), nunca o título da janela (A-06)."""
+    cima saíram pretas. `app` é o rótulo ("janela do Teams", "monitor 2"), nunca o título da janela (A-06). `note`: o que o
+    cartão diz além do estado (o monitor fixo que sumiu, A-30; a reunião coberta por outras janelas; R-04 e R-08 da revisão)."""
     status: ScreenStatus
     source: ScreenSource
     app: str
@@ -105,6 +106,7 @@ class ScreenShot:
     thumb: bytes | None = None
     copy: bytes | None = None
     covered: int = 0
+    note: str = ""
 
 
 @dataclass(frozen=True, slots=True)

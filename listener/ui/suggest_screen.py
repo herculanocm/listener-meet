@@ -7,12 +7,15 @@
 - A chave nasce desligada em cada gravação (A-31); a escolha rápida da seta (o automático, o monitor em uso ou um monitor) fica
   na memória desta gravação (A-25), e a das Configurações vale de novo na seguinte.
 - A confirmação da primeira vez com o provedor (U-168, A-25, A-31): um pedido pendente por vez, o novo no lugar do anterior;
-  "Mandar" grava o provedor com a data em `suggest.screen_consent` e pede com a tela (o print sai naquele momento); "Agora
-  não" desliga a chave e pede sem ela.
+  o cartão recolhido abre para ela; "Mandar" grava o provedor com a data em `suggest.screen_consent` e pede com a tela (o
+  print sai naquele momento); "Agora não" desliga a chave e pede sem ela. Um pedido que começa sem ela e o Parar a tiram da
+  vista (R-05 da revisão do L2).
 - O print (`capturer`): uma função para a tarefa, com o que se lê agora na thread da interface (a fonte atual da gravação,
-  A-05; a escolha; a lista dos apps; guardar a cópia); o alvo, o print e o preparo rodam na tarefa (A-02, D-103).
+  A-05, com o `fallback_exe`; a escolha; a lista dos apps; guardar a cópia); o alvo, o print e o preparo rodam na tarefa
+  (A-02, D-103).
 - A tela enviada (`sent`): a miniatura no chat (sem a imagem se a bandeja não saiu da captura, pergunta 15), a linha no
-  cartão e a imagem na memória para a janela maior (as 10 últimas).
+  cartão (com a nota do alvo: o monitor fixo que sumiu, a reunião coberta) e a imagem na memória para a janela maior (as 10
+  últimas), decodificada e escalada numa `Task` no clique (R-07).
 O log leva o estado, as dimensões e a fonte; nunca a imagem nem o título."""
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QRect
 from PySide6.QtGui import QImage
 
 from ..config.defaults import SPECS
@@ -31,9 +34,11 @@ from ..llm.suggest_ctx import ScreenSent, ScreenShot
 from ..log import get_logger
 from ..model import ScreenStatus, SuggestMode
 from .caption_chat import AltProofMenu
-from .screen_grab import AUTO, CURSOR, MONITOR, capture
-from .screen_view import ScreenView
+from .screen_grab import AUTO, COVERED_NOTE, CURSOR, MONITOR, capture
+from .screen_view import ScreenView, fitted
 from .settings_search import PROVIDER_NAMES
+from .tasks import Task, run_task
+from .widget_parts import shortcut_text
 
 if TYPE_CHECKING:
     from .suggest_host import SuggestHost
@@ -67,6 +72,8 @@ class ScreenFlow(QObject):
         self.key: int | None = None                 # o tempo do pedido da última tela (a linha do cartão rola até ela)
         self.images: dict[int, bytes] = {}
         self.view: ScreenView | None = None
+        self.view_task: Task | None = None
+        self.view_near: QRect | None = None
         self.visible = self.enabled = False
         self.tip = ""
         row = host.card.screen_row
@@ -86,7 +93,9 @@ class ScreenFlow(QObject):
         self.enabled = self.visible and not self.tip
         if not self.enabled:
             self.on = False
-        self.host.card.screen_row.set_state(self.visible and self.host.enabled and self.host.active, self.enabled, self.tip)
+        shortcut = shortcut_text(store.get_setting("hotkeys.suggest_screen") or "")
+        self.host.card.screen_row.set_state(self.visible and self.host.enabled and self.host.active,
+                                            self.enabled and not self.host.finished, self.tip, shortcut)   # R-05, R-09
         self.host.card.screen_row.set_on(self.on)
 
     def set_on(self, on: bool) -> None:
@@ -130,8 +139,14 @@ class ScreenFlow(QObject):
         self.pending = mode
         self.host.tray.show_card()
         self.host.card.show()
+        self.host.card.set_collapsed(False)                 # R-05: recolhido, a pergunta ficava no corpo escondido
         self.host.card.screen_row.ask(PROVIDER_NAMES.get(provider, provider))
         return True
+
+    def drop_pending(self) -> None:
+        """Um pedido que começa (sem a tela, ou já confirmado) e o Parar: a pergunta pendente sai da vista (R-05)."""
+        self.pending = None
+        self.host.card.screen_row.ask(None)
 
     def answer(self, ok: bool) -> None:
         mode, self.pending = self.pending, None
@@ -153,21 +168,23 @@ class ScreenFlow(QObject):
         rec = self.host.recording
         src = getattr(rec, "source", None)
         pid = getattr(src, "pid", None)
-        exe = str(getattr(src, "exe", "") or getattr(src, "fallback_exe", "") or "")
+        exe, fallback = str(getattr(src, "exe", "") or ""), str(getattr(src, "fallback_exe", "") or "")
         platform, store = self.host.platform, self.host.store
         return functools.partial(capture, platform, self.source(), pid, exe, platform.watched_apps(),
-                                 bool(store.get(SPECS["suggest.screen_keep"])))
+                                 bool(store.get(SPECS["suggest.screen_keep"])), fallback)
 
     def sent(self, s: ScreenSent) -> None:
         shot = s.shot
         self.key = s.t_ms
         ok = shot.status == ScreenStatus.SENT
         image = QImage.fromData(shot.thumb) if shot.thumb and self.host.tray.excluded is not False else None
-        text = (f"Tela enviada · {shot.app}" if ok else "Tela preta · não enviada" if shot.status == ScreenStatus.EMPTY
-                else "Tela não capturada")
+        covered = shot.note == COVERED_NOTE
+        text = (f"Tela enviada · {shot.app}" if ok else ("Tela coberta" if covered else "Tela preta") + " · não enviada"
+                if shot.status == ScreenStatus.EMPTY else "Tela não capturada")
         self.host.tray.chat.add_screen(s.t_ms, image, text, ok)
-        self.host.card.screen_row.show_line(f"com a tela · {shot.app}" if ok else EMPTY_NOTE if shot.status == ScreenStatus.EMPTY
-                                        else FAILED_NOTE)
+        line = (f"com a tela · {shot.app}" if ok else shot.note if covered else EMPTY_NOTE if shot.status == ScreenStatus.EMPTY
+                else FAILED_NOTE)
+        self.host.card.screen_row.show_line(f"{line} ({shot.note})" if shot.note and not covered else line)   # R-08: A-30
         if ok and shot.image is not None:
             self.images[s.t_ms] = shot.copy or shot.image.data
             for old in sorted(self.images)[:-KEEP_IMAGES]:
@@ -181,13 +198,22 @@ class ScreenFlow(QObject):
         self.host.tray.chat.scroll_to_screen(self.key)
 
     def open_view(self, key: int) -> None:
+        """R-07: a imagem decodificada e escalada numa `Task`; na volta, só o pixmap nasce na thread da interface."""
         data = self.images.get(key)
-        if data is None:
+        if data is None or self.view_task is not None:
+            return
+        self.view_near = self.host.tray.frameGeometry()
+        size = ScreenView.fit_size(self.view_near)
+        self.view_task = run_task(functools.partial(fitted, data, size.width(), size.height()), None, self._view_ready)
+
+    def _view_ready(self, image: object) -> None:
+        self.view_task = None
+        if self.host.closed or not isinstance(image, QImage) or image.isNull():
             return
         if self.view is not None:
             with suppress(RuntimeError):
                 self.view.close()
-        self.view = ScreenView(QImage.fromData(data), "Tela enviada", self.host.platform, self.host.tray.frameGeometry())
+        self.view = ScreenView(image, "Tela enviada", self.host.platform, self.view_near)
         self.view.show()
 
     def teardown(self) -> None:

@@ -599,7 +599,7 @@ class Controller(QObject):
         if self.captions is not None:
             self.captions.request_suggestion(screen)
         else:
-            suggest_outside(self.store, self.notify)
+            suggest_outside(self.store, self.notify, screen)
 
     # ---------------------------------------------------------------- gravação
     @property
