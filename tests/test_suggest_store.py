@@ -45,16 +45,16 @@ def test_v10_on_a_v9_database_the_way_back_and_up_again(tmp_path, monkeypatch):
     assert "suggestions" not in _tables(tmp_path) and "goal" not in _meeting_columns(tmp_path)
     monkeypatch.undo()
     with Store(tmp_path) as s:
-        assert s.schema_version() == MAIN_SCHEMA_VERSION == 10
+        assert s.schema_version() == MAIN_SCHEMA_VERSION == 11
         mid = s.create_meeting("Orçamento", None, None, None, goal="fechar o corte")
         suggestion(s, mid)
     assert {"suggestions", "suggestion_options"} <= _tables(tmp_path) and "goal" in _meeting_columns(tmp_path)
-    assert down.downgrade(tmp_path, 9) == [10]
+    assert down.downgrade(tmp_path, 9) == [11, 10]
     assert not {"suggestions", "suggestion_options"} & _tables(tmp_path) and "goal" not in _meeting_columns(tmp_path)
     with sqlite3.connect(tmp_path / "listener.db") as c:
         assert c.execute("SELECT title FROM meetings").fetchall() == [("Orçamento",)]       # a reunião fica, sem o objetivo
     with Store(tmp_path) as again:
-        assert again.schema_version() == 10 and again.get_meeting(mid)["goal"] is None
+        assert again.schema_version() == 11 and again.get_meeting(mid)["goal"] is None
         assert again.suggestions.list_for_meeting(mid) == []
 
 

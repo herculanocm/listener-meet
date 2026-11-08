@@ -220,6 +220,19 @@ MAIN_V10: tuple[str, ...] = (
 )
 MAIN_V10_COLUMNS: tuple[tuple[str, str, str], ...] = (("meetings", "goal", "TEXT"),)
 
+# F5.21 (v11): a tela das sugestões ao vivo, uma linha por pedido com a tela (o estado, a fonte, o rótulo do app, as dimensões
+# e os bytes do que foi enviado, as janelas pintadas de preto, a miniatura sempre e a cópia de 960 px com `suggest.screen_keep`;
+# vai com a sugestão); `suggestions.screen_summary` (o resumo que a LLM devolveu) e `suggestion_options.screen` (a opção que
+# usou a tela) por `_add_columns`. A volta é `MAIN_DOWNS[11]` em `store/downgrade.py`.
+MAIN_V11: tuple[str, ...] = (
+    ("CREATE TABLE IF NOT EXISTS suggestion_screens ("
+    "  suggestion_id INTEGER PRIMARY KEY REFERENCES suggestions(id) ON DELETE CASCADE, status TEXT NOT NULL, source TEXT NOT NULL,"
+    "  app TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,"
+    "  covered INTEGER NOT NULL DEFAULT 0, thumb BLOB, data BLOB)"),
+)
+MAIN_V11_COLUMNS: tuple[tuple[str, str, str], ...] = (("suggestions", "screen_summary", "TEXT"),
+                                                      ("suggestion_options", "screen", "INTEGER NOT NULL DEFAULT 0"))
+
 FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
                 "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
 
@@ -277,6 +290,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (8, None),        # F5: base consultável (MAIN_V8_RAG, CHAT_V8_*), com a guarda da CP3 e o FTS5 como requisito
     (9, None),        # F5.10: `chat_messages.trace_json` (MAIN_V9_COLUMNS); a volta em `store/downgrade.py`
     (10, MAIN_V10),   # F5.20: `suggestions`, `suggestion_options` e `meetings.goal` (MAIN_V10_COLUMNS); a volta em `downgrade.py`
+    (11, MAIN_V11),   # F5.21: `suggestion_screens`, o resumo da tela e a tela por opção (MAIN_V11_COLUMNS); a volta em `downgrade.py`
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

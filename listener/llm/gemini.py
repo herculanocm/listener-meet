@@ -84,6 +84,7 @@ class GeminiProvider:
             if m.text:
                 parts.append({"text": m.text})
             parts += [{"inline_data": {"data": a.data, "mime_type": a.mime}} for a in m.audio]
+            parts += [{"inline_data": {"data": i.data, "mime_type": i.mime}} for i in m.images]      # F5.21: depois do texto
             contents.append({"role": "model" if m.role == Role.ASSISTANT else "user", "parts": parts or [{"text": ""}]})
         return system, contents
 

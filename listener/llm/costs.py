@@ -15,6 +15,7 @@ from .models_table import family_for
 from .types import Usage
 
 CHARS_PER_TOKEN = 3.5
+IMAGE_TOKENS_EST = 2_400             # F5.21 (A-13): uma imagem de 1.600 px, pelo mais caro dos três provedores [fato: docs]
 AUDIO_TOKENS_PER_SECOND = 32          # Gemini [fato]; os outros provedores informam `audio_tokens` na resposta
 CACHE_WRITE_FACTOR = 1.25             # escrita no cache da Anthropic (TTL de 5 min) custa 1,25 vez a entrada [fato]
 

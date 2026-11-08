@@ -215,6 +215,10 @@ def has_audio(req: Request) -> bool:
     return any(m.audio for m in req.messages)
 
 
+def has_images(req: Request) -> bool:
+    return any(m.images for m in req.messages)
+
+
 def require(capabilities: frozenset[Capability], cap: Capability, provider: str, what: str) -> None:
     if cap not in capabilities:
         from .base import ProviderUnavailableError

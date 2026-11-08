@@ -173,7 +173,7 @@ def test_the_live_suggestion_and_the_memo_send_the_custom_instructions_they_stam
     assert r.outcome == Outcome.DONE
     req, _resp = store.llm_calls.payloads(r.call_id)
     assert req[0]["text"].startswith(f"{_sent('suggest')}{prompts.suggest.CONTRACT}")
-    assert store.llm_calls.get(r.call_id)["prompt_version"] == f"suggest/1.0+u{prompt_settings.text_hash(_mine('suggest'))}"
+    assert store.llm_calls.get(r.call_id)["prompt_version"] == f"suggest/1.1+u{prompt_settings.text_hash(_mine('suggest'))}"
     for option_id in r.option_ids:
         store.suggestions.set_rating(option_id, 1)
     for _ in range(3):                                                    # 10 avaliações ou mais: o memorando roda

@@ -3,14 +3,16 @@ o texto como chegou, a saída validada, o custo e os tempos), e `suggestion_opti
 com o `t_ms` de cada legenda citada, a evidência e a avaliação: "Boa" 1, "Ruim" 0 com o motivo, "Usei"). Gravadas pelo app
 (a tarefa da sugestão roda numa `StreamTask`); vão com a reunião, as opções pela cascata das sugestões; nada se apaga sozinho
 (CP3): "desfazer" só volta a nota a nula. `rated_at` marca a última avaliação ("Boa", "Ruim" ou "Usei") e ordena o que entra no
-pedido seguinte e no memorando."""
+pedido seguinte e no memorando. F5.21: `suggestion_screens`, a tela de um pedido (o estado, a fonte, o rótulo do app, o
+tamanho do que foi enviado, a miniatura e a cópia de 960 px), `suggestions.screen_summary` (o resumo da tela, que os pedidos
+seguintes leem) e `suggestion_options.screen` (a opção que usou a tela)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypedDict, cast
 
-from ..model import Evidence, RatingReason, SuggestStatus
+from ..model import Evidence, RatingReason, ScreenSource, ScreenStatus, SuggestStatus
 from .core import Core, _now
 
 RATED = "(o.rating IS NOT NULL OR o.used = 1)"         # uma opção avaliada: com nota ou usada
@@ -86,6 +88,7 @@ class SuggestionInsert:
     total_ms: int | None
     status: SuggestStatus
     error: str | None
+    screen_summary: str | None = None       # F5.21: o resumo da tela que a LLM devolveu
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +98,36 @@ class OptionInsert:
     text: str
     facts_json: str                 # [{"caption_id", "t_ms"}]
     evidence: Evidence
+    screen: bool = False            # F5.21: a opção usou a tela
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenInsert:
+    """F5.21: a tela de um pedido. `thumb` sempre (o chat e a aba a mostram); `data`, a cópia de 960 px, só com
+    `suggest.screen_keep`; nunca a imagem enviada, de 1.600 px (A-23)."""
+    suggestion_id: int
+    status: ScreenStatus
+    source: ScreenSource
+    app: str                        # "janela do Teams", "monitor 2": nunca o título da janela (A-06)
+    width: int
+    height: int
+    sent_bytes: int
+    covered: int
+    thumb: bytes | None
+    data: bytes | None
+
+
+class ScreenRow(TypedDict, total=False):
+    suggestion_id: int
+    status: str
+    source: str
+    app: str
+    width: int
+    height: int
+    bytes: int
+    covered: int
+    thumb: bytes | None
+    t_ms: int
 
 
 class SuggestionsRepo:
@@ -106,17 +139,45 @@ class SuggestionsRepo:
         return self.core.insert(
             "INSERT INTO suggestions(meeting_id, t_ms, mode, nudge, goal, since_t_ms, until_caption_id, t_until_ms, anchored, raw_chars, "
             "input_chars, thread_summary, data_json, text_llm, provider, model, prompt_version, call_id, cost_usd, cost_estimated, "
-            "first_ms, total_ms, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?)",
+            "first_ms, total_ms, status, error, screen_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row.meeting_id, int(row.t_ms), str(row.mode), row.nudge, row.goal, int(row.since_t_ms), int(row.until_caption_id),
              int(row.t_until_ms), int(bool(row.anchored)), int(row.raw_chars), int(row.input_chars), row.thread_summary, row.data_json,
              row.text_llm, row.provider, row.model, row.prompt_version, row.call_id, row.cost_usd, int(bool(row.cost_estimated)),
-             row.first_ms, row.total_ms, str(row.status), row.error, _now()))
+             row.first_ms, row.total_ms, str(row.status), row.error, row.screen_summary, _now()))
 
     def insert_options(self, suggestion_id: int, options: Sequence[OptionInsert]) -> list[int]:
-        sql = ("INSERT INTO suggestion_options(suggestion_id, idx, kind, text, facts_json, evidence) VALUES (?, ?, ?, ?, ?, ?)")
+        sql = "INSERT INTO suggestion_options(suggestion_id, idx, kind, text, facts_json, evidence, screen) VALUES (?, ?, ?, ?, ?, ?, ?)"
         with self.core.transaction():
-            return [self.core.insert(sql, (suggestion_id, int(o.idx), o.kind, o.text, o.facts_json, str(o.evidence))) for o in options]
+            return [self.core.insert(sql, (suggestion_id, int(o.idx), o.kind, o.text, o.facts_json, str(o.evidence), int(o.screen)))
+                    for o in options]
+
+    def insert_screen(self, row: ScreenInsert) -> None:
+        """F5.21: a tela do pedido (uma por sugestão)."""
+        self.core.execute(
+            "INSERT INTO suggestion_screens(suggestion_id, status, source, app, width, height, bytes, covered, thumb, data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row.suggestion_id, str(row.status), str(row.source), row.app, int(row.width), int(row.height), int(row.sent_bytes),
+             int(row.covered), row.thumb, row.data))
+
+    def screens_for_meeting(self, meeting_id: int) -> dict[int, ScreenRow]:
+        """F5.21: as telas da reunião com a miniatura (sem a cópia), por sugestão: o chat e a aba."""
+        rows = self.core.q("SELECT t.suggestion_id, t.status, t.source, t.app, t.width, t.height, t.bytes, t.covered, t.thumb, s.t_ms "
+                           "FROM suggestion_screens t JOIN suggestions s ON s.id = t.suggestion_id WHERE s.meeting_id = ? "
+                           "ORDER BY s.id", (meeting_id,))
+        return {int(r["suggestion_id"]): cast(ScreenRow, dict(r)) for r in rows}
+
+    def screen_copy(self, suggestion_id: int) -> bytes | None:
+        """F5.21: a cópia de 960 px guardada (ou nada, com `suggest.screen_keep` desligada)."""
+        rows = self.core.q("SELECT data FROM suggestion_screens WHERE suggestion_id = ?", (suggestion_id,))
+        return bytes(rows[0]["data"]) if rows and rows[0]["data"] is not None else None
+
+    def screen_summaries(self, meeting_id: int, t_from_ms: int, t_to_ms: int, limit: int) -> list[tuple[int, str]]:
+        """F5.21 (7b): os resumos das telas anteriores da reunião na janela do pedido, os mais novos primeiro."""
+        rows = self.core.q("SELECT t_ms, screen_summary FROM suggestions WHERE meeting_id = ? AND t_ms >= ? AND t_ms < ? "
+                           "AND screen_summary IS NOT NULL AND screen_summary != '' ORDER BY t_ms DESC, id DESC LIMIT ?",
+                           (meeting_id, int(t_from_ms), int(t_to_ms), int(limit)))
+        return [(int(r["t_ms"]), str(r["screen_summary"])) for r in rows]
 
     def set_rating(self, option_id: int, rating: int | None, reason: str | None = None) -> bool:
         """"Boa" (1), "Ruim" (0, com o motivo ou sem) ou "desfazer" (None). O motivo só vale com o "Ruim"; `rated_at` fica com a
@@ -198,4 +259,4 @@ class SuggestionsRepo:
         return [cast(OptionRow, dict(r)) for r in rows]
 
 
-__all__ = ["OptionInsert", "OptionRow", "SuggestionInsert", "SuggestionRow", "SuggestionsRepo"]
+__all__ = ["OptionInsert", "OptionRow", "ScreenInsert", "ScreenRow", "SuggestionInsert", "SuggestionRow", "SuggestionsRepo"]

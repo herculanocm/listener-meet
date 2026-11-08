@@ -71,6 +71,7 @@ NEVER_TABLES = frozenset({"providers", "settings", "revisions", "events", "prese
                           "job_artifacts"})
 NEVER_PREFIXES = ("chat_", "voice_", "sqlite_", "pragma_")
 NEVER_COLUMNS = frozenset({("people", "email"), ("people", "notes"), ("meetings", "notes"), ("meetings", "goal"),   # F5.20
+                           ("suggestions", "screen_summary"),                                                       # F5.21
                            ("llm_calls", "request_blob"), ("llm_calls", "response_blob"), ("llm_calls", "error")})
 # as funções aceitas; fora da lista (e negadas por nome em D2): load_extension, fts5, fts3_tokenizer, randomblob, zeroblob, sqlite_*
 FUNCTIONS = frozenset({

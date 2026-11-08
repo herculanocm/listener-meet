@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from .types import Capability, ModelInfo, ProviderKind
 
 TEXT_JSON = frozenset({Capability.TEXT, Capability.JSON, Capability.STREAMING})
-ALL_GEMINI = TEXT_JSON | {Capability.AUDIO_IN, Capability.COUNT_TOKENS, Capability.CACHE}
-CLAUDE = TEXT_JSON | {Capability.COUNT_TOKENS, Capability.CACHE}
+ALL_GEMINI = TEXT_JSON | {Capability.AUDIO_IN, Capability.IMAGE_IN, Capability.COUNT_TOKENS, Capability.CACHE}
+CLAUDE = TEXT_JSON | {Capability.IMAGE_IN, Capability.COUNT_TOKENS, Capability.CACHE}
+GPT_VISION = TEXT_JSON | {Capability.IMAGE_IN, Capability.CACHE}          # F5.21 (A-12): as GPT que recebem imagem
 EMBED_ONLY = frozenset({Capability.EMBEDDINGS})
 G = ProviderKind.GEMINI
 O = ProviderKind.OPENAI
@@ -86,15 +87,15 @@ FAMILIES: tuple[Family, ...] = (
     Family(G, "gemini-3", "Gemini 3.x", 1_048_576, 65_536, ALL_GEMINI, "gemini-2.5-flash", True),
     Family(G, "gemini-embedding", "Gemini Embedding", 2_048, 0, EMBED_ONLY, "gemini-embedding-001", embedding=True),
     Family(G, "gemini", "Gemini", 1_048_576, 8_192, ALL_GEMINI, "gemini-2.5-flash"),
-    Family(O, "gpt-4.1-mini", "GPT-4.1 mini", 1_047_576, 32_768, TEXT_JSON | {Capability.CACHE}, "gpt-4.1-mini"),
-    Family(O, "gpt-4.1", "GPT-4.1", 1_047_576, 32_768, TEXT_JSON | {Capability.CACHE}, "gpt-4.1"),
-    Family(O, "gpt-5-mini", "GPT-5 mini", 400_000, 128_000, TEXT_JSON | {Capability.CACHE}, "gpt-5-mini", True),
-    Family(O, "gpt-5", "GPT-5", 400_000, 128_000, TEXT_JSON | {Capability.CACHE}, "gpt-5", True),
+    Family(O, "gpt-4.1-mini", "GPT-4.1 mini", 1_047_576, 32_768, GPT_VISION, "gpt-4.1-mini"),
+    Family(O, "gpt-4.1", "GPT-4.1", 1_047_576, 32_768, GPT_VISION, "gpt-4.1"),
+    Family(O, "gpt-5-mini", "GPT-5 mini", 400_000, 128_000, GPT_VISION, "gpt-5-mini", True),
+    Family(O, "gpt-5", "GPT-5", 400_000, 128_000, GPT_VISION, "gpt-5", True),
     Family(O, "gpt-4o-audio", "GPT-4o audio", 128_000, 16_384, TEXT_JSON | {Capability.AUDIO_IN}, "gpt-4o-audio-preview"),
-    Family(O, "gpt-4o-mini", "GPT-4o mini", 128_000, 16_384, TEXT_JSON | {Capability.CACHE}, "gpt-4.1-mini"),
-    Family(O, "gpt-4o", "GPT-4o", 128_000, 16_384, TEXT_JSON | {Capability.CACHE}, "gpt-4.1"),
-    Family(O, "o4-mini", "o4-mini", 200_000, 100_000, TEXT_JSON | {Capability.CACHE}, "gpt-5-mini", True),
-    Family(O, "o3", "o3", 200_000, 100_000, TEXT_JSON | {Capability.CACHE}, "gpt-5", True),
+    Family(O, "gpt-4o-mini", "GPT-4o mini", 128_000, 16_384, GPT_VISION, "gpt-4.1-mini"),
+    Family(O, "gpt-4o", "GPT-4o", 128_000, 16_384, GPT_VISION, "gpt-4.1"),
+    Family(O, "o4-mini", "o4-mini", 200_000, 100_000, GPT_VISION, "gpt-5-mini", True),
+    Family(O, "o3", "o3", 200_000, 100_000, GPT_VISION, "gpt-5", True),
     Family(O, "text-embedding-3-small", "text-embedding-3-small", 8_191, 0, EMBED_ONLY, "text-embedding-3-small", embedding=True),
     Family(O, "text-embedding-3-large", "text-embedding-3-large", 8_191, 0, EMBED_ONLY, "text-embedding-3-large", embedding=True),
     Family(O, "gpt", "GPT", 128_000, 16_384, TEXT_JSON, "gpt-4.1-mini"),
@@ -116,8 +117,9 @@ DEFAULT_EMBED_MODELS: dict[ProviderKind, str] = {
 }
 PROVIDER_CAPABILITIES: dict[ProviderKind, frozenset[Capability]] = {
     ProviderKind.GEMINI: ALL_GEMINI | {Capability.EMBEDDINGS},
-    ProviderKind.OPENAI: TEXT_JSON | {Capability.AUDIO_IN, Capability.EMBEDDINGS, Capability.CACHE, Capability.COUNT_TOKENS},
-    ProviderKind.ANTHROPIC: CLAUDE,                                                     # sem embeddings nem áudio [fato]
+    ProviderKind.OPENAI: TEXT_JSON | {Capability.AUDIO_IN, Capability.IMAGE_IN, Capability.EMBEDDINGS, Capability.CACHE,
+                                      Capability.COUNT_TOKENS},
+    ProviderKind.ANTHROPIC: CLAUDE,                                                     # sem embeddings nem áudio [fato]; com imagem
     ProviderKind.LOCAL: EMBED_ONLY,                                                     # F5.1 (A-02): só os vetores da busca
 }
 

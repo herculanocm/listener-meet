@@ -38,7 +38,7 @@ def test_the_schemas_are_strict_fast_and_versioned():
     assert check_strict(prompts.suggest.SCHEMA) == [] and check_strict(prompts.suggest_memo.SCHEMA) == []
     assert TASK_CLASS[LlmTask.SUGGEST] == TASK_CLASS[LlmTask.SUGGEST_MEMO] == ModelClass.FAST
     assert TASK_REASONING[LlmTask.SUGGEST] == Reasoning.NONE
-    assert prompts.prompt_version(LlmTask.SUGGEST) == "suggest/1.0" and prompts.prompt_version(LlmTask.SUGGEST_MEMO) == "suggest_memo/1.0"
+    assert prompts.prompt_version(LlmTask.SUGGEST) == "suggest/1.1" and prompts.prompt_version(LlmTask.SUGGEST_MEMO) == "suggest_memo/1.0"
     assert prompts.EDITABLE.index(LlmTask.SUGGEST) == prompts.EDITABLE.index(LlmTask.PARTIAL) + 1
     assert prompt_settings.TASKS.index("suggest_memo") == prompt_settings.TASKS.index("suggest") + 1
     kinds = prompts.suggest.OPTION_SCHEMA["properties"]["kind"]["enum"]
@@ -90,7 +90,7 @@ def test_custom_instructions_come_first_and_stamp_the_version():
     mine = "Sugira em {idioma}, como um CFO."
     msgs = prompts.build(LlmTask.SUGGEST, _ctx(), mine)
     assert msgs[0].text.startswith(f"Sugira em português do Brasil, como um CFO. {CONTRACT_SPEAK}")
-    assert prompts.prompt_version(LlmTask.SUGGEST, mine) == f"suggest/1.0+u{prompt_settings.text_hash(mine)}"
+    assert prompts.prompt_version(LlmTask.SUGGEST, mine) == f"suggest/1.1+u{prompt_settings.text_hash(mine)}"
 
 
 def test_the_memo_has_no_meeting_and_writes_in_the_given_language():

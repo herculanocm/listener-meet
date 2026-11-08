@@ -17,7 +17,7 @@ from typing import Any
 
 from ..log import get_logger
 from . import models_table
-from .adapters_common import has_audio, split_system
+from .adapters_common import audio_b64, has_audio, split_system
 from .base import ProviderUnavailableError
 from .models_table import Family
 from .schema import provider_schema
@@ -84,7 +84,8 @@ class ClaudeParams:
 
 
 def conversation(req: Request, provider_id: str) -> tuple[str | None, list[dict[str, Any]]]:
-    """O sistema e as mensagens só com texto; o prefixo estável (a primeira mensagem do usuário) com `cache_control`. R-01: a
+    """O sistema e as mensagens (F5.21: com as imagens em base64 antes do texto); o prefixo estável (a primeira mensagem do
+    usuário) com `cache_control`. R-01: a
     mensagem em branco (a resposta vazia gravada no chat, de uma recusa ou de outro provedor) fica de fora, porque a API recusa
     bloco de texto só com espaço; os turnos seguidos do mesmo papel ela junta, mas o primeiro precisa ser do usuário, então a
     resposta que sobra no começo (o histórico cortado no meio de um par) também sai."""
@@ -93,12 +94,15 @@ def conversation(req: Request, provider_id: str) -> tuple[str | None, list[dict[
     system, rest = split_system(req)
     out: list[dict[str, Any]] = []
     for m in rest:
-        if not m.text.strip() or (not out and m.role == Role.ASSISTANT):
+        if (not m.text.strip() and not m.images) or (not out and m.role == Role.ASSISTANT):
             continue
-        block: dict[str, Any] = {"type": "text", "text": m.text}
+        blocks: list[dict[str, Any]] = [{"type": "image", "source": {"type": "base64", "media_type": i.mime,   # F5.21 (A-11)
+                                                                     "data": audio_b64(i.data)}} for i in m.images]
+        if m.text.strip():
+            blocks.append({"type": "text", "text": m.text})
         if req.cache_prefix and not out:                             # a primeira que fica é sempre do usuário
-            block["cache_control"] = {"type": "ephemeral"}
-        out.append({"role": "assistant" if m.role == Role.ASSISTANT else "user", "content": [block]})
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        out.append({"role": "assistant" if m.role == Role.ASSISTANT else "user", "content": blocks})
     return system, out
 
 

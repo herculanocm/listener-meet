@@ -138,6 +138,22 @@ def _frozen(text: str | None) -> bool:
     return isinstance(data, dict) and "prompts" in data
 
 
+def image_capable(store: Store) -> bool:
+    """F5.21 (A-12): o provedor ativo com chave cujo modelo rápido recebe imagem, só pela tabela do projeto: o cache de
+    `list_models()` em `providers.models_json` guarda as capacidades do dia em que o dono listou os modelos, antes da imagem."""
+    from .models_table import PROVIDER_CAPABILITIES, model_info
+    from .types import Capability
+
+    row = store.providers.active_with_key("llm")
+    if row is None:
+        return False
+    cfg = LlmJobConfig.from_store(store, str(row["id"]))
+    if not cfg.ready:
+        return False
+    return (Capability.IMAGE_IN in model_info(cfg.provider_kind, cfg.fast_model).capabilities
+            and Capability.IMAGE_IN in PROVIDER_CAPABILITIES[ProviderKind(cfg.provider_kind)])
+
+
 def audio_capable(store: Store) -> bool:
     """`pipeline.transcriber = llm` só com provedor ativo com chave cujo modelo rápido tem `AUDIO_IN` (F3 item 9, F3A-10):
     capacidade pelo cache de `list_models()` em `providers.models_json`, senão pela tabela do projeto."""

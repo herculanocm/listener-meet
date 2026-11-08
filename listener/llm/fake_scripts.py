@@ -184,9 +184,17 @@ def suggest(req: Request) -> dict[str, Any]:
     kinds = ORIENT_KINDS if orient else SPEAK_KINDS
     lines = _lines(req)
     facts = [ln.segment_id for ln in lines[:2]]
-    options = [{"kind": kinds[i % len(kinds)], "text": f"Opção simulada {i + 1}: {kinds[i % len(kinds)].lower()} sobre o que foi dito.",
-                "facts": facts} for i in range(n)]
-    return {"options": options, "thread_summary": f"Fio simulado com {len(lines)} {'legenda' if len(lines) == 1 else 'legendas'}."}
+    options: list[dict[str, Any]] = [{"kind": kinds[i % len(kinds)], "facts": facts,
+                                      "text": f"Opção simulada {i + 1}: {kinds[i % len(kinds)].lower()} sobre o que foi dito."}
+                                     for i in range(n)]
+    out: dict[str, Any] = {"options": options,
+                           "thread_summary": f"Fio simulado com {len(lines)} {'legenda' if len(lines) == 1 else 'legendas'}."}
+    if "screen_summary" in ((req.json_schema or {}).get("properties") or {}):     # F5.21: o esquema com a tela
+        images = req.image_count
+        for i, opt in enumerate(options):
+            opt["screen"] = images > 0 and i == 0                                 # a primeira opção usa a tela anexa
+        out["screen_summary"] = f"Tela simulada com {images} {'imagem' if images == 1 else 'imagens'}." if images else ""
+    return out
 
 
 def suggest_memo(req: Request) -> dict[str, Any]:

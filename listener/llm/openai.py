@@ -92,6 +92,8 @@ class OpenAIProvider:
                 if fmt is None:
                     raise ProviderUnavailableError(f"{self.id} só aceita áudio wav ou mp3 (veio {a.mime})")
                 content.append({"type": "input_audio", "input_audio": {"data": audio_b64(a.data), "format": fmt}})
+            content.extend({"type": "input_image", "image_url": f"data:{i.mime};base64,{audio_b64(i.data)}", "detail": "high"}
+                           for i in m.images)                                    # F5.21 (A-11)
             items.append({"role": "assistant" if assistant else "user", "content": content or [{"type": "input_text", "text": ""}]})
         return system, items
 

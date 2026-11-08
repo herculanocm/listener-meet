@@ -73,8 +73,8 @@ def test_the_default_prompt_is_byte_identical_to_the_frozen_copy(name):
 def test_every_version_is_the_pt_br_major():
     """D-071: o idioma mudou em todos os módulos e cada um subiu a versão major (as chamadas gravadas antes ficam em 1.x)."""
     versions = {str(t): prompts.prompt_version(t) for t in prompts.EDITABLE}
-    fresh = {"rag_sql", "rag_answer", "suggest", "suggest_memo"}               # F5.10 e F5.20: prompts novos, na 1.0
-    assert versions == {t: f"{t}/{'1.0' if t in fresh else '2.0'}" for t in prompt_settings.TASKS if t != "rag_chat"}
+    fresh = {"rag_sql": "1.0", "rag_answer": "1.0", "suggest": "1.1", "suggest_memo": "1.0"}   # F5.10, F5.20 e F5.21 (a tela)
+    assert versions == {t: f"{t}/{fresh.get(t, '2.0')}" for t in prompt_settings.TASKS if t != "rag_chat"}
     assert prompts.prompt_version(LlmTask.TEST) == "test/2.0" and prompts.prompt_version(LlmTask.RAG_CHAT) == "rag_chat/2.0"
     assert tuple(str(t) for t in prompts.EDITABLE) == prompt_settings.TASKS[:-1] and LlmTask.TEST not in prompts.EDITABLE
     assert prompt_settings.TASKS[-1] == "rag_chat" and LlmTask.RAG_CHAT not in prompts.EDITABLE    # F5.10: fora da página

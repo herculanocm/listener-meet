@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from .base import LlmStream
+from .costs import IMAGE_TOKENS_EST
 from .fake_scripts import DEFAULTS
 from .models_table import PROVIDER_CAPABILITIES
 from .schema import minimal_instance
@@ -106,10 +107,11 @@ class FakeProvider:
 
     def _usage(self, req: Request, text: str) -> Usage:
         audio = int(req.audio_seconds * 32)
+        images = req.image_count * IMAGE_TOKENS_EST                 # F5.21 (A-15): a imagem conta na entrada
         cached = min(self.cached_prefix_tokens, req.text_chars // 4) if req.cache_prefix else 0
         if req.cache_prefix:
             self.cached_prefix_tokens = len(req.messages[0].text) // 4 if req.messages else 0
-        return Usage(max(1, req.text_chars // 4) + audio, max(1, len(text) // 4), cached, audio)
+        return Usage(max(1, req.text_chars // 4) + audio + images, max(1, len(text) // 4), cached, audio)
 
     async def _enter(self, req: Request) -> None:
         self.requests.append(req)

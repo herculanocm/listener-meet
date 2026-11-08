@@ -31,7 +31,7 @@ from .attached import AttachedFiles
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_NEW_FILE, AUDIO_PAGE_SIZE, AUDIO_SCHEMA_VERSION, CHAT_V8_INDEXES,
                      CHAT_V8_TABLE, FTS5_MISSING, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS, MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS,
                      MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES, MAIN_V7_COLUMNS, MAIN_V7_INDEXES, MAIN_V8_RAG, MAIN_V9_COLUMNS,
-                     MAIN_V10_COLUMNS,
+                     MAIN_V10_COLUMNS, MAIN_V11_COLUMNS,
                      RAG_TABLES, RAG_TRIGGERS, fts5_error)
 
 log = get_logger("store")
@@ -259,9 +259,15 @@ def _main_v10_suggest(_core: Core, conn: sqlite3.Connection, schema: str) -> Non
     _add_columns(conn, schema, MAIN_V10_COLUMNS)
 
 
+def _main_v11_screen(_core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """F5.21: `suggestions.screen_summary` e `suggestion_options.screen`; `suggestion_screens` vem de `MAIN_V11` na mesma
+    transação (a volta é `store/downgrade.py`)."""
+    _add_columns(conn, schema, MAIN_V11_COLUMNS)
+
+
 MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
                                               5: _main_v5_review_columns, 6: _main_v6_llm, 7: _main_v7_live, 8: _main_v8_rag,
-                                              9: _main_v9_trace, 10: _main_v10_suggest}
+                                              9: _main_v9_trace, 10: _main_v10_suggest, 11: _main_v11_screen}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 

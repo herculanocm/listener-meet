@@ -7,6 +7,8 @@ tipos da sugestão ao vivo (o desfecho, a opção, o resultado, a janela), os te
   memorando, o objetivo, o parcial atual, o fio da sugestão anterior, as avaliações desta reunião e "Como sugerir agora".
 - `estimate_usd` (o custo pelos caracteres, sem chamar o provedor) e `bounded` (os tetos do esquema cortados antes da
   validação, R-02 da revisão do L1 da F5.20).
+- F5.21: `ScreenShot`, a tela de um pedido já preparada pela interface (A-17: o preparo fica em `ui/screen_grab.py`), e
+  `ScreenSent`, o aviso ao host para a miniatura entrar no chat (A-33).
 Nenhum Qt aqui."""
 from __future__ import annotations
 
@@ -16,13 +18,14 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..config.defaults import SPECS
-from ..model import Evidence, SuggestMode
+from ..model import Evidence, ScreenSource, ScreenStatus, SuggestMode
 from . import partial_task
-from .costs import CHARS_PER_TOKEN, fmt_usd, price_for
+from .costs import CHARS_PER_TOKEN, IMAGE_TOKENS_EST, fmt_usd, price_for
 from .jobconfig import LlmJobConfig
 from .prompts.common import Marker, Person
-from .prompts.suggest import MAX_FACTS, MAX_OPTIONS, SUMMARY_LIMIT, TEXT_LIMIT, RatedOption, SuggestCtx
+from .prompts.suggest import MAX_FACTS, MAX_OPTIONS, SCREEN_SUMMARY_LIMIT, SUMMARY_LIMIT, TEXT_LIMIT, RatedOption, SuggestCtx
 from .suggest_compact import PARTICIPANT, Compacted
+from .types import ImagePart
 
 if TYPE_CHECKING:
     from ..store import Store
@@ -64,6 +67,7 @@ class SuggestOption:
     text: str
     facts: tuple[tuple[int, int], ...]     # (caption_id, t_ms) das legendas citadas que estão no pedido
     evidence: Evidence
+    screen: bool = False                   # F5.21: a fala se apoia na tela ("[tela]" no cartão)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +90,29 @@ class SuggestResult:
     spent_usd: float = 0.0
     limit_usd: float = 0.0
     error: str | None = None
+    with_screen: bool = False              # F5.21: a imagem da tela foi no pedido (a recusa oferece "Tentar sem a tela")
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenShot:
+    """F5.21: a tela de um pedido, preparada fora da thread da interface: a imagem a enviar (nula se vazia ou se falhou), a
+    miniatura (sempre que houve print), a cópia de 960 px (com `suggest.screen_keep`), de onde saiu e quantas janelas por
+    cima saíram pretas. `app` é o rótulo ("janela do Teams", "monitor 2"), nunca o título da janela (A-06)."""
+    status: ScreenStatus
+    source: ScreenSource
+    app: str
+    image: ImagePart | None = None
+    thumb: bytes | None = None
+    copy: bytes | None = None
+    covered: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenSent:
+    """F5.21 (A-33): o aviso da tarefa ao host, depois das saídas cedo do pedido, para a miniatura entrar no chat no tempo do
+    pedido."""
+    t_ms: int
+    shot: ScreenShot
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,12 +186,14 @@ def suggest_ctx(store: Store, meeting: Mapping[str, Any], me: PersonRow | None, 
                       rated(store.suggestions.rated_for_meeting(mid, RATINGS_IN_PROMPT)), (nudge or "").strip() or None)
 
 
-def estimate_usd(store: Store, cfg: LlmJobConfig, chars_in: int, chars_out: int) -> float | None:
-    """O custo pelos caracteres (÷ 3,5 por token, o contrato), sem chamar o provedor: a dica do botão e a sugestão cancelada."""
+def estimate_usd(store: Store, cfg: LlmJobConfig, chars_in: int, chars_out: int, images: int = 0) -> float | None:
+    """O custo pelos caracteres (÷ 3,5 por token, o contrato), sem chamar o provedor: a dica do botão e a sugestão cancelada;
+    F5.21 (A-13): cada imagem conta `IMAGE_TOKENS_EST` tokens de entrada."""
     price = price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, cfg.fast_model)
     if price is None:
         return None
-    return round((chars_in / CHARS_PER_TOKEN * price.input_usd_m + chars_out / CHARS_PER_TOKEN * price.output_usd_m) / 1e6, 6)
+    tokens_in = chars_in / CHARS_PER_TOKEN + images * IMAGE_TOKENS_EST
+    return round((tokens_in * price.input_usd_m + chars_out / CHARS_PER_TOKEN * price.output_usd_m) / 1e6, 6)
 
 
 def bounded(obj: Any) -> Any:
@@ -181,9 +210,12 @@ def bounded(obj: Any) -> Any:
         out["options"] = [bounded(o) for o in out["options"][:MAX_OPTIONS]]
     if isinstance(out.get("thread_summary"), str):
         out["thread_summary"] = out["thread_summary"][:SUMMARY_LIMIT]
+    if isinstance(out.get("screen_summary"), str):                                  # F5.21
+        out["screen_summary"] = out["screen_summary"][:SCREEN_SUMMARY_LIMIT]
     return out
 
 
 __all__ = ["ANCHOR_WINDOW_MS", "CANCELLED", "MAX_ANCHOR_CHARS", "MAX_INPUT_CHARS", "MIN_WINDOW_MS", "NO_OPTIONS", "NO_PROVIDER", "POLL_S",
-           "REANCHOR_EVERY_MS", "TIMED_OUT", "TIMEOUT_S", "OnOption", "Outcome", "SuggestOption", "SuggestResult", "Window", "bounded",
+           "REANCHOR_EVERY_MS", "TIMED_OUT", "TIMEOUT_S", "OnOption", "Outcome", "ScreenSent", "ScreenShot", "SuggestOption",
+           "SuggestResult", "Window", "bounded",
            "budget_text", "estimate_usd", "me_label", "rated", "suggest_ctx", "window"]

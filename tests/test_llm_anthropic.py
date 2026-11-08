@@ -335,7 +335,7 @@ def test_seeds_and_new_claude_defaults_on_a_v9_database_with_an_edited_price(tmp
     with Store(db) as s:
         prices = {p["model"]: p for p in s.providers.list_prices("anthropic")}
         row, other = s.providers.get("anthropic"), s.providers.get("openai")
-    assert version == 10 and prices["claude-opus-5-5"]["input_usd_m"] == 4.0 and prices["claude-haiku-5-5"]["cached_usd_m"] == 0.01
+    assert version == 11 and prices["claude-opus-5-5"]["input_usd_m"] == 4.0 and prices["claude-haiku-5-5"]["cached_usd_m"] == 0.01
     assert prices["claude-haiku-4-5"]["input_usd_m"] == 9.0 and prices["claude-sonnet-5-5"]["input_usd_m"] == 7.0
     assert (row["fast_model"], row["strong_model"]) == ("claude-haiku-5-5", "claude-opus-5-5")
     assert other["strong_model"] == "claude-sonnet-4-5"                                       # só a linha do Claude

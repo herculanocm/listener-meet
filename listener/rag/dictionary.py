@@ -143,6 +143,7 @@ DENIED: dict[str, str] = {
     "chat_threads": "as conversas", "llm_prices": "a tabela de preços", "schema_migrations": "versões do banco",
     "sqlite_sequence": "interna do SQLite",
     "suggestions": "sugestões ao vivo (o que a IA propôs dizer)", "suggestion_options": "as opções e avaliações das sugestões",
+    "suggestion_screens": "as telas mandadas com as sugestões",                                                        # F5.21
 }
 FTS_INTERNAL = frozenset({"rag_fts_data", "rag_fts_idx", "rag_fts_docsize", "rag_fts_config"})
 HEADER = ("Visões da base do usuário, só leitura (as únicas tabelas que existem). Junte as visões com JOIN … ON (USING e "

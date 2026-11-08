@@ -308,8 +308,23 @@ class SuggestStatus(StrEnum):
     CANCELLED = "cancelada"
 
 
+class ScreenStatus(StrEnum):
+    """F5.21: o que houve com a tela de um pedido (`suggestion_screens.status`)."""
+    SENT = "enviada"
+    EMPTY = "vazia"                # preta ou de uma cor só (conteúdo protegido): não foi
+    FAILED = "falhou"              # o print falhou ou a janela sumiu: não foi
+
+
+class ScreenSource(StrEnum):
+    """F5.21: de onde saiu a tela (`suggestion_screens.source`)."""
+    WINDOW = "janela"              # a janela do app da reunião, recortada
+    FOREGROUND = "primeiro_plano"  # o monitor da janela em primeiro plano
+    CURSOR = "cursor"              # o monitor do cursor
+    MONITOR = "monitor"            # o monitor fixo das Configurações
+
+
 class Evidence(StrEnum):
-    """F5.20: a opção cita ao menos uma legenda que existe no pedido (a regra da evidência da F3)."""
+    """F5.20: a opção cita ao menos uma legenda que existe no pedido (a regra da evidência da F3); F5.21: ou se apoia na tela."""
     OK = "ok"
     NONE = "sem_evidencia"
 

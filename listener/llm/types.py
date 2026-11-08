@@ -14,7 +14,7 @@ from ..model import (ActionStatus, ChatRole, DecisionSource, Evidence, LlmCallSt
                      SuggestStatus, SummaryKind, SummaryStatus)
 
 __all__ = ["LLM_JOB_TASKS", "TASK_CLASS", "TASK_REASONING", "ActionStatus", "AudioPart", "Capability", "ChatRole", "Completion",
-           "ConnectionTest", "DecisionSource", "EmbedTask", "Embeddings", "Evidence", "LlmCallStatus", "LlmTask", "Message",
+           "ConnectionTest", "DecisionSource", "EmbedTask", "Embeddings", "Evidence", "ImagePart", "LlmCallStatus", "LlmTask", "Message",
            "ModelClass", "ModelInfo", "ProviderKind", "RatingReason", "Reasoning", "Request", "Role", "SuggestKind", "SuggestMode",
            "SuggestStatus", "SummaryKind", "SummaryStatus", "Usage"]
 
@@ -29,6 +29,7 @@ class Capability(StrEnum):
     TEXT = "text"
     JSON = "json"
     AUDIO_IN = "audio_in"
+    IMAGE_IN = "image_in"          # F5.21: imagem na entrada (a tela das sugestões ao vivo)
     EMBEDDINGS = "embeddings"
     STREAMING = "streaming"
     COUNT_TOKENS = "count_tokens"
@@ -109,10 +110,25 @@ class AudioPart:
 
 
 @dataclass(frozen=True, slots=True)
+class ImagePart:
+    """F5.21: uma imagem na mensagem (a tela das sugestões ao vivo), já reduzida e em JPEG. O rótulo vai ao pedido guardado
+    e ao log no lugar dos bytes, e nunca é o título de uma janela."""
+    data: bytes
+    mime: str                      # "image/jpeg"
+    width: int
+    height: int
+    label: str                     # "tela: janela do Teams"
+
+    def describe(self) -> str:
+        return f"{self.label}, {self.width}x{self.height}, {len(self.data) // 1024} kB"
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     role: Role
     text: str
     audio: tuple[AudioPart, ...] = ()
+    images: tuple[ImagePart, ...] = ()       # F5.21
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +151,10 @@ class Request:
     def audio_seconds(self) -> float:
         """Estimativa da duração do áudio anexado pelo tamanho e pelo tipo; só para custo prévio."""
         return sum(a.seconds for m in self.messages for a in m.audio)
+
+    @property
+    def image_count(self) -> int:
+        return sum(len(m.images) for m in self.messages)
 
     def with_messages(self, messages: tuple[Message, ...]) -> Request:
         return Request(self.task, self.model, messages, self.json_schema, self.temperature, self.max_output_tokens, self.reasoning,

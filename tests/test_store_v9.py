@@ -56,14 +56,14 @@ def _seed(folder: Path) -> tuple[list[tuple[Any, ...]], int]:
         s.chat.add(None, ChatRole.USER, "quantas reuniões?", thread_id=thread)
         answer = s.chat.add(None, ChatRole.ASSISTANT, "Três [R1].", "gemini", "m", [{"alias": "R1", "meeting_id": mid}], 0.001,
                             thread_id=thread, trace=TRACE)
-        assert json.loads(s.chat.get(answer)["trace_json"]) == TRACE and s.schema_version() == MAIN_SCHEMA_VERSION == 10
+        assert json.loads(s.chat.get(answer)["trace_json"]) == TRACE and s.schema_version() == MAIN_SCHEMA_VERSION == 11
     return _messages(folder), thread
 
 
 def test_v9_up_down_up_keeps_the_ids_and_the_v8_app_opens_after_the_down(tmp_path, monkeypatch):
     before, thread = _seed(tmp_path)
-    assert "trace_json" in _columns(tmp_path) and _versions(tmp_path) == (10, 10)
-    assert down.downgrade(tmp_path, 8) == [10, 9]
+    assert "trace_json" in _columns(tmp_path) and _versions(tmp_path) == (11, 11)
+    assert down.downgrade(tmp_path, 8) == [11, 10, 9]
     assert "trace_json" not in _columns(tmp_path) and _versions(tmp_path) == (8, 8) and _messages(tmp_path) == before
     assert down.downgrade(tmp_path, 8) == []                                           # já está lá: nada a fazer
     monkeypatch.setattr(store_core, "MAIN_MIGRATIONS", MAIN_MIGRATIONS[:8])            # o app da v8
@@ -81,14 +81,14 @@ def test_v9_up_down_up_keeps_the_ids_and_the_v8_app_opens_after_the_down(tmp_pat
         rows = again.chat.list_for_thread(thread)
         assert [(m["text"], m["trace_json"]) for m in rows] == [("quantas reuniões?", None), ("Três [R1].", None), ("e agora?", None)]
         assert again.chat.get(again.chat.add(None, ChatRole.ASSISTANT, "ok", thread_id=thread, trace=TRACE))["trace_json"] is not None
-    assert _messages(tmp_path)[:len(before)] == before and _versions(tmp_path) == (10, 10)
+    assert _messages(tmp_path)[:len(before)] == before and _versions(tmp_path) == (11, 11)
 
 
 def test_the_down_refuses_what_has_no_way_back_and_a_newer_database(tmp_path):
     _seed(tmp_path)
     with pytest.raises(ValueError, match="a versão 8 não tem volta: o menor destino possível é 8"):
         down.downgrade(tmp_path, 7)
-    assert _versions(tmp_path) == (10, 10) and "trace_json" in _columns(tmp_path)      # nada mudou
+    assert _versions(tmp_path) == (11, 11) and "trace_json" in _columns(tmp_path)      # nada mudou
     with pytest.raises(FileNotFoundError):
         down.downgrade(tmp_path / "nada", 8)
     with _raw(tmp_path) as c:
@@ -114,7 +114,7 @@ def test_a_failure_in_the_middle_of_the_down_undoes_everything(tmp_path, monkeyp
 def test_the_command_line_down(tmp_path, capsys):
     _seed(tmp_path)
     assert main(["--downgrade", str(tmp_path), "8"]) == 0
-    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"downgrade": "ok", "desfeitas": [10, 9]}
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"downgrade": "ok", "desfeitas": [11, 10, 9]}
     assert main(["--downgrade", str(tmp_path), "oito"]) == 1
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["downgrade"] == "erro"
     assert _versions(tmp_path) == (8, 8)

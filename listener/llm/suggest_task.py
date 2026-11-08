@@ -20,6 +20,11 @@ interface por sinal.
 No L0 da F5.21 (A-27), os tipos e o pedido foram para `llm/suggest_ctx.py`, o dossiê para `llm/suggest_dossier.py` e o
 memorando para `llm/suggest_memo_task.py`, sem mudar nada; os nomes de antes seguem importáveis daqui.
 
+- F5.21: com a tela (`ScreenShot`, já preparada fora daqui, A-17), o aviso `ScreenSent` sai pelo `on_screen` depois das
+  saídas cedo (A-33); a imagem vai na última mensagem do usuário; os resumos das telas anteriores na janela entram na linha
+  do tempo, com os caracteres deles fora do teto antes da compactação (A-35); o esquema e o teto de saída da tela; a tela
+  gravada com a sugestão, a opção com `screen` e o resumo da tela na sugestão. O tempo conta do clique (`clicked_at`, A-19).
+
 O log leva ids, contagens, tempos e custo; nunca o texto da sugestão, do fio, do objetivo, da linha nem do memorando."""
 from __future__ import annotations
 
@@ -29,25 +34,27 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..config.defaults import SPECS
 from ..log import get_logger
-from ..model import Evidence, LlmCallStatus, SuggestMode, SuggestStatus
+from ..model import Evidence, LlmCallStatus, ScreenStatus, SuggestMode, SuggestStatus
 from ..store.llm_calls import LlmCallInsert
-from ..store.suggestions import OptionInsert, SuggestionInsert
-from . import partial_task, prompts, redact
+from ..store.suggestions import OptionInsert, ScreenInsert, SuggestionInsert
+from . import partial_task, redact
 from .aio import run_async
 from .base import OFF_SCHEMA, LlmError, LLMProvider, classify_exception
 from .costs import cost_usd, fmt_usd, price_for
 from .jobconfig import LlmJobConfig
-from .prompts.suggest import KINDS_ORIENT, KINDS_SPEAK, OPTION_SCHEMA, SUMMARY_LIMIT, TEXT_LIMIT
+from .prompts.suggest import (KINDS_ORIENT, KINDS_SPEAK, MAX_SCREEN_LINES, OPTION_SCHEMA, OPTION_SCHEMA_SCREEN, SCREEN_SUMMARY_LIMIT,
+                              SUMMARY_LIMIT, TEXT_LIMIT, ScreenLine, ScreenRef, has_screen, schema_for)
 from .registry import build_provider
 from .schema import SchemaError, parse_json_text, schema_hash, validate
 from .suggest_compact import compact, trim
 from .suggest_ctx import (ANCHOR_WINDOW_MS, CANCELLED, MAX_ANCHOR_CHARS, MAX_INPUT_CHARS, MIN_WINDOW_MS, NO_OPTIONS, NO_PROVIDER, POLL_S,
-                          REANCHOR_EVERY_MS, TIMED_OUT, TIMEOUT_S, OnOption, Outcome, SuggestOption, SuggestResult, Window, bounded,
-                          budget_text, estimate_usd, me_label, rated, suggest_ctx, window)
+                          REANCHOR_EVERY_MS, TIMED_OUT, TIMEOUT_S, OnOption, Outcome, ScreenSent, ScreenShot, SuggestOption,
+                          SuggestResult, Window, bounded, budget_text, estimate_usd, me_label, rated, suggest_ctx, window)
 from .suggest_dossier import DOSSIER_MAX_ACTIONS, DOSSIER_MAX_CHARS, DOSSIER_MAX_MEETINGS, dossier_text
 from .suggest_memo_task import MEMO_MAX_RATED, MEMO_MIN_RATINGS, MEMO_OUTPUT_TOKENS, MemoResult, memo_due, run_memo
 from .suggest_parse import OptionsReader
@@ -59,14 +66,17 @@ if TYPE_CHECKING:
 log = get_logger("llm.suggest")
 
 MAX_OUTPUT_TOKENS = 700
+MAX_OUTPUT_TOKENS_SCREEN = 900          # F5.21 (A-15): 4 opções, o fio e o resumo da tela passam de ~650 tokens [exp]
 
 
 # ---------------------------------------------------------------- a sugestão
 def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, nudge: str = "", options_n: int = 3,
                 dossier: str | None = None, on_option: OnOption | None = None, cancelled: Callable[[], bool] | None = None,
-                provider: LLMProvider | None = None, clock: Callable[[], float] = time.monotonic) -> SuggestResult:
-    """Uma sugestão (síncrona: roda numa `StreamTask`). `provider` só nos testes; senão o ativo, com a chave lida agora."""
-    t0 = clock()
+                provider: LLMProvider | None = None, clock: Callable[[], float] = time.monotonic, screen: ScreenShot | None = None,
+                on_screen: Callable[[ScreenSent], None] | None = None, clicked_at: float | None = None) -> SuggestResult:
+    """Uma sugestão (síncrona: roda numa `StreamTask`). `provider` só nos testes; senão o ativo, com a chave lida agora.
+    F5.21: `screen` é a tela já preparada; `clicked_at`, o instante do clique no mesmo relógio (o print e o preparo contam)."""
+    t0 = clicked_at if clicked_at is not None else clock()
     stopped = cancelled or (lambda: False)
     meeting = store.get_meeting(meeting_id)
     if meeting is None:
@@ -76,15 +86,28 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
     spent, limit = partial_task.budget(store, meeting_id)
     if spent >= limit:
         return SuggestResult(Outcome.BUDGET, meeting_id, spent_usd=spent, limit_usd=limit, error=budget_text(spent, limit))
+    if screen is not None and on_screen is not None:          # A-33: depois das saídas cedo, a miniatura entra no chat
+        on_screen(ScreenSent(int(t_ms), screen))
     cfg = LlmJobConfig.from_store(store)
     redact.GLOBAL.add(store.providers.key(cfg.provider_id))   # CP10: a chave some do erro gravado e do log
     w = window(store, meeting_id, t_ms, int(store.get(SPECS["suggest.window_min"])))
     rows: list[Mapping[str, Any]] = [dict(r) for r in store.captions.list_from(meeting_id, w.t_from_ms)]
     me = store.get_me()
-    c = trim(compact(rows, me_label(me), bool(meeting.get("is_in_room"))), w.max_chars)
-    ctx = suggest_ctx(store, meeting, me, mode, options_n, dossier, nudge, c, rows)
-    req = Request(LlmTask.SUGGEST, cfg.fast_model, cfg.build(LlmTask.SUGGEST, ctx), prompts.suggest.SCHEMA,
-                  max_output_tokens=MAX_OUTPUT_TOKENS, reasoning=TASK_REASONING[LlmTask.SUGGEST], timeout_s=TIMEOUT_S)
+    screens = tuple(ScreenLine(st, summary) for st, summary in
+                    reversed(store.suggestions.screen_summaries(meeting_id, w.t_from_ms, int(t_ms), MAX_SCREEN_LINES)))
+    budget = max(w.max_chars // 2, w.max_chars - sum(len(s.render()) + 1 for s in screens))   # A-35: as telas fora do teto
+    c = trim(compact(rows, me_label(me), bool(meeting.get("is_in_room"))), budget)
+    image = screen.image if screen is not None and screen.status == ScreenStatus.SENT else None
+    ctx = replace(suggest_ctx(store, meeting, me, mode, options_n, dossier, nudge, c, rows),
+                  screen=ScreenRef(screen.app, int(t_ms)) if screen is not None and image is not None else None, screens=screens)
+    with_screen = has_screen(ctx)
+    messages = cfg.build(LlmTask.SUGGEST, ctx)
+    if image is not None:                                     # a imagem na última mensagem do usuário (o texto antes, A-11)
+        messages = (*messages[:-1], replace(messages[-1], images=(image,)))
+    schema = schema_for(ctx)
+    req = Request(LlmTask.SUGGEST, cfg.fast_model, messages, schema,
+                  max_output_tokens=MAX_OUTPUT_TOKENS_SCREEN if with_screen else MAX_OUTPUT_TOKENS,
+                  reasoning=TASK_REASONING[LlmTask.SUGGEST], timeout_s=TIMEOUT_S)
     times = {int(r["id"]): int(r.get("t_start_ms") or 0) for r in rows}
     kinds = frozenset(str(k) for k in (KINDS_ORIENT if mode == SuggestMode.ORIENT else KINDS_SPEAK))
     emitted: list[SuggestOption] = []
@@ -96,7 +119,7 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
         if len(emitted) >= ctx.options:
             return
         try:
-            data = validate(OPTION_SCHEMA, bounded(obj))
+            data = validate(OPTION_SCHEMA_SCREEN if with_screen else OPTION_SCHEMA, bounded(obj))
         except SchemaError:
             reader.dropped += 1
             return
@@ -105,7 +128,8 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
             reader.dropped += 1
             return
         facts = tuple((i, times[i]) for i in dict.fromkeys(int(x) for x in data["facts"]) if i in c.ids and i in times)
-        opt = SuggestOption(len(emitted), str(data["kind"]), text, facts, Evidence.OK if facts else Evidence.NONE)
+        uses = bool(data.get("screen")) and with_screen       # A-42: a tela também sustenta a opção
+        opt = SuggestOption(len(emitted), str(data["kind"]), text, facts, Evidence.OK if facts or uses else Evidence.NONE, uses)
         if not first:
             first.append(int((clock() - t0) * 1000))
         emitted.append(opt)
@@ -152,6 +176,7 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
     total_ms = int((clock() - t0) * 1000)
     data: dict[str, Any] | None = None
     thread: str | None = None
+    screen_summary: str | None = None
     usage = Usage()
     cost: float | None = None
     estimated = False
@@ -159,14 +184,14 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
     if stop:
         status = SuggestStatus.CANCELLED if stop == "cancelled" else SuggestStatus.ERROR
         error = CANCELLED if stop == "cancelled" else TIMED_OUT
-        cost, estimated = estimate_usd(store, cfg, req.text_chars, len(reader.text)), True
+        cost, estimated = estimate_usd(store, cfg, req.text_chars, len(reader.text), req.image_count), True
     elif err is not None or comp is None:
         status, error = SuggestStatus.ERROR, redact.GLOBAL.redact(str(err) if err is not None else "sem resposta")
     else:
         usage = comp.usage
         cost = cost_usd(usage, price_for(store.providers.list_prices(cfg.provider_kind or None), cfg.provider_kind, comp.model))
         try:
-            data = validate(prompts.suggest.SCHEMA, bounded(parse_json_text(comp.text)))
+            data = validate(schema, bounded(parse_json_text(comp.text)))
         except (SchemaError, ValueError) as e:
             status, error = SuggestStatus.ERROR, redact.GLOBAL.redact(f"{OFF_SCHEMA}: {e}")
         else:
@@ -174,14 +199,17 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
                 for obj in data["options"]:
                     take(obj)
             thread = " ".join(str(data["thread_summary"]).split())[:SUMMARY_LIMIT] or None
+            if image is not None:                                  # o resumo descreve a imagem anexa (7b, os pedidos seguintes)
+                screen_summary = " ".join(str(data.get("screen_summary") or "").split())[:SCREEN_SUMMARY_LIMIT] or None
             status = SuggestStatus.OK if emitted else SuggestStatus.ERROR
             error = None if emitted else NO_OPTIONS
     alive = store.get_meeting(meeting_id) is not None
     model = comp.model if comp is not None else cfg.fast_model
-    payload_req = [{"role": str(m.role), "text": m.text} for m in req.messages] if cfg.store_payloads else None
+    payload_req = ([{"role": str(m.role), "text": m.text, **({"images": [i.describe() for i in m.images]} if m.images else {})}
+                    for m in req.messages] if cfg.store_payloads else None)      # A-14: o rótulo, nunca os bytes
     resp = {"text": reader.text} if cfg.store_payloads else None
     call_id = store.llm_calls.insert(LlmCallInsert(meeting_id if alive else None, None, str(LlmTask.SUGGEST), cfg.provider_id, model,
-                                                   cfg.version(LlmTask.SUGGEST), schema_hash(prompts.suggest.SCHEMA), usage.input_tokens,
+                                                   cfg.version(LlmTask.SUGGEST), schema_hash(schema), usage.input_tokens,
                                                    usage.output_tokens, usage.cached_tokens, usage.audio_tokens, cost,
                                                    comp.latency_ms if comp is not None else total_ms,
                                                    LlmCallStatus.OK if status == SuggestStatus.OK else LlmCallStatus.ERROR, error,
@@ -193,23 +221,30 @@ def run_suggest(store: Store, meeting_id: int, *, mode: SuggestMode, t_ms: int, 
     data_json = json.dumps(data, ensure_ascii=False) if data is not None else None
     row = SuggestionInsert(meeting_id, int(t_ms), str(mode), ctx.nudge, ctx.goal, w.t_from_ms, c.until_caption_id, c.t_until_ms,
                            w.anchored, c.raw_chars, c.input_chars, thread, data_json, reader.text, cfg.provider_id, model,
-                           cfg.version(LlmTask.SUGGEST), call_id, cost, estimated, first_ms, total_ms, status, error)
+                           cfg.version(LlmTask.SUGGEST), call_id, cost, estimated, first_ms, total_ms, status, error, screen_summary)
     try:
         sid = store.suggestions.insert(row)
         option_ids = store.suggestions.insert_options(sid, [OptionInsert(o.idx, o.kind, o.text, json.dumps(
-            [{"caption_id": i, "t_ms": t} for i, t in o.facts]), o.evidence) for o in emitted])
+            [{"caption_id": i, "t_ms": t} for i, t in o.facts]), o.evidence, o.screen) for o in emitted])
+        if screen is not None:
+            store.suggestions.insert_screen(ScreenInsert(sid, screen.status, screen.source, screen.app, image.width if image else 0,
+                                                         image.height if image else 0, len(image.data) if image else 0,
+                                                         screen.covered, screen.thumb, screen.copy))
     except sqlite3.IntegrityError:                              # apagada entre a conferência e a gravação
         return SuggestResult(Outcome.GONE, meeting_id, call_id=call_id, cost_usd=cost)
-    log.info("reunião %s: sugestão %s (%s): %d legenda(s), %d -> %d caracteres, %d opção(ões), primeira em %s ms, fim em %d ms, %s%s",
+    log.info("reunião %s: sugestão %s (%s): %d legenda(s), %d -> %d caracteres, %d opção(ões), primeira em %s ms, fim em %d ms, %s%s%s",
              meeting_id, sid, mode, len(c.ids), c.raw_chars, c.input_chars, len(emitted), first_ms if first_ms is not None else "-",
-             total_ms, fmt_usd(cost), " estimado" if estimated else "")
+             total_ms, fmt_usd(cost), " estimado" if estimated else "",
+             f", tela {screen.status} {len(image.data) // 1024 if image else 0} kB, {len(screens)} anterior(es)" if screen else
+             f", {len(screens)} tela(s) anterior(es)" if screens else "")
     outcome = {SuggestStatus.OK: Outcome.DONE, SuggestStatus.CANCELLED: Outcome.CANCELLED}.get(status, Outcome.ERROR)
     return SuggestResult(outcome, meeting_id, sid, call_id, tuple(emitted), tuple(option_ids), thread, cost, estimated, first_ms, total_ms,
-                         c.raw_chars, c.input_chars, c.until_caption_id, c.t_until_ms, spent, limit, error)
+                         c.raw_chars, c.input_chars, c.until_caption_id, c.t_until_ms, spent, limit, error, image is not None)
 
 
 __all__ = ["ANCHOR_WINDOW_MS", "CANCELLED", "DOSSIER_MAX_ACTIONS", "DOSSIER_MAX_CHARS", "DOSSIER_MAX_MEETINGS", "MAX_ANCHOR_CHARS",
-           "MAX_INPUT_CHARS", "MAX_OUTPUT_TOKENS", "MEMO_MAX_RATED", "MEMO_MIN_RATINGS", "MEMO_OUTPUT_TOKENS", "MIN_WINDOW_MS",
-           "NO_OPTIONS", "NO_PROVIDER", "POLL_S", "REANCHOR_EVERY_MS", "SUMMARY_LIMIT", "TEXT_LIMIT", "TIMED_OUT", "TIMEOUT_S",
-           "MemoResult", "OnOption", "OptionsReader", "Outcome", "SuggestOption", "SuggestResult", "Window", "bounded", "budget_text",
-           "dossier_text", "estimate_usd", "me_label", "memo_due", "rated", "run_memo", "run_suggest", "suggest_ctx", "window"]
+           "MAX_INPUT_CHARS", "MAX_OUTPUT_TOKENS", "MAX_OUTPUT_TOKENS_SCREEN", "MEMO_MAX_RATED", "MEMO_MIN_RATINGS",
+           "MEMO_OUTPUT_TOKENS", "MIN_WINDOW_MS", "NO_OPTIONS", "NO_PROVIDER", "POLL_S", "REANCHOR_EVERY_MS", "SUMMARY_LIMIT",
+           "TEXT_LIMIT", "TIMED_OUT", "TIMEOUT_S", "MemoResult", "OnOption", "OptionsReader", "Outcome", "ScreenSent", "ScreenShot",
+           "SuggestOption", "SuggestResult", "Window", "bounded", "budget_text", "dossier_text", "estimate_usd", "me_label",
+           "memo_due", "rated", "run_memo", "run_suggest", "suggest_ctx", "window"]
