@@ -223,7 +223,7 @@ def test_the_screen_modules_never_log_the_image_the_summary_or_the_title():
 # ---------------------------------------------------------------- L3: a aba da reunião
 def test_the_meeting_tab_shows_the_thumbnail_marks_the_option_and_opens_the_copy(qtbot, store):
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice
-    from PySide6.QtGui import QImage
+    from PySide6.QtGui import QImage, QImageWriter
 
     from listener.store.suggestions import ScreenInsert
     from listener.ui.meeting_suggestions import SuggestionsTab
@@ -235,7 +235,7 @@ def test_the_meeting_tab_shows_the_thumbnail_marks_the_option_and_opens_the_copy
         data = QByteArray()
         buf = QBuffer(data)
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        img.save(buf, "JPG")
+        QImageWriter(buf, QByteArray(b"jpeg")).write(img)
         return bytes(data.data())
 
     mid = store.create_meeting("Orçamento", None, None, None)
