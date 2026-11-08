@@ -14,7 +14,8 @@ F5.4 L2, no tema (claro ou escuro, como o resto do app; sem folha de estilo):
 - U-062: o mudo é o microfone cortado, no botão ligado (preenchido em destaque, como a alternância do Windows 11); L, R e
   o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h.
 F5.17 (U-142): com a bandeja de legendas, o botão "Legendas" entre Dispositivos e Parar; o selo, as telas e a posição
-inicial moram em `ui/widget_parts.py`."""
+inicial moram em `ui/widget_parts.py`. F5.20 (U-153): o botão "Sugerir" entre "Legendas" e Parar, que o host das sugestões
+mostra, apaga e destaca (fora do `_buttons()`: o estado da gravação não o religa)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -31,8 +32,9 @@ from .components import INFO_KINDS, IconButton
 from .icons import set_icon
 from .meters import LevelMeter
 from .theme import Tone, note, qcolor, role, surface_tokens, tone
-from .widget_parts import (CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, LIVE_BADGES, CaptionLine, ElidedLabel, MarkerPopup,
-                           caption_text, channel_letter, clock_text, hbox, health_icon, icon_label, initial_pos, shortcut_text)
+from .widget_parts import (BUTTON_TIPS, CAPTIONS_TIP, CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, LIVE_BADGES, CaptionLine,
+                           ElidedLabel, MarkerPopup, apply_suggest_state, caption_text, channel_letter, clock_text, hbox, health_icon,
+                           icon_label, initial_pos, shortcut_text)
 
 log = get_logger("ui.widget")
 WIDTH = 360                                   # U-060, A-16: fixa
@@ -41,7 +43,6 @@ HEAD_H, METERS_H, BUTTONS_H = 36, 16, 32      # 7 + 36 + 4 + 16 + 4 + 32 + 7 = 1
 CAPTION_H, ALERT_H = 20, 36                   # +24 com a legenda e +40 com o alerta: 170 no máximo
 BUTTON_SIZE = (36, 32)                        # U-061
 METER_PX = 6
-CAPTIONS_TIP = {True: "Legendas: esconder a bandeja", False: "Legendas: mostrar a bandeja"}   # F5.17 (pergunta 6)
 
 
 class RecordingWidget(QWidget):
@@ -55,6 +56,7 @@ class RecordingWidget(QWidget):
     settings_requested = Signal()
     live_clicked = Signal()               # F4: clique na linha da legenda abre a janela "Ao vivo"
     captions_clicked = Signal()           # F5.17 (U-142): o botão "Legendas" mostra e esconde a bandeja
+    suggest_clicked = Signal()            # F5.20 (U-153): o botão "Sugerir"
     moved = Signal(QPoint)
     height_changed = Signal()             # F5.4 L2 (A-16): cresceu ou encolheu, com a borda de baixo no lugar
 
@@ -117,15 +119,15 @@ class RecordingWidget(QWidget):
         self.caption_line.setVisible(self.live_line)
 
     def _build_buttons(self) -> None:
-        self.btn_pause = self._btn("pause", "Pausar", "Pausar / retomar a gravação", "pause", self.pause_clicked)
-        self.btn_mark = self._btn("flag", "Marcador", "Marcador com nota", "mark", self.mark_clicked)
-        self.btn_mute = self._btn("mic", "Mudo global", "Mudo global: muta o microfone no sistema", "mute", self.mute_clicked)
+        self.btn_pause = self._btn("pause", "Pausar", BUTTON_TIPS["pause"], "pause", self.pause_clicked)
+        self.btn_mark = self._btn("flag", "Marcador", BUTTON_TIPS["mark"], "mark", self.mark_clicked)
+        self.btn_mute = self._btn("mic", "Mudo global", BUTTON_TIPS["mute"], "mute", self.mute_clicked)
         self.btn_mute.setCheckable(True)
-        self.btn_devices = self._btn("headphones", "Dispositivos",
-                                     "Dispositivos: trocar o microfone e a saída gravada sem parar", "", self.devices_clicked)
+        self.btn_devices = self._btn("headphones", "Dispositivos", BUTTON_TIPS["devices"], "", self.devices_clicked)
         self.btn_captions = self._btn("chat", "Legendas", CAPTIONS_TIP[True], "", self.captions_clicked)
-        self.btn_stop = self._btn("stop", "Parar e salvar", "Parar e salvar", "stop", self.stop_clicked, Tone.DANGER)
-        self.btn_cancel = self._btn("delete", "Descartar gravação", "Descartar a gravação: pergunta antes", "", self.cancel_clicked)
+        self.btn_suggest = self._btn("lightbulb", "Sugerir", BUTTON_TIPS["suggest"], "suggest", self.suggest_clicked)
+        self.btn_stop = self._btn("stop", "Parar e salvar", BUTTON_TIPS["stop"], "stop", self.stop_clicked, Tone.DANGER)
+        self.btn_cancel = self._btn("delete", "Descartar gravação", BUTTON_TIPS["cancel"], "", self.cancel_clicked)
 
     def _build_alert(self) -> None:
         self.alert_icon = icon_label("warning", Tone.WARNING)
@@ -165,9 +167,10 @@ class RecordingWidget(QWidget):
             meters.addWidget(channel_letter(channel, METERS_H))
             meters.addWidget(meter, 1)
         buttons = hbox(None, 4)
-        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_captions, self.btn_stop):
+        for b in (self.btn_pause, self.btn_mark, self.btn_mute, self.btn_devices, self.btn_captions, self.btn_suggest, self.btn_stop):
             buttons.addWidget(b)
         self.btn_captions.setVisible(self.captions_button)    # F5.17: só com a bandeja (escondido, não ocupa lugar)
+        self.btn_suggest.hide()                           # F5.20: até o host das sugestões dizer
         buttons.addStretch(1)                             # U-061: Cancelar longe de Parar
         buttons.addWidget(self.btn_cancel)
         alert = hbox(self.alert_icon, 6)
@@ -334,6 +337,9 @@ class RecordingWidget(QWidget):
         set_icon(self.btn_captions, "chat" if shown else "chat-off", Tone.TEXT, 20)
         self.btn_captions.setToolTip(CAPTIONS_TIP[shown])
         self.btn_captions.setAccessibleDescription("à vista" if shown else "escondida")
+
+    def set_suggest_state(self, visible: bool, enabled: bool, tip: str, hint: bool) -> None:
+        apply_suggest_state(self.btn_suggest, visible, enabled, tip, hint)    # F5.20 (U-153, U-160): como na bandeja
 
     def set_caption(self, label: str | None, text: str) -> None:
         """A última legenda na linha (só existe com `live.in_widget`)."""

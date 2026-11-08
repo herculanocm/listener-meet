@@ -16,13 +16,16 @@ de 400 linhas: as caixas "Legenda ao vivo", "Nomes ao vivo" e "Resumo parcial", 
   para a gravação. O aviso dos modelos passou para a faixa do rodapé (`ui/warmup_notice.py`). Caixa apagada nunca aparece
   marcada (os nomes e o parcial, como o rodapé da transcrição): o pedido do preset ou das Configurações fica guardado por
   dentro (`names_wanted`, `partial_wanted`) e volta quando a caixa acende.
+- F5.20 (U-163, U-156): "Sugestões" (o botão Sugerir desta gravação), marcada por `suggest.enabled`, acesa só com a legenda,
+  a bandeja de legendas e a chave, fora do preset; e "Meu objetivo nesta reunião", uma linha opcional, abaixo das caixas. Vão
+  em `fields["suggest"]` e `fields["goal"]`. Moram aqui, não no `warmup.py`, que já passa de 400 linhas (A-12).
 Sinais ligados a métodos (R-06)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 
 from ..config.defaults import HF_PROVIDER_ID, SPECS
 from ..live.client import is_fake, live_models_dir
@@ -42,6 +45,11 @@ PARTIAL_OFF_TIP = "O resumo parcial sai das legendas: ligue a legenda ao vivo."
 NAMES_OFF_TIP = "Os nomes saem na legenda: ligue a legenda ao vivo."
 NAMES_NEED_HF = "Nomes ao vivo precisa do token do Hugging Face (Configurações, Chaves de acesso)."
 NAMES_NEED_VOICES = "Nomes ao vivo precisa dos modelos de voz, que chegam com o primeiro processamento com o token."
+SUGGEST_TIP = "Sugestões do que falar pela LLM, a pedido, na bandeja de legendas; tem custo por clique."
+SUGGEST_OFF_TIP = "A sugestão lê a legenda ao vivo: ligue-a."
+SUGGEST_NEED_TRAY = "Ligue a bandeja de legendas (Configurações, Ao vivo): o cartão da sugestão mora nela."
+GOAL_HINT = "Meu objetivo nesta reunião (opcional; a IA o lê nas sugestões)"
+GOAL_MAX = 300
 
 
 def names_reason(store: Store) -> str:
@@ -73,19 +81,35 @@ class LiveBoxes(QObject):
         self.names_check = QCheckBox("Nomes ao vivo")
         self.names_check.setToolTip(NAMES_TIP)
         self.partial_check = QCheckBox("Resumo parcial")
+        self.suggest_check = QCheckBox("Sugestões")                                  # F5.20 (U-163)
+        self.suggest_wanted = bool(store.get(SPECS["suggest.enabled"]))
+        self.goal_edit = QLineEdit()                                                 # F5.20 (U-156)
+        self.goal_edit.setPlaceholderText(GOAL_HINT)
+        self.goal_edit.setMaxLength(GOAL_MAX)
+        self.goal_edit.setAccessibleName("Meu objetivo nesta reunião")
         self.key = has_key(store)                                                    # R-09: sem chave, o parcial não sai
         self.live_check.toggled.connect(self.toggled)
         self.live_check.clicked.connect(self._clicked)        # só o clique do usuário (o `setChecked` não emite)
         self.names_check.toggled.connect(self._names_toggled)       # a marca com a caixa acesa é o pedido
         self.partial_check.toggled.connect(self._partial_toggled)
+        self.suggest_check.toggled.connect(self._suggest_toggled)
 
-    def row(self) -> QHBoxLayout:
+    def row(self) -> QVBoxLayout:
+        """As caixas numa linha e, embaixo, o objetivo da reunião (F5.20)."""
         row = QHBoxLayout()
         row.setSpacing(METRICS.card_padding)
-        for box in (self.live_check, self.names_check, self.partial_check):
+        for box in (self.live_check, self.names_check, self.partial_check, self.suggest_check):
             row.addWidget(box)
         row.addStretch(1)
-        return row
+        goal = QHBoxLayout()
+        goal.setSpacing(METRICS.card_padding)
+        goal.addWidget(QLabel("Objetivo"))
+        goal.addWidget(self.goal_edit, 1)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(row)
+        outer.addLayout(goal)
+        return outer
 
     def set_values(self, enabled: int | bool | None, names: int | bool | None) -> None:
         """Legenda e nomes: o valor do preset quando não nulo, senão o padrão das Configurações (o parcial não muda); sem os
@@ -107,6 +131,10 @@ class LiveBoxes(QObject):
         if self.partial_check.isEnabled():
             self.partial_wanted = checked
 
+    def _suggest_toggled(self, checked: bool) -> None:
+        if self.suggest_check.isEnabled():
+            self.suggest_wanted = checked
+
     def wants_live(self) -> bool:
         """A legenda pedida: a caixa ou, sem o usuário mexer, o pedido que veio desmarcado só pela falta dos modelos (os
         modelos entram na faixa só então, e o "Salvar como preset" grava isto)."""
@@ -120,6 +148,7 @@ class LiveBoxes(QObject):
     def toggled(self, on: bool) -> None:
         self._names_state(on)
         self._partial_state()
+        self._suggest_state()
         self.changed.emit()
 
     def _names_state(self, on: bool) -> None:
@@ -134,6 +163,7 @@ class LiveBoxes(QObject):
         """A chave e o token podem ter chegado pelas Configurações com o diálogo aberto (o link da faixa)."""
         self.key = has_key(self.store)
         self._partial_state()
+        self._suggest_state()
         self._names_state(self.live_check.isChecked())
 
     def _partial_state(self) -> None:
@@ -142,12 +172,23 @@ class LiveBoxes(QObject):
         self.partial_check.setChecked(on and self.key and self.partial_wanted)
         self.partial_check.setToolTip(NO_KEY_TIP if not self.key else PARTIAL_TIP if on else PARTIAL_OFF_TIP)
 
-    def fields(self) -> dict[str, bool]:
+    def _suggest_state(self) -> None:
+        """F5.20: acesa só com a legenda, a bandeja de legendas e a chave; apagada, desmarcada, com o motivo na dica."""
+        tray = bool(self.store.get(SPECS["live.caption_tray"]))
+        lit = self.live_check.isChecked() and self.key and tray
+        self.suggest_check.setEnabled(lit)
+        self.suggest_check.setChecked(lit and self.suggest_wanted)
+        self.suggest_check.setToolTip(SUGGEST_TIP if lit else NO_KEY_TIP if not self.key else SUGGEST_NEED_TRAY if not tray
+                                      else SUGGEST_OFF_TIP)
+
+    def fields(self) -> dict[str, bool | str | None]:
         """O que vai para o controlador (CP6): a legenda, os nomes (só quando saem, U-111) e o parcial (só com a legenda e a
         chave, A-21, R-09)."""
         live = self.live_check.isChecked()
         return {"live_enabled": live, "live_names": self.names_check.isEnabled() and self.names_check.isChecked(),
-                "live_partial": self.partial_check.isEnabled() and self.partial_check.isChecked()}
+                "live_partial": self.partial_check.isEnabled() and self.partial_check.isChecked(),
+                "suggest": self.suggest_check.isEnabled() and self.suggest_check.isChecked(),     # F5.20 (U-163)
+                "goal": self.goal_edit.text().strip() or None}                                    # F5.20 (U-156)
 
 
 __all__ = ["NAMES_NEED_HF", "NAMES_NEED_VOICES", "PARTIAL_TIP", "LiveBoxes", "names_reason"]

@@ -18,7 +18,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   do diff por um agente novo (D-040). Posição (`[x]` com o commit):
   - [x] L1: a v10 (com volta), a tarefa `suggest` e a do memorando, os prompts, a compactação, o leitor incremental e
     os testes (o commit do L1); falta a revisão do diff por um agente novo, antes do L2.
-  - [ ] L2: o cartão na bandeja, o botão, o atalho, o menu, a caixa e o objetivo.
+  - [x] L2: o cartão na bandeja, o botão "Sugerir" no widget e na bandeja, o atalho, o "Sugerir…" da bandeja do
+    sistema, a caixa e o objetivo no "Antes de gravar", o grupo nas Configurações e o memorando na página Prompts (o
+    commit do L2).
   - [ ] L3: a avaliação, o memorando, o dossiê, a aba Sugestões e o `--check`.
   - [ ] L4: as fotos, a revisão do diff, a documentação e a versão 0.13.0.
   Nesta máquina (Linux nativo, sem PortAudio nem PyInstaller), a suíte de base tem 13 falhas do ambiente

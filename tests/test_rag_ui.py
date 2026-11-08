@@ -326,7 +326,7 @@ def test_controller_history_hotkey_tray_balloon_reload_q9_and_exit(qtbot, qapp, 
     c = Controller(qapp, platform, store)
     c.tray = None
     try:
-        assert ctl.HOTKEY_ACTIONS[-1] == "history" and store.get_setting("hotkeys.history") == "ctrl+alt+shift+h"
+        assert ctl.HOTKEY_ACTIONS[-2:] == ("history", "suggest") and store.get_setting("hotkeys.history") == "ctrl+alt+shift+h"   # F5.20
         assert c.register_hotkeys() == {} and "ctrl+alt+shift+h" in platform.hotkeys().registered          # U-028
         c.hotkey_pressed.emit("history")
         hist = c._history

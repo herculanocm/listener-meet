@@ -11,7 +11,8 @@ relógio). O chat mora em `ui/caption_chat.py`.
 - Recolhida (U-142): o cabeçalho e a última legenda numa linha (o clique restaura). Fechada ou recolhida, não lê o banco: ao
   abrir, uma leitura por `after_id` traz o que faltou; recolhida, a linha vem da própria legenda.
 - Encosto (U-146): `anchor` dá o retângulo do widget; encostada, `follow` a põe pelo lado e pela borda direita dele (o host
-  chama quando o widget anda ou cresce), e a borda que toca o widget fica no lugar ao recolher e ao restaurar."""
+  chama quando o widget anda ou cresce), e a borda que toca o widget fica no lugar ao recolher e ao restaurar.
+- F5.20 (U-153, U-154): o botão "Sugerir" no cabeçalho e o cartão da sugestão sob o chat (`ui/caption_tray_card.py`)."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ..config.defaults import SPECS
 from ..log import get_logger
 from .caption_chat import WAITING, CaptionChat
+from .caption_tray_card import TrayCardMixin
 from .caption_geometry import (DEFAULT_SIZE, MIN_H, MIN_W, Dock, Edge, Rect, anchored, default_dock, dock_rect, dock_text, docked,
                                edges_at, fit_dock, parse_dock, parse_rect, rect_text, resized)
 from .common import clamp_to_screens
@@ -61,8 +63,9 @@ def area_of(rect: Rect) -> Rect:
     return g.x(), g.y(), g.width(), g.height()
 
 
-class CaptionTray(QWidget):
+class CaptionTray(TrayCardMixin, QWidget):
     closed_by_user = Signal()             # "Fechar": escondida até o botão "Legendas" do widget
+    suggest_requested = Signal()          # F5.20 (U-153): o botão "Sugerir" do cabeçalho
     open_live_requested = Signal()        # "Abrir a janela Ao vivo"
 
     def __init__(self, store: Store, meeting_id: int, *, parent: QWidget | None = None, platform: Platform | None = None,
@@ -96,6 +99,9 @@ class CaptionTray(QWidget):
         role(self.title, "body_strong")
         self.badge = QLabel("")
         note(self.badge, Tone.NEUTRAL)
+        self.btn_suggest = self._button("lightbulb", "Sugerir", "Sugerir o que falar agora")
+        self.btn_suggest.clicked.connect(self.suggest_requested)
+        self.btn_suggest.hide()                           # F5.20: até o host das sugestões dizer
         self.btn_open = self._button("document", "Abrir a janela Ao vivo", "Abrir a janela Ao vivo: o resumo parcial e as marcações")
         self.btn_open.clicked.connect(self.open_live_requested)
         self.btn_min = self._button("chevron-down", "Minimizar", "")
@@ -108,19 +114,19 @@ class CaptionTray(QWidget):
         for w in (self.live_icon, self.title, self.badge):
             head.addWidget(w)
         head.addStretch(1)
-        for b in (self.btn_open, self.btn_min, self.btn_close):
+        for b in (self.btn_suggest, self.btn_open, self.btn_min, self.btn_close):
             head.addWidget(b)
         self.line = CaptionLine()
         note(self.line, Tone.TEXT)
         self.line.setFixedHeight(max(20, self.line.fontMetrics().height() + 4))
         self.line.set_full_text(WAITING, LINE_TIP)
         self.line.clicked.connect(self.restore)
-        lay = QVBoxLayout(self)
+        self.lay = lay = QVBoxLayout(self)
         lay.setContentsMargins(*MARGINS)
         lay.setSpacing(SPACING)
         lay.addLayout(head)
         lay.addWidget(self.chat, 1)
-        lay.addWidget(self.line)
+        lay.addWidget(self.line)                          # F5.20: o cartão da sugestão entra antes dela (`CARD_INDEX`)
         self._show_collapsed(False)
 
     @staticmethod
@@ -175,6 +181,7 @@ class CaptionTray(QWidget):
         self.collapsed = collapsed
         self.chat.setVisible(not collapsed)
         self.line.setVisible(collapsed)
+        self.card_collapsed(collapsed)                    # F5.20: o cartão some e volta com o chat
         name, icon = ("Restaurar", "chevron-up") if collapsed else ("Minimizar", "chevron-down")
         self.btn_min.setText(name)
         self.btn_min.setAccessibleName(name)
@@ -222,7 +229,7 @@ class CaptionTray(QWidget):
         return MARGINS[1] + head + SPACING + self.line.minimumHeight() + MARGINS[3]
 
     def target_height(self) -> int:
-        return self.collapsed_height() if self.collapsed else self.full_height
+        return self.collapsed_height() if self.collapsed else self.full_height + self.card_extra
 
     def follow(self) -> None:
         """Encostada: a posição pelo widget (arrastado, crescido com um alerta) e pela altura de agora; sem espaço do lado
@@ -278,7 +285,7 @@ class CaptionTray(QWidget):
     def _settled(self, resizing: bool) -> None:
         """Soltou o arrasto ou a borda: a altura da aberta, o encosto (perto do widget, encosta) e a posição guardada."""
         if resizing and not self.collapsed:
-            self.full_height = self.height()
+            self.full_height, self.card_extra = self.height(), 0      # F5.20: a altura escolhida já leva o cartão
         widget = self.anchor() if self.anchor is not None else None
         self.dock = docked(widget, self._rect()) if widget is not None else None
         self.follow()
@@ -347,6 +354,7 @@ class CaptionTray(QWidget):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self.title.setVisible(self.width() >= TITLE_MIN_W)
+        self.fit_card()
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:

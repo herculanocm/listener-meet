@@ -16,16 +16,22 @@ tarefas da LLM, editáveis; o resto do pedido fica embaixo, só leitura. F5.10: 
   marca o editor e explica na faixa (`prompt_problem`, `reveal_prompt`); o editor é um `QPlainTextEdit`, que o
   `change_signal` reconhece.
 
+- F5.20 (U-158): na tarefa do memorando das sugestões, "O que o assistente aprendeu" (`suggest.memo`): quando foi refeito e
+  com quantas avaliações, se o aprender está ligado, o texto editável, "Limpar" e a contagem dos 600; o Salvar o grava e
+  barra acima do limite, como as instruções.
+
 `PromptsMixin` é parte do `SettingsDialog`: lê `store` dele. Log só com a tarefa e o hash, nunca o texto (A-46)."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QSizePolicy,
-                               QStackedWidget, QWidget)
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from ..config import prompts as prompt_settings
+from ..config.defaults import SPECS
 from ..llm import prompts
 from ..llm.prompts.preview import preview
 from ..llm.types import LlmTask
@@ -112,6 +118,9 @@ class PromptPane(Card):
         self.count = QLabel("")
         self.count.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._lay_out()
+        self.memo = MemoBox(store) if task == LlmTask.SUGGEST_MEMO else None      # F5.20 (U-158)
+        if self.memo is not None:
+            self.content.addWidget(self.memo)
         self._changed()
 
     def _lay_out(self) -> None:
@@ -160,6 +169,71 @@ class PromptPane(Card):
         n = len(self.text())
         self.count.setText(f"{n:,} de {prompt_settings.MAX_CHARS:,} caracteres".replace(",", "."))
         theme.note(self.count, Tone.DANGER if n > prompt_settings.MAX_CHARS else Tone.SECONDARY)    # acima do limite, em vermelho
+
+
+MEMO_KEY, MEMO_MAX = "suggest.memo", 600
+MEMO_TITLE = "O que o assistente aprendeu"
+MEMO_NONE = "Ainda nenhum: entra com 10 avaliações das sugestões ao vivo."
+
+
+class MemoBox(QWidget):
+    """F5.20 (U-158): o memorando das sugestões, editável, com "Limpar" e a contagem; o Salvar o grava (`save`)."""
+
+    def __init__(self, store: Store) -> None:
+        super().__init__()
+        self.store = store
+        self.saved = str(store.get(SPECS[MEMO_KEY]))
+        heading = QLabel(MEMO_TITLE)
+        role(heading, "body_strong")
+        self.info = note(self._info())
+        self.edit = QPlainTextEdit(self.saved)
+        self.edit.setAccessibleName(MEMO_TITLE)
+        self.edit.setFixedHeight(EDITOR_H)
+        self.edit.setTabChangesFocus(True)
+        self.edit.textChanged.connect(self._changed)
+        self.clear = QPushButton("Limpar")
+        self.clear.setToolTip("Esvazia o memorando (grava ao salvar); as avaliações ficam")
+        self.clear.clicked.connect(self.edit.clear)
+        self.count = QLabel("")
+        row = QHBoxLayout()
+        row.addWidget(self.clear)
+        row.addStretch(1)
+        row.addWidget(self.count)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 8, 0, 0)
+        for w in (heading, self.info, self.edit):
+            lay.addWidget(w)
+        lay.addLayout(row)
+        self._changed()
+
+    def _info(self) -> str:
+        at, n = str(self.store.get(SPECS["suggest.memo_at"])), int(self.store.get(SPECS["suggest.memo_ratings"]))
+        learn = "ligado" if self.store.get(SPECS["suggest.learn"]) else "desligado"
+        try:
+            when = f"Refeito em {datetime.fromisoformat(at).strftime('%d/%m/%Y às %H:%M')} com {n} avaliações." if at else MEMO_NONE
+        except ValueError:
+            when = MEMO_NONE
+        return f"{when} Aprender com as avaliações: {learn} (página Ao vivo)."
+
+    def text(self) -> str:
+        return self.edit.toPlainText().strip()
+
+    def problem(self) -> str | None:
+        n = len(self.text())
+        return f"o memorando tem {n:,} caracteres; o limite é {MEMO_MAX}.".replace(",", ".") if n > MEMO_MAX else None
+
+    def save(self) -> bool:
+        if self.text() == self.saved.strip():
+            return False
+        self.store.set_setting(MEMO_KEY, self.text())
+        log.info("configurações: memorando das sugestões editado (%d caracteres)", len(self.text()))
+        return True
+
+    def _changed(self) -> None:
+        n = len(self.text())
+        self.count.setText(f"{n} de {MEMO_MAX} caracteres")
+        theme.note(self.count, Tone.DANGER if n > MEMO_MAX else Tone.SECONDARY)
+        self.clear.setEnabled(bool(n))
 
 
 class PromptsMixin:
@@ -241,11 +315,14 @@ class PromptsMixin:
             err = pane.problem() if pane is not None else None
             if pane is not None and err:
                 return f"Prompts, {pane.name}: {err}", pane.edit
+            memo = pane.memo.problem() if pane is not None and pane.memo is not None else None
+            if pane is not None and pane.memo is not None and memo:
+                return f"Prompts, {MEMO_TITLE}: {memo}", pane.memo.edit
         return None
 
     def reveal_prompt(self, widget: QWidget) -> None:
         """U-072: o erro num editor de instruções abre a tarefa dele."""
-        task = next((t for t, pane in self.prompt_panes.items() if pane.edit is widget), None)
+        task = next((t for t, pane in self.prompt_panes.items() if widget in (pane.edit, pane.memo and pane.memo.edit)), None)
         if task is not None:
             self.select_prompt(task)
 
@@ -256,7 +333,10 @@ class PromptsMixin:
         for t in done:
             key = prompt_settings.key(t)
             log.info("configurações: prompt de %s: %s", t, prompt_settings.shown(key, self.store.get_setting(key)))
+        memo = self.prompt_panes.get(LlmTask.SUGGEST_MEMO)
+        if memo is not None and memo.memo is not None:                    # F5.20 (U-158)
+            memo.memo.save()
         return done
 
 
-__all__ = ["CORE", "PROMPTS_TITLE", "TASKS", "PromptPane", "PromptsMixin"]
+__all__ = ["CORE", "MEMO_TITLE", "PROMPTS_TITLE", "TASKS", "MemoBox", "PromptPane", "PromptsMixin"]

@@ -63,10 +63,10 @@ import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
 from contextlib import suppress
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QSystemTrayIcon, QWidget
 
 from ..capture.clock import Clock, SessionClock
@@ -94,6 +94,7 @@ from .live_prepare import RAG, USER_CANCELED, preparer, shutdown_preparer
 from .llm_tabs import llm_done_text
 from .meeting import MeetingWindow
 from .meeting_delete import MeetingDeleter
+from .mute_poller import MutePoller
 from .notices import (CHAT_FAILED, CHAT_READY, CRASH_SHORT, HISTORY_FAILED, HISTORY_READY, IDENTITY_READY, Notice, NoticeAction,
                       NoticeKind, NoticeMeta, RateLimit, Target, download_text, job_error_text, startup_texts)
 from .player import Player, PlayRequest, prewarm_audio
@@ -115,7 +116,7 @@ if TYPE_CHECKING:
     from ..store import Store
 
 log = get_logger("ui")
-HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history")
+HOTKEY_ACTIONS = ("start", "pause", "stop", "mark", "mute", "history", "suggest")      # F5.20: + sugerir (U-153)
 SYSTEM_PLAY_TEXT = ("Você está gravando o som do sistema inteiro: o áudio do player entra na gravação. Tocar mesmo assim?")
 PLAYER_PAUSED_WARMUP = "pausado para o warm-up da gravação"                                    # R7-01, na barra do player
 PLAYER_PAUSED_SYSTEM = "pausado: a gravação capta o som do sistema inteiro (tocar pede confirmação)"
@@ -125,7 +126,6 @@ PLAYER_RELEASE_WAIT_S = 1.0          # A-17: a troca de microfone espera o playe
 TRAY_TIP = ("No Windows 11 o ícone da bandeja nasce no menu oculto (seta ao lado do relógio). Arraste-o para a barra "
             "para ver o estado da gravação.")
 EMERGENCY_STOP_BUDGET_S = 10.0
-MUTE_POLL_S = 2.0
 LEASE_S = 600.0                      # pipeline.paused_until = agora + 10 min enquanto grava (Q7)
 LEASE_RENEW_S = 60.0
 QUEUE_POLL_ACTIVE_MS = 2000
@@ -150,30 +150,6 @@ ENDED_BADLY = (JobStatus.ERROR, JobStatus.CANCELLED)      # R-07: o fim que não
 def _error_key(job: Any) -> tuple[int, str]:
     """A-11: um erro é o par (job, `finished_at`): o "Tentar de novo" que falha de novo é outro erro e avisa de novo."""
     return int(job["id"]), str(job.get("finished_at") or "")
-
-
-class _MutePoller(QThread):
-    """Lê o mudo do sistema a cada 2 s fora da thread do Qt (COM pode engasgar no dock/undock)."""
-    changed = Signal(object)
-
-    def __init__(self, platform: Platform):
-        super().__init__(None)
-        self.platform = platform
-        self._wake = threading.Event()
-
-    def interrupt(self) -> None:
-        self.requestInterruption()
-        self._wake.set()
-
-    @override
-    def run(self) -> None:
-        mute = self.platform.mic_mute()
-        while not self.isInterruptionRequested():
-            try:
-                self.changed.emit(mute.get())
-            except Exception as e:
-                log.debug("ler mudo do sistema: %s", e)
-            self._wake.wait(MUTE_POLL_S)
 
 
 class Controller(QObject):
@@ -204,7 +180,7 @@ class Controller(QObject):
         self._marker_open = False
         self._quitting = False
         self.on_start: Callable[[], Any] | None = None   # F5.7: o `hotkeys.start` com uma reunião sem gravação pendente
-        self._mute_poller: _MutePoller | None = None
+        self._mute_poller: MutePoller | None = None
         self._mute_skip = 0                           # F5.3 (A-18): leituras do poller do mudo a ignorar depois de uma troca
         self.devices: RecordingDevices | None = None  # F5.3 L4: os dispositivos da gravação em curso
         self.hotkey_pressed.connect(self._on_hotkey)
@@ -617,6 +593,15 @@ class Controller(QObject):
                 self.toggle_mute()
             case "history":
                 self.open_history(focus_search=True)
+            case "suggest":
+                self.request_suggestion()
+
+    def request_suggestion(self) -> None:
+        """F5.20 (U-153): o atalho e o "Sugerir…" da bandeja do sistema, pelo fio da bandeja de legendas, onde o cartão mora."""
+        if self.captions is not None:
+            self.captions.request_suggestion()
+        else:
+            self.notify("As sugestões só saem durante a gravação, com a legenda ao vivo e a bandeja de legendas.")
 
     # ---------------------------------------------------------------- gravação
     @property
@@ -660,7 +645,7 @@ class Controller(QObject):
         meeting_id = self.store.create_meeting(fields.get("title"), fields.get("platform"), fields.get("preset_id"),
                                                fields.get("participants"), fields.get("is_in_room", False),
                                                glossary=fields.get("glossary"), expected_people_json=fields.get("expected_people_json"),
-                                               language=lang)
+                                               language=lang, goal=fields.get("goal"))
         for call_id in fields.get("glossary_call_ids") or ():               # as chamadas do glossário nascem sem reunião (F3A-11)
             self.store.llm_calls.set_meeting(int(call_id), meeting_id)
         log.info("gravação %s iniciada: mic=%s fonte=%s idioma=%s", meeting_id,       # A-22: o id, nunca o nome do aparelho
@@ -721,7 +706,9 @@ class Controller(QObject):
             self.captions = CaptionTrayHost(self.store, self.platform, w, rec.meeting_id, on_mark=self.mark_caption,
                                             on_open_live=self._open_live_front, live_state=self.live_status,
                                             on_notice=functools.partial(self._notify_as, NoticeKind.ERROR),
-                                            marked=self._marked_captions, speakers=self._speakers, parent=self)
+                                            marked=self._marked_captions, speakers=self._speakers,
+                                            suggest=bool(fields.get("suggest", True)), elapsed=rec.elapsed, on_info=self.notify,
+                                            parent=self)
         if self.tray:
             self.tray.set_state(AppState.RECORDING)
         self._timer.start()
@@ -839,7 +826,7 @@ class Controller(QObject):
         self._stop_mute_poller()
         self._terminate_live()                           # antes de apagar: o filho não pode gravar numa reunião apagada
         self._stop_partial(cancel=True)                  # a resposta que vier depois não grava (a reunião some)
-        self._end_live_window(rec.meeting_id, "gravação cancelada (apagada): só leitura")
+        self._end_live_window(rec.meeting_id, "gravação cancelada (apagada): só leitura", discarded=True)
         rec.cancel()
         if rec.muted:
             self.platform.mic_mute().set(False)
@@ -975,7 +962,7 @@ class Controller(QObject):
     def _start_mute_poller(self) -> None:
         self._mute_skip = 0
         if self._mute_poller is None:
-            poller = _MutePoller(self.platform)
+            poller = MutePoller(self.platform)
             poller.changed.connect(self._on_os_mute)
             poller.finished.connect(functools.partial(release, poller))
             live_threads.add(poller)                      # referência viva até `finished` (sem parent, M-12)
@@ -1632,13 +1619,14 @@ class Controller(QObject):
             self.live_window = None
         win.deleteLater()
 
-    def _end_live_window(self, meeting_id: int, text: str) -> None:
-        """Parar ou Cancelar: a janela da gravação fica aberta só para leitura; a bandeja, sem marcar até fechar (F5.17)."""
+    def _end_live_window(self, meeting_id: int, text: str, discarded: bool = False) -> None:
+        """Parar ou Cancelar: a janela da gravação fica aberta só para leitura; a bandeja, sem marcar até fechar (F5.17); F5.20:
+        o descarte cancela a sugestão em voo."""
         win = self.live_window
         if win is not None and win.meeting_id == meeting_id:
             win.set_finished(text)
         if self.captions is not None:
-            self.captions.set_finished()
+            self.captions.set_finished(discarded)
 
     def _can_mark(self, meeting_id: object) -> bool:
         rec = self.recorder
@@ -1847,6 +1835,8 @@ class Controller(QObject):
                  "salvas" if accepted else "canceladas")
         if accepted:
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
+            if self.captions is not None:                # F5.20: `suggest.enabled` e a chave valem em uso (CP8)
+                self.captions.settings_changed()
             from .app import attach_log
 
             err = attach_log(self.store)

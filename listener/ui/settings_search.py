@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QPushButton
 
-from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS
+from ..config.defaults import LIVE_KEYS, RAG_KEYS, RAG_SQL_KEYS, SUGGEST_KEYS
 from ..fmt import plural
 from ..llm import local_embed
 from ..model import SettingScope
@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 
 IDLE: dict[str, Any] = {"state": "idle"}
 OTHER_DOWNLOAD = "outro download em curso (um por vez)"
-LIVE_SUBTITLE = ("A legenda e o resumo parcial durante a gravação. Vale na próxima gravação; a linha diz o que aplica "
-                 "agora.")
+LIVE_SUBTITLE = ("A legenda, o resumo parcial e as sugestões durante a gravação. Vale na próxima gravação; a linha diz o que "
+                 "aplica agora (as sugestões valem em uso).")
 SEARCH_SUBTITLE = ("A busca do Histórico e o chat sobre todas as reuniões. Aplica agora; o índice por palavra é grátis, e "
                    "os vetores só custam nos provedores pagos.")
 ASK_CARD = "Perguntar à base"
@@ -137,6 +137,9 @@ class SearchMixin:
         self.prepare_btn, self.prepare_bar, self.prepare_status = self.live_row.btn, self.live_row.bar, self.live_row.status
         self.prepare_btn.clicked.connect(self.prepare_models)
         form.addRow("Modelos", self.live_row)
+        suggest = page.form("Sugestões")                 # F5.20: as sugestões ao vivo; valem em uso, salvo o dossiê
+        for key in SUGGEST_KEYS:
+            self._add(page, suggest, key)
         page.finish()
         return page
 

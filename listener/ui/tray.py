@@ -44,7 +44,8 @@ CALL_RECORD, CALL_OFF = "Gravar a reunião do {label}…", "Não avisar para o {
 ABOUT_ITEM, SUPPORT_ITEM = f"Sobre o {about.APP_NAME}…", "Apoiar o projeto…"        # F5.12 (U-122, U-123)
 # F5.13 (U-133): o atalho (`hotkeys.<nome>`) de cada item do menu que tem um
 SHORTCUT_ITEMS: tuple[tuple[str, str], ...] = (("start", "act_record"), ("pause", "act_pause"), ("mark", "act_mark"),
-                                               ("mute", "act_mute"), ("stop", "act_stop"), ("history", "act_history"))
+                                               ("mute", "act_mute"), ("stop", "act_stop"), ("history", "act_history"),
+                                               ("suggest", "act_suggest"))                 # F5.20 (A-20)
 
 
 def menu_shortcuts(read: Callable[[str], str | None], failed: object) -> dict[str, str]:
@@ -128,6 +129,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_mute = QAction("Mudo", self.menu)
         self.act_stop = QAction("Parar", self.menu)
         self.act_live = QAction("Ao vivo…", self.menu)
+        self.act_suggest = QAction("Sugerir…", self.menu)          # F5.20 (U-153, A-20): pelo cartão da bandeja de legendas
         self.act_history = QAction("Histórico…", self.menu)
         self.act_queue = QAction("Fila de processamento…", self.menu)
         self.act_settings = QAction("Configurações…", self.menu)
@@ -135,7 +137,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_support = QAction(SUPPORT_ITEM, self.menu)          # F5.12 (U-123)
         self.act_quit = QAction("Sair", self.menu)
         self._call_actions()
-        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
+        for a in (self.act_record, self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(self.act_history)
@@ -157,6 +159,7 @@ class TrayIcon(QSystemTrayIcon):
         self.act_mute.triggered.connect(controller.toggle_mute)
         self.act_stop.triggered.connect(controller.stop_recording)
         self.act_live.triggered.connect(controller.open_live_window)
+        self.act_suggest.triggered.connect(controller.request_suggestion)
         self.act_history.triggered.connect(self._open_history)
         self.act_queue.triggered.connect(controller.open_queue)
         self.act_settings.triggered.connect(controller.open_settings)
@@ -238,7 +241,7 @@ class TrayIcon(QSystemTrayIcon):
         self._apply_tip()
         recording = state in (AppState.RECORDING, AppState.PAUSED)
         self.act_record.setEnabled(state == AppState.IDLE)
-        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live):
+        for a in (self.act_pause, self.act_mark, self.act_mute, self.act_stop, self.act_live, self.act_suggest):
             a.setEnabled(recording)
 
     def show_shortcuts(self, combos: Mapping[str, str]) -> None:

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QWidget
+from PySide6.QtWidgets import QAbstractButton, QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QWidget
 
 from ..capture.clock import fmt_mmss
 from ..log import get_logger
@@ -34,6 +34,23 @@ HEALTH_ICONS: dict[str, dict[str, str]] = {
     "L": {Health.ALERT: "mic-off", Health.MUTED: "mic-off", Health.PAUSED: "pause", Health.LOST: "error"},
     "R": {Health.ALERT: "warning", Health.PAUSED: "pause", Health.LOST: "error"},
 }
+
+
+# F5.20 (A-12): as dicas dos botões do widget, aqui para o `ui/widget.py` ficar abaixo de 400 linhas (o atalho entra junto)
+BUTTON_TIPS = {"pause": "Pausar / retomar a gravação", "mark": "Marcador com nota", "mute": "Mudo global: muta o microfone no sistema",
+               "devices": "Dispositivos: trocar o microfone e a saída gravada sem parar", "stop": "Parar e salvar",
+               "cancel": "Descartar a gravação: pergunta antes", "suggest": "Sugerir o que falar agora"}
+CAPTIONS_TIP = {True: "Legendas: esconder a bandeja", False: "Legendas: mostrar a bandeja"}   # F5.17 (pergunta 6)
+
+
+def apply_suggest_state(button: QAbstractButton, visible: bool, enabled: bool, tip: str, hint: bool) -> None:
+    """F5.20 (U-153, U-160): o botão "Sugerir" do widget e da bandeja: escondido sem as sugestões nesta gravação, apagado com o
+    motivo na dica e a lâmpada no destaque enquanto falaram o seu nome."""
+    button.setVisible(visible)
+    button.setEnabled(enabled)
+    button.setToolTip(tip)
+    set_icon(button, "lightbulb", Tone.ACCENT if hint else Tone.TEXT, 20)
+    button.setAccessibleDescription("falaram com você" if hint else "")
 
 
 # selo por estado do ao vivo (`Controller.live_status`): texto e tom; os estados fora daqui escondem o selo (no widget e,
@@ -277,10 +294,11 @@ def saved_widget_size(store: Store) -> tuple[int, int]:
 
 def widget_prefs(store: Store) -> dict[str, Any]:
     """O tamanho, a posição e (F5.4 L2, U-061) os atalhos globais das ações do widget, para a dica dos botões."""
-    shortcuts = {name: store.get_setting(f"hotkeys.{name}") or "" for name in ("pause", "mark", "mute", "stop")}
+    shortcuts = {name: store.get_setting(f"hotkeys.{name}") or "" for name in ("pause", "mark", "mute", "stop", "suggest")}   # F5.20
     return {"size": saved_widget_size(store), "pos": saved_widget_pos(store), "shortcuts": shortcuts}
 
 
-__all__ = ["CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "LIVE_BADGES", "CaptionLine", "ElidedLabel",
-           "MarkerPopup", "caption_text", "channel_letter", "clock_text", "confirm_discard", "hbox", "health_icon", "icon_label",
-           "initial_pos", "save_widget_pos", "saved_widget_pos", "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]
+__all__ = ["BUTTON_TIPS", "CAPTIONS_TIP", "CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "LIVE_BADGES",
+           "CaptionLine", "ElidedLabel", "MarkerPopup", "apply_suggest_state", "caption_text", "channel_letter", "clock_text",
+           "confirm_discard", "hbox", "health_icon", "icon_label", "initial_pos", "save_widget_pos", "saved_widget_pos",
+           "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]

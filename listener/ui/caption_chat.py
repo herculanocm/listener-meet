@@ -182,6 +182,16 @@ class CaptionChat(QWidget):
             self.unread = 0
             self.new_btn.hide()
 
+    def scroll_to_caption(self, caption_id: int) -> bool:
+        """F5.20 (U-154): o fato citado numa sugestão rola o chat até a legenda dele (o fim deixa de ficar preso)."""
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            row = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(row, dict) and _row_id(row) == caption_id:
+                self.list.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return True
+        return False
+
     def scroll_to_end(self) -> None:
         self.list.scroll_to_end()
         self.unread = 0
