@@ -7,13 +7,15 @@ majors mais novas do que a documentação conhecida; a forma exata das chamadas 
 contrato e pelo canário do "testar conexão".
 
 ## Tipos (`llm/types.py`, tudo `frozen, slots`, `StrEnum` para enumerações)
-`Role` (system, user, assistant) · `AudioPart(data: bytes, mime: str, label: str)` · `Message(role, text, audio=())` ·
+`Role` (system, user, assistant) · `AudioPart(data: bytes, mime: str, label: str)` · `ImagePart(data, mime, width, height,
+label)` (F5.21) · `Message(role, text, audio=(), images=())` ·
 `Request(task: LlmTask, model: str, messages, json_schema: Mapping | None, temperature=0.2, max_output_tokens=8192,
 reasoning: Reasoning = NONE, timeout_s=120.0, cache_prefix=False)` · `Usage(input_tokens, output_tokens, cached_tokens=0,
 audio_tokens=0, cache_write_tokens=0)` · `Completion(text, data: Mapping | None, usage, model, latency_ms, finish,
 raw_id)` · `ModelInfo(id, display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok,
 latency_ms, model, error)` ·
-`Capability`: TEXT, JSON, AUDIO_IN, EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary, identify, minutes,
+`Capability`: TEXT, JSON, AUDIO_IN, IMAGE_IN (F5.21), EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary,
+identify, minutes,
 executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5), rag_sql e rag_answer
 (F5.10), suggest e suggest_memo (F5.20, classe rápida) · `Reasoning`:
 none, low, high · `ProviderKind`: gemini, openai, anthropic, local (F5.1: só embeddings) · `SummaryKind`: pre_summary,
@@ -90,6 +92,12 @@ nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga d
 - `suggest` (F5.20): `{options: [{kind, text, facts: [caption_id]}], thread_summary}` em streaming, lido opção a opção pelo
   projeto; os tetos (`maxItems`, `maxLength`) são cortados antes da validação, porque a OpenAI e a Anthropic não os recebem;
   `suggest_memo`: `{memo}`. Nas famílias do Claude de ferramenta forçada, o `stream()` repassa o `input_json_delta`.
+- Imagem (F5.21): `ImagePart(data, mime, width, height, label)` em `Message.images`; a capacidade `IMAGE_IN` vem só da tabela
+  de modelos (o cache dos modelos listados é anterior a ela). O Gemini manda `inline_data` depois do texto; a OpenAI
+  (Responses), `input_image` em data URL com `detail: "high"`; o Claude, o bloco `image` em base64 antes do texto (a mensagem
+  só com imagem fica). A estimativa conta 2.400 tokens por imagem; o pedido guardado leva o rótulo, nunca os bytes. O
+  `suggest` 1.1, com contexto de tela, troca o esquema por `{options: [{kind, text, facts, screen}], thread_summary,
+  screen_summary}` e soma as regras da tela; sem tela, o pedido é o da 1.0.
 - Embeddings (F5): `embed` passa pela retentativa e pelo timeout do `RetryingProvider`; o índice normaliza sempre (a
   OpenAI não normaliza); documentos com `task=document` em lotes de 64, consulta com `task=query`; `rag_embed` em
   `llm_calls` por lote.
