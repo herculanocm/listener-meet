@@ -1,7 +1,7 @@
 """Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
-`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`; F5: `rag`) atrás dos nomes de
-método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair; `Store.open_readonly(dir)` para o `--check`;
-`Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
+`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`; F5: `rag`; F5.20: `suggestions`)
+atrás dos nomes de método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair;
+`Store.open_readonly(dir)` para o `--check`; `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -27,6 +27,7 @@ from .providers import ProvidersRepo
 from .rag import RagRepo
 from .segments import SegmentsRepo
 from .settings import SettingsRepo
+from .suggestions import SuggestionsRepo
 from .summaries import SummariesRepo
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class Store:
         self.llm_calls = LlmCallsRepo(self.core)
         self.chat = ChatRepo(self.core)
         self.captions = CaptionsRepo(self.core)
+        self.suggestions = SuggestionsRepo(self.core)       # F5.20: as sugestões ao vivo e as avaliações
         self.rag = RagRepo(self.core)
         if role == StoreRole.APP:
             self.providers.refresh_seeds()            # F5.14 (item 8): depois das migrações, só no papel que escreve e migra
@@ -182,9 +184,9 @@ class Store:
     # ---------------------------------------------------------------- reuniões
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
-                       expected_people_json: str | None = None, language: str | None = None) -> int:
+                       expected_people_json: str | None = None, language: str | None = None, goal: str | None = None) -> int:
         return self.meetings.create_meeting(title, platform, preset_id, expected_participants, is_in_room, glossary, expected_people_json,
-                                            language)
+                                            language, goal)
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         return self.meetings.get_meeting(meeting_id)

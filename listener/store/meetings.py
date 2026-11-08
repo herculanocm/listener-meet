@@ -17,7 +17,7 @@ log = get_logger("store.meetings")
 # F5.6 (A-32): o que a cascata da reunião leva (contadas para o log da exclusão, A-46); `job_artifacts` e `rag_vectors` vão
 # pela cascata das filhas e o `rag_fts` pelo gatilho
 CASCADE_TABLES = ("processing_jobs", "clusters", "segments", "summaries", "action_items", "captions", "markers", "events",
-                  "rag_chunks", "chat_messages")
+                  "rag_chunks", "chat_messages", "suggestions")         # F5.20: as opções vão pela cascata das sugestões
 # A-33: as revisões das entidades da reunião (as de `voice_profile` e `person` ficam)
 REVISION_ENTITIES = (("cluster", "clusters"), ("summary", "summaries"), ("action_item", "action_items"))
 
@@ -39,6 +39,7 @@ class MeetingRow(TypedDict, total=False):
     language: str | None               # F5.3: código do Whisper (pt ou en), escolhido no warm-up (A-01)
     glossary: str | None               # F3: termos prováveis do warm-up (LLM, editados pelo usuário)
     expected_people_json: str | None   # F3: ids de `people` casados com os participantes esperados
+    goal: str | None                   # F5.20 (U-156): "Meu objetivo nesta reunião", lido pelas sugestões ao vivo
 
 
 class PresetRow(TypedDict, total=False):
@@ -121,18 +122,19 @@ class MeetingsRepo:
     # ---------------------------------------------------------------- meetings
     def create_meeting(self, title: str | None, platform: str | None, preset_id: int | None,
                        expected_participants: str | None, is_in_room: bool = False, glossary: str | None = None,
-                       expected_people_json: str | None = None, language: str | None = None) -> int:
+                       expected_people_json: str | None = None, language: str | None = None, goal: str | None = None) -> int:
         """Cria a reunião já apontando para o arquivo de áudio do mês (criado e migrado aqui, antes do primeiro pedaço).
         F3: `glossary` e `expected_people_json` vêm do warm-up (F3A-11). F5.3 (A-01): `language` é o idioma escolhido no
-        warm-up, gravado como código do Whisper; sem ele, fica nulo e o runner usa o padrão."""
+        warm-up, gravado como código do Whisper; sem ele, fica nulo e o runner usa o padrão. F5.20 (U-156): `goal` é o
+        "Meu objetivo nesta reunião" do warm-up (vazio vira nulo)."""
         started = _now()
         audio_file = audio_file_for(started)
         self.core.attach(audio_file)
         return self.core.insert(                         # F5.6 (A-34): o id acima do piso, nunca o de uma reunião excluída
             "INSERT INTO meetings(id, title, started_at, platform, preset_id, status, expected_participants, is_in_room, audio_file, "  # noqa: S608
-            f"glossary, expected_people_json, language) VALUES ({next_id_sql(MEETINGS[0])}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"glossary, expected_people_json, language, goal) VALUES ({next_id_sql(MEETINGS[0])}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (MEETINGS[1], title, started, platform, preset_id, MeetingStatus.RECORDING, expected_participants, int(bool(is_in_room)),
-             audio_file, glossary, expected_people_json, whisper_code(language) if language else None))
+             audio_file, glossary, expected_people_json, whisper_code(language) if language else None, (goal or "").strip() or None))
 
     def get_meeting(self, meeting_id: int) -> MeetingRow | None:
         rows = self.core.q("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
@@ -232,6 +234,20 @@ class MeetingsRepo:
         with self.core.transaction():
             self.core.execute("UPDATE meetings SET title_llm = ? WHERE id = ?", (title, meeting_id))
             self.add_revision("meeting", meeting_id, "title_llm", before, title, author)
+        return True
+
+    def set_goal(self, meeting_id: int, goal: str | None, author: str = "usuario") -> bool:
+        """F5.20 (U-156): o "Meu objetivo nesta reunião" trocado durante a gravação ("Objetivo…" no cartão), com `revisions`;
+        vazio vira nulo; False quando a reunião não existe ou o objetivo já era esse."""
+        m = self.get_meeting(meeting_id)
+        if m is None:
+            return False
+        before, after = m.get("goal"), (goal or "").strip() or None
+        if before == after:
+            return False
+        with self.core.transaction():
+            self.core.execute("UPDATE meetings SET goal = ? WHERE id = ?", (after, meeting_id))
+            self.add_revision("meeting", meeting_id, "goal", before, after, author)
         return True
 
     def set_glossary(self, meeting_id: int, glossary: str | None, expected_people_json: str | None) -> None:

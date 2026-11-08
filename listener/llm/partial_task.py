@@ -105,6 +105,17 @@ def partial_state(store: Store, meeting_id: int) -> tuple[dict[str, Any], int]:
     return data, int(data.get("last_caption_id") or 0)
 
 
+def prompt_json(previous: Mapping[str, Any]) -> str | None:
+    """O parcial como vai a um pedido (o próximo parcial e, na F5.20, a sugestão ao vivo): só o que a LLM devolve, sem `t_ms`
+    nem os metadados do projeto; None antes do primeiro."""
+    if not previous:
+        return None
+    prev: dict[str, Any] = {"summary": previous.get("summary") or ""}
+    for kind in ("decisions", "actions"):
+        prev[kind] = [{k: v for k, v in it.items() if k != "t_ms"} for it in previous.get(kind) or () if isinstance(it, dict)]
+    return json.dumps(prev, ensure_ascii=False, separators=(",", ":"))
+
+
 def select_captions(rows: Sequence[CaptionRow], max_chars: int = MAX_INPUT_CHARS) -> tuple[list[CaptionRow], int]:
     """As legendas novas pela ordem dos ids até o limite de caracteres (ao menos uma), devolvidas em ordem de tempo; devolve
     (usadas, quantas sobraram). Pelos ids porque o próximo parcial começa depois do maior id usado e L e R entram fora da
@@ -207,13 +218,7 @@ def run_partial(store: Store, meeting_id: int, *, provider: LLMProvider | None =
     lines = [Line(int(r["id"]), int(r["t_start_ms"] or 0), _speaker(r, me), " ".join(str(r.get("text") or "").split())[:MAX_CAPTION_CHARS])
              for r in used]
     ctx = meeting_ctx(store, meeting)
-    previous_json: str | None = None
-    if previous:                                           # só o que a LLM devolve: sem `t_ms` nem os metadados do projeto
-        prev = {"summary": previous.get("summary") or ""}
-        for kind in ("decisions", "actions"):
-            prev[kind] = [{k: v for k, v in it.items() if k != "t_ms"} for it in previous.get(kind) or () if isinstance(it, dict)]
-        previous_json = json.dumps(prev, ensure_ascii=False, separators=(",", ":"))
-    msgs = cfg.build(LlmTask.PARTIAL, PartialCtx(ctx, previous_json, lines))      # F5.6 L2 (A-26): as instruções suas
+    msgs = cfg.build(LlmTask.PARTIAL, PartialCtx(ctx, prompt_json(previous), lines))      # F5.6 L2 (A-26): as instruções suas
     req = Request(LlmTask.PARTIAL, cfg.fast_model, msgs, prompts.partial.SCHEMA,
                   max_output_tokens=MAX_OUTPUT_TOKENS, reasoning=TASK_REASONING[LlmTask.PARTIAL], timeout_s=TIMEOUT_S)
 

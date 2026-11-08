@@ -108,6 +108,7 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("hotkeys.mark", "ctrl+alt+shift+m", _NOW, "Atalho: marcador", _text),
     SettingSpec("hotkeys.mute", "ctrl+alt+shift+u", _NOW, "Atalho: mudo", _text),
     SettingSpec("hotkeys.history", "ctrl+alt+shift+h", _NOW, "Atalho: abrir o Histórico (cursor na busca)", _text, phase="F5"),  # U-028
+    SettingSpec("hotkeys.suggest", "ctrl+alt+shift+d", _NOW, "Atalho: sugerir o que falar", _text, phase="F5.20"),  # U-153
     SettingSpec("log.path", "", _NOW, "Arquivo de log", _text),                 # vazio = <pasta do banco>/logs/listener.log
     SettingSpec("log.level", "INFO", _NOW, "Nível de log", _upper, choices=frozenset(LOG_LEVELS)),
     SettingSpec("ui.widget_pos", "", _NOW, "Posição do widget", _text),
@@ -202,6 +203,19 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("live.in_widget", True, _NEXT, "Última legenda no widget (com a bandeja desligada)", _bool, phase="F4"),
     # F5.6 (A-21, P-06): o resumo parcial automático é escolha da gravação (fora do preset); "Atualizar resumo agora" vale sempre
     SettingSpec("live.partial", False, _NEXT, "Resumo parcial automático (padrão do \"Antes de gravar\")", _bool, phase="F5.6"),
+    # F5.20: as sugestões ao vivo do que falar (grupo "Sugestões" na página Ao vivo). Valem em uso (CP8, pergunta 13), salvo o
+    # dossiê, montado ao começar a gravar; as três internas são o memorando do que o usuário prefere (U-158) e quando saiu
+    SettingSpec("suggest.enabled", True, _NOW, "Sugestões ao vivo (o botão Sugerir na bandeja de legendas e no widget)", _bool,
+                phase="F5.20"),
+    SettingSpec("suggest.learn", True, _NOW, "Aprender com as avaliações (o memorando do que você prefere)", _bool, phase="F5.20"),
+    SettingSpec("suggest.options", 3, _NOW, "Opções por sugestão", int, low=2, high=4, phase="F5.20"),
+    SettingSpec("suggest.window_min", 8, _NOW, "Minutos de legenda por pedido, no máximo", int, low=3, high=30, phase="F5.20"),
+    SettingSpec("suggest.dossier", True, _NEXT, "Dossiê dos participantes no pedido (ações abertas e últimas reuniões)", _bool,
+                phase="F5.20"),
+    SettingSpec("suggest.name_hint", True, _NOW, "Destacar o botão quando falarem o seu nome (sem chamar a IA)", _bool, phase="F5.20"),
+    SettingSpec("suggest.memo", "", _NOW, "O que o assistente aprendeu", _text, phase="F5.20", internal=True),
+    SettingSpec("suggest.memo_at", "", _NOW, "Quando o memorando foi refeito", _text, phase="F5.20", internal=True),
+    SettingSpec("suggest.memo_ratings", 0, _NOW, "Avaliações usadas no último memorando", int, low=0, phase="F5.20", internal=True),
     # F5 (Dados): grupo "Busca" (a tela é do L5). `rag.auto_index` = vetores automáticos (o custo dos embeddings, Q1):
     # desligado, os jobs `index` continuam e gravam trechos e FTS (locais e grátis), só os vetores ficam de fora, salvo no
     # "reindexar" (pedido forçado). F5.1 (A-05): o embedder local não tem custo, logo o rótulo só fala de custo nos pagos;
@@ -238,6 +252,7 @@ HOTKEY_KEYS = tuple(k for k in SPECS if k.startswith("hotkeys."))
 PIPELINE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("pipeline.") and not s.internal)
 LLM_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("llm.") and not s.internal)
 LIVE_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("live.") and not s.internal)
+SUGGEST_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("suggest.") and not s.internal)   # F5.20: o grupo "Sugestões"
 RAG_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("rag.") and not k.startswith("rag.sql_") and not s.internal)
 RAG_SQL_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("rag.sql_") and not s.internal)     # F5.10: "Perguntar à base"
 

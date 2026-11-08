@@ -8,8 +8,9 @@ import json
 from typing import Any
 
 from ..types import AudioPart, LlmTask, Message, Role
-from . import (build, chat, executive, glossary, identify, minutes, partial, rag_answer, rag_chat, rag_sql, revise, schema_for, title,
-               transcribe)
+from ...model import SuggestMode
+from . import (build, chat, executive, glossary, identify, minutes, partial, rag_answer, rag_chat, rag_sql, revise, schema_for,
+               suggest, suggest_memo, title, transcribe)
 from .common import Line, Marker, MeetingCtx, Person
 from .rag_chat import MeetingBlock
 
@@ -76,6 +77,11 @@ def _context(task: LlmTask) -> Any:
         LlmTask.PRE_SUMMARY: summary, LlmTask.EXECUTIVE: summary,
         LlmTask.MINUTES: minutes.MinutesCtx(m, _lines("{transcrição}"), people),
         LlmTask.PARTIAL: partial.PartialCtx(m, "{resumo parcial anterior em JSON}", _lines("{legendas novas}")),
+        LlmTask.SUGGEST: suggest.SuggestCtx(m, _Person(0, "{você: nome — cargo, empresa}"), SuggestMode.SPEAK, 3,
+                                            "{objetivo da reunião}", "{dossiê}", "{memorando}", "{resumo parcial em JSON}",
+                                            "{fio até a sugestão anterior}", _lines("{legendas compactadas}"), (),
+                                            "{como sugerir agora}"),
+        LlmTask.SUGGEST_MEMO: suggest_memo.MemoCtx("{memorando atual}", (), "{idioma padrão}"),
         LlmTask.CHAT: chat.ChatCtx(m, _lines("{transcrição}"), (("user", "{perguntas e respostas anteriores}"),), "{pergunta}"),
         LlmTask.RAG_CHAT: rag_chat.RagChatCtx((_Block("R1", 0, "{trechos achados pela busca, por reunião}", "", "", ()),),
                                               (("user", "{perguntas e respostas anteriores}"),), "{pergunta}", "{idioma padrão}"),

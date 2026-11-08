@@ -16,7 +16,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   implementador com o que é proibido (91 KB). Escrita no Linux nativo: nada a verificar no Windows até o código.
   Aprovada pelo dono em 08/11; a implementação segue os lotes L1 a L4 da spec, um commit por lote, com a revisão
   do diff por um agente novo (D-040). Posição (`[x]` com o commit):
-  - [ ] L1: a v10, a tarefa `suggest`, os prompts, a compactação, o leitor e os testes.
+  - [x] L1: a v10 (com volta), a tarefa `suggest` e a do memorando, os prompts, a compactação, o leitor incremental e
+    os testes (o commit do L1); falta a revisão do diff por um agente novo, antes do L2.
   - [ ] L2: o cartão na bandeja, o botão, o atalho, o menu, a caixa e o objetivo.
   - [ ] L3: a avaliação, o memorando, o dossiê, a aba Sugestões e o `--check`.
   - [ ] L4: as fotos, a revisão do diff, a documentação e a versão 0.13.0.

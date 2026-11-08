@@ -1,8 +1,8 @@
 """F5.6 L2, revisão do diff (R-03, R-06): cada ponto de chamada da LLM manda as instruções do usuário da própria tarefa e
 grava a marca `+u<hash>` do mesmo texto. Os mutantes que mandavam o prompt do app e gravavam a marca passavam na suíte:
 identidade (as duas chamadas), título, revisada, ata, executivo, pré-resumo, a redução da ata em blocos, a transcrição pelo
-áudio, o resumo parcial e o chat de todas as reuniões. A transcrição pelo áudio deixa o rastro no `timings_json` da etapa
-(`prompt`), fora do nome do transcritor, que é a chave da velocidade medida."""
+áudio, o resumo parcial e o chat de todas as reuniões; F5.20: a sugestão ao vivo e o memorando. A transcrição pelo áudio
+deixa o rastro no `timings_json` da etapa (`prompt`), fora do nome do transcritor, que é a chave da velocidade medida."""
 from __future__ import annotations
 
 import json
@@ -154,6 +154,36 @@ def test_the_live_partial_sends_the_custom_instructions_it_stamps(store, monkeyp
     req, _resp = store.llm_calls.payloads(r.call_id)
     assert req[0]["text"].startswith(f"{_sent('partial')}{prompts.partial.CONTRACT}")
     assert store.llm_calls.get(r.call_id)["prompt_version"] == f"partial/2.0+u{prompt_settings.text_hash(_mine('partial'))}"
+
+
+def test_the_live_suggestion_and_the_memo_send_the_custom_instructions_they_stamp(store, monkeypatch):
+    """F5.20: a sugestão ao vivo e o memorando, as duas chamadas, mandam as instruções suas e gravam a marca."""
+    from listener.llm.suggest_task import Outcome, run_memo, run_suggest
+    from listener.model import SuggestMode
+    from tests.test_live_partial import _caption, _ready
+
+    monkeypatch.setenv("LISTENER_LLM", "fake")
+    store.upsert_me("Eu", role="CTO")
+    mid = store.create_meeting("Orçamento", None, None, "Ana")
+    _caption(store, mid, 1000, "vamos cortar oito por cento")
+    _ready(store)
+    for task in ("suggest", "suggest_memo"):
+        store.set_setting(prompt_settings.key(task), _mine(task))
+    r = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=60_000)
+    assert r.outcome == Outcome.DONE
+    req, _resp = store.llm_calls.payloads(r.call_id)
+    assert req[0]["text"].startswith(f"{_sent('suggest')}{prompts.suggest.CONTRACT}")
+    assert store.llm_calls.get(r.call_id)["prompt_version"] == f"suggest/1.0+u{prompt_settings.text_hash(_mine('suggest'))}"
+    for option_id in r.option_ids:
+        store.suggestions.set_rating(option_id, 1)
+    for _ in range(3):                                                    # 10 avaliações ou mais: o memorando roda
+        more = run_suggest(store, mid, mode=SuggestMode.SPEAK, t_ms=120_000)
+        for option_id in more.option_ids:
+            store.suggestions.set_used(option_id, True)
+    memo = run_memo(store)
+    assert memo.outcome == Outcome.DONE and memo.call_id is not None
+    call = store.llm_calls.get(memo.call_id)
+    assert call["prompt_version"] == f"suggest_memo/1.0+u{prompt_settings.text_hash(_mine('suggest_memo'))}" and call["meeting_id"] is None
 
 
 @pytest.mark.usefixtures("fresh_search")

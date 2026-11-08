@@ -2,7 +2,8 @@
 destes casos rodados no código em pt-BR (D-071); `test_prompts_custom.py` monta os mesmos casos no código de hoje e compara
 byte a byte. As falas trazem chaves soltas e `{idioma}` de propósito: o dado da reunião nunca passa pelo substituidor.
 F5.10: os casos de `rag_sql` e `rag_answer` entraram na cópia sem mudar os antigos (o dicionário de teste é curto: o de
-verdade tem os próprios testes em `test_rag_semantic.py`)."""
+verdade tem os próprios testes em `test_rag_semantic.py`). F5.20: os de `suggest` (fala e "Me situar") e `suggest_memo`,
+idem."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -12,7 +13,10 @@ from typing import Any
 from listener.llm import prompts
 from listener.llm.prompts.common import Line, Marker, MeetingCtx, Person
 from listener.llm.prompts.rag_chat import ExcerptLine, MeetingBlock
+from listener.llm.prompts.suggest import RatedOption, SuggestCtx
+from listener.llm.prompts.suggest_memo import MemoCtx
 from listener.llm.types import AudioPart, Message
+from listener.model import SuggestMode
 
 ANA = Person(7, "Ana Souza", "CFO", "ACME")
 BRUNO = Person(9, "Bruno Lima")
@@ -46,6 +50,11 @@ BLOCKS = (
 DICTIONARY = "\n".join(("agora: uma linha só {x}", "  hoje (texto): AAAA-MM-DD em {idioma}"))
 NOW_TEXT = "2026-10-30 (sexta), 14:05, fuso -03:00"
 ROUNDS = "\n".join(("Rodada 1:", "", "#1.1 contar {x}", "SQL: SELECT count(*) AS n FROM reunioes", "n", "3", "1 linha · 2 ms"))
+ME = Person(1, "Carla Dias", "CTO", "Beta {x}")
+RATED = (RatedOption("Perguntar", "Qual o prazo {x}?", 1, None, True), RatedOption("Posicionar", "Sou contra o corte {idioma}.", 0,
+                                                                                   "longa demais", False),
+         RatedOption("Pedir tempo", "Posso voltar nisso amanhã?", None, None, True))
+DOSSIER = "- Ação aberta: mandar a planilha {x} · dono: Ana Souza · prazo: 2026-11-10 · reunião: Orçamento (2026-10-20)"
 
 
 def _cases() -> dict[str, tuple[ModuleType, str, Any]]:
@@ -81,6 +90,12 @@ def _cases() -> dict[str, tuple[ModuleType, str, Any]]:
                                                                                "a LLM teve o que precisava", "pt-BR")),
         "rag_answer/empty-en": (p.rag_answer, "build", p.rag_answer.RagAnswerCtx((), NOW_TEXT, "", "Anything?", "", "",
                                                                                 "três rodadas seguidas sem informação nova", "en")),
+        "suggest/speak": (p.suggest, "build", SuggestCtx(full, ME, SuggestMode.SPEAK, 3, "Fechar o corte {x} hoje", DOSSIER,
+                                                         "Prefere perguntas {curtas}.", PARTIAL_JSON, "Fio {anterior}: o corte", LINES,
+                                                         RATED[:2], "mais curta; {idioma}")),
+        "suggest/orient-en": (p.suggest, "build", SuggestCtx(meeting("en", full=False), Person(0, "Usuário"), SuggestMode.ORIENT, 3,
+                                                             None, None, None, None, None, LINES[:2], (), None)),
+        "suggest_memo/first": (p.suggest_memo, "build", MemoCtx(None, RATED, "pt-BR")),
         "glossary/full": (p.glossary, "build", p.glossary.GlossaryCtx("Orçamento {2027}", "Ana, {Bia}", ("Bia",), (ANA,), "OKR", "pt-BR")),
         "glossary/bare-en": (p.glossary, "build", p.glossary.GlossaryCtx(None, None, (), (), "", "en")),
         "transcribe/hints": (p.transcribe, "build", p.transcribe.TranscribeCtx(AUDIO, "pt", "ACME, {idioma}, OKR")),

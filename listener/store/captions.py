@@ -59,6 +59,12 @@ class CaptionsRepo:
         return [cast(CaptionRow, dict(r)) for r in self.core.q(
             "SELECT * FROM captions WHERE meeting_id = ? AND id > ? ORDER BY t_start_ms, id", (meeting_id, int(after_id)))]
 
+    def list_from(self, meeting_id: int, t_from_ms: int) -> list[CaptionRow]:
+        """F5.20: as legendas que começam a partir de `t_from_ms`, em ordem de tempo (a janela de uma sugestão ao vivo; usa o
+        índice `(meeting_id, t_start_ms)`)."""
+        return [cast(CaptionRow, dict(r)) for r in self.core.q(
+            "SELECT * FROM captions WHERE meeting_id = ? AND t_start_ms >= ? ORDER BY t_start_ms, id", (meeting_id, int(t_from_ms)))]
+
     def count(self, meeting_id: int) -> int:
         return int(self.core.q("SELECT COUNT(*) FROM captions WHERE meeting_id = ?", (meeting_id,))[0][0])
 

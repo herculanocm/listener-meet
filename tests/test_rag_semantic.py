@@ -244,7 +244,8 @@ def test_every_main_table_is_classified_and_no_dependency_touches_the_deny_list(
     assert not visible & set(dictionary.DENIED) and not visible & dictionary.FTS_INTERNAL
     assert [(v, t, c) for v, pairs in deps.items() for t, c in pairs if never(t, c)] == []
     assert {"providers", "settings", "chat_messages", "revisions", "events", "presets", "processing_jobs", "clusters",
-            "rag_vectors", "job_artifacts", "voice_profiles", "voice_embeddings"} <= set(dictionary.DENIED)
+            "rag_vectors", "job_artifacts", "voice_profiles", "voice_embeddings", "suggestions",
+            "suggestion_options"} <= set(dictionary.DENIED)
     assert deps["pessoas"] == frozenset() and "people" in dictionary.DENIED                   # D-075: nenhuma visão lê people
     assert all(t != "people" for pairs in deps.values() for t, _c in pairs)
 

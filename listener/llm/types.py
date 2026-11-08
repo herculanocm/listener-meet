@@ -10,11 +10,13 @@ from typing import Any
 
 import numpy as np
 
-from ..model import ActionStatus, ChatRole, DecisionSource, LlmCallStatus, SummaryKind, SummaryStatus
+from ..model import (ActionStatus, ChatRole, DecisionSource, Evidence, LlmCallStatus, RatingReason, SuggestKind, SuggestMode,
+                     SuggestStatus, SummaryKind, SummaryStatus)
 
 __all__ = ["LLM_JOB_TASKS", "TASK_CLASS", "TASK_REASONING", "ActionStatus", "AudioPart", "Capability", "ChatRole", "Completion",
-           "ConnectionTest", "DecisionSource", "EmbedTask", "Embeddings", "LlmCallStatus", "LlmTask", "Message", "ModelClass", "ModelInfo",
-           "ProviderKind", "Reasoning", "Request", "Role", "SummaryKind", "SummaryStatus", "Usage"]
+           "ConnectionTest", "DecisionSource", "EmbedTask", "Embeddings", "Evidence", "LlmCallStatus", "LlmTask", "Message",
+           "ModelClass", "ModelInfo", "ProviderKind", "RatingReason", "Reasoning", "Request", "Role", "SuggestKind", "SuggestMode",
+           "SuggestStatus", "SummaryKind", "SummaryStatus", "Usage"]
 
 
 class Role(StrEnum):
@@ -49,6 +51,8 @@ class LlmTask(StrEnum):
     RAG_CHAT = "rag_chat"          # F5: chat sobre todas as reuniões
     RAG_SQL = "rag_sql"            # F5.10: cada rodada de "Perguntar à base" (consultas SQL e buscas, em JSON)
     RAG_ANSWER = "rag_answer"      # F5.10: a resposta de "Perguntar à base", em streaming
+    SUGGEST = "suggest"            # F5.20: as sugestões ao vivo do que falar, a pedido, em streaming
+    SUGGEST_MEMO = "suggest_memo"  # F5.20: o memorando do que o usuário prefere nas sugestões, ao parar a gravação
 
 
 class Reasoning(StrEnum):
@@ -80,6 +84,7 @@ TASK_CLASS: dict[LlmTask, ModelClass] = {
     LlmTask.REVISE: ModelClass.FAST, LlmTask.TRANSCRIBE: ModelClass.FAST, LlmTask.CHAT: ModelClass.FAST, LlmTask.TEST: ModelClass.FAST,
     LlmTask.PARTIAL: ModelClass.FAST, LlmTask.RAG_EMBED: ModelClass.FAST, LlmTask.RAG_CHAT: ModelClass.FAST,   # F5 Q11: o rápido
     LlmTask.RAG_SQL: ModelClass.FAST, LlmTask.RAG_ANSWER: ModelClass.FAST,      # F5.10 (D-073): o forte nas rodadas, por opção
+    LlmTask.SUGGEST: ModelClass.FAST, LlmTask.SUGGEST_MEMO: ModelClass.FAST,     # F5.20: o rápido (a latência manda)
     LlmTask.IDENTIFY: ModelClass.STRONG, LlmTask.MINUTES: ModelClass.STRONG, LlmTask.EXECUTIVE: ModelClass.STRONG,
 }
 TASK_REASONING: dict[LlmTask, Reasoning] = {t: (Reasoning.LOW if c == ModelClass.STRONG else Reasoning.NONE) for t, c in TASK_CLASS.items()}

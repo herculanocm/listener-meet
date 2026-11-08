@@ -11,18 +11,20 @@ from typing import Any
 
 from ...config.prompts import text_hash
 from ..types import LlmTask, Message
-from . import (chat, executive, glossary, identify, minutes, partial, pre_summary, rag_answer, rag_chat, rag_sql, revise, test, title,
-               transcribe)
+from . import (chat, executive, glossary, identify, minutes, partial, pre_summary, rag_answer, rag_chat, rag_sql, revise, suggest,
+               suggest_memo, test, title, transcribe)
 
 MODULES: dict[LlmTask, ModuleType] = {
     LlmTask.GLOSSARY: glossary, LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: executive,
     LlmTask.PRE_SUMMARY: pre_summary, LlmTask.TITLE: title, LlmTask.REVISE: revise, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat,
     LlmTask.TEST: test, LlmTask.PARTIAL: partial, LlmTask.RAG_CHAT: rag_chat, LlmTask.RAG_SQL: rag_sql, LlmTask.RAG_ANSWER: rag_answer,
+    LlmTask.SUGGEST: suggest, LlmTask.SUGGEST_MEMO: suggest_memo,                # F5.20: as sugestões ao vivo e o memorando
 }
-# A-25: as tarefas com instruções editáveis, na ordem da página "Prompts" (o `test` fica fora; F5.10: o `rag_chat` também)
+# A-25: as tarefas com instruções editáveis, na ordem da página "Prompts" (o `test` fica fora; F5.10: o `rag_chat` também;
+# F5.20: as sugestões e o memorando logo depois do resumo parcial)
 EDITABLE: tuple[LlmTask, ...] = (LlmTask.IDENTIFY, LlmTask.REVISE, LlmTask.TITLE, LlmTask.PRE_SUMMARY, LlmTask.MINUTES,
-                                 LlmTask.EXECUTIVE, LlmTask.PARTIAL, LlmTask.CHAT, LlmTask.RAG_SQL, LlmTask.RAG_ANSWER,
-                                 LlmTask.GLOSSARY, LlmTask.TRANSCRIBE)
+                                 LlmTask.EXECUTIVE, LlmTask.PARTIAL, LlmTask.SUGGEST, LlmTask.SUGGEST_MEMO, LlmTask.CHAT,
+                                 LlmTask.RAG_SQL, LlmTask.RAG_ANSWER, LlmTask.GLOSSARY, LlmTask.TRANSCRIBE)
 
 
 def prompt_version(task: LlmTask, instructions: str | None = None) -> str:

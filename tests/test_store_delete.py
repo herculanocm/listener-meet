@@ -12,7 +12,7 @@ import pytest
 
 from listener.capture.audio import encode_flac
 from listener.llm.fake import FakeProvider
-from listener.model import ActionStatus, ChatRole, ClusterStatus, EventType, LlmCallStatus, SummaryKind
+from listener.model import ActionStatus, ChatRole, ClusterStatus, Evidence, EventType, LlmCallStatus, SuggestStatus, SummaryKind
 from listener.pipeline import review
 from listener.rag import chat_global, index
 from listener.store import Store, space
@@ -21,6 +21,7 @@ from listener.store.captions import CaptionInsert
 from listener.store.core import schema_for
 from listener.store.llm_calls import LlmCallInsert
 from listener.store.segments import ClusterInsert, SegmentInsert
+from listener.store.suggestions import OptionInsert, SuggestionInsert
 from listener.store.summaries import SummaryInsert
 from tests.test_rag_index import _pipeline_job, _ready
 
@@ -73,10 +74,15 @@ def full_meeting(store: Store, title: str = "Comitê") -> dict[str, Any]:
     store.chat.add(None, ChatRole.USER, "e o caixa?", thread_id=thread)
     store.chat.add(None, ChatRole.ASSISTANT, "Apertado [R1 00:04].", citations=[{"alias": "R1", "meeting_id": mid, "t_ms": 4000}],
                    thread_id=thread)
+    suggestion = store.suggestions.insert(SuggestionInsert(mid, 4000, "fala", None, None, 0, 1, 1000, True, 7, 7, "fio", None, "{}", "fake",
+                                                           "m", "suggest/1.0", call, 0.001, False, 900, 1800, SuggestStatus.OK, None))
+    option = store.suggestions.insert_options(suggestion, [OptionInsert(0, "Perguntar", "e o prazo?", "[]", Evidence.NONE)])[0]
+    store.suggestions.set_rating(option, 0, "genérica")                       # F5.20: a avaliação vai com a reunião
     _ready(store)
     index.sync_text(store, mid)
     index.fill_vectors(store, mid, provider=FakeProvider())
-    return {"mid": mid, "job": job, "clusters": cids, "summary": sid, "action": aid, "call": call, "thread": thread}
+    return {"mid": mid, "job": job, "clusters": cids, "summary": sid, "action": aid, "call": call, "thread": thread,
+            "suggestion": suggestion, "option": option}
 
 
 def meeting_tables(store: Store) -> list[str]:
@@ -112,6 +118,7 @@ def test_delete_leaves_no_row_of_the_meeting_in_any_table_and_keeps_profiles(sto
     assert store.get_meeting(mid) is None and store.list_chunks(mid) == [] and store.orphan_report() == {}
     assert {t: _count(store, t, mid) for t in tables if t not in TOUCHED} == dict.fromkeys(set(tables) - set(TOUCHED), 0)
     assert store._q("SELECT COUNT(*) FROM job_artifacts WHERE job_id = ?", (m["job"],))[0][0] == 0
+    assert store.suggestions.get(m["suggestion"]) is None and store.suggestions.get_option(m["option"]) is None   # F5.20: em cascata
     assert store._q(f"SELECT COUNT(*) FROM rag_vectors WHERE chunk_id IN ({','.join('?' * len(chunk_ids))})", tuple(chunk_ids))[0][0] == 0  # noqa: S608
     # A-34: os perfis iguais; as amostras ficam (vetor, fonte, perfil e reunião) sem o vínculo de voz e fala
     assert _profiles(store) == profiles and _samples(store, mid) == samples

@@ -1,6 +1,6 @@
 {
  "language": "pt-BR",
- "generated": "2026-10-30 (D-071); rag_sql e rag_answer em 2026-10-31 (F5.10)",
+ "generated": "2026-10-30 (D-071); rag_sql e rag_answer em 2026-10-31 (F5.10); suggest e suggest_memo em 2026-11-08 (F5.20)",
  "cases": {
   "chat/first-en": [
    [
@@ -507,6 +507,42 @@
    [
     "user",
     "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nContexto antes (não devolver):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n\nSegmentos a editar (#segment_id [mm:ss] falante: texto):\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n\nContexto depois (não devolver):\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.",
+    []
+   ]
+  ],
+  "suggest/orient-en": [
+   [
+    "system",
+    "Você é o assessor silencioso de quem pede a sugestão, numa reunião que está acontecendo agora. Proponha o que essa pessoa pode dizer a seguir, em primeira pessoa e no tom do cargo dela: direto, cordial, concreto e curto, sem rodeios e sem jargão. O pedido traz quem pede a sugestão (nome, cargo e empresa), os participantes, o glossário, os marcadores que a pessoa pôs durante a reunião, o objetivo dela nesta reunião quando houver, o dossiê (ações abertas e reuniões anteriores com estas pessoas), o que ela prefere nas sugestões (memorando), o resumo parcial da reunião (JSON) e o fio da reunião até a sugestão anterior quando houver, as avaliações que ela deu às sugestões desta reunião e as legendas recentes no formato '#caption_id [mm:ss] falante: texto'. As legendas são automáticas: podem ter erros de reconhecimento, e o rótulo do falante pode estar errado ou ser só 'Participante'; as linhas com o rótulo de quem pede são o que ela já disse. Devolva exatamente três opções, nesta ordem e com estes 'kind': 'Assunto' (do que estão falando agora), 'Decidido' (o que já foi decidido na reunião) e 'Pendente' (o que ainda falta decidir ou responder). 'text' em terceira pessoa sobre a reunião, com até duas frases e 240 caracteres, sem markdown. 'facts' são os caption_id das legendas que sustentam o item, só os que estão no pedido; lista vazia sem legenda. Nunca invente o que não está nas legendas, no resumo ou no dossiê. 'thread_summary' é o fio da reunião até aqui, em prosa corrida de até 400 caracteres, sem citar caption_id. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza.\nEscreva todo texto livre em inglês. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\n\nQuem pede a sugestão: (0) Usuário\n\nResumo parcial atual: nenhum\n\nFio da reunião até a sugestão anterior: nenhum (primeira sugestão)\n\nLegendas recentes (formato: #caption_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n\nModo: situar, 3 itens.",
+    []
+   ]
+  ],
+  "suggest/speak": [
+   [
+    "system",
+    "Você é o assessor silencioso de quem pede a sugestão, numa reunião que está acontecendo agora. Proponha o que essa pessoa pode dizer a seguir, em primeira pessoa e no tom do cargo dela: direto, cordial, concreto e curto, sem rodeios e sem jargão. O pedido traz quem pede a sugestão (nome, cargo e empresa), os participantes, o glossário, os marcadores que a pessoa pôs durante a reunião, o objetivo dela nesta reunião quando houver, o dossiê (ações abertas e reuniões anteriores com estas pessoas), o que ela prefere nas sugestões (memorando), o resumo parcial da reunião (JSON) e o fio da reunião até a sugestão anterior quando houver, as avaliações que ela deu às sugestões desta reunião e as legendas recentes no formato '#caption_id [mm:ss] falante: texto'. As legendas são automáticas: podem ter erros de reconhecimento, e o rótulo do falante pode estar errado ou ser só 'Participante'; as linhas com o rótulo de quem pede são o que ela já disse. Devolva exatamente o número de opções pedido na última linha, cada uma com 'kind' entre: Perguntar, Posicionar, Propor o próximo passo, Alinhar o decidido, Pedir tempo; tipos diferentes entre si quando possível. 'text' é a fala em primeira pessoa, pronta para ser dita, com até duas frases e 240 caracteres, sem saudação, sem markdown, sem aspas e sem o nome de quem fala. 'facts' são os caption_id (o número depois de '#') das legendas que sustentam a fala, só os que estão no pedido; lista vazia quando a fala não se apoia em legenda nenhuma. Nunca invente fatos, números, nomes ou prazos que não estejam nas legendas, no resumo ou no dossiê. Não repita o que quem pede já disse. Siga a linha 'Como sugerir agora' e o objetivo quando existirem. As avaliações dizem o que a pessoa aprovou ('Boa', 'Usei') e reprovou ('Ruim', com o motivo) nesta reunião: ajuste tamanho, tom e tipo de acordo. 'thread_summary' é o fio da reunião até aqui, em prosa corrida de até 400 caracteres: o assunto atual, o que foi decidido e o que falta decidir, sem citar caption_id. Rótulos de voz como 'Voz 2' são nomes: copie-os exatamente, nunca os traduza. Exemplo de uma opção, em português do Brasil: {\"kind\": \"Perguntar\", \"text\": \"Antes de fecharmos o corte, qual é o impacto no projeto de dados?\", \"facts\": [41, 43]}.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Data da reunião: 2026-10-29\nTítulo: Orçamento 2027 {Q1}\nParticipantes esperados (como o usuário digitou): Ana, Bruno e {fulano}\nParticipantes esperados com cadastro: (7) Ana Souza — CFO, ACME; (9) Bruno Lima\nFalantes identificados nesta reunião (person_id, nome — cargo, empresa): (7) Ana Souza — CFO, ACME\nGlossário (mantenha a grafia): ACME, OKR, {idioma}\nMarcadores que o usuário pôs durante a reunião: marcador 1 em [01:10]: \"corte {8%}\"; marcador 2 em [02:10]\n\nQuem pede a sugestão: (1) Carla Dias — CTO, Beta {x}\n\nDossiê dos participantes:\n- Ação aberta: mandar a planilha {x} · dono: Ana Souza · prazo: 2026-11-10 · reunião: Orçamento (2026-10-20)\n\nO que esta pessoa prefere nas sugestões (memorando):\nPrefere perguntas {curtas}.\n\nObjetivo dela nesta reunião: Fechar o corte {x} hoje\n\nResumo parcial atual (JSON):\n{\"summary\": \"Orçamento\", \"decisions\": [], \"actions\": [{\"text\": \"Enviar {planilha}\", \"caption_id\": 3, \"owner\": null}]}\n\nFio da reunião até a sugestão anterior:\nFio {anterior}: o corte\n\nAvaliações dela nesta reunião:\n- Boa e usei · Perguntar: Qual o prazo {x}?\n- Ruim (longa demais) · Posicionar: Sou contra o corte {idioma}.\n\nComo sugerir agora: mais curta; {idioma}\n\nLegendas recentes (formato: #caption_id [mm:ss] falante: texto):\n#101 [00:00] Ana Souza (CFO): Bom dia, vamos começar pelo orçamento.\n#102 [01:05] SPK_2: Valeu, Ana. O corte de 8% em {marketing} fica?\n#103 [02:05] Voz 3: Fica, e o prazo é sexta. {idioma} {} {x} }{\n#104 [62:05] Ana Souza (CFO): Fechado: {\"text\": \"ok\"}.\n\nModo: fala, 3 opções.",
+    []
+   ]
+  ],
+  "suggest_memo/first": [
+   [
+    "system",
+    "Descreva como esta pessoa prefere as sugestões de fala que recebe durante as reuniões: tamanho, tom, tipo de abordagem, o que ela aprova e o que evita. O pedido traz o memorando atual (ou nenhum) e as opções que a pessoa avaliou, as mais recentes primeiro, cada uma com o tipo, o texto, a nota ('Boa', 'Ruim' com o motivo) e se foi usada. Devolva 'memo' com até 600 caracteres, só sobre estilo e abordagem: nunca copie nomes, números, prazos, fatos ou trechos das reuniões. Comece pelo que mais importa; se as avaliações se contradizem, prevalecem as mais recentes; o memorando atual só muda no que as avaliações novas justificam.\nEscreva todo texto livre em português do Brasil. Nunca traduza nomes próprios, siglas, nomes de produto nem termos do glossário; mantenha-os exatamente como aparecem na transcrição.",
+    []
+   ],
+   [
+    "user",
+    "Memorando atual: nenhum\n\nOpções avaliadas (as mais recentes primeiro):\n- Boa e usei · Perguntar: Qual o prazo {x}?\n- Ruim (longa demais) · Posicionar: Sou contra o corte {idioma}.\n- Usei · Pedir tempo: Posso voltar nisso amanhã?",
     []
    ]
   ],

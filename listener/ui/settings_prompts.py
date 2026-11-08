@@ -57,6 +57,12 @@ TASKS: dict[LlmTask, tuple[str, str, str]] = {
     LlmTask.EXECUTIVE: ("Resumo executivo", "a pedido, com o resumo", "Roda quando você pede o resumo, a partir da ata."),
     LlmTask.PARTIAL: ("Resumo parcial", "durante a gravação",
                       "Roda durante a gravação, com o resumo parcial ligado ou em \"Atualizar resumo agora\"."),
+    LlmTask.SUGGEST: ("Sugestões ao vivo", "a pedido, durante a gravação",
+                      ("Roda quando você clica em Sugerir durante a gravação: as opções do que falar, pelo cargo e pelo fio da "
+                       "reunião.")),
+    LlmTask.SUGGEST_MEMO: ("Sugestões: o que aprendeu", "ao parar, com 10 avaliações novas",
+                           ("Roda ao parar a gravação quando há 10 avaliações novas: refaz o memorando do que você prefere nas "
+                            "sugestões.")),
     LlmTask.CHAT: ("Chat da reunião", "a cada pergunta", "Roda a cada pergunta no chat de uma reunião."),
     LlmTask.RAG_SQL: ("Perguntar à base: consultas", "a cada pergunta",
                       "Roda a cada pergunta sobre todas as reuniões, no Histórico: decide as consultas à base e quando parar."),

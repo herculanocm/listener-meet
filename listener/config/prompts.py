@@ -20,9 +20,10 @@ VARIABLE = "{idioma}"                          # a única variável: o nome do i
 MAX_CHARS = 4000
 VERSION_HASH, BASE_HASH = 6, 12                # `minutes/1.2+u3fa9c1`; o `.base` com folga contra colisão
 # as tarefas editáveis (A-25), pelo valor do `LlmTask`; o `test` fica fora. F5.10: `rag_sql` e `rag_answer` entram; o
-# `rag_chat` saiu da página Prompts, mas fica aqui por último: o chat global antigo ainda lê o que estava salvo
-TASKS = ("identify", "revise", "title", "pre_summary", "minutes", "executive", "partial", "chat", "rag_sql", "rag_answer",
-         "glossary", "transcribe", "rag_chat")
+# `rag_chat` saiu da página Prompts, mas fica aqui por último: o chat global antigo ainda lê o que estava salvo. F5.20:
+# `suggest` e `suggest_memo` logo depois do `partial`
+TASKS = ("identify", "revise", "title", "pre_summary", "minutes", "executive", "partial", "suggest", "suggest_memo", "chat", "rag_sql",
+         "rag_answer", "glossary", "transcribe", "rag_chat")
 # `{nome}`: chaves com um nome curto, sem aspas nem dois-pontos (um exemplo de JSON nas instruções não é variável)
 FIELD_RE = re.compile(r"\{([^{}\"':\n]{1,40})\}")
 

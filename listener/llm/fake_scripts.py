@@ -2,7 +2,8 @@
 a pessoa cujo nome aparece na transcrição com a citação literal; `minutes` cita segmentos reais e os marcadores; `revise`
 devolve os segmentos do bloco com pontuação; `glossary`, `title`, `executive`, `pre_summary`, `transcribe` e `chat` têm saídas
 estáveis; `partial` (F4) mantém os itens do parcial anterior e acrescenta uma decisão na primeira legenda nova e uma ação na
-última; `rag_chat` (F5) cita as primeiras falas dos trechos enviados por apelido. Tudo válido nos esquemas do projeto, para os
+última; `rag_chat` (F5) cita as primeiras falas dos trechos enviados por apelido; `suggest` (F5.20) devolve as opções que a
+linha do modo pede, citando as primeiras legendas, e `suggest_memo` um memorando fixo. Tudo válido nos esquemas do projeto, para os
 testes do runner e o worker leve com `LISTENER_LLM=fake`."""
 from __future__ import annotations
 
@@ -168,6 +169,31 @@ def chat(req: Request) -> str:
     return f"Resposta simulada com citação [{stamp}] e outra fora da transcrição [59:59]."
 
 
+MODE_RE = re.compile(r"^Modo: (fala), (\d+) opções\.$|^Modo: (situar), 3 itens\.$", re.MULTILINE)
+SPEAK_KINDS = ("Perguntar", "Posicionar", "Propor o próximo passo", "Alinhar o decidido", "Pedir tempo")
+ORIENT_KINDS = ("Assunto", "Decidido", "Pendente")
+
+
+def suggest(req: Request) -> dict[str, Any]:
+    """F5.20: o número de opções da última linha do pedido ("Modo: fala, N opções."; 3 no "Me situar"), de tipos distintos,
+    cada uma citando os dois primeiros `caption_id` das legendas do pedido; o fio diz quantas legendas leu."""
+    text = _user_text(req)
+    m = MODE_RE.search(text)
+    orient = bool(m and m.group(3))
+    n = 3 if orient or m is None else max(1, min(4, int(m.group(2))))
+    kinds = ORIENT_KINDS if orient else SPEAK_KINDS
+    lines = _lines(req)
+    facts = [ln.segment_id for ln in lines[:2]]
+    options = [{"kind": kinds[i % len(kinds)], "text": f"Opção simulada {i + 1}: {kinds[i % len(kinds)].lower()} sobre o que foi dito.",
+                "facts": facts} for i in range(n)]
+    return {"options": options, "thread_summary": f"Fio simulado com {len(lines)} {'legenda' if len(lines) == 1 else 'legendas'}."}
+
+
+def suggest_memo(req: Request) -> dict[str, Any]:
+    del req
+    return {"memo": "Prefere opções curtas e em pergunta."}
+
+
 BLOCK_RE = re.compile(r"^\[(R\d+)\] ", re.MULTILINE)
 
 
@@ -192,5 +218,5 @@ DEFAULTS: dict[LlmTask, Callable[[Request], Any]] = {
     LlmTask.IDENTIFY: identify, LlmTask.MINUTES: minutes, LlmTask.EXECUTIVE: summary_text("Resumo executivo simulado:", 1500),
     LlmTask.PRE_SUMMARY: summary_text("Pré-resumo simulado:", 600), LlmTask.TITLE: title, LlmTask.REVISE: revise,
     LlmTask.GLOSSARY: glossary, LlmTask.TRANSCRIBE: transcribe, LlmTask.CHAT: chat, LlmTask.PARTIAL: partial,
-    LlmTask.RAG_CHAT: rag_chat,
+    LlmTask.RAG_CHAT: rag_chat, LlmTask.SUGGEST: suggest, LlmTask.SUGGEST_MEMO: suggest_memo,
 }

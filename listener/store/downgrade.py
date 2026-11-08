@@ -1,9 +1,10 @@
 """F5.10 (v9): a volta das migrações do arquivo principal, pela linha de comando e com o app fechado
 (`python -m listener --downgrade <pasta do banco> 8`). Cada volta roda inteira num `BEGIN IMMEDIATE`: desfaz o que a
 migração fez, apaga a linha dela em `schema_migrations` e põe o `user_version` na anterior; uma falha no meio desfaz tudo.
-Só a v9 tem volta (`MAIN_DOWNS`): a v8 para trás reconstrói tabelas e não volta. Abre o arquivo direto (o `Store` do app
-migraria de novo); os arquivos de áudio não mudam. Apaga a coluna e o que estava nela (os passos das respostas): só por
-pedido do usuário (CP3). O log leva as versões, nunca o conteúdo."""
+A v9 e a v10 (F5.20) têm volta (`MAIN_DOWNS`): a v8 para trás reconstrói tabelas e não volta. Abre o arquivo direto
+(o `Store` do app migraria de novo); os arquivos de áudio não mudam. Apaga as colunas e as tabelas da versão e o que
+estava nelas (os passos das respostas; as sugestões, as avaliações e os objetivos): só por pedido do usuário (CP3). O
+log leva as versões, nunca o conteúdo."""
 from __future__ import annotations
 
 import sqlite3
@@ -29,7 +30,16 @@ def _down_v9(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE main.chat_messages DROP COLUMN trace_json")
 
 
-MAIN_DOWNS: dict[int, Down] = {9: _down_v9}
+def _down_v10(conn: sqlite3.Connection) -> None:
+    """A v10 de volta (F5.20): sem as sugestões ao vivo (as opções antes, pela FK) e sem `meetings.goal` (o `DROP COLUMN` só se
+    ela existe; a coluna não tem índice). Apaga as sugestões, as avaliações e os objetivos: só a pedido (CP3)."""
+    conn.execute("DROP TABLE IF EXISTS main.suggestion_options")
+    conn.execute("DROP TABLE IF EXISTS main.suggestions")
+    if "goal" in _columns(conn, "meetings"):
+        conn.execute("ALTER TABLE main.meetings DROP COLUMN goal")
+
+
+MAIN_DOWNS: dict[int, Down] = {9: _down_v9, 10: _down_v10}
 
 
 def current_version(conn: sqlite3.Connection) -> int:

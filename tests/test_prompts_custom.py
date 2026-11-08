@@ -49,7 +49,7 @@ def _language(name: str) -> str:
     module, _fn, ctx = pc.CASES[name]
     if module is prompts.transcribe:
         return "português" if ctx.language == "pt" else ORIGINAL_LANGUAGE
-    asks = (prompts.rag_chat, prompts.rag_sql, prompts.rag_answer, prompts.glossary)        # F5.10: o idioma está no contexto
+    asks = (prompts.rag_chat, prompts.rag_sql, prompts.rag_answer, prompts.glossary, prompts.suggest_memo)   # o idioma no contexto
     code = ctx.output_language if module in asks else ctx.meeting.output_language
     return {"pt-BR": "português do Brasil", "en": "inglês"}[code]
 
@@ -73,7 +73,7 @@ def test_the_default_prompt_is_byte_identical_to_the_frozen_copy(name):
 def test_every_version_is_the_pt_br_major():
     """D-071: o idioma mudou em todos os módulos e cada um subiu a versão major (as chamadas gravadas antes ficam em 1.x)."""
     versions = {str(t): prompts.prompt_version(t) for t in prompts.EDITABLE}
-    fresh = {"rag_sql", "rag_answer"}                                          # F5.10: prompts novos, na 1.0
+    fresh = {"rag_sql", "rag_answer", "suggest", "suggest_memo"}               # F5.10 e F5.20: prompts novos, na 1.0
     assert versions == {t: f"{t}/{'1.0' if t in fresh else '2.0'}" for t in prompt_settings.TASKS if t != "rag_chat"}
     assert prompts.prompt_version(LlmTask.TEST) == "test/2.0" and prompts.prompt_version(LlmTask.RAG_CHAT) == "rag_chat/2.0"
     assert tuple(str(t) for t in prompts.EDITABLE) == prompt_settings.TASKS[:-1] and LlmTask.TEST not in prompts.EDITABLE
@@ -100,7 +100,7 @@ def test_custom_instructions_reach_the_call_with_contract_and_data_intact(name):
 
 def _language_code(name: str) -> str:
     module, _fn, ctx = pc.CASES[name]
-    asks = (prompts.rag_chat, prompts.rag_sql, prompts.rag_answer, prompts.glossary)
+    asks = (prompts.rag_chat, prompts.rag_sql, prompts.rag_answer, prompts.glossary, prompts.suggest_memo)
     return ctx.output_language if module in asks else ctx.meeting.output_language
 
 

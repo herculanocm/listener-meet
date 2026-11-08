@@ -295,6 +295,47 @@ class ChatRole(StrEnum):
     ASSISTANT = "assistant"
 
 
+class SuggestMode(StrEnum):
+    """F5.20: o modo de uma sugestão ao vivo (`suggestions.mode`)."""
+    SPEAK = "fala"                 # as opções do que falar
+    ORIENT = "situar"              # "Me situar": o assunto, o decidido e o pendente
+
+
+class SuggestStatus(StrEnum):
+    """F5.20: como terminou o pedido de uma sugestão (`suggestions.status`)."""
+    OK = "ok"
+    ERROR = "erro"
+    CANCELLED = "cancelada"
+
+
+class Evidence(StrEnum):
+    """F5.20: a opção cita ao menos uma legenda que existe no pedido (a regra da evidência da F3)."""
+    OK = "ok"
+    NONE = "sem_evidencia"
+
+
+class SuggestKind(StrEnum):
+    """F5.20: o tipo de cada opção; os cinco primeiros no modo fala, os três últimos no "Me situar"."""
+    ASK = "Perguntar"
+    POSITION = "Posicionar"
+    NEXT_STEP = "Propor o próximo passo"
+    ALIGN = "Alinhar o decidido"
+    PAUSE = "Pedir tempo"
+    TOPIC = "Assunto"
+    DECIDED = "Decidido"
+    PENDING = "Pendente"
+
+
+class RatingReason(StrEnum):
+    """F5.20 (U-155): o motivo do "Ruim" de uma opção."""
+    TOO_LONG = "longa demais"
+    TONE = "tom errado"
+    OFF_TOPIC = "fora do assunto"
+    ALREADY_SAID = "já foi dito"
+    GENERIC = "genérica"
+    WRONG_FACTS = "errou os fatos"
+
+
 class ChunkKind(StrEnum):
     """Tipo do trecho do índice (F5 item 1, `rag_chunks.kind`)."""
     TRANSCRIPT = "transcricao"     # 60 a 120 s de falas, cortado em fim de turno
