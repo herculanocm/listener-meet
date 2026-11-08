@@ -19,7 +19,7 @@ import html
 import os
 import re
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -277,24 +277,37 @@ def save_error_text(path: str | Path, error: OSError) -> str:
     return f"Não consegui salvar o arquivo:\n{path}\n\n{error}"
 
 
-def write_atomic(path: str | Path, data: str | bytes) -> Path:
-    """Escreve num temporário na mesma pasta (texto em UTF-8 com quebras `\\n`, ou os bytes como vieram, o .docx) e troca no
-    fim com `os.replace`; em erro o temporário sai e o arquivo anterior fica como estava. `OSError` sobe para quem chamou
-    avisar."""
+@contextlib.contextmanager
+def atomic_target(path: str | Path) -> Iterator[Path]:
+    """Um temporário vazio na pasta de `path` (o começo do nome e `.tmp`) para quem escreve por caminho (F5.19: o soundfile
+    e o PyAV, que reabre o arquivo pelo nome no `+faststart`). Com o arquivo já fechado, o fim do `with` o grava no disco
+    (`fsync`) e troca o destino (`Path.replace`); em erro ou cancelamento, o temporário sai e o anterior fica como estava.
+    `OSError` sobe para quem chamou avisar (o destino aberto em outro programa falha na troca, U-030)."""
     target = Path(path)
-    payload = data.encode("utf-8") if isinstance(data, str) else data
-    fd, tmp = tempfile.mkstemp(prefix=f".{target.stem[:40]}-", suffix=".tmp", dir=target.parent)
+    fd, name = tempfile.mkstemp(prefix=f".{target.stem[:40]}-", suffix=".tmp", dir=target.parent)
+    os.close(fd)
+    tmp = Path(name)
     try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        Path(tmp).replace(target)
+        yield tmp
+        fd = os.open(tmp, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        tmp.replace(target)
     except BaseException:
         with contextlib.suppress(OSError):
-            Path(tmp).unlink()
+            tmp.unlink()
         raise
-    return target
+
+
+def write_atomic(path: str | Path, data: str | bytes) -> Path:
+    """Escreve num temporário na mesma pasta (texto em UTF-8 com quebras `\\n`, ou os bytes como vieram, o .docx) e troca no
+    fim (`atomic_target`); em erro o temporário sai e o arquivo anterior fica como estava. `OSError` sobe para quem chamou
+    avisar."""
+    with atomic_target(path) as tmp:
+        tmp.write_bytes(data.encode("utf-8") if isinstance(data, str) else data)
+    return Path(path)
 
 
 # ---------------------------------------------------------------- copiar com citação (U-029)
@@ -319,7 +332,8 @@ def quote_answer(text: str, saved: Sequence[Mapping[str, Any]], meetings: Mappin
     return plain, html.escape(plain).replace("\n", "<br>")
 
 
-__all__ = ["TEXTS", "ExportAction", "ExportLine", "ExportMeeting", "ExportTexts", "MdBlock", "MdRun", "action_text", "default_filename",
+__all__ = ["TEXTS", "ExportAction", "ExportLine", "ExportMeeting", "ExportTexts", "MdBlock", "MdRun", "action_text", "atomic_target",
+           "default_filename",
            "fmt_date", "fmt_datetime", "fmt_duration", "gather", "header_facts", "header_markdown", "marker_text", "meeting_markdown",
            "minutes_markdown", "parse_inline", "parse_markdown", "quote", "quote_answer", "safe_filename", "shift_headings",
            "texts_for", "transcript_markdown", "write_atomic"]
