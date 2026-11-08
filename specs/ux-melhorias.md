@@ -16,7 +16,7 @@ da transcrição sem o token do Hugging Face (F5.16), aprovada (D-091) e impleme
 de legendas (F5.17), aprovadas (D-094) e implementadas em 06/11; U-147 a U-149 da performance (F5.18), aprovadas em
 07/11 (D-096); U-150 a U-152 da exportação do áudio e do vídeo com legendas (F5.19), aprovadas (D-098) e
 implementadas em 07/11; U-153 a U-163 das sugestões ao vivo (F5.20), aprovadas em 08/11 no padrão sim
-(D-100) e implementadas no mesmo dia.
+(D-100) e implementadas no mesmo dia; U-164 a U-169 da tela nas sugestões (F5.21), propostas em 08/11.
 Status: proposta | aprovada | vetada | implementada.
 Tamanho-alvo: 3 KB.
 
@@ -182,3 +182,9 @@ Tamanho-alvo: 3 KB.
 | U-161 | Dossiê dos participantes no pedido: as ações abertas deles e suas e as últimas reuniões em comum, uma vez por gravação; desligável | LLM | implementada (F5.20, 08/11) |
 | U-162 | Aba "Sugestões" na reunião aberta e os números no `--check` | Reunião, `--check` | implementada (F5.20, 08/11) |
 | U-163 | Caixa "Sugestões" no "Antes de gravar" (por gravação) e o liga/desliga em uso nas Configurações: desligou, o botão some e o atalho fica mudo na hora | Warm-up, Configurações, bandeja, widget | implementada (F5.20, 08/11) |
+| U-164 | "Sugerir com a tela": atalho `ctrl+alt+shift+t`, item no menu da bandeja do sistema e a chave "Com a tela" no cabeçalho do cartão; ligada, o "Sugerir" de sempre manda a tela | Bandeja, menu, atalhos | proposta (F5.21) |
+| U-165 | Qual tela: automático (a janela da reunião, senão o monitor sob o cursor) ou um monitor fixo nas Configurações; a troca rápida da gravação no menu da chave, com nome e resolução, sem imagem | Configurações, bandeja | proposta (F5.21) |
+| U-166 | O título do cartão diz "com a tela" e, na dica, qual; a tela vazia vira a nota "a tela veio preta: só as legendas" | Bandeja | proposta (F5.21) |
+| U-167 | A miniatura da tela enviada em cada pedido na aba "Sugestões" da reunião; o clique abre maior | Reunião | proposta (F5.21) |
+| U-168 | A confirmação em linha no cartão na primeira vez, sem janela: "A imagem da tela vai para o <provedor>. Mandar · Agora não" | Bandeja | proposta (F5.21) |
+| U-169 | "[tela]" nos fatos da opção que usou a tela, ao lado dos [mm:ss] | Bandeja | proposta (F5.21) |
