@@ -217,6 +217,8 @@ def _dpi_context() -> Any:
     """A-03: o contexto de DPI da thread (2 = por monitor; o PMv2 também dá 2) [exp]."""
     import ctypes
 
+    if sys.platform != "win32":
+        return None
     try:
         user32 = ctypes.WinDLL("user32")
         ctx = user32.GetThreadDpiAwarenessContext()
@@ -362,9 +364,9 @@ def _click_to_thumb(app: Any, platform: Any, store: Any) -> dict[str, Any]:
     added: list[float] = []
     real = tray.chat.add_screen
 
-    def timed(*args: Any) -> None:
+    def timed(t_ms: int, thumb: Any, text: str, sent: bool) -> None:
         added.append(time.perf_counter())
-        real(*args)
+        real(t_ms, thumb, text, sent)
 
     tray.chat.add_screen = timed                     # type: ignore[method-assign]
     t0 = time.perf_counter()
