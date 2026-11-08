@@ -46,6 +46,7 @@ class SuggestionRow(TypedDict, total=False):
     status: str
     error: str | None
     created_at: str
+    screen_summary: str | None      # F5.21: o resumo da tela que a LLM devolveu
 
 
 class OptionRow(TypedDict, total=False):
@@ -60,6 +61,7 @@ class OptionRow(TypedDict, total=False):
     reason: str | None
     used: int
     rated_at: str | None
+    screen: int                     # F5.21: a opção usou a tela
 
 
 @dataclass(frozen=True, slots=True)
