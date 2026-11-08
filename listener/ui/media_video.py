@@ -146,23 +146,25 @@ def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Scre
 
     chunks = Chunks(store, plan.meeting_id, plan.rate)
     gain = gain_for(measure_peak(plan, chunks, tick))
-    with atomic_target(target) as tmp, av.open(str(tmp), "w", format="mp4", options={"movflags": "+faststart"}) as out:
-        mux = _Muxer(av, out, size, plan.rate, render)
-        frames = frame_times(screens, plan.duration_ms)
-        pending = next(frames, None)
-        pos = 0
-        for x in blocks(plan, chunks, gain):
-            mux.sound(x, pos)
-            pos += len(x)
-            done_ms = pos * 1000 // plan.rate
-            while pending is not None and pending[0] < done_ms:
+    with atomic_target(target) as tmp:
+        with av.open(str(tmp), "w", format="mp4", options={"movflags": "+faststart"}) as out:
+            mux = _Muxer(av, out, size, plan.rate, render)
+            frames = frame_times(screens, plan.duration_ms)
+            pending = next(frames, None)
+            pos = 0
+            for x in blocks(plan, chunks, gain):
+                mux.sound(x, pos)
+                pos += len(x)
+                done_ms = pos * 1000 // plan.rate
+                while pending is not None and pending[0] < done_ms:
+                    mux.picture(pending[0], pending[1], screens[pending[1]][1])
+                    pending = next(frames, None)
+                step(tick, WRITE, pos / max(1, plan.frames))
+            while pending is not None:              # o arredondamento do último bloco
                 mux.picture(pending[0], pending[1], screens[pending[1]][1])
                 pending = next(frames, None)
-            step(tick, WRITE, pos / max(1, plan.frames))
-        while pending is not None:                  # o arredondamento do último bloco
-            mux.picture(pending[0], pending[1], screens[pending[1]][1])
-            pending = next(frames, None)
-        mux.flush()
+            mux.flush()
+        step(tick, WRITE, 1.0)                       # R-01: depois do trailer e do `+faststart`, o cancelar ainda vale
     return target, mux.frames
 
 

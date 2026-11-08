@@ -3,21 +3,18 @@
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
 ## Onde paramos (07/11/2026, Windows nativo; tudo commitado; o push é do dono)
-- **F5.19 em implementação** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098; versão 0.12.0): o pedido do
-  dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
-  aberta ganha "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca) e "Salvar vídeo com legendas…" (MP4 H.264 e AAC,
-  1280 × 720), numa tarefa com o progresso e o "Cancelar" numa faixa própria; nenhuma dependência nova (soundfile e o
-  PyAV que já vem com o faster-whisper). Posição (gravada a cada etapa; `[x]` com o commit):
-  - [x] spec escrita, a revisão de arquitetura por um agente (A-01 a A-25, incorporada) e a aprovação registrada
-    (D-098, 8 perguntas no padrão).
-  - [x] implementação: `ui/media_audio.py`, `media_cues.py`, `media_frames.py`, `media_video.py`, `media_job.py` e
-    `media_save.py`, o `export.atomic_target`, o fio no `meeting_header.py`, no `meeting.py` e no controlador; testes
-    `test_media_export.py` (20) e `test_media_save_ui.py` (8) verdes, ruff e os dois mypy limpos. Medida na reunião 22
-    (55 min, com um job do worker rodando junto): o MP3 em 10,1 s (17 MB), o MP4 em 61,6 s (49 MB), +26 MB de memória
-    com o PyAV e cancelar a 95 % em 0,04 s sem sobrar arquivo.
-  - [ ] revisão do diff por um agente novo e as correções.
-  - [ ] fechamento: a suíte inteira, a seção Implementação da spec, D-099, a posição final e o commit.
-  Como retomar: `git log` mostra os commits da F5.19; o próximo passo é a revisão do diff (D-040).
+- **F5.19 implementada** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098, D-099; versão 0.12.0): o pedido
+  do dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
+  aberta ganhou "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca, as pausas fora) e "Salvar vídeo com legendas…"
+  (MP4 H.264 e AAC, 1280 × 720, a fala atual com o nome e o cargo do dia na cor do falante e a anterior acima), numa
+  tarefa com o progresso e o "Cancelar" numa faixa própria, que espera parada com uma gravação em curso; nenhuma
+  dependência nova (soundfile e o PyAV que já vem com o faster-whisper). Reunião 22 (55 min): o MP3 em 10,1 s (17 MB)
+  e o MP4 em 61,6 s (49 MB). Falta o dono: o uso real (em "Verificar no Windows") e o push; o `.exe` 0.12.0 espera o OK
+  dele (CP13: `scripts/build_exe.py --zip`). Posição (`[x]` com o commit):
+  - [x] spec, a revisão de arquitetura (A-01 a A-25) e a aprovação (D-098, 8 perguntas no padrão): `a5fb5a0`.
+  - [x] `export.atomic_target` (A-23): `4951786`; implementação e testes: `d79996a`.
+  - [x] revisão do diff por um agente novo (R-01 a R-04, baixas, aplicadas), D-099, a suíte inteira e a spec
+    implementada: o commit do fechamento.
 - **F5.18 implementada** (07/11, `features/F5.18-performance.md`, D-096, D-097; versão 0.11.0): a spec de performance
   pedida pelo dono (a D-094 (3) já pedia a dívida F2 Q7 numa spec própria): cinco lotes, do pesado ceder a CPU em
   segundos (hoje em até 29 min) ao tronco do wespeaker rodado uma vez por trecho (hoje três) e ao Whisper em lote; três
@@ -92,9 +89,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
     `KMP_BLOCKTIME=0` sem ganho); a spec implementada, Tamanho-alvo 55 KB (o commit final).
   Como retomar: ler a spec e esta posição; o que estiver "em implementação" sem commit está no working tree (`git
   status`); um lote só fecha com a revisão do diff por um agente novo (D-040) e a suíte inteira limpa.
-- Código: F1 a F5.18 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
+- Código: F1 a F5.19 implementadas (o detalhe na seção Implementação de cada spec; as decisões em `decisoes.md`); até a
   F5.15, verificadas pelo uso real do app no Windows, sem os números dos gates (D-090). F6 é rascunho e fica para
-  depois (D-091); F7 é futuro. Esquema v9, versão 0.11.0 (D-081; F5.18).
+  depois (D-091); F7 é futuro. Esquema v9, versão 0.12.0 (D-081; F5.19).
 - **F5.16 implementada** (05/11, D-091, D-093, `features/F5.16-sem-token-hugging-face.md`): sem o token do Hugging
   Face, a reunião sai transcrita com o R "Desconhecido" e o aviso do U-139; reprocessar sem o token não tira vozes já
   identificadas. Falta o dono: usar uma reunião sem o token (ou só seguir usando; nada muda com ele).
@@ -118,6 +115,9 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
 3. Antes de código: a spec da entrega em `specs/features/` está `aprovada`? (CP13)
 
 ## Verificar no Windows (quando a sessão estiver no Windows nativo)
+- F5.19 (Aceite 4, no uso): salvar o áudio (MP3) e o vídeo de uma reunião processada e abrir no player do Windows e
+  num celular (WhatsApp ou Teams): a legenda no tempo da fala, os nomes e cargos certos, o MP3 tocando; fechar a
+  janela no meio (a pergunta); começar a gravar outra reunião com uma exportação em curso (a faixa diz "Na espera").
 - F5.18 (no uso, com os modelos): lote 1, o `pausado dentro da janela` em até 13 s no `listener-worker.log`, o worker
   "Ociosa" no Gerenciador de Tarefas durante a gravação e o filho `--live` em "Normal"; lote 2, as 3 reuniões
   reprocessadas (Aceite 1), o texto do L nas reuniões do M-05 (Aceite 5) e o RSS com o gate ligado numa reunião sem
@@ -143,6 +143,10 @@ Nenhum: B1, B2, B5 e B15 fecharam pelo uso real, sem os números que pediam (D-0
 fechados (as decisões em `decisoes.md`).
 
 ## Dívidas técnicas
+- F5.19, da revisão de arquitetura: (A-01, fato novo) o .docx loga o caminho inteiro, e o nome padrão traz o título,
+  pela decisão do R9-03 e com teste, contra o D-053; o .md e a F5.19 logam só a pasta. Proposta: alinhar o .docx
+  (duas linhas e o teste do R9-03). (A-14) Se a interface atrasar durante uma exportação, o plano B é a exportação num
+  processo filho em BELOW_NORMAL, com GIL próprio.
 - F5.18, das revisões: a regra dura `test_app_modules_do_not_import_models` num subprocesso (lote 2); `live/proc.py`
   cresceu 38 linhas (mover os motores para um módulo próprio ao mexer); `store/rag.py` com 474 linhas; o `test_theme`
   falha por ordem na suíte inteira (2 testes, passam sozinhos: a instabilidade da F5.16); `NetworkConfig.verify()` sem

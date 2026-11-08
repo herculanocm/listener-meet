@@ -9,6 +9,7 @@ import itertools
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -255,11 +256,22 @@ def test_frame_renderer_draws_text_off_the_ui_thread_and_shrinks_long_text(qapp)
     assert np.all(idle[lower] == background)                                # sem legenda: só o fundo embaixo do título
     assert np.any(idle[:104] != background)                                 # o título e a data no topo
     assert np.mean(np.any(both[lower] != background, axis=2)) > 0.005       # o texto desenhado
-    fitted = renderer.fit("palavra " * 60, renderer.look.text_px)
+    from PySide6.QtCore import QRect
     from PySide6.QtGui import QFontMetrics
 
-    assert fitted.font.pixelSize() < renderer.look.text_px
-    assert fitted.height <= renderer.look.lines * QFontMetrics(fitted.font).lineSpacing()
+    def wrapped_height(text: str, fitted: Any) -> int:                     # a altura de verdade, sem o teto do `fit` (R-04)
+        return QFontMetrics(fitted.font).boundingRect(QRect(0, 0, renderer.text_w, 100_000), fitted.flags, text).height()
+
+    longest = (LONG + " " + LONG)[: mc.MAX_CHARS + 1].rsplit(" ", 1)[0]     # uma legenda do tamanho máximo, inteira
+    assert 100 <= len(longest) <= mc.MAX_CHARS
+    crowded = "palavra " * 25                                               # 200 caracteres: encolhe mais
+    sizes = []
+    for text in (longest, crowded):                                         # a fonte do offscreen não é a do Windows: o
+        fitted = renderer.fit(text, renderer.look.text_px)                  # tamanho varia, a regra do `fit` não
+        lines = renderer.look.lines * QFontMetrics(fitted.font).lineSpacing()
+        assert wrapped_height(text, fitted) <= lines or fitted.font.pixelSize() == renderer.look.min_text_px
+        sizes.append(fitted.font.pixelSize())
+    assert renderer.look.min_text_px <= sizes[1] <= sizes[0] <= renderer.look.text_px and sizes[1] < renderer.look.text_px
 
 
 def test_frame_times_put_one_frame_per_change_and_one_per_second_between():
@@ -298,6 +310,7 @@ def test_progress_tick_waits_while_recording_and_reports_only_changes():
     assert tick(ma.PEAK, 0.004) is False and reports[-1] == (ma.PEAK, 0) and len(reports) == 2   # o mesmo inteiro não repete
     state["recording"], state["cancel"] = True, True
     assert tick(ma.WRITE, 0.5) is True and len(sleeps) == 3                     # cancelado: não espera a gravação
+    assert len(reports) == 2                                                    # R-02: nem manda progresso por cima
 
 
 def test_run_job_classifies_cancel_write_errors_and_bugs_without_the_path_in_the_log(tmp_path, caplog):
@@ -398,3 +411,80 @@ def test_pick_codec_skips_codecs_that_do_not_exist_or_do_not_open():
 
     with pytest.raises(RuntimeError):
         pick_codec(NoCodecs, (1280, 720))
+
+
+# ---------------------------------------------------------------- revisão do diff (R-01, R-03, R-04)
+def test_overall_percent_maps_both_passes_to_one_number():
+    from listener.ui.media_save import AUDIO, VIDEO, overall_percent
+
+    assert overall_percent(VIDEO, ma.PEAK, 100) == 5 and overall_percent(VIDEO, ma.WRITE, 0) == 5
+    assert overall_percent(VIDEO, ma.WRITE, 100) == 100
+    assert overall_percent(AUDIO, ma.PEAK, 50) == 15 and overall_percent(AUDIO, ma.WRITE, 50) == 65
+
+
+def _second_full_write() -> tuple[ma.Tick, list[float]]:
+    """Um `tick` que deixa passar o último bloco (WRITE em 1,0) e cancela na conferência seguinte, a do fecho (R-01)."""
+    full: list[float] = []
+
+    def tick(stage: str, fraction: float) -> bool:
+        if stage == ma.WRITE and fraction >= 1.0:
+            full.append(fraction)
+        return len(full) >= 2
+
+    return tick, full
+
+
+def test_cancel_after_the_audio_file_closes_keeps_the_previous_one(store, tmp_path):
+    mid = _audio_meeting(store)
+    plan = ma.plan_audio(store, mid)
+    assert plan is not None
+    folder = tmp_path / "saida"
+    folder.mkdir()
+    target = folder / "reuniao.wav"
+    target.write_bytes(b"anterior")
+    tick, full = _second_full_write()
+    with pytest.raises(ma.ExportCancelledError):
+        ma.write_audio(store, plan, target, next(f for f in ma.available_formats() if f.key == "wav"), tick)
+    assert len(full) == 2 and target.read_bytes() == b"anterior" and [p.name for p in folder.iterdir()] == ["reuniao.wav"]
+
+
+def test_cancelling_the_real_mp4_leaves_nothing_open_or_behind(store, tmp_path, qapp):
+    """R-04 (b) e R-01: o `write_video` com o contêiner de verdade, cancelado no primeiro bloco (o PyAV fecha antes de o
+    temporário sair, A-21) e depois do trailer com o `+faststart`; nos dois, o anterior fica e nada sobra."""
+    pytest.importorskip("av")
+    from listener.ui.media_frames import FrameRenderer
+    from listener.ui.media_save import speeches_for
+    from listener.ui.media_video import write_video
+
+    mid = _speech_meeting(store)
+    plan = ma.plan_audio(store, mid)
+    assert plan is not None
+    cues = mc.build_cues(speeches_for(store, mid, True), plan.pauses, plan.duration_ms)
+    timeline = mc.screens(cues, plan.duration_ms)
+    renderer = FrameRenderer("Orçamento 2027", "", cues)
+    folder = tmp_path / "saida"
+    folder.mkdir()
+    target = folder / "reuniao.mp4"
+    target.write_bytes(b"anterior")
+
+    def run(tick: ma.Tick) -> list[str]:
+        seen: list[str] = []
+
+        def body() -> None:
+            try:
+                write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height))
+            except ma.ExportCancelledError:
+                seen.append("cancelado")
+            finally:
+                store.close_thread()
+
+        thread = threading.Thread(target=body)
+        thread.start()
+        thread.join(60)
+        return seen
+
+    assert run(lambda stage, _f: stage == ma.WRITE) == ["cancelado"]
+    assert target.read_bytes() == b"anterior" and [p.name for p in folder.iterdir()] == ["reuniao.mp4"]
+    tick, full = _second_full_write()
+    assert run(tick) == ["cancelado"] and len(full) == 2
+    assert target.read_bytes() == b"anterior" and [p.name for p in folder.iterdir()] == ["reuniao.mp4"]

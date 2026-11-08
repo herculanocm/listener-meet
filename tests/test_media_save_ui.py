@@ -195,3 +195,22 @@ def test_the_app_exit_cancels_and_waits_for_the_export(qtbot, store, tmp_path, m
     assert task is not None
     win.shutdown()                                                            # a saída do app: cancela e espera antes do banco
     assert _finished(task) and win.media.task is None and win.media.confirm_close()
+
+
+def test_the_task_rechecks_the_audio_file_and_frees_the_app_slot_even_when_it_ends_at_once(qtbot, store, tmp_path, monkeypatch):
+    """A-08: o arquivo de áudio some entre o clique e a tarefa (o diálogo não tem prazo); a tarefa confere de novo antes de
+    ler, avisa e termina na hora, e a vaga do app sai mesmo assim (ela é posta antes de a tarefa nascer)."""
+    win = _window(qtbot, store, _speech_meeting(store))
+    real = msave.missing_audio
+    calls: list[int] = []
+
+    def gone_later(store_: Any, mid: int) -> str | None:
+        calls.append(mid)
+        return real(store_, mid) if len(calls) == 1 else "Sem o arquivo de áudio desta reunião na pasta do banco (x.db)."
+
+    monkeypatch.setattr(msave, "missing_audio", gone_later)
+    task = win.media.save_audio(str(tmp_path / "a.wav"), _wav(win))
+    assert task is not None
+    qtbot.waitUntil(lambda: win.media.task is None, timeout=10000)
+    assert win.message.text().startswith("Sem o arquivo de áudio") and not msave._running and len(calls) == 2
+    assert not (tmp_path / "a.wav").exists()

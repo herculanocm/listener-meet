@@ -49,7 +49,15 @@ WAITING = "Na espera: uma gravação está em curso. A exportação continua qua
 MEDIA_WAIT_MS = 5000             # a saída do app espera a exportação cancelada até isto (depois avisa no log e espera)
 WHAT = {AUDIO: "o áudio", VIDEO: "o vídeo"}
 DOING = {AUDIO: "Gravando o áudio", VIDEO: "Gerando o vídeo"}
-_running: dict[int, str] = {}    # A-17: a exportação de mídia em curso no app (reunião -> tipo); só a thread da interface
+PEAK_SHARE = {AUDIO: 0.3, VIDEO: 0.05}  # a primeira passada (só decodificar) no tempo todo [chute pela reunião 22]
+_running: dict[int, str] = {}    # A-17: a exportação de mídia em curso no app (reunião -> tipo): a interface põe, a tarefa tira
+
+
+def overall_percent(kind: str, stage: str, percent: int) -> int:
+    """O percentual da exportação inteira (R-03), o mesmo na faixa e na pergunta do fechar: a passada do pico (só
+    decodificar) numa faixa inicial, a gravação no resto."""
+    share = PEAK_SHARE.get(kind, 0.1)
+    return int(percent * share) if stage == PEAK else int(share * 100 + percent * (1 - share))
 
 
 def audio_tip(formats: tuple[AudioFormat, ...]) -> str:
@@ -236,25 +244,29 @@ class MediaSaver(QObject):
         meeting_id, store, recording, seconds = self.meeting_id, self.store, self.recording, plan.duration_ms / 1000
 
         def work(_emit: Callable[[str], None], cancelled: Callable[[], bool], report: Callable[[Any], None]) -> object:
-            return run_job(kind, fmt, meeting_id, target, make, lambda: missing_audio(store, meeting_id),
-                           progress_tick(cancelled, report, recording), seconds)
+            try:
+                return run_job(kind, fmt, meeting_id, target, make, lambda: missing_audio(store, meeting_id),
+                               progress_tick(cancelled, report, recording), seconds)
+            finally:
+                _running.pop(meeting_id, None)           # a própria tarefa solta a vaga: vale com a janela já fechada
 
         log.info("reunião %s: exportando %s (%s, %.1f s de áudio)", meeting_id, kind, fmt, seconds)
         self.kind, self.target, self.percent = kind, str(target), 0
         self._enable(False)
         self.bar.set_text(f"Preparando {WHAT[kind]}…")
+        _running[meeting_id] = kind                      # antes de a tarefa nascer: uma tarefa rápida não deixa a vaga presa
         self.task = run_stream(work, self.store, lambda _text: None, self._done, self._progress)
-        _running[meeting_id] = kind
-        self.task.finished.connect(lambda: _running.pop(meeting_id, None))    # vale com a janela já fechada no meio
         return self.task
 
     def _progress(self, step: object) -> None:
         with suppress(RuntimeError):                     # a janela já foi destruída
+            if self.task is not None and self.task.cancelled:     # R-02: o "Cancelando…" fica até o fim
+                return
             stage, percent = step if isinstance(step, tuple) else ("", 0)
-            self.percent = int(percent)
             if stage == WAIT:
                 self.bar.set_text(WAITING)
                 return
+            self.percent = overall_percent(self.kind, str(stage), int(percent))
             doing = "Preparando o áudio" if stage == PEAK else DOING.get(self.kind, "Exportando")
             self.bar.set_text(f"{doing}… {self.percent} %")
 
@@ -308,4 +320,4 @@ class MediaSaver(QObject):
 
 
 __all__ = ["AUDIO", "NO_AUDIO", "NO_SPEECH", "RECORDING", "VIDEO", "VIDEO_MISSING", "VIDEO_TIP", "WAITING", "MediaSaver", "audio_tip",
-           "missing_audio", "speeches_for"]
+           "missing_audio", "overall_percent", "speeches_for"]

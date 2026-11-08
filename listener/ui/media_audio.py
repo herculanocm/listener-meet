@@ -199,6 +199,7 @@ def write_audio(store: Store, plan: AudioPlan, target: Path, fmt: AudioFormat, t
                     step(tick, WRITE, done / max(1, plan.frames))
         except (sf.SoundFileError, AssertionError) as e:   # o `write` confere o gravado por `assert` (soundfile 0.14)
             raise MediaWriteError from e
+        step(tick, WRITE, 1.0)                           # R-01: o cancelar no fecho ainda vale; o anterior fica
     return target
 
 

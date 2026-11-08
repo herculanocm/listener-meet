@@ -55,11 +55,15 @@ def progress_tick(cancelled: Callable[[], bool], report: Callable[[Any], None], 
             report(item)
 
     def tick(stage: str, fraction: float) -> bool:
+        if cancelled():                           # R-02: depois do "Cancelar", nada de progresso por cima do "Cancelando…"
+            return True
         percent = min(100, int(fraction * 100))
-        if recording() and not cancelled():
+        if recording():
             send((WAIT, percent))
             while recording() and not cancelled():
                 sleep(POLL_S)
+            if cancelled():
+                return True
         send((stage, percent))
         return cancelled()
 
