@@ -9,8 +9,12 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   opções curtas com os fatos citados; "Boa"/"Ruim"/"Usei" em dois tempos, com um memorando visível; o direcionamento
   em três camadas; o pedido comprimido por resumo rolante e compactação local; liga e desliga em uso; só na bandeja de
   legendas, fora da captura de tela), U-153 a U-163; a revisão de arquitetura (A-01 a A-30) incorporada; as 16
-  perguntas decididas no padrão por delegação do dono (D-100). Escrita no Linux nativo: nada a verificar no Windows
-  até o código. Falta o dono: a palavra "aprovada" (CP13) para o L1 começar; depois, o uso real e o push.
+  perguntas decididas no padrão por delegação do dono (D-100). A pedido dele (08/11, "faça detalhado a spec pois será
+  implementada por outra llm que é o opus"), a spec virou o contrato de implementação: os contratos C1 a C16 (nomes,
+  assinaturas, SQL da v10, esquema JSON, textos dos prompts, algoritmos da compactação e do leitor, telas com medidas,
+  registro completo da tarefa), os testes por lote, os quatro lotes com o commit de cada um e o briefing do
+  implementador com o que é proibido (91 KB). Escrita no Linux nativo: nada a verificar no Windows até o código.
+  Falta o dono: a palavra "aprovada" (CP13) para o L1 começar; depois, o uso real e o push.
 - **F5.19 implementada** (07/11, `features/F5.19-exportar-audio-e-video.md`, D-098, D-099; versão 0.12.0): o pedido
   do dono no chat, "exportar o áudio" e o "vídeo com a legenda com os nomes e títulos de cargo". O Exportar da reunião
   aberta ganhou "Salvar áudio…" (MP3, FLAC ou WAV, como o player toca, as pausas fora) e "Salvar vídeo com legendas…"
