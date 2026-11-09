@@ -1,4 +1,4 @@
-# Ambientes: Windows 11 corporativo (EDR, sem GPU; o alvo), o WSL dele e um Linux Ubuntu nativo
+# Ambientes: Windows 11 corporativo (EDR, sem GPU dedicada; o alvo), o WSL dele e um Linux Ubuntu nativo
 
 Tudo [fato] medido em 24/10/2026, salvo indicação. Caminhos com `<usuário>` são desta máquina, não do produto.
 Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; `linux` com `microsoft` em
@@ -20,6 +20,11 @@ Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; 
 - CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch
   2.8.0+cpu com 12 threads; sem CUDA. Suíte: ~35 s com 349 testes (50 s a frio, 25/10). Importar os SDKs a quente
   (`-X importtime`): google.genai 0,8 s, openai 0,9 s, anthropic 4,0 s.
+- GPU (08/11): só a Intel Graphics integrada do processador (`VEN_8086&DEV_7D41`, driver 32.0.101.8860 de 24/06/2026,
+  memória compartilhada; único adaptador no `Win32_VideoController`) e a NPU Intel AI Boost; sem NVIDIA (`nvidia-smi` e
+  `nvcuda.dll` ausentes). No `.venv`: `torch.cuda.is_available()` falso e `torch.xpu` sem dispositivo (a roda é CPU),
+  `ctranslate2.get_cuda_device_count()` 0, onnxruntime só com `CPUExecutionProvider`. No System32: `directml.dll` 1.15.5,
+  `ze_loader.dll` 1.28 e `vulkan-1.dll` 1.4 (o driver Intel fica no DriverStore, `iigd_dch`).
 - Versões: whisperx 3.8.6, faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, PySide6 6.12.0, sqlite-vec 0.1.9
   (SQLite 3.49.1), proc-tap 1.1.1, sounddevice 0.5.6, soundfile 0.14.0, PyAudioWPatch 0.2.12.9, pynput 1.8.2,
   pycaw 20260927, google-genai 2.33.0, openai 3.37.0, anthropic 2.3.0.
