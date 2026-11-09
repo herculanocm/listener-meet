@@ -114,7 +114,7 @@ Decisões mudam o que o sistema é; o que muda só a forma de trabalhar fica em 
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | correção da deriva de relógio (F1.1 A7) | só instrumentar; corrigir em spec própria se o G1 mostrar mais de 100 ms por hora |
-| P24 | F5.22 (GPU quando houver, `features/F5.22-gpu-quando-houver.md`): emendar a CP14 e seguir com a GPU NVIDIA opcional (as 10 perguntas da spec) | sim, no escopo mínimo (detecção, `pipeline.device` e `live.device` com queda para CPU, o extra `[gpu]` só no venv; o `.exe` segue CPU); sem resposta, nada muda e a CP14 vale |
+| P24 | F5.22 (GPU quando houver, `features/F5.22-gpu-quando-houver.md`): emendar a CP14 e implementar a GPU NVIDIA opcional (as 10 perguntas da spec); em 08/11 o dono a deu por aprovada ao finalizar ("A spec está aprovada quando finalizar, siga para desenvolvimento") e, logo depois, suspendeu ("deixe a spec criada, só comite por enquanto, depois vou decidir se vou implementar") | sim, no escopo mínimo (detecção, `pipeline.device` e `live.device` com queda para CPU, o lock `windows-gpu.txt` só no venv; o `.exe` segue CPU), quando ele decidir; até lá nada muda e a CP14 vale |
 
 ## Medições (nesta máquina: Intel 14 núcleos, Windows 11, sem CUDA, torch 2.8.0+cpu com 12 threads; detalhes em `memory/maquina.md`)
 | Data | O quê | Resultado |

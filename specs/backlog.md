@@ -2,7 +2,27 @@
 
 Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão. Tamanho-alvo: 5 KB.
 
-## Onde paramos (08/11/2026, Linux nativo; tudo commitado; o push é do dono)
+## Onde paramos (09/11/2026, Windows nativo; tudo commitado; o push é do dono)
+- **F5.22 em revisão, implementação suspensa pelo dono** (09/11, `features/F5.22-gpu-quando-houver.md`): o estudo de
+  viabilidade pedido em 08/11 (usar a GPU quando houver, só CPU quando não; "a máquina tem CPU e GPU"), feito por
+  agentes especialistas (mapa do código, ML no Windows, empacotamento e lock), e a spec com a revisão de arquitetura
+  A-01 a A-28 incorporada. Conclusão: a GPU desta máquina é a Intel Graphics integrada, sem NVIDIA (`memory/maquina.md`
+  corrigida, `ec005c6`), e nada da stack travada a usa; só NVIDIA (CUDA 12) acelera sem trocar motor, e ninguém no
+  projeto tem uma para verificar; o `.exe` segue CPU (um zip CUDA teria ~3,5 GB). Proposta: detecção em duas camadas
+  (DXGI no app, sem torch; `torch.cuda` e o CT2 só nos filhos com NVIDIA), `pipeline.device` e `live.device` (auto,
+  cpu, gpu) com queda para CPU por janela, o lock `requirements/windows-gpu.txt` só no venv. Em 08/11 o dono disse
+  "A spec está aprovada quando finalizar, siga para desenvolvimento" e, logo depois, "Mudanças de planos, deixe a
+  spec criada, só comite por enquanto, depois vou decidir se vou implementar": nenhum código, nenhuma dependência, a
+  CP14 como está (a emenda fica na pergunta 1 da spec; P24). Posição (`[x]` com o commit):
+  - [x] o rascunho com o estudo, a P24, a medição de 08/11 e a linha do roadmap: `116eb52`; a revisão incorporada e
+    os dois fatos de 08/11: `c9ef8ec` e `63fb694`; este backlog: o commit do fechamento.
+  - [ ] a decisão do dono (as 10 perguntas da spec, com os padrões na spec e na P24); com o "siga", implementar pelo
+    D-040 em lotes (L0 device puro, chaves, nomes, `Hello`, DXGI; L1 motores, ordem de import, queda para CPU, ao
+    vivo; L2 interface, `--check`, sonda, lock, versão 0.15.0), o Aceite A3 como roteiro do dono e o B só numa NVIDIA.
+  Nesta sessão (Windows nativo, 08 e 09/11) nada de código mudou: a suíte rápida (1.315 passaram, 7 pulados, 215 s com
+  um worker do dono processando ao lado), o ruff e os dois mypy limpos no `9a31add`. As quatro notas do estudo (mapa
+  do código, ML no Windows, empacotamento e lock, o parecer) ficaram na pasta de notas compartilhada da sessão, fora do
+  repositório; a spec as resume.
 - **F5.21 implementada** (08/11, `features/F5.21-tela-nas-sugestoes.md`, D-102, D-103; versão 0.14.0): o pedido do dono no
   chat, o print da tela mandado como contexto da sugestão do que falar, sem ver antes, e a miniatura do que foi no chat da
   bandeja. A chave "Com a tela" do cartão, o atalho `ctrl+alt+shift+t` e o "Sugerir com a tela…" do menu da bandeja do
@@ -196,6 +216,9 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
+- F5.22 (GPU quando houver): implementar ou não, e as 10 perguntas da spec (padrão: sim, no escopo mínimo; P24). Em
+  08/11 ele a deu por aprovada ao finalizar e logo suspendeu ("depois vou decidir se vou implementar"): até a
+  decisão, nenhum código (CP13) e a CP14 como está.
 - O `.exe` 0.14.0 (com a F5.20 e a F5.21) saiu em 08/11 pelo `gerar-exe.bat`; a sonda `--probe` e o push são do dono.
 - F5.21 (D-103): as miniaturas da aba "Sugestões" ficam na janela da reunião, que sai na captura quando é compartilhada
   (padrão: ficam, como o resto da reunião; a cópia maior abre fora da captura).
