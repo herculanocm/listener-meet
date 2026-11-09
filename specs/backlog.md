@@ -11,8 +11,8 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   fora da captura; "[tela]" na opção que a usou; os resumos das telas anteriores no contexto dos pedidos seguintes; a tela
   preta ou protegida que não vai; a aba da reunião com as miniaturas e a cópia; o bloco do `--check`; no Windows, por
   ctypes (U-164 a U-170). Implementada no Linux nativo pelos lotes L0 a L3, um commit por lote, cada diff revisado por um
-  agente novo (D-040). Falta o dono: o uso real com os números do Aceite (em "Verificar no Windows"), o `.exe` 0.14.0 (no
-  Windows, com o OK dele) e o push. Posição (`[x]` com o commit):
+  agente novo (D-040). Falta o dono: o uso real com os números do Aceite (em "Verificar no Windows"), a sonda do `.exe`
+  0.14.0 (gerado em 08/11 pelo `gerar-exe.bat`, `9c7f92c`, em 482 s) e o push. Posição (`[x]` com o commit):
   - [x] spec aprovada (D-102): `1d0aea7`; L0: `3bb6aba`; L1: `d5673da` e `805908a`; a revisão do L0 e do L1 (R-01 a
     R-05): `adc55fc`.
   - [x] L2: `49234e8`; L3: `9f3bf16`, `a722a92`, `44925b8` (os documentos e a versão), `01572ac` e `e1fa042` (a sonda).
@@ -30,7 +30,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   bloco do `--check`; o pedido comprimido (resumo rolante e compactação local) e o teto de custo partilhado com o resumo
   parcial; tudo fora da captura de tela e ligável em uso (U-153 a U-163). Implementada no Linux nativo pelos lotes L1 a
   L4, um commit por lote, cada diff revisado por um agente novo (D-040). Falta o dono: o uso real com os números do
-  Aceite (em "Verificar no Windows"), o `.exe` 0.13.0 (no Windows, com o OK dele) e o push. Posição (`[x]` com o
+  Aceite (em "Verificar no Windows"), a sonda do `.exe` 0.14.0 (que inclui a F5.20) e o push. Posição (`[x]` com o
   commit):
   - [x] spec aprovada (D-100): `9a438f9`; L1, a v10, as tarefas, os prompts, a compactação e o leitor: `3082e1a`; a
     revisão do L1 (R-01 a R-08): `6a2e119`.
@@ -174,7 +174,7 @@ Quando ler: sempre (T0). Único lugar de estado; atualize ao fim de cada sessão
   se outro app o tiver); a primeira opção com a LLM real (p50 até 3 s e p95 até 6 s; a sugestão inteira com p95 até
   10 s), no Gemini com o JSON em streaming (A-27) e numa família do Claude de ferramenta forçada (R-01 do L1); os números
   do Aceite pelo `--check` das três reuniões (a parcela útil, a evidência, a compactação e o custo por pedido); o
-  memorando depois de 10 avaliações, visível e editável na página Prompts; o `.exe` 0.13.0 (sonda `--probe`), com o OK
+  memorando depois de 10 avaliações, visível e editável na página Prompts; o `.exe` 0.14.0 (sonda `--probe`), com o OK
   do dono.
 - F5.19 (Aceite 4, no uso): salvar o áudio (MP3) e o vídeo de uma reunião processada e abrir no player do Windows e
   num celular (WhatsApp ou Teams): a legenda no tempo da fala, os nomes e cargos certos, o MP3 tocando; fechar a
@@ -196,7 +196,7 @@ Windows verifica (`AGENTS.md`); o dono confere no uso, e o roteiro fica como ref
 dele: apagar o venv do F0 e as duas entradas vazias de 24/10 no cache do Hugging Face (D-050, D-052).
 
 ## Perguntas abertas ao dono (padrão entre parênteses; só vale com a resposta dele)
-- O `.exe` 0.13.0 da F5.20, o 0.14.0 da F5.21 e o push são decisões do dono.
+- O `.exe` 0.14.0 (com a F5.20 e a F5.21) saiu em 08/11 pelo `gerar-exe.bat`; a sonda `--probe` e o push são do dono.
 - F5.21 (D-103): as miniaturas da aba "Sugestões" ficam na janela da reunião, que sai na captura quando é compartilhada
   (padrão: ficam, como o resto da reunião; a cópia maior abre fora da captura).
 As anteriores (1, 5 a 10, 17 e 19) foram fechadas no padrão em 04/11 (D-091) e estão em `decisoes.md`, nas specs e no
