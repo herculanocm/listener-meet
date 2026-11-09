@@ -70,6 +70,9 @@ nível editável nas Configurações. Para o desenvolvimento: `--selftest` (grav
 O executável sai numa pasta, sem console (PyInstaller `--onedir --windowed`), e não num arquivo único, que se
 descompactaria a cada abertura e deixaria o app mais lento (D-069).
 
+Com dois cliques em `gerar-exe.bat`, na raiz, saem os dois passos abaixo (as ferramentas pelo lock e o build com
+`--zip`) e a janela fica aberta com o resultado; pelo terminal, ele volta direto.
+
 ```powershell
 # uma vez, e de novo sempre que o lock do app mudar: as ferramentas de build (o app nunca as importa)
 .venv\Scripts\python.exe -m pip install -r requirements\build-windows.txt

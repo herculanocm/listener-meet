@@ -1,0 +1,2 @@
+# o cmd quer CRLF nos .bat, seja qual for o core.autocrlf de quem clona (gerar-exe.bat)
+*.bat text eol=crlf
