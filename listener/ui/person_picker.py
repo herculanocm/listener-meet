@@ -88,8 +88,6 @@ class _Entry:
     person: Candidate
     fields: tuple[str, ...]              # nome, cargo e empresa, normalizados
     name_words: tuple[str, ...]
-    full_name: str
-    first_name: str
 
 
 class PersonIndex:
@@ -100,8 +98,7 @@ class PersonIndex:
         for i, p in enumerate(people):
             name = fold(p.name)
             words = tuple(_WORD.findall(name))
-            self.entries.append(_Entry(i, p, (name, fold(p.role), fold(p.company)), words, " ".join(name.split()),
-                                       words[0] if words else ""))
+            self.entries.append(_Entry(i, p, (name, fold(p.role), fold(p.company)), words))
         known = {p.person_id for p in people}
         self.top = [pid for pid in top if pid in known]
         self._rank = {pid: i for i, pid in enumerate(self.top)}
@@ -117,7 +114,7 @@ class PersonIndex:
         if hits:
             hits.sort(key=lambda e: self._key(e, words))
             return View((Section("", tuple(e.person for e in hits)),), len(hits), True)
-        similar = self._similar(" ".join(words))
+        similar = self._similar(words)
         if similar:
             return View((Section(SIMILAR_TITLE, tuple(similar)),), 0, True, similar=True)
         return View((), 0, False)
@@ -141,18 +138,28 @@ class PersonIndex:
         prefix = all(any(n.startswith(w) for n in e.name_words) for w in words)
         return (1 if prefix else 2, 0 if e.person.expected else 1, e.order)
 
-    def _similar(self, typed: str) -> list[Candidate]:
-        """U-175: com 3 letras ou mais, até 3 pessoas cujo nome inteiro ou primeiro nome se pareça com o texto (`difflib`,
-        0,75 ou mais), da mais parecida para a menos."""
-        if sum(c.isalnum() for c in typed) < SIMILAR_MIN_LETTERS:
+    def _similar(self, words: list[str]) -> list[Candidate]:
+        """U-175: com 3 letras ou mais, até 3 pessoas cujo nome tem, para cada palavra digitada, uma palavra parecida
+        (`difflib`, 0,75 ou mais), da mais parecida para a menos. Palavra por palavra (D-111): comparado com o nome inteiro,
+        o sobrenome em comum bastava ("zuleica prado" trazia "Elisa Prado", e o Enter a confirmaria)."""
+        if sum(c.isalnum() for w in words for c in w) < SIMILAR_MIN_LETTERS:
             return []
+        matchers = [difflib.SequenceMatcher(None, "", w) for w in words]     # o lado fixo é o digitado: o difflib o prepara uma vez
         scored: list[tuple[float, int, Candidate]] = []
         for e in self.entries:
-            best = max(difflib.SequenceMatcher(None, typed, target).ratio() for target in (e.full_name, e.first_name))
-            if best >= SIMILAR_CUTOFF:
-                scored.append((-best, e.order, e.person))
+            bests = [max((_ratio(m, n) for n in e.name_words), default=0.0) for m in matchers]
+            if bests and min(bests) >= SIMILAR_CUTOFF:
+                scored.append((-sum(bests) / len(bests), e.order, e.person))
         scored.sort(key=lambda t: (t[0], t[1]))
         return [p for _, _, p in scored[:SIMILAR_MAX]]
+
+
+def _ratio(m: difflib.SequenceMatcher[str], word: str) -> float:
+    """A semelhança do `difflib`, com os limites baratos antes: abaixo do corte, 0."""
+    m.set_seq1(word)
+    if m.real_quick_ratio() < SIMILAR_CUTOFF or m.quick_ratio() < SIMILAR_CUTOFF:
+        return 0.0
+    return m.ratio()
 
 
 # ---------------------------------------------------------------- a janela
@@ -197,6 +204,7 @@ class PersonPicker(QDialog):
         self.tree = self._build_tree()
         self.count = QLabel(self)
         note(self.count)
+        self.count.setWordWrap(True)                           # "Ninguém com …" cede a largura aos botões
         self.btn_new = QPushButton("Nova pessoa…", self)
         self.btn_choose = QPushButton("Escolher", self)
         self.btn_cancel = QPushButton("Cancelar", self)
@@ -292,8 +300,9 @@ class PersonPicker(QDialog):
             self.count.setText(f'Ninguém com "{_short(typed)}".')
         self.btn_new.setText(f'Nova pessoa "{_short(typed)}"…' if typed else "Nova pessoa…")
         new_first = self._offers_new()
-        set_kind(self.btn_new, PRIMARY if new_first else None)
-        set_kind(self.btn_choose, None if new_first else PRIMARY)
+        for button, kind in ((self.btn_new, PRIMARY if new_first else None), (self.btn_choose, None if new_first else PRIMARY)):
+            set_kind(button, kind)
+            button.updateGeometry()                            # o primário pinta em negrito: a largura muda com o tipo
         self._sync()
 
     def _offers_new(self) -> bool:
@@ -309,7 +318,10 @@ class PersonPicker(QDialog):
             return
         item = self.rows[pos]
         self.tree.setCurrentItem(item)
-        self.tree.scrollToItem(item)
+        if pos == 0:
+            self.tree.scrollToTop()                            # o título da seção da primeira linha fica à vista
+        else:
+            self.tree.scrollToItem(item)
 
     def selected_id(self) -> int | None:
         chosen = [it for it in self.tree.selectedItems() if it.data(NAME_COL, PERSON_ROLE) is not None]

@@ -72,6 +72,7 @@ from probe_f56 import f56_shots          # F5.6 L3: só a biblioteca padrão no 
 from probe_f517 import f517_shots        # F5.17: a bandeja de legendas e o botão "Legendas" do widget
 from probe_f520 import f520_shots, f520_timings   # F5.20: o cartão, o popup, a caixa, o memorando, a aba e os tempos
 from probe_f521 import f521_screen, f521_shots, f521_timings   # F5.21: a tela nas sugestões (as fotos, os tempos e `tela`)
+from probe_f525 import f525_shots, f525_timings   # F5.25: a escolha da pessoa com busca (as fotos e os tempos)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -491,6 +492,8 @@ def cmd_shots(args) -> None:
     out("f520_tempos", dpr=screen().devicePixelRatio(), **f520_timings(store, app, p))   # F5.20 (Aceite "Interface"): < 5 ms
     f521_shots(store, shot, app, p)                       # F5.21: a bandeja com a tela, a confirmação, a tela maior e a aba
     out("f521_tempos", dpr=screen().devicePixelRatio(), **f521_timings(store, app, p))   # F5.21: a miniatura no chat, < 5 ms
+    f525_shots(shot, app)                                 # F5.25: "Outra pessoa" vazia, com texto, parecidos, sem resultado
+    out("f525_tempos", dpr=screen().devicePixelRatio(), **f525_timings(app))   # F5.25: abrir (+20 ms) e a tecla (p95 30 ms)
     queue_jobs(store, mid)                                # F5.3 L2: a barra em cada estado, a faixa do rodando e o índice
     qd = QueueDialog(store)
     shot(qd, "fila")

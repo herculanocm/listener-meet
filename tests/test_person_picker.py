@@ -109,8 +109,9 @@ def test_a_typo_without_result_brings_similar_names():
 
 
 def test_similar_names_need_three_letters_and_a_close_name():
+    """D-111: palavra por palavra; o sobrenome em comum não basta ("zuleica silva" não traz "João Silva")."""
     index = PersonIndex(PEOPLE, [])
-    for typed in ("xq", "zzzzzz"):
+    for typed in ("xq", "zzzzzz", "zuleica silva", "bia souza"):
         view = index.view(typed)
         assert view.sections == () and not view.select_first and not view.similar
 
