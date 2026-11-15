@@ -9,7 +9,7 @@ import pytest
 from listener.ui.person_picker import (ALL_TITLE, BY_VOICE_TITLE, EXPECTED_TITLE, SIMILAR_TITLE, Candidate, PersonIndex, fold,
                                        percent, top_by_voice)
 
-ME = Candidate(1, "Herculano", "Herculano", score=0.31)
+ME = Candidate(1, "Rui Alves", "Rui Alves", score=0.31)
 ANA = Candidate(2, "Ana Souza — CFO · Acme", "Ana Souza", "CFO", "Acme", score=0.58)
 ANA_TI = Candidate(3, "Ana Lima — TI", "Ana Lima", "TI", score=0.20)
 BIA = Candidate(4, "Bia Lima — CFO", "Bia Lima", "CFO", score=0.51)
@@ -123,3 +123,151 @@ def test_at_most_three_similar_names_most_similar_first():
                                               (None, ""), (float("nan"), "")])
 def test_percent_is_the_cosine_times_100_without_decimals(score, shown):
     assert percent(score) == shown
+
+
+# ---------------------------------------------------------------- a janela (U-171, U-172, U-176)
+def _picker(qtbot, people=PEOPLE, top=(), threshold=0.6):
+    from listener.ui.person_picker import PersonPicker
+
+    picker = PersonPicker(None, PersonIndex(people, list(top)), question="Quem é a Voz 3?", threshold=threshold)
+    qtbot.addWidget(picker)
+    picker.show()
+    return picker
+
+
+def _key(picker, key, times=1):
+    from PySide6.QtTest import QTest
+
+    for _ in range(times):
+        QTest.keyClick(picker.search, key)
+
+
+def _shown(picker) -> list[str]:
+    """As linhas da lista como o usuário as vê: os títulos com "#" e as pessoas com o rótulo e a nota."""
+    out: list[str] = []
+    for i in range(picker.tree.topLevelItemCount()):
+        top = picker.tree.topLevelItem(i)
+        children = [top.child(j) for j in range(top.childCount())]
+        if children:
+            out.append(f"# {top.text(0)}")
+        out.extend(" | ".join(t for t in (item.text(0), item.text(1), item.text(2)) if t) for item in children or [top])
+    return out
+
+
+def test_the_field_is_born_with_the_focus_and_the_sections_with_the_voice_first(qtbot):
+    from PySide6.QtCore import Qt
+
+    picker = _picker(qtbot, top=[2, 4])
+    assert picker.windowTitle() == "Outra pessoa" and picker.question.text() == "Quem é a Voz 3?"
+    assert picker.focusWidget() is picker.search and picker.search.isClearButtonEnabled()
+    assert picker.search.placeholderText() == "Buscar por nome, cargo ou empresa"
+    assert _shown(picker) == ["# Pela voz", "Ana Souza — CFO · Acme | 58 %", "Bia Lima — CFO | 51 %",
+                              "# Esperadas nesta reunião", "Caio Reis — TI | 12 %",
+                              "# Todas", "Rui Alves | 31 %", "Ana Lima — TI | 20 %", "Davi Luz — Vendas", "João Silva",
+                              "Maria Conceição — Jurídico"]
+    assert picker.selected_id() == 2 and picker.count.text() == "8 pessoas"
+    _key(picker, Qt.Key.Key_Down)
+    _key(picker, Qt.Key.Key_Down)                                             # pula o título "Esperadas nesta reunião"
+    assert picker.selected_id() == 5
+    _key(picker, Qt.Key.Key_PageDown)
+    assert picker.selected_id() == 8                                          # a página para no fim
+    _key(picker, Qt.Key.Key_Enter)
+    assert picker.picked.person_id == 8 and picker.result() == picker.DialogCode.Accepted
+
+
+def test_without_by_voice_nothing_is_selected_and_enter_does_nothing(qtbot):
+    from PySide6.QtCore import Qt
+
+    picker = _picker(qtbot)
+    assert picker.selected_id() is None and not picker.btn_choose.isEnabled()
+    _key(picker, Qt.Key.Key_Return)
+    assert picker.picked.person_id is None and picker.picked.new_name is None and picker.isVisible()
+    _key(picker, Qt.Key.Key_Down)                                             # as setas escolhem a primeira de propósito
+    assert picker.selected_id() == 5 and picker.btn_choose.isEnabled()
+
+
+def test_typing_filters_at_each_key_and_selects_the_first_row(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    picker = _picker(qtbot, top=[4])
+    QTest.keyClicks(picker.search, "lim")
+    assert _shown(picker) == ["Bia Lima — CFO | 51 %", "Ana Lima — TI | 20 %"]          # Pela voz antes
+    assert picker.selected_id() == 4 and picker.count.text() == "2 de 8 pessoas"
+    _key(picker, Qt.Key.Key_Down)
+    _key(picker, Qt.Key.Key_Down)                                             # para na última
+    assert picker.selected_id() == 3
+    _key(picker, Qt.Key.Key_Up)
+    assert picker.selected_id() == 4
+    _key(picker, Qt.Key.Key_Backspace, 3)
+    assert picker.count.text() == "8 pessoas" and _shown(picker)[0] == "# Pela voz"
+
+
+def test_a_typo_brings_similar_names_and_enter_picks_the_first(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from listener.ui.theme import KIND_PROP, PRIMARY
+
+    picker = _picker(qtbot)
+    QTest.keyClicks(picker.search, "jaoo silva")
+    assert _shown(picker) == ["# Nomes parecidos", "João Silva"] and picker.count.text() == 'Ninguém com "jaoo silva".'
+    assert picker.btn_new.text() == 'Nova pessoa "jaoo silva"…' and picker.btn_new.property(KIND_PROP) != PRIMARY
+    _key(picker, Qt.Key.Key_Return)
+    assert picker.picked.person_id == 7
+
+
+def test_no_result_offers_the_new_person_with_the_typed_name(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from listener.ui.theme import KIND_PROP, PRIMARY
+
+    picker = _picker(qtbot)
+    QTest.keyClicks(picker.search, "  Zuleica Prado ")
+    assert _shown(picker) == [] and picker.count.text() == 'Ninguém com "Zuleica Prado".'
+    assert not picker.btn_choose.isEnabled() and picker.btn_new.property(KIND_PROP) == PRIMARY
+    _key(picker, Qt.Key.Key_Enter)
+    assert picker.picked.new_name == "Zuleica Prado" and picker.picked.person_id is None
+
+
+def test_the_new_person_name_is_cut_at_120_and_the_label_is_short(qtbot):
+    picker = _picker(qtbot)
+    picker.search.setText("x" * 200)
+    assert len(picker.search.text()) == 120 and picker.btn_new.text() == f'Nova pessoa "{"x" * 23}…"…'
+    picker.btn_new.click()
+    assert picker.picked.new_name == "x" * 120
+
+
+@pytest.mark.parametrize("typed", ["", "ana"])
+def test_escape_closes_without_choosing(qtbot, typed):
+    from PySide6.QtCore import Qt
+
+    picker = _picker(qtbot, top=[2])
+    picker.search.setText(typed)
+    _key(picker, Qt.Key.Key_Escape)
+    assert picker.picked.person_id is None and picker.picked.new_name is None
+    assert picker.result() == picker.DialogCode.Rejected and not picker.isVisible()
+
+
+def test_double_click_picks_the_row_and_the_titles_do_not_select(qtbot):
+    from listener.ui.person_picker import PERSON_ROLE
+
+    picker = _picker(qtbot, top=[2])
+    title = picker.tree.topLevelItem(0)
+    picker.tree.setCurrentItem(title)
+    assert picker.selected_id() is None
+    picker.tree.itemDoubleClicked.emit(title, 0)
+    assert picker.picked.person_id is None
+    picker.tree.itemDoubleClicked.emit(picker.rows[3], 0)
+    assert picker.picked.person_id == picker.rows[3].data(0, PERSON_ROLE)
+
+
+def test_the_score_column_has_the_percent_and_the_tip_the_threshold(qtbot):
+    picker = _picker(qtbot, people=[ANA, DAVI, replace(BIA, taken="Voz 2")], threshold=0.6)
+    ana, davi, bia = picker.rows
+    assert (ana.text(2), davi.text(2), bia.text(1)) == ("58 %", "", "já na Voz 2")
+    assert ana.toolTip(0) == ("O quanto esta voz se parece com o perfil de voz de Ana Souza. A partir de 60 %, o app costuma "
+                              "reconhecer sozinho.")
+    assert davi.toolTip(0) == "" and not picker.tree.isColumnHidden(1)
+    assert _picker(qtbot).tree.isColumnHidden(1)                               # ninguém já decidido: sem a coluna
