@@ -1,24 +1,24 @@
-# Roadmap — fases e gates
+# Roadmap — o que vem pela frente
 
-Quando ler: ao planejar ou fechar uma fase (T2). Ordem do handoff §10 (captura → SQLite → pyannote com perfis → LLM →
-telas), com warm-up e widget já na F1 porque os gates são medidos em reunião real (CP6). Esforço em dias de foco é
-[chute]; no calendário de gestor, o triplo (F0 a F6: 32 a 44 dias de foco, 4 a 6 meses). Status: `backlog.md`.
-Tamanho-alvo: 2,5 KB.
+Quando ler: ao planejar a próxima entrega. O que já foi entregue está no `CHANGELOG.md`, e o contrato de cada feature,
+em `features/`. O estado de cada item está no `backlog.md`. Esforço em dias de foco é [chute]. Tamanho-alvo: 3 KB.
 
-| Fase | Entrega | Gate medido em reunião real | Esforço |
+## Entregue
+F1 a F5.21 estão implementadas (versão 0.14.0). Até a F5.15, os gates foram dados por cumpridos pelo uso real do app
+no Windows, sem os números (D-090). Da F5.16 em diante, o aceite de cada spec é conferido no uso, e o que falta está em
+"Verificar no Windows", no backlog.
+
+## Próximas entregas
+| Fase | Entrega | Gate, medido em uso real | Esforço |
 | --- | --- | --- | --- |
-| F0 Preparo | venv 3.12 com tudo; token HF; chave Gemini; medir 1 h de áudio em CPU | G0: tudo instala; tempos de Whisper e pyannote medidos; decisões registradas | 2 d |
-| F1 Captura, SQLite, warm-up, widget | captura de qualquer app ou do sistema; FLAC em blobs; eventos, marcadores, pausa, mudo; atalhos; warm-up e widget | G1: 3 reuniões reais em 2 plataformas com headset; L/R alinhados abaixo de 100 ms; nenhum buraco acima de 1 s; alerta de canal mudo disparou; pedaços tocáveis do banco | 5 a 7 d |
-| F1.1 Ajustes pré-G1 | correções da revisão de código de 24/10 | G1 mais os seis critérios da spec | 1 d |
-| F2 Perfis de voz | fila pós-reunião: Whisper em L e R, pyannote em R, embeddings, cosseno; perfil de um trecho; revisão mínima; opção LLM com áudio (D-020) | G2: 80 % ou mais do tempo de fala de R com a pessoa certa em 3 reuniões após uma rodada de confirmações; processamento até 1,5× a duração (plano B até 2×, D-041) | 8,5 a 10 d (revisto) |
-| F3 LLM agnóstica | provedores Gemini, GPT e Claude; glossário; identidade por contexto; título, pré-resumo, ata, resumo executivo, transcrição revisada; testar conexão | G3: 2 de 3 atas aceitas com edições pequenas; troca de provedor sem código; identidade por contexto 70 % ou mais quando há pista | 4 a 6 d |
-| F4 Ao vivo | legenda leve com nome; resumo parcial a cada N minutos | G4: atraso até 10 s; CPU do app até 35 %; nome certo em 70 % ou mais para quem tem perfil | 8,5 d (revisto na revisão de arquitetura de 25/10) |
-| F5 RAG e histórico | FTS5 e vetores, busca híbrida, chat com citações, histórico com player por frase | G5: 10 perguntas sobre 5 ou mais reuniões, 8 com citação certa; clique toca o ponto certo | 8,5 d (revisto em 25/10) |
-| F5.1 Busca local e linha do tempo | embeddings locais (D-021), linha do tempo (U-008), destaque contínuo (U-025), .docx | G5 com o embedder local | 3 d |
-| F5.4 Design das telas | sistema visual do Windows 11 nos dois temas, ícones próprios e as telas revistas (D-061) | uso real (B1): telas claras e escuras a 150 % sem texto cortado, nenhuma janela mais lenta | 4 a 5 d [chute] |
-| F5.5 Vozes numeradas | "Voz 2" também na ata, na exportação, na busca e no chat (D-062) | uso real (B1): o mesmo nome da voz na tela e no que sai dela | 1 d [chute] |
-| F5.6 Ata a pedido, prompts e excluir | ata, ações e resumo só a pedido, com popup; prompts editáveis; excluir reunião (D-063) | uso real (B1): nenhuma ata sem pedido; perfis intactos depois de excluir | 3 d [chute] |
-| F5.7 Aviso de reunião sem gravação | a chamada que começa sem gravação vira um aviso sem foco, fora da captura, que abre o "Antes de gravar" com o app (U-094, D-065) | uso real (B1): o Teams em chamada avisa em até 15 s; nenhum aviso falso em 20 min parados | 2 a 3 d [chute] |
-| F5.22 GPU quando houver | o adaptador detectado, `pipeline.device` e `live.device` (auto, CPU, GPU) com queda para CPU por janela, o extra `[gpu]` e o lock `windows-gpu.txt` só no venv; o `.exe` segue CPU (pede a emenda da CP14, pergunta 1 da spec) | uso real (D-090): sem CUDA, nenhuma regressão; numa NVIDIA, pós-reunião até 0,25× a duração e ao vivo p95 até 6 s [chute] | 3 a 4 d [chute] |
-| F6 Telas e UX de fábrica | janela principal, perfis, configurações totais, presets, notificação de reunião, backup, tema escolhido à mão (o do sistema veio na F5.4), primeiro uso | G6: 1 semana de uso diário sem terminal; todo o CP8 editável em uso | 7 a 10 d |
-| F7 Linux e macOS | adaptadores de plataforma e empacotamento (CP15) | G7: testes da plataforma simulada passam nos 3 sistemas; uma reunião real em cada | sem estimativa |
+| F5.22 GPU quando houver | o adaptador detectado; `pipeline.device` e `live.device` (auto, CPU, GPU) com queda para CPU; o lock `windows-gpu.txt` só no venv; o `.exe` segue só CPU. Pede a emenda da CP14 e a decisão do dono (P24) | sem CUDA, nenhuma regressão; numa NVIDIA, pós-reunião em até 0,25× a duração e ao vivo com p95 de até 6 s [chute] | 3 a 4 d |
+| F6 Telas completas | janela principal (Gravar, Histórico, Perfis, Configurações); tela de Perfis (criar de um trecho, mesclar, separar, vozes desconhecidas); todo o CP8 editável em uso; presets; tamanho do banco e backup; mover o banco; tema escolhido à mão | G6: uma semana de uso diário sem terminal; toda configuração do CP8 editável durante o uso | 7 a 10 d |
+| F7 Linux e macOS | adaptadores em `listener/platform/linux/` e `macos/` e o empacotamento por sistema (CP15) | G7: os testes da plataforma simulada passam nos três sistemas; uma reunião real em cada | sem estimativa |
+
+## Ideias avaliadas, sem spec
+- Refazer a sugestão das vozes pendentes também nas reuniões antigas quando uma pessoa ganha uma referência nova, e
+  apontar a referência de voz que parece confirmação errada, sem apagar nada. Só se o uso mostrar gente conhecida
+  caindo em pendente ou com o nome errado.
+- Tradução da interface: os textos são fixos em pt-BR; prever `tr()` do Qt ou gettext antes da F6 (CP15).
+- Correção da deriva de relógio entre os canais: hoje só é medida; vira spec se uma reunião mostrar mais de 100 ms por
+  hora no `--check` (P22).

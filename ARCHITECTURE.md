@@ -1,122 +1,117 @@
-# ARCHITECTURE.md — listener-meet v4
+# ARCHITECTURE.md — listener-meet
 
-Quando ler: ao mexer em produto ou arquitetura (T1). Fonte da verdade: `specs/00-handoff-v4.md`; em conflito, ele vence.
-Estado: `specs/backlog.md`. Decisões: `specs/decisoes.md`. Tabelas: `specs/dados.md`. Tamanho-alvo: 4,5 KB.
+Quando ler: ao mexer em produto ou arquitetura. Cláusulas: `specs/01-clausulas.md`. Decisões: `specs/decisoes.md`.
+Tabelas: `specs/dados.md`. Camada de LLM: `specs/llm-contrato.md`. Tamanho-alvo: 12 KB.
 
-Em uma frase: app desktop, pessoal e local (Windows primeiro; Linux e macOS depois, CP15) que grava dois canais de áudio
-de qualquer reunião, identifica quem fala por perfil de voz (pyannote), transcreve (faster-whisper ou WhisperX), gera
-legenda, resumo e ata com uma LLM trocável (Gemini inicial) e guarda tudo em SQLite para consulta por RAG. Tudo em CPU.
+## Visão geral
+App desktop, pessoal e local (Windows primeiro; Linux e macOS depois, CP15). Ele grava dois canais de áudio de
+qualquer reunião, identifica quem fala por perfil de voz (pyannote), transcreve (faster-whisper), gera legenda, resumo,
+ata e sugestões com uma LLM trocável e guarda tudo em SQLite, para busca e perguntas. Tudo roda em CPU (CP14).
+
+Princípios de produto:
+- Funciona sozinho, no computador do usuário, sem depender de admin, de TI ou de recursos das plataformas de reunião.
+- As bibliotecas locais (pyannote e Whisper) fazem o trabalho pesado; a LLM é o cérebro de contexto.
+- Tudo é configurável pela interface, a qualquer momento.
+- A experiência vem primeiro: toda melhoria de UX aprovada sai pronta de fábrica.
 
 ## Camadas
-| Camada | Pacote | Responsabilidade | Fase |
+| Camada | Pacote | Responsabilidade |
+| --- | --- | --- |
+| Plataforma | `listener/platform/` | Tudo o que depende do sistema, atrás de `base.py`: dispositivos, apps tocando, microfone, loopback de app e de sistema, mudo, atalhos, processos, pastas, instância única, captura da tela. `win32/` usa sounddevice (WASAPI), proc-tap, PyAudioWPatch, pycaw, `RegisterHotKey`, Toolhelp32 e ctypes; `common/` tem as pastas e o pynput. Fora daqui não há pycaw, PyAudioWPatch, `ctypes.windll` nem `C:\`. |
+| Captura | `listener/capture/` | Dois canais num relógio único (`perf_counter`): L é o microfone a 16 kHz; R é o loopback do app (a árvore de processos) ou do sistema. Mudo e pausa gravam silêncio; buracos são preenchidos pelo timestamp; pedaços FLAC de ~60 s vão para o SQLite por uma thread de trabalho. Os canais se reabrem sozinhos quando um aparelho cai (F5.9). |
+| Transcrição | `listener/pipeline/` | `JobRunner` em janelas de 600 s cortadas no silêncio; faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028); glossário e contexto no `initial_prompt`; idioma escolhido por reunião, sem detecção (D-060); um artefato por janela, para retomar. |
+| Identificação | `listener/pipeline/` | L é o usuário (salvo no preset de sala). No R, o pyannote community-1 diariza em janelas de até 20 min, costuradas; cada voz é comparada por cosseno com as referências de voz de cada pessoa (limiar 0,60, margem 0,05; D-008, F5.15); a revisão reforça o perfil a cada confirmação. Sem o token do Hugging Face, o job só transcreve (F5.16). |
+| Ao vivo | `listener/live/` | Processo próprio (D-044): VAD Silero incremental, janelas de 4 a 10 s, Whisper `small` int8 (degrada para `base`), nome por embedding só para exibição (CP11). |
+| Inteligência | `listener/llm/`, `pipeline/llm_steps.py` | Contrato único de provedor (texto, JSON validado pelo projeto, áudio, imagem, embeddings, streaming) com adaptadores Gemini, OpenAI e Claude carregados sob demanda, e um provedor local de embeddings (e5-small em ONNX). Prompts, esquemas, validação de evidência e render da ata são do projeto. Tarefas: glossário, identidade por contexto, ata, resumo executivo, pré-resumo, título, transcrição revisada, resumo parcial, chats e sugestões ao vivo. |
+| Base | `listener/store/` | `listener.db` e um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), em WAL. Conexão por thread, migrações atômicas, `Store` como fachada dos repositórios com os papéis APP, WORKER e READONLY, fila de jobs com claim atômico e artefatos no banco. |
+| Busca | `listener/rag/` | Trechos de 60 a 120 s e itens da ata com nome e cargo; FTS5 obrigatório; vetores float32 com modelo e dimensão por vetor (D-009); busca por assinatura binária em numpy, sem sqlite-vec (D-048); híbrida por RRF com teto por reunião; chat com citações; "perguntar à base" numa sandbox SQL somente leitura (F5.10). |
+| Interface | `listener/ui/` | PySide6: assistente de primeiro uso, "Antes de gravar", widget flutuante, bandeja do sistema, bandeja de legendas, revisão de falantes, Histórico, reunião aberta (ata, transcrição, linha do tempo, player, exportação), fila, Configurações e Sobre. |
+| Config | `listener/config/` | Padrões e tipos das configurações (`SPECS`) e o ponteiro da pasta do banco (D-029). |
+| Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, com nível configurável (D-033). |
+
+## Fluxo de uma reunião
+1. **Antes de gravar.** Microfone, fonte (um app tocando ou o sistema), medidores e teste; título, participantes e
+   objetivo opcionais; a LLM monta o glossário.
+2. **Gravação.** Widget com tempo, medidores, saúde dos canais, pausar, marcador com nota, mudo global (D-004), parar
+   e cancelar. Ao vivo: legenda, resumo parcial e sugestões do que falar, a pedido.
+3. **Processamento.** Começa sozinho ao parar (D-014), num subprocesso: diarização e identificação do R, Whisper em L
+   e R. Acima do limiar, o nome é direto; abaixo, a LLM propõe por contexto; sem pista, a voz fica sem nome.
+4. **Revisão.** O usuário confirma as vozes de baixa confiança ouvindo um trecho; cada confirmação reforça o perfil.
+   O banco guarda a versão da LLM e a editada.
+5. **Depois.** Ata, ações e resumo a pedido (D-063); Histórico, busca e chat com citações [mm:ss] que tocam o áudio.
+
+## Processos
+| Processo | Comando | Prioridade | Papel |
 | --- | --- | --- | --- |
-| Plataforma | `listener/platform/` | Tudo que depende do SO atrás de `base.py`: dispositivos, apps tocando, mic, loopback de app e de sistema, mudo, atalhos, processos, pastas. `common/` (pastas, pynput para Linux e macOS); `win32/` (sounddevice WASAPI, proc-tap, PyAudioWPatch, pycaw, `RegisterHotKey`, Toolhelp32, identidade do processo, suspensão e foco; F5.21: a tela, em `win32/screen.py`, os monitores, a janela da reunião pela ordem z com o DWM e o print por BitBlt, em pixels físicos e sem UI Automation; os tipos em `screen_types.py`); `linux/` e `macos/` na F7. Fora daqui não há pycaw, PyAudioWPatch, `ctypes.windll` nem `C:\` | F1, F7, F5.21 |
-| Captura | `listener/capture/` | Dois canais num relógio único (`perf_counter`, QPC no Windows): L = mic 16 kHz; R = loopback do app (árvore de processos) ou do sistema. Mudo e pausa gravam silêncio; buracos preenchidos por timestamp; pedaços FLAC de ~60 s gravados no SQLite por uma thread de trabalho | F1 |
-| Transcrição | `listener/pipeline/` | `JobRunner` em janelas de 600 s cortadas no silêncio; faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028; wav2vec2 opcional), glossário e contexto no `initial_prompt`, idioma escolhido por reunião, sem detecção (D-060, `config/language.py`); palavras viram segmentos por turno; artefato por janela e retomada. Ao vivo (`listener/live/`, D-044): processo próprio com VAD Silero incremental, janelas de 4 a 10 s e `small` int8 (degrada para `base`) | F2, F4 |
-| Identificação | `listener/pipeline/` | L = usuário (salvo preset sala, U-015). R: pyannote community-1 em janelas de até 20 min (`pipeline.diar_window_s`, 1200 s) costuradas; centroide por cluster e atribuição sem repetição contra perfis persistentes (limiar 0,60 calibrado por perfil, margem 0,05, D-008); a revisão mínima reforça o perfil a cada confirmação. F5.15: cada pessoa tem até `pipeline.max_refs` referências (as amostras agrupadas por ligação média de cosseno com corte em `pipeline.ref_cos`), a nota de uma voz é a da referência mais próxima e a margem segue entre pessoas; referências e limiar são calculados na carga (`load_profile_refs`: o job, o ao vivo ao começar e a revisão a cada ação). Ao vivo: `match_one` por janela contra os perfis, só exibição (CP11). Sem o token do Hugging Face, o job transcreve sem diarizar: o L é o usuário e o R fica "Desconhecido" (F5.16) | F2, F4, F5.15, F5.16 |
-| Inteligência | `listener/llm/`, `pipeline/llm_steps.py` | Contrato único de provedor (`base.py`, `types.py`; texto, JSON estrito validado pelo projeto, áudio, embeddings, streaming) com adaptadores Gemini, GPT e Claude importados preguiçosamente pelo `registry` (retentativa própria, `max_retries = 0`, proxy, PEM e truststore, chave redigida); prompts, esquemas e render da ata do projeto, versionados. Job `kind = llm` encadeado ao fim do pipeline e rodado pelo worker leve: identidade por contexto só nas vozes pendentes (CP11), ata com evidência conferida, executivo, pré-resumo, título e transcrição revisada; glossário no warm-up, chat com citações clicáveis e `LLMAudioTranscriber` (D-020) no app; resumo parcial ao vivo no app a cada N minutos (F4). F5: embeddings do índice pelo job `index` do worker leve e chat sobre todas as reuniões (`rag/chat_global.py`, apelidos `R1` e citações `[R1 12:03]` ligadas só às linhas enviadas). F5.1: provedor local de embeddings (`llm/local_embed.py`: e5-small int8 em ONNX na CPU, sem chave, sem rede e sem custo; preparo em `llm/local_prepare.py`). F5.20: as sugestões ao vivo do que falar (`llm/suggest_task.py`: a janela de legendas que reancora a cada 20 min, compactadas por `llm/suggest_compact.py`, o resumo parcial, o fio da sugestão anterior, o dossiê, as avaliações e o memorando no pedido; a resposta JSON em streaming lida opção a opção por `llm/suggest_parse.py`; o teto de custo partilhado com o parcial) e o memorando do que o usuário prefere, refeito ao parar com 10 avaliações novas. F5.21: a imagem no contrato único (`ImagePart`, `Capability.IMAGE_IN` pela tabela de modelos; o Gemini, a OpenAI e o Claude) e a tela nas sugestões (o prompt `suggest` 1.1 com o esquema e as regras da tela e os resumos das telas anteriores na linha do tempo; a tarefa recebe a tela pronta, `llm/suggest_ctx.py`); o `suggest_task.py` dividido em `suggest_ctx`, `suggest_dossier` e `suggest_memo_task` | F3, F4, F5, F5.1, F5.20, F5.21 |
-| Base | `listener/store/` | `listener.db` mais um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), WAL; conexão por thread, migrações atômicas por arquivo, `Store` como fachada dos repositórios por domínio com papéis APP, WORKER e READONLY; fila com claim atômico e artefatos de job no banco. F5 (`listener/rag/`): trechos de 60 a 120 s e itens da ata com nome e cargo, FTS5 obrigatório, vetores float32 com modelo e dimensão por vetor (D-009) e busca por assinatura binária centralizada em numpy, sem sqlite-vec (D-048); híbrida por RRF com teto por reunião | F1, F2, F5 |
-| Interface | `listener/ui/` | PySide6: assistente de primeiro uso, warm-up, widget flutuante, bandeja, resumo, configurações mínimas, janela "Ao vivo" (F4); Histórico (reuniões, ações abertas, perguntar às reuniões), reunião aberta, player único e exportação .md (F5); linha do tempo por falante, destaque da fala que toca e .docx (F5.1); bandeja de legendas, o ao vivo como chat fora do widget (F5.17); o áudio da reunião em MP3, FLAC ou WAV e o vídeo MP4 com a legenda de cada fala, nome e cargo (F5.19); o cartão da sugestão ao vivo na bandeja de legendas, o "Sugerir" no widget, na bandeja e no atalho, a caixa e o objetivo no "Antes de gravar" e a aba "Sugestões" da reunião (F5.20); a tela nas sugestões (F5.21: a chave "Com a tela" e a seta dos monitores no cartão, a confirmação da primeira vez, a miniatura no chat da bandeja e a janela maior fora da captura, a escolha da tela nas Configurações e a miniatura na aba da reunião); janela principal completa na F6 | F1, F4, F5, F5.1, F5.17, F5.19, F5.20, F5.21, F6 |
-| Config | `listener/config/` | Padrões das settings e o ponteiro da pasta do banco (D-029) | F1 |
-| Log | `listener/log.py` | stderr sempre; arquivo rotativo escolhido pelo usuário, nível configurável (D-033) | F1.1 |
+| App | `python -m listener` | normal | Interface, captura, player, chats, sugestões e exportações. Nunca importa `torch`. |
+| Worker pesado | `--worker` | abaixo do normal; ociosa durante uma gravação | Diarização, identificação e transcrição. Solto do app (`Platform.spawn_detached`): termina a fila mesmo com o app fechado e sai após 60 s ocioso. |
+| Worker leve | `--worker --light` | abaixo do normal | Jobs `llm` e `index`, sem `torch`. Pode rodar durante a gravação. Fica até 10 min ocioso. |
+| Ao vivo | `--live` | normal | Legenda. Filho do app (`Platform.spawn_child`, pipes binários, sem janela), preso à gravação: o fim do stdin o encerra. Não consome a fila. |
 
-## Fluxo de uma reunião (handoff §4)
-1. Warm-up: mic, fonte (app tocando ou sistema), medidores, teste; título e participantes opcionais; a LLM monta
-   glossário e lista de perfis candidatos.
-2. Gravação: widget com tempo, medidores, saúde dos canais, pausar, marcador com nota, mudo global (D-004), parar,
-   cancelar. Ao vivo (F4): legenda leve e resumo parcial a cada N minutos.
-3. Processamento (fila automática ao parar, D-014; subprocesso): Whisper em L e R, pyannote em R, cosseno contra perfis.
-   Acima do limiar, nome direto; abaixo, a LLM propõe por contexto; sem pista, sem nome. A LLM gera título, pré-resumo,
-   ata, resumo executivo e transcrição revisada; nunca sobrescreve alta confiança.
-4. Revisão: título, pré-resumo e falantes de baixa confiança com trecho de áudio; cada confirmação reforça o perfil; o
-   banco guarda a versão da LLM e a editada.
-5. Histórico, perfis e chat com RAG citando [mm:ss]; clique toca o áudio.
+Regras dos processos:
+- **Fila.** O app cria o job ao parar e lança o worker. O worker faz o claim atômico, bate o heartbeat numa thread
+  própria e grava um artefato por janela. A interface só lê a fila por polling (2 s com job ativo, 30 s sem).
+- **Lease da gravação.** Enquanto há gravação, o worker pesado pausa. Ele confere a lease, a pausa manual e o
+  cancelamento dentro da janela (`in_window_checkpoint`, chamado pelo gancho do pyannote a cada lote e pelo gerador do
+  Whisper a cada segmento) e cai para a classe ociosa enquanto a lease vale (F5.18).
+- **Worker leve.** O `LlmJobRunner` roda as tarefas num `asyncio.run()` com `TaskGroup` e `Semaphore`
+  (`llm.max_parallel`). O cliente de rede nasce e morre dentro do laço. Nunca há `await` dentro de transação. Um vigia
+  derruba o worker se o laço ficar parado por 120 s (D-058), e o app o relança. O job `index` roda depois dos `llm`,
+  pede os vetores em lotes fora de transação e os adia enquanto há gravação.
+- **Ao vivo.** O desvio de PCM do chunker enche um deque de ~30 s por canal; a thread `live-feed` escreve quadros no
+  stdin do filho e a `live-read` lê linhas JSON do stdout e as vira sinal do Qt. O filho grava `captions` (papel
+  WORKER), calcula o embedding do nome numa thread própria enquanto o Whisper transcreve e limita os tokens novos pelo
+  tamanho do prompt (`live/pacing.py`).
+- **Eco.** Fora do preset de sala, os blocos do L que são eco do R são zerados para o Whisper e para o reforço do
+  perfil (`pipeline/echo_gate.py`); a regra é a de `capture/echo.py`, a mesma do ao vivo.
+- **Instância única.** Um mutex da plataforma e um canal local entregam ao app que já roda o pedido de um segundo
+  processo (F5.13).
 
-## Processos e threads
-App Qt na thread principal; parada, mudo do sistema e atalhos em QThreads próprias. Callbacks de áudio só enfileiram
-blocos imutáveis; uma thread de trabalho (não daemon) faz mono, reamostragem com estado, pedaços, FLAC e grava com
-retentativa, publicando um snapshot imutável para a interface; uma conexão SQLite por thread (F1.2). F2: worker em
-subprocesso de prioridade baixa que lê e escreve só no banco (WAL, `busy_timeout`). `from __future__ import annotations`
-fica em todo módulo até o piso subir para 3.14 (PEP 649); sai em bloco. F2: ao parar, o app cria o job e lança `python
--m listener --worker` solto (`Platform.spawn_detached`, prioridade baixa, log próprio); o worker faz o claim atômico com
-heartbeat em thread própria, roda as etapas em janelas com artefato por janela, lê a lease da gravação e o cancelamento
-entre janelas e sai após 60 s ocioso; a interface só lê a fila por polling (2 s com job ativo, 30 s sem), nunca importa
-torch e decodifica áudio sob demanda numa `Task` (QThread). F3: segunda classe de fila com um worker leve (`python -m
-listener --worker --light`), sem torch, log próprio (`listener-llm.log`), lançado pelo app mesmo durante a gravação (ou
-pelo worker pesado ao enfileirar); o `LlmJobRunner` roda as tarefas num `asyncio.run()` com `TaskGroup` e `Semaphore`
-(`llm.max_parallel`), cliente de rede criado e fechado dentro do loop, nunca `await` dentro de transação; chat e
-glossário rodam no app numa `Task`/`StreamTask` com `run_async()` próprio (um `asyncio.run` que não espera o executor
-padrão na saída). F4: terceira classe de processo, `python -m listener --live` (não consome a fila; isento da regra "o
-pesado não sobe gravando"), lançado ao gravar por `Platform.spawn_child` (pipes binários, prioridade abaixo do normal,
-sem janela; o próprio filho desliga o EcoQoS) e preso à gravação: o desvio de PCM do chunker (O(1), na thread de
-trabalho da captura) enche um deque de ~30 s por canal, `live-feed` escreve quadros binários no stdin, `live-read` lê
-linhas JSON do stdout e as vira sinal do Qt; o filho grava `captions` (papel WORKER) e log próprio
-(`listener-live.log`); EOF encerra; com ele, a lease pausa o pesado. O resumo parcial roda no app numa `StreamTask`, uma
-chamada por vez. F5: o pesado grava trechos e FTS ao concluir; o job `index` (classe leve, depois dos `llm`, nunca
-espera a lease) refaz o diff e pede os vetores em lotes fora de transação; a espera das edições é durável (`not_before`
-no job); no app, a busca roda numa `Task` com contador de geração e um cache das assinaturas do modelo ativo, o chat
-global numa `StreamTask`, a varredura da abertura numa `Task` interrompível e o player em duas threads (a alimentadora
-decodifica numa fila de até 3 s; a escritora só escreve no `OutputStream`); o gravador chama um gancho antes de abrir o
-loopback do sistema inteiro, que pausa o player (Q9); a saída cancela e espera todas antes de fechar o banco. F5.1: o
-embedder local é uma sessão do ONNX por processo, sob lock, que calcula na thread de quem chama (2 threads no worker
-leve, 1 no app, pré-carregada numa `Task` ao abrir o Histórico e solta 10 min depois do último uso); com a lease da
-gravação o `index` adia os vetores e parar ou cancelar a gravação roda a varredura; `--live --prepare --what rag` baixa
-o e5 (pelo HTTP, que retoma) e grava a marca `.ready`; o .docx sai numa `Task`.
-F5.18: o pesado confere a lease, a pausa manual e o cancelamento DENTRO da janela (o `hook` do pyannote a cada lote e o
-gerador do Whisper a cada segmento chamam `in_window_checkpoint`, com o tempo em pausa fora do `wall_s`), e a thread do
-heartbeat o baixa à classe ociosa enquanto a lease vale; o `spawn_child` (o `--live` e os filhos interativos) nasce em
-NORMAL e o worker em BELOW_NORMAL; o leve fica 10 min ocioso (solta o e5 aos 2 min e sai se o esquema mudou), monta o
-snapshot só com job a pegar e roda `identify`, `revise` e `title` (sem ata) no mesmo `TaskGroup`; a busca compara o
-contador `rag.vector_version` em vez de contar o índice e filtra pessoa, período e reunião em numpy ao lado das
-assinaturas, aquecidas ao abrir o Histórico; a fila lê só as reuniões dos jobs listados por uma consulta indexada; a
-lista da transcrição faz o layout em lotes e o cursor do player extrapola entre blocos. O pesado roda o tronco do
-wespeaker uma vez por trecho (`pipeline/lean_diarization.py`, saída idêntica) e, fora da sala presencial, zera para o
-Whisper e para o reforço do perfil os blocos do L que são o eco do R (`pipeline/echo_gate.py`, a regra pura de
-`capture/echo.py`, a mesma do filho ao vivo); o filho ao vivo calcula o embedding do nome numa thread `live-embed`
-enquanto o Whisper transcreve e limita os tokens novos pelo prompt (`live/pacing.py`). O lote 5 desenha o FIR do
-`StreamResampler` uma vez por par de taxas (`capture/audio.py::poly_fir`), põe `cache_size` e `mmap_size` no main do app
-e do worker, partilha um `SSLContext` por PEM entre os clientes de LLM (`llm/adapters_common.py`) e tira o título do
-hash e do embedding da transcrição (`rag/chunk_hash.py`: a migração do hash legado no lugar, sem refazer vetor).
-F5.19: o "Salvar áudio…" e o "Salvar vídeo com legendas…" da reunião aberta rodam numa `StreamTask` de prioridade normal
-(uma thread de prioridade baixa segurando o GIL travaria a interface e a captura), uma por vez no app, com o progresso e
-o "Cancelar" numa faixa própria da reunião: duas passadas pelos pedaços em blocos de 10 s com um `Chunks` próprio da
-tarefa (a primeira mede o pico, a segunda grava pelo soundfile ou pelo PyAV, importado só ali, com o `libx264` numa
-thread); com uma gravação em curso a tarefa espera parada; a tela de cada troca da legenda é desenhada uma vez por
-QPainter num QImage, na própria tarefa, e repetida a um quadro por segundo; o arquivo vai para um temporário na pasta de
-destino (`export.atomic_target`) e troca no fim; fechar a janela no meio pergunta, e a saída cancela e espera.
-F5.20: o host das sugestões (`ui/suggest_host.py`) nasce no fio da bandeja de legendas (`CaptionTrayHost`), que lhe repassa a
-legenda, o estado do ao vivo, o fim e a saída; cada sugestão roda numa `StreamTask` (uma por vez, `run_async` com cliente
-próprio, cancelável a cada 0,2 s, prazo total de 30 s no laço) e entrega cada opção à interface pelo sinal `progress`; o
-dossiê e o memorando rodam em `Task`s (o memorando ao parar a gravação, com o cancelamento que a saída do app acende); o
-leitor do mudo saiu do controlador para `ui/mute_poller.py`.
-F5.21: o pedido com a tela escolhe o alvo, tira o print (o BitBlt da plataforma) e prepara a imagem (`ui/screen_grab.py`: as
-janelas por cima pretas, a enviada de 1.600 px, a miniatura e a cópia) dentro do `job` da mesma `StreamTask`, antes da
-chamada; a thread da interface só lê as configurações e a fonte atual da gravação. A miniatura chega ao chat pelo `progress`
-(`ScreenSent`), e a cópia guardada da aba da reunião é decodificada numa `Task`.
+## Threads e tarefas no app
+- O Qt fica na thread principal. Parada, mudo do sistema e atalhos têm QThreads próprias.
+- Os callbacks de áudio só enfileiram blocos imutáveis. Uma thread de trabalho, não daemon, faz mono, reamostragem
+  com estado, pedaços, FLAC e gravação com retentativa, e publica um snapshot imutável para a interface.
+- Uma conexão SQLite por thread.
+- Trabalho que demora roda numa `Task` (QThread) ou, com progresso, numa `StreamTask`: decodificar áudio, busca (com
+  contador de geração e cache das assinaturas do modelo ativo), chats, glossário, resumo parcial (uma chamada por vez),
+  .docx, exportação de áudio e vídeo (uma por vez no app; espera parada durante uma gravação) e sugestões ao vivo (uma
+  por vez, canceláveis, com prazo total de 30 s).
+- As tarefas de exportação e de sugestão têm prioridade normal: uma thread de prioridade baixa segurando o GIL
+  travaria a interface e a captura.
+- O player usa duas threads: a alimentadora decodifica numa fila de até 3 s e a escritora só escreve no
+  `OutputStream`. Antes de o gravador abrir o loopback do sistema inteiro, um gancho pausa o player.
+- O embedder local é uma sessão ONNX por processo, sob lock, que calcula na thread de quem chama; no app, ele é
+  carregado ao abrir o Histórico e solto 10 min depois do último uso.
+- A captura da tela para as sugestões (alvo, print e preparo da imagem) roda dentro da tarefa do pedido; a thread da
+  interface só lê as configurações.
+- Na saída, o app cancela e espera todas as tarefas antes de fechar o banco.
+- `from __future__ import annotations` fica em todo módulo até o piso do Python subir para 3.14.
 
-## Logs (D-059: para a LLM achar qualquer cenário nos testes do dono)
-Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (pesado), `listener-llm.log` (leve: `llm`
-e `index`) e `listener-live.log` (ao vivo). A categoria é o logger `listener.<módulo>`. Níveis: DEBUG para o detalhe de
-cada chamada, lote ou decisão (começo de toda chamada à LLM e de todo lote de embeddings; configuração mudada; apps com
-som, só quando mudam); INFO para marcos e ações do usuário (gravação, pausa, mudo, marcador, fonte, warm-up e teste de 3
-s, janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada com latência, tokens e motivo,
-provedor e chave definidos, exportação, avisos da bandeja); WARNING para o recuperável (job devolvido à fila, chamada
-que falhou de vez, terminal fechado com o app aberto); ERROR para falha (tentativas esgotadas, vigia do laço, D-058). O
-faulthandler grava crash nativo e o dump do vigia num `<log>-crash.log` ao lado de cada log, sem rotação (D-072: no
-mesmo arquivo, o Windows recusava a rotação). Nunca no log: nome de pessoa, fala, título de reunião, e-mail, chave ou
-token, título de janela (D-053, D-056); vão ids, contagens, durações, modelos e estados. Para diagnosticar, o dono usa o
-nível DEBUG.
+## Logs
+Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (o pesado), `listener-llm.log` (o leve)
+e `listener-live.log` (o ao vivo). A categoria é o logger `listener.<módulo>`.
+| Nível | O que registra |
+| --- | --- |
+| DEBUG | o detalhe de cada chamada, lote ou decisão; configuração mudada; apps com som, só quando mudam |
+| INFO | marcos e ações do usuário: gravação, pausa, mudo, marcador, fonte, janelas, revisão, player, fila, worker lançado ou não e por quê, fim de cada chamada à LLM com latência e tokens, exportação |
+| WARNING | o recuperável: job devolvido à fila, chamada que falhou de vez, terminal fechado com o app aberto |
+| ERROR | falha: tentativas esgotadas, vigia do laço |
+
+O faulthandler grava a queda nativa num `<log>-crash.log` ao lado de cada log, sem rotação (no mesmo arquivo, o
+Windows recusava a rotação; D-072). Nunca vão para o log: nome de pessoa, fala, título de reunião ou de janela,
+e-mail, chave, token ou caminho do usuário (D-053, D-056, D-092). Vão ids, contagens, durações, modelos e estados.
 
 ## Stack
-Python 3.12 ou mais novo, sem retrocompatibilidade (CP17; teto `<3.14` só enquanto WhisperX e torch exigirem) · PySide6
-· sounddevice · proc-tap · PyAudioWPatch e pycaw (só win32) · soundfile · scipy · faster-whisper ou WhisperX
-(CTranslate2 int8) · pyannote.audio 4 (community-1, token do Hugging Face) · SQLite com FTS5 (vetores em numpy, D-048) ·
-google-genai, openai, anthropic · onnxruntime e tokenizers (busca local) · python-docx · pynput · empacotamento: venv
-e atalho, ou o `.exe` do PyInstaller em pasta (F5.8, D-069). Versões medidas:
-`memory/maquina.md`.
+Python 3.12 ou mais novo (CP17; teto `<3.14` enquanto o WhisperX e o torch o exigirem) · PySide6 · sounddevice ·
+proc-tap · PyAudioWPatch e pycaw (só no Windows) · soundfile · scipy · faster-whisper (CTranslate2 int8) ·
+pyannote.audio 4 (community-1, com o token do Hugging Face) · SQLite com FTS5 · numpy · google-genai, openai e
+anthropic · onnxruntime e tokenizers (busca local) · python-docx · PyAV (exportação de vídeo; vem com o
+faster-whisper) · pynput (Linux e macOS) · PyInstaller em pasta para o `.exe` (D-069). As versões travadas estão em
+`requirements/windows.txt`.
 
 ## Riscos de desenho
-Fala sobreposta no canal R; CPU dividida com o app de reunião; banco cresce 5 a 6 GB por mês a 16 kHz (D-015; indicador
-e backup na F6); codecs diferentes por plataforma deslocam embeddings (F2 Q9); chaves em texto aberto (banco fora do
-OneDrive e do git). Documentos vivos: handoff https://claude.ai/artifact/L9q6Yi1znE3cxCCJLkd6YM e plano v4
-https://claude.ai/artifact/8tvkwjZZhH4RwtmfYjjNUt
+- Fala sobreposta no canal R reduz a precisão da diarização.
+- A CPU é dividida com o app de reunião: por isso o pesado cede durante a gravação.
+- O banco cresce de 5 a 6 GB por mês a 16 kHz (D-015); o indicador de tamanho e o backup ficam para a F6.
+- Codecs diferentes por plataforma deslocam os embeddings de voz: as referências por pessoa atenuam (F5.15).
+- As chaves ficam em texto aberto no banco (CP10): a pasta do banco fora do git e de pasta sincronizada.

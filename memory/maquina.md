@@ -1,126 +1,87 @@
-# Ambientes: Windows 11 corporativo (EDR, sem GPU dedicada; o alvo), o WSL dele e um Linux Ubuntu nativo
+# Ambiente de desenvolvimento e armadilhas conhecidas
 
-Tudo [fato] medido em 24/10/2026, salvo indicação. Caminhos com `<usuário>` são desta máquina, não do produto.
-Onde estou (começo de sessão, `AGENTS.md`): `sys.platform` `win32` = Windows; `linux` com `microsoft` em
-`platform.release()` (e `/mnt/c`) = WSL; `linux` sem isso = Linux nativo (em 25/10, o Xeon abaixo).
+Quando ler: ao montar o ambiente, medir algo ou mexer em áudio, processos, modelos e interface no Windows. Tudo é
+[fato] medido entre 2026-10-24 e 2026-11-08, salvo indicação. Regras desta pasta: só o que não está em spec nem em
+código; fato com data ou fonte; nenhum segredo; o que for superado é apagado. Tamanho-alvo: 9 KB.
 
-## Ambiente
-- Windows: Python 3.12.10 (`py install 3.12`, sem admin, em `%LOCALAPPDATA%\Python\pythoncore-3.12-64`; o `python` do
-  PATH é o alias do instalador em WindowsApps e abre esse mesmo); checkout em `C:\dev\listener-meet` com o venv do projeto
-  em `.venv` dentro dele (26/10: tudo pelo lock `requirements/windows.txt`, com o `[pipeline]`: torch 2.8.0+cpu,
-  faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, onnxruntime 1.31.0; mais `uv` 0.13.5); o venv do F0 em
-  `C:\Users\<usuário>\dev\listener-meet\.venv`
-  tem torch, whisperx, pyannote e sqlite-vec, mas não o projeto; modelos do F0 (large-v3-turbo, wav2vec2 pt) em
-  `C:\Users\<usuário>\listener-meet\models\`; a pasta padrão do app (`%LOCALAPPDATA%\listener-meet\models`) já tem `small`
-  e `base` do ao vivo (486 e 148 MB em 24 s pelo `output_dir`, 25/10) e o large-v3-turbo copiado do F0 (26/10); no cache
-  global do HF (`~\.cache\huggingface\hub`) sobram só as duas entradas vazias de 24/10, que saem com o venv do F0 depois
-  da Parte 3 do roteiro (o `small` de um teste saiu na limpeza da D-052);
-  áudio sintético de calibração (15 min, duas vozes TTS, pt-BR e en, gerado por `gerar.ps1`) em
-  `C:\Users\<usuário>\listener-meet\f0\`. SQLite do Python do python.org: 3.49.1 com FTS5 (25/10).
-- CPU Intel Core Ultra 5 235U (família 6, modelo 181): 12 núcleos, 14 threads, 2,0 GHz base; 31,5 GB de RAM; torch
-  2.8.0+cpu com 12 threads; sem CUDA. Suíte: ~35 s com 349 testes (50 s a frio, 25/10). Importar os SDKs a quente
-  (`-X importtime`): google.genai 0,8 s, openai 0,9 s, anthropic 4,0 s.
-- GPU (08/11): só a Intel Graphics integrada do processador (`VEN_8086&DEV_7D41`, driver 32.0.101.8860 de 24/06/2026,
-  memória compartilhada; único adaptador no `Win32_VideoController`) e a NPU Intel AI Boost; sem NVIDIA (`nvidia-smi` e
-  `nvcuda.dll` ausentes). No `.venv`: `torch.cuda.is_available()` falso e `torch.xpu` sem dispositivo (a roda é CPU),
-  `ctranslate2.get_cuda_device_count()` 0, onnxruntime só com `CPUExecutionProvider`. No System32: `directml.dll` 1.15.5,
-  `ze_loader.dll` 1.28 e `vulkan-1.dll` 1.4 (o driver Intel fica no DriverStore, `iigd_dch`).
-- Versões: whisperx 3.8.6, faster-whisper 1.2.1, ctranslate2 4.8.3, pyannote.audio 4.0.7, PySide6 6.12.0, sqlite-vec 0.1.9
-  (SQLite 3.49.1), proc-tap 1.1.1, sounddevice 0.5.6, soundfile 0.14.0, PyAudioWPatch 0.2.12.9, pynput 1.8.2,
-  pycaw 20260927, google-genai 2.33.0, openai 3.37.0, anthropic 2.3.0.
-- Linux de desenvolvimento: em 25/10 a sessão rodou num Ubuntu 24.04 **nativo** (Xeon Silver 4208 de 2,1 GHz, 32 threads,
-  18 GB de RAM, ~6,7 GB livres em disco, sem `/mnt/c`), não no WSL; a suíte fica mais lenta pelo clock baixo (270 testes
-  em ~17,5 s depois da F4).
-  Para medir o Whisper ou o filho `--live` real, use um venv à parte com faster-whisper 1.2.1 (sem torch). O de 25/10
-  ficou na pasta temporária da sessão e sumiu: recriar com `python3 -m venv <pasta>` e `pip install
-  faster-whisper==1.2.1 soundfile scipy`. No `.venv` do projeto ele quebraria o teste do worker "real" (que baixaria o
-  `large-v3-turbo`).
-- Linux de desenvolvimento, 08/11 (a F5.20): outra máquina Ubuntu 24.04.5 **nativa** (Core i7-8565U de 1,8 GHz, 8 threads,
-  15 GB de RAM), sem PortAudio, sem PyInstaller e sem sudo. O `.venv` do projeto (Python 3.12.3, PySide6 6.12.0, SQLite
-  3.45.1) foi criado com `pip install -c requirements/windows.txt -e ".[dev,llm,docx]"`, sem o `[pipeline]`. A suíte
-  inteira (`--tudo -n 4 --dist loadgroup`) tem 13 falhas do ambiente, as mesmas antes da F5.20: o build do `.exe` (3),
-  o widget 1 px mais alto no offscreen (3), os tempos dos avisos (2) e do cartão de chamada (1), as cores do estilo (2),
-  o cabeçalho dos preços cortado pelas fontes do offscreen (1) e o app que sai com o sensor preso (1); a régua de cada lote
-  é nenhuma falha nova, comparada à lista de base. Instáveis aqui, também no código de antes da F5.20: o cartão de chamada
-  com um modal aberto (`test_call_answers`) e, por ordem no worker do xdist, a regra dos modelos (`test_runner`).
-- WSL (Ubuntu 24.04): `.venv/` com Python 3.12.3, numpy, scipy, soundfile, pytest, ruff, mypy, pytest-qt, PySide6 e, desde
-  a F3, google-genai 2.33, openai 3.37, anthropic 2.3, truststore e httpx nas versões do Windows: roda os 193 testes em ~7 s
-  (interface em `QT_QPA_PLATFORM=offscreen`; `LISTENER_SDK_TESTS=1` liga os de transporte simulado dos SDKs, sem rede) e
-  `scripts/ui_smoke.py --fake`; não roda o selftest, o app de verdade nem torch. `uv` não está instalado. A sessão do
-  Claude Code guarda relatórios de agentes em `/tmp/claude-1000/...` (não sobrevivem à troca de sessão).
-- Git: reiniciado limpo em 24/10 (D-032) e primeiro commit no mesmo dia; branch `main`. Remoto `origin` no GitHub,
-  **público** (visto em 25/10): o dono faz o push quando quer; o agente só commita. Tudo que entra num commit vira
-  público (CP10, CP15).
+## Máquinas
+- **Windows 11 (o alvo).** Corporativo, com EDR. Intel Core Ultra 5 235U (12 núcleos, 14 threads, 2 de desempenho),
+  31,5 GB de RAM. GPU: só a Intel Graphics integrada e a NPU; sem NVIDIA e sem CUDA (`torch.cuda.is_available()`
+  falso; onnxruntime só com `CPUExecutionProvider`). Python 3.12.10 pelo `py -3.12`; o venv do projeto fica em `.venv`,
+  no checkout, instalado pelo lock. Modelos em `%LOCALAPPDATA%\listener-meet\models` (large-v3-turbo, `small`, `base`).
+  Monitores mudam com o lugar (4K a 150 %, 1080p a 100 %, notebook a 150 %). O terminal padrão é o Windows Terminal.
+- **Linux de desenvolvimento.** Ubuntu 24.04 nativo ou WSL, sem PortAudio, sem PyInstaller e sem sudo. Venv com
+  `pip install -c requirements/windows.txt -e ".[dev,llm,docx]"`, sem o extra `[pipeline]`. A suíte inteira tem ~13
+  falhas do ambiente (o build do `.exe`, o widget 1 px mais alto no offscreen, os tempos dos avisos e do cartão de
+  chamada, as cores do estilo, o cabeçalho dos preços cortado, o app que sai com o sensor preso): a régua de cada
+  lote é nenhuma falha nova. Para medir o Whisper ou o `--live` de verdade, use um venv à parte com
+  `faster-whisper==1.2.1 soundfile scipy`, sem torch.
+- **Git.** Branch `main`; o remoto `origin` é um repositório público no GitHub: tudo o que entra num commit vira
+  público. O dono faz o push.
 
-## Áudio e processos (medido com o protótipo v3 e o selftest da F1)
-- proc-tap captura um processo e sua árvore (`INCLUDE_TARGET_PROCESS_TREE`): 48 kHz, 2 canais, float32; primeiro pacote em
-  ~40 ms; o callback passa `frames = -1` (contar pelos bytes, 8 por frame) e entrega ~10 ms por chamada (juntar ~100 ms).
-  Backends por SO (PyPI 1.1.1): Windows WASAPI 20H1+; Linux PipeWire ou PulseAudio por processo; macOS 13+ via
-  ScreenCaptureKit, por bundle id.
-- Loopback WASAPI (de processo e de endpoint) não entrega nenhum pacote em silêncio: 8 s sem áudio = 0 callbacks.
-  Preencher por timestamp e até o fim da sessão ao parar.
-- Microfone: o padrão do PortAudio no Windows é MME (44,1 kHz, sem timestamp do ADC); abrir o mesmo mic pela host API
-  "Windows WASAPI" com `WasapiSettings(auto_convert=True)` a 16 kHz mono; aí `inputBufferAdcTime` funciona.
-- psutil leva ~4 s para enumerar processos (o EDR gancha `OpenProcess`); snapshot Toolhelp32 via ctypes leva ~30 ms.
-  pycaw `GetAllSessions()` usa psutil em `session.Process`; a sessão expõe `ProcessId` (F1.1 A4).
-- Dispositivos vistos: mic "Grupo de microfones (Tecnologia Intel Smart Sound...)" (WASAPI); loopback "Altofalantes
-  (Realtek(R) Audio) [Loopback]" (48 kHz, 2 canais).
-- Console do Windows não é UTF-8 por padrão: `sys.stdout.reconfigure(encoding="utf-8")` (feito em `__main__.py`).
-- ctypes no Windows de 64 bits: sem `restype`, `GetCurrentProcess()` volta `c_long` (-1) e o pseudo-handle chega
-  truncado (0xFFFFFFFF), com erro 6 (handle inválido); com `restype` mas sem `argtypes`, o handle estoura a conversão.
-  Sempre `WinDLL` próprio com `restype` e `argtypes` em `HANDLE` (25/10).
-- Mic Intel Smart Sound pelo WASAPI: o primeiro pacote chega ~380 ms depois do start (selftest, 25/10). `os.replace`
-  sobre um arquivo aberto por outro processo dá WinError 5, mesmo com FILE_SHARE_DELETE (25/10).
-- Saída padrão no MME: "Altofalantes (Realtek(R) Audio)" a 44,1 kHz (o player reamostra de 16 kHz). Monitores mudam
-  com o lugar: LU28R55 (4K a 150 %, o principal) e LF24T35 (1080p a 100 %) em 25/10; a tela do notebook (150 %, a
-  principal) e um Dell SE2225HM (1080p a 100 %) em 26/10 à tarde.
-- Loopback de processo do Windows (`PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`, via proc-tap): pega o processo e
-  os filhos diretos, não os netos (medido em 26/10 com um tom num neto). O Teams novo daqui: ms-teams.exe raiz, um
-  ms-teams.exe filho com uma sessão de áudio e um msedgewebview2.exe filho cujo filho tem a outra; WhatsApp e Outlook
-  novo também rodam em WebView2. A captura do app soma a raiz com as sessões mais fundas (D-055).
-- O terminal padrão é o Windows Terminal (26/10): um processo de console que nasce sem console para herdar (o
-  interpretador que o lançador do venv cria, quando o lançador veio com `DETACHED_PROCESS`) abre uma janela dele, preta
-  e vazia com a saída em DEVNULL; fechá-la no X encerra o processo com 0xC000013A, sem log. Só `CREATE_NO_WINDOW` dá ao
-  lançador um console sem janela, que o neto herda (D-056). Desde a D-059 o app registra o fechamento do terminal com um
-  handler de console (`SetConsoleCtrlHandler`): conferido fechando um terminal de verdade (27/10).
-- PortAudio (sounddevice 0.5.6) lê os dispositivos só ao iniciar: reiniciá-lo (`_terminate` e `_initialize`, sem stream
-  aberto) leva ~61 ms; a assinatura dos endpoints pelo Core Audio (pycaw) ~19 ms, com 3 de captura e 2 de saída (27/10).
-- Em 27/10 o worker leve ficou preso 52 min dentro do `CertGetCertificateChain` (truststore, aperto de mão TLS com o
-  Gemini), com 0xc000070a e um access violation no log do faulthandler; o mesmo aperto de mão leva 0,3 s em outro processo
-  (pontual: CryptoAPI ou EDR). O vigia do laço (D-058) corta em 120 s.
-- Word 16 (Office) instalado: dá para conferir um .docx sem o dono pelo COM do PowerShell (instância nova e oculta,
-  `[ref]` nos parâmetros por referência no 5.1, fechar sem salvar e conferir que nenhum WINWORD novo sobrou). Arquivo
-  aberto no Word: `os.replace` sobre ele dá WinError 5 (26/10).
-- Interface no Windows (25/10): a plataforma Qt `offscreen` não tem as fontes do sistema (cai num "Sans Serif" largo),
-  então medir layout só com a plataforma real; para capturar no DPI real sem aparecer na tela do dono
-  (`scripts/win_probe.py shots`; também `app`, `player` e `export`), janela em
-  (-10000, -10000) com `WA_ShowWithoutActivating` e `grab()` (com `WA_DontShowOnScreen` o diálogo sai em DPR 1). A área de
-  transferência sobrevive à saída quando o app sai pelo laço de eventos (`app.exec`); um `sys.exit` sem o laço a perde.
-- Selftest da F1 (mic + loopback do sistema): L e R contínuos, desvio de 19 ms na duração, sem buracos; cinco atalhos
-  registram; sessões de áudio e mudo do mic respondem.
+## Versões travadas (lock do Windows)
+torch 2.8.0+cpu · faster-whisper 1.2.1 · ctranslate2 4.8.3 · pyannote.audio 4.0.7 · onnxruntime 1.31.0 · PySide6 6.12.0
+· SQLite 3.49.1 com FTS5 · proc-tap 1.1.1 · sounddevice 0.5.6 · soundfile 0.14.0 · PyAudioWPatch 0.2.12.9 ·
+pycaw 20260927 · pynput 1.8.2 · google-genai 2.33.0 · openai 3.37.0 · anthropic 2.3.0. Importar os SDKs a quente:
+google.genai 0,8 s, openai 0,9 s, anthropic 4,0 s.
+
+## Áudio no Windows
+- O proc-tap captura um processo e a árvore dele a 48 kHz, 2 canais, float32. O callback passa `frames = -1` (conte
+  pelos bytes, 8 por frame) e entrega ~10 ms por chamada.
+- O loopback de processo pega o processo e os filhos diretos, não os netos. O Teams novo toca a chamada num WebView2
+  neto do `ms-teams.exe` raiz; WhatsApp e Outlook novo também usam WebView2. Por isso a captura soma a raiz com as
+  sessões de áudio mais fundas (D-055).
+- O loopback WASAPI não entrega nenhum pacote em silêncio: preencha pelo timestamp, e até o fim da sessão ao parar.
+- O padrão do PortAudio no Windows é o MME (44,1 kHz, sem timestamp do ADC). Abra o microfone pela host API "Windows
+  WASAPI" com `WasapiSettings(auto_convert=True)` a 16 kHz mono; aí o `inputBufferAdcTime` funciona. O primeiro pacote
+  do microfone pode chegar ~380 a 900 ms depois do início.
+- O PortAudio lê os dispositivos só ao iniciar. Reiniciá-lo sem stream aberto leva ~61 ms; a assinatura dos
+  endpoints pelo Core Audio (pycaw) leva ~19 ms.
+- O `GetAllSessions()` do pycaw usa o psutil e só vê a saída padrão; a sessão expõe o `ProcessId`.
+
+## Processos e console no Windows
+- O psutil leva ~4 s para enumerar processos (o EDR intercepta o `OpenProcess`); um snapshot Toolhelp32 por ctypes,
+  ~30 ms.
+- ctypes em 64 bits: sem `restype`, um handle volta truncado; sempre um `WinDLL` próprio, com `restype` e `argtypes`
+  em `HANDLE`.
+- Um processo de console que nasce sem console para herdar abre uma janela preta do Windows Terminal; fechá-la mata o
+  processo com 0xC000013A, sem log. Só o `CREATE_NO_WINDOW`, sem `DETACHED_PROCESS`, dá um console sem janela (D-056).
+- O console não é UTF-8 por padrão: `sys.stdout.reconfigure(encoding="utf-8")`, feito em `__main__.py`.
+- `os.replace` sobre um arquivo aberto por outro processo (o Word, por exemplo) dá WinError 5.
+- Um aperto de mão TLS já ficou preso 52 min dentro da verificação de certificado do Windows (truststore), de forma
+  pontual. O vigia do laço corta em 120 s (D-058).
 
 ## Modelos e bibliotecas
-- Cache do Hugging Face usa symlink e falha no Windows sem Modo de Desenvolvedor (`WinError 1314`), mesmo no
-  huggingface_hub 0.36.2: baixar com `local_dir` (`faster_whisper.download_model(size, output_dir=...)`,
-  `snapshot_download(repo, local_dir=...)`) e carregar pelo caminho local (`whisperx.load_model(<pasta>)`,
-  `load_align_model(..., model_name=<pasta>)`). Vale para o pyannote.
-- torchcodec não carrega sem FFmpeg: a decodificação embutida do pyannote falha e `whisperx.load_audio` chama o ffmpeg.
-  Decodificar com soundfile e passar `{"waveform": tensor (1, N), "sample_rate": 16000}` ao pyannote e numpy float32 ao
-  Whisper (D-025).
-- WhisperX carrega em 18 s; faster-whisper direto em 3,5 s. Tempos por hora de áudio: `specs/decisoes.md` (Medições).
-- Model card do pyannote community-1 é gated: sem token o README não vem; a página pública mostra
-  `output.speaker_diarization` e `exclusive_speaker_diarization`, não `speaker_embeddings` (F2 Q8).
-- Python 3.14 instala a captura, mas WhisperX exige < 3.14 e torch ~2.8 (D-019). PySide6 6.12 tem wheel abi3.
+- O cache do Hugging Face usa symlink e falha no Windows sem o Modo de Desenvolvedor (WinError 1314): baixe com
+  `local_dir` (`faster_whisper.download_model(size, output_dir=...)`, `snapshot_download(repo, local_dir=...)`) e
+  carregue pelo caminho local. Vale para o pyannote.
+- O torchcodec não carrega sem o FFmpeg: decodifique com o soundfile e passe ao pyannote
+  `{"waveform": tensor (1, N), "sample_rate": 16000}` e, ao Whisper, numpy float32 (D-025).
+- O WhisperX carrega em 18 s; o faster-whisper direto, em 3,5 s.
+- O model card do pyannote community-1 é restrito: sem o token, nada vem.
+- O Python 3.14 instala a captura, mas o WhisperX exige menos que 3.14 e o torch ~2.8. O PySide6 6.12 tem wheel abi3.
 
-## Atalhos e janelas (verificado em 24/10 em documentação pública)
-- `Ctrl+Shift+M` muta o Teams; `Ctrl+Shift+R` recarrega a aba em Chrome, Edge e Firefox; `Ctrl+Shift+S` é captura no
-  Edge; `Ctrl+Shift+P` imprime em Chrome e Edge; `Ctrl+Alt+letra` é AltGr+letra no ABNT2. pynput `GlobalHotKeys` não
-  engole a tecla; `RegisterHotKey` é exclusivo e consome (F1.1 A1).
-- Ferramentas de IA: ler arquivos grandes em lotes menores que 30 KB (limite de saída do Bash no Claude Code). Agente do
-  Claude Code com worktree isolado nasce do `origin/main`, não do `main` local (25/10): para um revisor ler commits
-  locais enquanto outro agente escreve, extrair `git archive <sha>` numa pasta à parte e rodar com `PYTHONPATH` nela (o
-  pacote está instalado em modo editável apontando para o diretório principal).
-- No WSL, `ruff`, `mypy` e `pytest` só existem no venv: `source .venv/bin/activate` antes (25/10).
-- PowerShell 5.1 no Windows: um here-string passado a executável nativo vira argumento (no git, pathspec): mensagem de
-  commit por arquivo (`git commit -F <arquivo>`). O worktree de agente fica em `.claude/worktrees/` dentro do checkout
-  (fora do git); o briefing manda `git merge --ff-only main` ou `git rebase main` primeiro (25/10).
+## Interface (Qt)
+- A plataforma `offscreen` não tem as fontes do sistema (cai num "Sans Serif" cerca de duas vezes mais largo): meça
+  layout só com a plataforma real. Uma caixa modal aberta no `closeEvent` trava o encerramento do teste.
+- Para capturar uma tela no DPI real sem aparecer para o usuário: janela em (-10000, -10000) com
+  `WA_ShowWithoutActivating` e `grab()` (`scripts/win_probe.py shots`). Com `WA_DontShowOnScreen`, o diálogo sai em
+  DPR 1.
+- A área de transferência só sobrevive à saída quando o app sai pelo laço de eventos.
+- Um diálogo num ciclo de referências, coletado pelo GC em outra thread, derruba o processo: `deleteLater()` no
+  código e `gc.collect()` nos testes. Um `QMimeData` criado pelo Python derrubava o app na saída: ele nasce no C++.
+- Um widget sem dono, preso por um lambda com `self` numa conexão, derruba a saída do processo (0xC0000409): use
+  método, não lambda (D-062).
+
+## Atalhos
+- `Ctrl+Shift+M` muta o Teams; `Ctrl+Shift+R` recarrega a aba nos navegadores; `Ctrl+Alt+letra` é AltGr+letra no
+  teclado ABNT2. Por isso os atalhos do app são `ctrl+alt+shift+letra`.
+- O `GlobalHotKeys` do pynput não engole a tecla; o `RegisterHotKey` é exclusivo e a consome.
+
+## Ferramentas
+- No Git Bash do Windows, `python3` é o atalho da Microsoft Store e trava: use `.venv/Scripts/python.exe`.
+- No PowerShell 5.1, um here-string passado a um executável vira argumento: mensagem de commit por arquivo
+  (`git commit -F <arquivo>`), gravado em UTF-8 sem BOM.
+- Medidas de tempo comparam sempre com a base da fase, com as duas cópias na mesma pasta e `--runs 7`: o ruído do
+  Teams e do EDR chega a 40 %.
+- Comando longo de medição roda sem `timeout` e com `python -u`.

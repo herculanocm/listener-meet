@@ -2,7 +2,7 @@
 
 Gravador de reuniões para Windows, de código aberto (MIT). Grava Teams, Meet, Zoom ou qualquer app, sem bot na
 chamada e sem ligar nada na plataforma. Identifica quem fala por perfil de voz, transcreve na sua máquina e gera a ata
-com a LLM que você escolher (Gemini ou Claude). Tudo fica num banco SQLite no seu computador.
+com a LLM que você escolher (Gemini, Claude ou GPT). Tudo fica num banco SQLite no seu computador.
 
 ![A ata de uma reunião de exemplo: cada decisão leva ao minuto da fala que a sustenta](docs/tela-ata.png)
 
@@ -91,16 +91,16 @@ Este repositório segue **Spec-Driven Development**: nenhum código existe sem u
 uma issue com o problema ou a ideia; a mudança vira uma spec em `specs/features/` (o modelo está em `specs/README.md`)
 e o código vem depois da aprovação.
 
-- Pessoas e LLMs: comecem por [AGENTS.md](AGENTS.md) (a ordem de leitura e as cláusulas do projeto).
+- Pessoas e LLMs: comecem por [AGENTS.md](AGENTS.md) (regras, comandos, mapa do código e o que ler).
 - O que o sistema é: [ARCHITECTURE.md](ARCHITECTURE.md).
-- O que o dono quer: [specs/00-handoff-v4.md](specs/00-handoff-v4.md) (o documento mestre).
+- O que não se negocia: [specs/01-clausulas.md](specs/01-clausulas.md) (as cláusulas do projeto).
 - O estado e o que fazer agora: [specs/backlog.md](specs/backlog.md).
+- O que cada versão entregou: [CHANGELOG.md](CHANGELOG.md).
 
 Frentes abertas para quem quiser ajudar:
 - **Linux e macOS** (F7): o que depende do sistema operacional fica em `listener/platform/<os>/`.
 - **Tradução da interface**: hoje os textos são fixos em português.
-- **Testes de verdade** em outras máquinas, microfones e apps de reunião; o passo a passo está em
-  `specs/roteiro-teste-windows.md`.
+- **Testes de verdade** em outras máquinas, microfones e apps de reunião.
 - **Outros provedores** de LLM e de busca por sentido: a camada em `listener/llm/` é agnóstica.
 
 Testes (qualquer sistema, com a plataforma simulada): `python -m pytest -q` roda a parte rápida e `python -m pytest -q

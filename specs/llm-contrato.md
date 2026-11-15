@@ -1,74 +1,72 @@
-# Contrato da camada de LLM (CP2) — dono único do desenho técnico da F3
+# Contrato da camada de LLM (CP2)
 
-Quando ler: ao implementar ou alterar `listener/llm/` ou `pipeline/llm_steps.py` (T2). A spec `features/F3-llm-agnostica.md`
-diz o que o produto faz; este arquivo diz como a camada é construída. Tamanho-alvo: 9 KB. Origem: revisão de arquitetura
-de 25/10/2026 (F3A-30 a F3A-49). Aviso: os SDKs instalados no Windows (google-genai 2.33, openai 3.37, anthropic 2.3) são
-majors mais novas do que a documentação conhecida; a forma exata das chamadas é [exp] e se confirma pelo teste de
-contrato e pelo canário do "testar conexão".
+Quando ler: ao alterar `listener/llm/` ou `pipeline/llm_steps.py`. As specs de feature dizem o que o produto faz; este
+arquivo é o dono único de como a camada é construída. Os SDKs travados (google-genai 2.33, openai 3.37, anthropic 2.3)
+mudam de forma entre majors: a forma exata das chamadas se confirma pelos testes de contrato e pelo canário do "testar
+conexão". Tamanho-alvo: 14 KB.
 
 ## Tipos (`llm/types.py`, tudo `frozen, slots`, `StrEnum` para enumerações)
-`Role` (system, user, assistant) · `AudioPart(data: bytes, mime: str, label: str)` · `ImagePart(data, mime, width, height,
-label)` (F5.21) · `Message(role, text, audio=(), images=())` ·
-`Request(task: LlmTask, model: str, messages, json_schema: Mapping | None, temperature=0.2, max_output_tokens=8192,
-reasoning: Reasoning = NONE, timeout_s=120.0, cache_prefix=False)` · `Usage(input_tokens, output_tokens, cached_tokens=0,
-audio_tokens=0, cache_write_tokens=0)` · `Completion(text, data: Mapping | None, usage, model, latency_ms, finish,
-raw_id)` · `ModelInfo(id, display_name, input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok,
-latency_ms, model, error)` ·
-`Capability`: TEXT, JSON, AUDIO_IN, IMAGE_IN (F5.21), EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary,
-identify, minutes,
-executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5), rag_sql e rag_answer
-(F5.10), suggest e suggest_memo (F5.20, classe rápida) · `Reasoning`:
-none, low, high · `ProviderKind`: gemini, openai, anthropic, local (F5.1: só embeddings) · `SummaryKind`: pre_summary,
-minutes, executive, partial (F4) · `SummaryStatus`: atual, superada, erro ·
-`ActionStatus`: aberta, feita, descartada, superada · `DecisionSource`: auto, usuario, usuario_pyannote, usuario_llm,
-usuario_outro.
+`Role` (system, user, assistant) · `AudioPart(data: bytes, mime: str, label: str)` · `ImagePart(data, mime, width,
+height, label)` (F5.21) · `Message(role, text, audio=(), images=())` · `Request(task: LlmTask, model: str, messages,
+json_schema: Mapping | None, temperature=0.2, max_output_tokens=8192, reasoning: Reasoning = NONE, timeout_s=120.0,
+cache_prefix=False)` · `Usage(input_tokens, output_tokens, cached_tokens=0, audio_tokens=0, cache_write_tokens=0)` ·
+`Completion(text, data: Mapping | None, usage, model, latency_ms, finish, raw_id)` · `ModelInfo(id, display_name,
+input_limit, output_limit, capabilities, price_ref)` · `ConnectionTest(ok, latency_ms, model, error)` · `Capability`:
+TEXT, JSON, AUDIO_IN, IMAGE_IN (F5.21), EMBEDDINGS, STREAMING, COUNT_TOKENS, CACHE · `LlmTask`: glossary, identify,
+minutes, executive, pre_summary, title, revise, transcribe, chat, test, partial (F4), rag_embed e rag_chat (F5), rag_sql
+e rag_answer (F5.10), suggest e suggest_memo (F5.20, classe rápida) · `Reasoning`: none, low, high · `ProviderKind`:
+gemini, openai, anthropic, local (F5.1: só embeddings) · `SummaryKind`: pre_summary, minutes, executive, partial (F4) ·
+`SummaryStatus`: atual, superada, erro · `ActionStatus`: aberta, feita, descartada, superada · `DecisionSource`: auto,
+usuario, usuario_pyannote, usuario_llm, usuario_outro.
 
 ## Protocolo (`llm/base.py`)
-`LLMProvider`: `id`, `kind`, `capabilities`; `async complete(req) -> Completion`; `stream(req) -> AsyncIterator[str]` (só
-texto; resultado final em `stream.result`); `async embed(texts, *, model, dim, task: document | query) -> Embeddings`;
-`async count_tokens(req) -> int | None` (None = o projeto estima: caracteres ÷ 3,5 em pt-BR); `async list_models()`;
-`async test_connection(model) -> ConnectionTest` (um JSON mínimo com esquema: é o canário das majors); `async aclose()`.
-Capacidade efetiva = `provider.capabilities ∩ model.capabilities`; a tabela de capacidades por família de modelo mora em
-`llm/models_table.py` (dado do projeto) e é complementada por `list_models()` (Gemini informa limites e ações; OpenAI e
-Anthropic não). Anthropic não tem embeddings nem áudio nativo [fato até as versões conhecidas]; OpenAI tem áudio só em
-modelos específicos [exp]; Gemini tem áudio em todos os 2.x [fato].
+`LLMProvider`: `id`, `kind`, `capabilities`; `async complete(req) -> Completion`; `stream(req) -> AsyncIterator[str]`
+(só texto; resultado final em `stream.result`); `async embed(texts, *, model, dim, task: document | query) ->
+Embeddings`; `async count_tokens(req) -> int | None` (None = o projeto estima: caracteres ÷ 3,5 em pt-BR); `async
+list_models()`; `async test_connection(model) -> ConnectionTest` (um JSON mínimo com esquema: é o canário das majors);
+`async aclose()`. Capacidade efetiva = `provider.capabilities ∩ model.capabilities`; a tabela de capacidades por família
+de modelo mora em `llm/models_table.py` (dado do projeto) e é complementada por `list_models()` (Gemini informa limites
+e ações; OpenAI e Anthropic não). Anthropic não tem embeddings nem áudio nativo [fato até as versões conhecidas]; OpenAI
+tem áudio só em modelos específicos [exp]; Gemini tem áudio em todos os 2.x [fato].
 
 ## Decoradores e registro (`llm/registry.py`)
 `RetryingProvider` sobre qualquer provedor: `asyncio.timeout(req.timeout_s)`; 3 tentativas com backoff exponencial e
-jitter (1, 3, 9 s) para 429, 5xx e rede, respeitando `Retry-After`; reenvio único com a mensagem de erro quando o JSON não
-valida; "request too large" não é retentado: sinaliza ao runner para o modo hierárquico. Os clientes dos SDKs nascem com
-`max_retries = 0` e timeout explícito, para não somar retentativas. O registro cria o provedor a partir de `providers`
-(chave lida na hora, nunca copiada para `config_json`), aplica proxy e certificados (`llm.proxy_url`, `llm.ca_bundle`,
-`llm.system_certs` com `truststore.inject_into_ssl()` antes de importar qualquer SDK) e carrega o adaptador por nome
-(importação preguiçosa; `llm/registry.py`, `types.py`, `schema.py`, `prompts/*` e `ui/*` nunca importam `google`,
-`openai`, `anthropic`, `httpx` nem `truststore` no nível do módulo; teste estático garante). Clientes assíncronos vivem
-dentro do event loop que os criou: cada `asyncio.run()` cria e fecha o seu.
+jitter (1, 3, 9 s) para 429, 5xx e rede, respeitando `Retry-After`; reenvio único com a mensagem de erro quando o JSON
+não valida; "request too large" não é retentado: sinaliza ao runner para o modo hierárquico. Os clientes dos SDKs nascem
+com `max_retries = 0` e timeout explícito, para não somar retentativas. O registro cria o provedor a partir de
+`providers` (chave lida na hora, nunca copiada para `config_json`), aplica proxy e certificados (`llm.proxy_url`,
+`llm.ca_bundle`, `llm.system_certs` com `truststore.inject_into_ssl()` antes de importar qualquer SDK) e carrega o
+adaptador por nome (importação preguiçosa; `llm/registry.py`, `types.py`, `schema.py`, `prompts/*` e `ui/*` nunca
+importam `google`, `openai`, `anthropic`, `httpx` nem `truststore` no nível do módulo; teste estático garante). Clientes
+assíncronos vivem dentro do event loop que os criou: cada `asyncio.run()` cria e fecha o seu.
+
+O timeout é por pedido, com teto de 600 s no cliente. A resposta cortada pelo limite de saída é reenviada uma vez,
+com o teto maior (ao menos 8.192 tokens a mais, até o limite do modelo), e o uso das duas chamadas é somado.
 
 ## Saída estruturada e validação (`llm/schema.py`)
 Um só esquema JSON por tarefa, escrito no subconjunto estrito aceito pelos três SDKs: `additionalProperties: false`,
 todas as chaves em `required`, nulo como união `["string", "null"]`, sem `format`, `minLength` nem `pattern`. Tradução:
-Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI formato `json_schema` estrito; Anthropic, por
-família (F5.14): `output_config.format` com o esquema sem as chaves de `PROVIDER_SOFT_KEYS`, e ferramenta forçada com
-`input_schema` (resposta em `content[].input`) só nas que não aceitam a saída estruturada (Opus 4.7 e 4.6, Sonnet 4.6,
-4.5 e 4; o Opus 5.5 e o Sonnet 5.5 recusam a ferramenta forçada). Validação sempre do projeto
-(~120 linhas): `type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho;
-dataclass `frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte
-(pydantic vem com os SDKs, mas não entra no WSL). O hash do esquema (`schema_hash`) vai para `llm_calls`,
-sem versão própria por tarefa.
+Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI formato `json_schema` estrito; Anthropic,
+por família (F5.14): `output_config.format` com o esquema sem as chaves de `PROVIDER_SOFT_KEYS`, e ferramenta forçada
+com `input_schema` (resposta em `content[].input`) só nas que não aceitam a saída estruturada (Opus 4.7 e 4.6, Sonnet
+4.6, 4.5 e 4; o Opus 5.5 e o Sonnet 5.5 recusam a ferramenta forçada). Validação sempre do projeto (~120 linhas):
+`type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho; dataclass
+`frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte (o pydantic
+vem com os SDKs, mas o projeto não depende dele). O hash do esquema (`schema_hash`) vai para `llm_calls`, sem versão
+própria por tarefa.
 
 ## Prompts (`llm/prompts/<task>.py`)
 `PROMPT_VERSION = "2.0"`, `SCHEMA`, `INSTRUCTIONS` (editáveis na página Prompts, F5.6) e `CONTRACT` (fixo, por último no
 texto de sistema), `build(ctx, instructions=None) -> tuple[Message, ...]`; com instruções do usuário, a versão gravada
-leva `+u<hash>` do texto. Instruções e contrato em pt-BR, o idioma padrão
-do app (D-071, 30/10: o experimento em inglês acabou), com `output_language` injetado como instrução de idioma e `{idioma}`
-trocado pelo nome do idioma em português ("português do Brasil", "inglês"); glossário, nomes próprios e siglas nunca
-traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version` gravam `"minutes/2.0"`; mudar o texto do prompt sobe a
-versão (regra de revisão de diff) e a cópia congelada `tests/data/prompts_ptbr.json` é gerada de novo.
-Classe por tarefa (`TASK_CLASS`): rápido = glossary, title, pre_summary, revise, transcribe, chat; forte = identify,
-minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de pensamento zero), `LOW` no forte. No
-Claude (F5.14), o pensamento adaptativo com o esforço `low` (NONE), `medium` (LOW) ou `high` (HIGH), trocável por classe
-nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga do pensamento; nas famílias antigas, o
-`budget_tokens`.
+leva `+u<hash>` do texto. Instruções e contrato em pt-BR, o idioma padrão do app (D-071), com o idioma da reunião
+injetado como instrução de idioma e `{idioma}` trocado pelo nome do idioma em português ("português do Brasil",
+"inglês"); glossário, nomes próprios e siglas nunca traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version`
+gravam `"minutes/2.0"`; mudar o texto do prompt sobe a versão (regra de revisão de diff) e a cópia congelada
+`tests/data/prompts_ptbr.json` é gerada de novo. Classe por tarefa (`TASK_CLASS`): rápido = glossary, title,
+pre_summary, revise, transcribe, chat; forte = identify, minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash
+com orçamento de pensamento zero), `LOW` no forte. No Claude (F5.14), o pensamento adaptativo com o esforço `low`
+(NONE), `medium` (LOW) ou `high` (HIGH), trocável por classe nos Parâmetros (`effort_fast`, `effort_strong`), e o
+`max_tokens` com a folga do pensamento; nas famílias antigas, o `budget_tokens`.
 
 ## Esquemas (resumo; o dicionário completo fica no módulo da tarefa)
 - `identify`: por cluster `{cluster, person_id | null, new_name | null, confidence 0..1, evidence: [{segment_id,
@@ -76,12 +74,12 @@ nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga d
   para pendentes), cabeçalho com título, participantes esperados com cargo e empresa, marcadores com nota, candidatos
   cadastrados (id, nome). Inteira até 60 % da janela do modelo; acima, só os segmentos dos pendentes com ±3 vizinhos.
 - `minutes`: `{context, decisions: [{text, segment_ids}], actions: [{text, owner_text, owner_person_id | null, due_text,
-  due_date AAAA-MM-DD | null, segment_ids}], highlights: [{marker_id, text, segment_ids}], open_points, next_steps}`.
-  A LLM recebe a data da reunião e devolve datas absolutas; o projeto só valida o formato.
+  due_date AAAA-MM-DD | null, segment_ids}], highlights: [{marker_id, text, segment_ids}], open_points, next_steps}`. A
+  LLM recebe a data da reunião e devolve datas absolutas; o projeto só valida o formato.
 - `executive` (texto até 1500 caracteres) e `pre_summary` (até 600) recebem a ata validada, não a transcrição; `title`
   (até 80) recebe o pré-resumo. Ordem: minutes → executive, pre_summary, title em paralelo.
-- `revise`: `{"revisions": [{"segment_id", "text"}]}` restrito aos ids do bloco (60 segmentos, 5 de contexto antes e depois);
-  o mapa `{"<segment_id>": texto}` não cabe no subconjunto estrito (chaves dinâmicas) [fato, implementação].
+- `revise`: `{"revisions": [{"segment_id", "text"}]}` restrito aos ids do bloco (60 segmentos, 5 de contexto antes e
+  depois); o mapa `{"<segment_id>": texto}` não cabe no subconjunto estrito (chaves dinâmicas) [fato, implementação].
 - `glossary`: `{terms: [str] (≤ 40), people: [{name, person_id | null}]}`.
 - `transcribe` (LLMAudioTranscriber): `{language, utterances: [{start_s, end_s, text}]}` relativo ao início da janela.
 - `chat`: texto livre com `[mm:ss]` da transcrição enviada; o projeto reescreve cada `[mm:ss]` para o segmento mais
@@ -89,25 +87,26 @@ nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga d
 - `rag_chat` (F5, chat global, rápido): trechos de até `rag.top_k` por reunião com apelido (`[R1] título — data —
   participantes`, linhas `#segment_id [mm:ss] Nome — Cargo: texto` dos segmentos vigentes); a resposta cita `[R1 12:03]`
   e o projeto liga à reunião e à linha enviada mais próxima (≤ 5 s); o histórico volta ao prompt sem apelidos.
-- `suggest` (F5.20): `{options: [{kind, text, facts: [caption_id]}], thread_summary}` em streaming, lido opção a opção pelo
-  projeto; os tetos (`maxItems`, `maxLength`) são cortados antes da validação, porque a OpenAI e a Anthropic não os recebem;
-  `suggest_memo`: `{memo}`. Nas famílias do Claude de ferramenta forçada, o `stream()` repassa o `input_json_delta`.
-- Imagem (F5.21): `ImagePart(data, mime, width, height, label)` em `Message.images`; a capacidade `IMAGE_IN` vem só da tabela
-  de modelos (o cache dos modelos listados é anterior a ela). O Gemini manda `inline_data` depois do texto; a OpenAI
-  (Responses), `input_image` em data URL com `detail: "high"`; o Claude, o bloco `image` em base64 antes do texto (a mensagem
-  só com imagem fica). A estimativa conta 2.400 tokens por imagem; o pedido guardado leva o rótulo, nunca os bytes. O
-  `suggest` 1.1, com contexto de tela, troca o esquema por `{options: [{kind, text, facts, screen}], thread_summary,
-  screen_summary}` e soma as regras da tela; sem tela, o pedido é o da 1.0.
+- `suggest` (F5.20): `{options: [{kind, text, facts: [caption_id]}], thread_summary}` em streaming, lido opção a opção
+  pelo projeto; os tetos (`maxItems`, `maxLength`) são cortados antes da validação, porque a OpenAI e a Anthropic não os
+  recebem; `suggest_memo`: `{memo}`. Nas famílias do Claude de ferramenta forçada, o `stream()` repassa o
+  `input_json_delta`.
+- Imagem (F5.21): `ImagePart(data, mime, width, height, label)` em `Message.images`; a capacidade `IMAGE_IN` vem só da
+  tabela de modelos (o cache dos modelos listados é anterior a ela). O Gemini manda `inline_data` depois do texto; a
+  OpenAI (Responses), `input_image` em data URL com `detail: "high"`; o Claude, o bloco `image` em base64 antes do texto
+  (a mensagem só com imagem fica). A estimativa conta 2.400 tokens por imagem; o pedido guardado leva o rótulo, nunca os
+  bytes. O `suggest` 1.1, com contexto de tela, troca o esquema por `{options: [{kind, text, facts, screen}],
+  thread_summary, screen_summary}` e soma as regras da tela; sem tela, o pedido é o da 1.0.
 - Embeddings (F5): `embed` passa pela retentativa e pelo timeout do `RetryingProvider`; o índice normaliza sempre (a
   OpenAI não normaliza); documentos com `task=document` em lotes de 64, consulta com `task=query`; `rag_embed` em
   `llm_calls` por lote.
 
 ## Evidência verificável
 Toda decisão, ação, destaque e sugestão de identidade carrega `segment_ids` ou `{segment_id, quote}`; o projeto confere
-que o segmento existe na reunião e que a citação está contida no texto dele (casefold, sem pontuação); evidência inválida
-é descartada e a confiança multiplicada por 0,5; item sem evidência válida é mantido com a marca "sem evidência". O minuto
-exibido vem sempre de `segments.t_start_ms`, nunca do texto da LLM. Render Markdown da ata é do projeto (`llm/render.py`),
-determinístico a partir do JSON; `text_llm` é esse Markdown e `text_edited` a edição humana.
+que o segmento existe na reunião e que a citação está contida no texto dele (casefold, sem pontuação); evidência
+inválida é descartada e a confiança multiplicada por 0,5; item sem evidência válida é mantido com a marca "sem
+evidência". O minuto exibido vem sempre de `segments.t_start_ms`, nunca do texto da LLM. Render Markdown da ata é do
+projeto (`llm/render.py`), determinístico a partir do JSON; `text_llm` é esse Markdown e `text_edited` a edição humana.
 
 ## Rede, segurança e concorrência
 `llm.max_parallel` (padrão 2) como `asyncio.Semaphore` por processo; nunca `await` dentro de `store.transaction()`
@@ -122,28 +121,29 @@ Tabela `llm_prices(provider, model, input_usd_m, output_usd_m, cached_usd_m, aud
 projeto por família, editável na sub-aba; custo = `input × p_in + cached × p_cached + cache_write × p_in × 1,25 + output
 × p_out + audio × p_audio` (a escrita no cache da Anthropic custa 1,25 vez a entrada); sem linha de preço, custo nulo e
 "sem preço cadastrado" na tela. F5.14: o Haiku 5.5 com pedido acima de 100 mil tokens custa 5 vezes (regra da família,
-sem coluna); as sementes que faltam entram no banco ao abrir, sem tocar no preço editado. Estimativa prévia por tarefa a partir de
-`count_tokens` ou caracteres ÷ 3,5. Projeção [chute]: reunião de 2 h ≈ US$ 0,30 a 0,50 (rápido nas leves, forte na
-ata); 3 h ≈ US$ 0,50 a 0,80. Pedido e resposta completos comprimidos (`zlib`) em `llm_calls` quando `llm.store_payloads`
-estiver ligado (padrão sim, P-N4).
+sem coluna); as sementes que faltam entram no banco ao abrir, sem tocar no preço editado. Estimativa prévia por tarefa a
+partir de `count_tokens` ou caracteres ÷ 3,5. Projeção [chute]: reunião de 2 h ≈ US$ 0,30 a 0,50 (rápido nas leves,
+forte na ata); 3 h ≈ US$ 0,50 a 0,80. Pedido e resposta completos comprimidos (`zlib`) em `llm_calls` quando
+`llm.store_payloads` estiver ligado (padrão sim, P-N4).
 
-## O que a implementação fixou além do texto acima (2026-10-25, medido com os SDKs instalados)
-`stream()` devolve `LlmStream` (iterador assíncrono com `.result`); `Embeddings.vectors` é `np.ndarray` float32 normalizado;
-`AudioPart.seconds` estima a duração pelo tamanho e tipo. Gemini e Anthropic recebem o esquema inteiro; a OpenAI, sem as
-chaves que o modo estrito dela pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`: `schema.provider_schema`); a
-validação do projeto usa o esquema inteiro. anthropic 2.x: `messages.create` não aceita `temperature`, `top_p` nem `top_k`
-(não são enviados); F5.14: `complete()` pelo `messages.stream(...).get_final_message()`, a recusa (`refusal`) vira erro
-permanente com a categoria, `model_context_window_exceeded` vira "grande demais" e o fallback do servidor (beta, nos
-modelos que o aceitam) soma o uso das partes; `Authorization: Bearer`; openai 3.x e anthropic 2.x
-usam `httpx2` (o `http_client` próprio só entra com proxy ou PEM configurados; com o PEM, o contexto TLS sai de
-`ssl.create_default_context(cafile=…)`, F5.14; sem ele, no Windows, o httpx2 já usa o `truststore.SSLContext`).
-google-genai 2.33: timeout em ms, `retry_options.attempts = 1`, `response_json_schema`, `thinking_budget = 0` no rápido (não no Pro, que não desliga),
-`client.aio.aclose()`. OpenAI: `input_audio` só wav e mp3 (o `LLMAudioTranscriber` manda WAV em fatias de 5 min fora do
-Gemini); `reasoning.effort` e sem `temperature` nas famílias que raciocinam. `title` lê o pré-resumo quando já existe, senão
-o `context` da ata, senão as primeiras falas. Erros traduzidos pela forma (`status_code`/`code`, nome da classe,
-`Retry-After`, texto de "too large"), sem importar SDK. `RetryingProvider` reenvia a resposta inválida como turno
-`assistant` mais a mensagem de erro em `user`.
+## Particularidades por SDK
+`stream()` devolve `LlmStream` (iterador assíncrono com `.result`); `Embeddings.vectors` é `np.ndarray` float32
+normalizado; `AudioPart.seconds` estima a duração pelo tamanho e tipo. Gemini e Anthropic recebem o esquema inteiro; a
+OpenAI, sem as chaves que o modo estrito dela pode recusar (`maxLength`, `minimum`, `maximum`, `minItems`, `maxItems`:
+`schema.provider_schema`); a validação do projeto usa o esquema inteiro. anthropic 2.x: `messages.create` não aceita
+`temperature`, `top_p` nem `top_k` (não são enviados); F5.14: `complete()` pelo
+`messages.stream(...).get_final_message()`, a recusa (`refusal`) vira erro permanente com a categoria,
+`model_context_window_exceeded` vira "grande demais" e o fallback do servidor (beta, nos modelos que o aceitam) soma o
+uso das partes; `Authorization: Bearer`; openai 3.x e anthropic 2.x usam `httpx2` (o `http_client` próprio só entra com
+proxy ou PEM configurados; com o PEM, o contexto TLS sai de `ssl.create_default_context(cafile=…)`, F5.14; sem ele, no
+Windows, o httpx2 já usa o `truststore.SSLContext`). google-genai 2.33: timeout em ms, `retry_options.attempts = 1`,
+`response_json_schema`, `thinking_budget = 0` no rápido (não no Pro, que não desliga), `client.aio.aclose()`. OpenAI:
+`input_audio` só wav e mp3 (o `LLMAudioTranscriber` manda WAV em fatias de 5 min fora do Gemini); `reasoning.effort` e
+sem `temperature` nas famílias que raciocinam. `title` lê o pré-resumo quando já existe, senão o `context` da ata, senão
+as primeiras falas. Erros traduzidos pela forma (`status_code`/`code`, nome da classe, `Retry-After`, texto de "too
+large"), sem importar SDK. `RetryingProvider` reenvia a resposta inválida como turno `assistant` mais a mensagem de erro
+em `user`.
 
 ## Pinos de versão (extra `llm`)
 `google-genai>=2.33,<3`, `openai>=3.37,<4`, `anthropic>=2.3,<3`, `truststore>=0.9`; os testes de contrato com
-cliente-dublê precisam do extra `llm` (o lock do Windows já o traz) e, sem ele, pulam por `importorskip` (sem CI, D-090).
+cliente-dublê precisam do extra `llm` (o lock do Windows já o traz) e, sem ele, pulam por `importorskip`.

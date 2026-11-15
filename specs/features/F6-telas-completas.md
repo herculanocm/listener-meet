@@ -1,25 +1,33 @@
 # F6 — Telas completas e UX de fábrica
 
-Status: rascunho inicial (aprovação do Herculano antes de codar)
-Fase e gate: F6 · G6
-Cláusulas pétreas envolvidas: CP6, CP7, CP8, CP9, CP12, CP15
-Quando ler: ao detalhar ou implementar esta fase (T2). Tabelas: `dados.md`.
+Status: rascunho (precisa de detalhamento, revisão de arquitetura e aprovação do dono antes de qualquer código)
+CPs: CP5, CP7, CP8, CP9, CP12, CP15
+Quando ler: ao detalhar ou implementar esta fase. Tamanho-alvo: 3 KB.
+
+## Objetivo
+O usuário faz tudo pela janela principal, sem terminal: gerencia perfis de voz, edita toda configuração durante o
+uso e cuida do banco.
 
 ## Escopo
-1. Janela principal com Gravar, Histórico, Perfis e Configurações; bandeja completa.
-2. Perfis de voz (seção 5 do handoff): lista com amostras e contagem de reuniões; criar de um trecho,
-   renomear, apagar (perguntando se mantém o nome nas reuniões antigas), mesclar, separar; ficha da pessoa
-   (nome, e-mail, cargo, empresa, descrição); caixa de "vozes desconhecidas" (U-007).
-3. Configurações totais (CP8): todas as chaves com o selo "aplica agora" ou "na próxima gravação"; sub-abas
-   de provedores; editor de atalhos capturando as teclas; presets; pasta de modelos; tamanho do banco com
-   projeção e backup com progresso (U-010); mover o banco; restaurar padrão.
-4. Notificação de reunião detectada (U-012, D-010): sessões de áudio do Windows; lista de apps observados
-   configurável; "Gravar agora" com o último preset; "ignorar por 1 h"; nunca grava sozinho. Saiu daqui: é a F5.7
-   (`F5.7-aviso-reuniao-sem-gravar.md`, U-094, aprovada na D-065).
-5. Assistente de primeiro uso completo (U-013): token do Hugging Face, chave do provedor, teste do
-   microfone, app de reunião, pasta de modelos.
-6. Tema claro e escuro seguindo o sistema, DPI alto (U-014); empacotamento com atalho (PyInstaller só se
-   necessário).
+1. **Janela principal** com navegação entre Gravar, Histórico, Perfis e Configurações; a bandeja segue como atalho.
+2. **Perfis de voz**: lista de pessoas com amostras de áudio para ouvir e o número de reuniões em que aparecem; criar
+   um perfil, inclusive de um trecho de áudio escolhido (`embed_range`); renomear; apagar, perguntando se o nome fica
+   nas reuniões antigas; mesclar perfis da mesma pessoa; separar um perfil que juntou duas vozes; a ficha da pessoa;
+   a caixa de "vozes desconhecidas" de todas as reuniões, agrupadas por similaridade (U-007).
+3. **Configurações totais (CP8)**: toda chave com a marca "aplica agora" ou "na próxima gravação"; editor de atalhos
+   que captura as teclas; presets por plataforma, editáveis; glossário fixo; tamanho do banco com projeção e backup
+   com progresso (U-010); mover o banco; restaurar padrão.
+4. **Assistente de primeiro uso completo** (U-013): o que falta além das chaves, do token e do teste do microfone,
+   como o app de reunião preferido.
+5. **Tema escolhido à mão** (claro, escuro ou o do sistema; U-014).
 
-## Gate G6
-Uma semana de uso diário sem terminal; toda configuração do CP8 editável durante o uso.
+## Fora de escopo
+- O aviso de reunião sem gravação (já entregue na F5.7).
+- O executável (já entregue na F5.8).
+- Linux e macOS (F7).
+
+## Aceite
+G6: uma semana de uso diário sem terminal; toda configuração do CP8 editável durante o uso.
+
+## Perguntas
+A levantar no detalhamento. Antes desta fase, decidir a tradução da interface (`specs/roadmap.md`).

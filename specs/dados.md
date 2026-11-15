@@ -1,14 +1,20 @@
-# Modelo de dados canônico (CP9)
+# Modelo de dados (CP9)
 
-Quando ler: ao tocar em qualquer tabela (T2). Dono único das tabelas; as specs citam a tabela e só descrevem o que muda.
-O que existe está em `listener/store/schema.py` e `core.py`. `listener.db` (main) mais um arquivo de áudio por mês de
-`meetings.started_at`, `listener-audio-AAAA-MM.db` (schema `audio_AAAA_MM`; o do mês corrente anexado na abertura, os
-outros sob demanda, até 8 por conexão; D-003, D-039), cada um com `audio_chunks` e `schema_migrations` próprios; o
-`listener-audio.db` da F1 segue lido como schema `audio`. WAL em todos; FK só no main. `page_size` 32 KB no áudio (M-19;
-legado pequeno recebe VACUUM). Datas em ISO 8601 local, com offset a partir da migração v2 (F1.1 A5). Tamanho-alvo: 4
-KB.
+Quando ler: ao tocar em qualquer tabela. Este arquivo é o dono único das tabelas: as specs citam a tabela e dizem só o
+que muda. A verdade executável está em `listener/store/schema.py` e `core.py`. Tamanho-alvo: 20 KB.
 
-| Tabela | Arquivo | Colunas principais | Fase | Estado |
+## Arquivos
+- `listener.db` (schema `main`): tudo, menos o áudio. As chaves estrangeiras valem só aqui.
+- `listener-audio-AAAA-MM.db` (schema `audio_AAAA_MM`): um arquivo por mês de `meetings.started_at`, com
+  `audio_chunks` e `schema_migrations` próprios. O do mês corrente é anexado na abertura; os outros, sob demanda, até 8
+  por conexão (D-003, D-039). O `listener-audio.db` antigo segue lido como schema `audio`.
+- WAL em todos; `page_size` de 32 KB nos de áudio. Datas em ISO 8601 local, com offset.
+- Fora do SQLite, por decisão: o ponteiro `db-location.json`, na pasta de configuração do sistema (D-029), e o arquivo
+  de log (D-033).
+
+## Tabelas
+A coluna "Esquema" diz a versão do `main` em que a tabela mudou pela última vez.
+| Tabela | Arquivo | Colunas principais | Feature | Esquema |
 | --- | --- | --- | --- | --- |
 | settings | main | key PK, value, scope (`now` ou `next_recording`), updated_at | F1 | v1 |
 | presets | main | id, name UNIQUE, mic_device_id, mic_device_name, source_kind (`app` ou `system`), source_exe, sample_rate, is_in_room; F4: live_enabled e live_names (caixas do warm-up; nulo = padrão das Configurações) | F1, F4 | v7 |
@@ -39,49 +45,74 @@ KB.
 | suggestion_screens | main | suggestion_id (PK e FK cascade), status (`enviada`, `vazia`, `falhou`), source (`janela`: a janela da reunião; `primeiro_plano`: o automático sem ela, o monitor da janela em primeiro plano; `cursor`: a escolha "o monitor em uso"; `monitor`: o monitor fixo), app (o rótulo: "janela do Teams", "Monitor 2"; nunca o título da janela), width e height (os da imagem enviada), bytes (o JPEG enviado), covered (as janelas por cima, pintadas de preto), thumb (BLOB, 320 x 180 em JPEG, sempre que houve print: nula na `falhou`), data (BLOB, a cópia de 960 px a q70, só na `enviada` e com `suggest.screen_keep`; a enviada, de 1.600 px, não fica): a tela de um pedido de sugestão | F5.21 | v11 |
 | llm_prices | main | provider, model (id ou prefixo de família), input_usd_m, output_usd_m, cached_usd_m, audio_usd_m, updated_at; PK (provider, model); sementes do projeto, editáveis na sub-aba | F3 | v6 |
 
-Índices v1: markers(meeting_id, t_ms); events(meeting_id, t_ms); idx_chunks_meeting(meeting_id, channel, t_start_ms) em
-cada arquivo de áudio. v4: segments(meeting_id, t_start_ms); clusters(meeting_id); processing_jobs(status, id);
-voice_embeddings(profile_id); único voice_profiles(person_id, model). v6: summaries(meeting_id, kind);
-summaries(job_id); action_items(meeting_id); llm_calls(meeting_id, id); chat_messages(meeting_id, id). v8:
-processing_jobs(meeting_id, kind, status); rag_chunks(meeting_id, t_start_ms); rag_vectors(model, id);
-chat_messages(thread_id, id). v7:
-captions(meeting_id, t_start_ms). v10: suggestions(meeting_id, id); suggestion_options(rated_at).
+## Índices
+| Esquema | Índices |
+| --- | --- |
+| v1 | `markers(meeting_id, t_ms)`; `events(meeting_id, t_ms)`; `idx_chunks_meeting(meeting_id, channel, t_start_ms)` em cada arquivo de áudio |
+| v4 | `segments(meeting_id, t_start_ms)`; `clusters(meeting_id)`; `processing_jobs(status, id)`; `voice_embeddings(profile_id)`; único `voice_profiles(person_id, model)` |
+| v6 | `summaries(meeting_id, kind)`; `summaries(job_id)`; `action_items(meeting_id)`; `llm_calls(meeting_id, id)`; `chat_messages(meeting_id, id)` |
+| v7 | `captions(meeting_id, t_start_ms)` |
+| v8 | `processing_jobs(meeting_id, kind, status)`; `rag_chunks(meeting_id, t_start_ms)`; `rag_vectors(model, id)`; `chat_messages(thread_id, id)` |
+| v10 | `suggestions(meeting_id, id)`; `suggestion_options(rated_at)` |
 
-Regras: nada apaga dados sem o usuário pedir (CP3): Cancelar da gravação em curso, Reprocessar (troca atômica dos
-clusters e segments do job anterior no último passo, decisões humanas transportadas por cosseno), excluir reunião (F5.6,
-D-063: tudo dela em cascata, áudio e legendas inclusive; os perfis de voz ficam) e apagar pessoa (F5.2: o perfil e os
-vetores de voz dela); `revisions` registra
-toda edição humana; `*.db` nunca no git nem em pasta sincronizada. Chaves de `settings` (padrões em
-`listener/config/defaults.py`): `capture.*` (inclui `echo_corr_min`), `hotkeys.*`, `log.path`, `log.level`,
-`ui.widget_pos`, `ui.widget_size`, `warmup.last_*`, `pipeline.*` (F2; internas `paused_until`, `paused_manual`,
-`rtf_json`; F5.15: `ref_cos` e `max_refs`, as referências de voz; F5.18: `embedding_batch`, o lote dos embeddings da diarização em trechos, e `echo_gate`, o eco do L zerado fora da sala presencial), `llm.*` (F3: output_language, auto_tasks, cost_alert_usd, max_parallel, audio_second_opinion,
-glossary_enabled, store_payloads, proxy_url, ca_bundle, system_certs), `live.*` (F4: enabled, names, model, threads,
-summary_interval_min com 0 = parcial desligado, in_widget), `ui.live_geometry`, `ui.live_on_top`, `rag.*` (F5:
-auto_index = vetores automáticos, top_k, max_per_meeting; F5.18: `vector_version`, interno, o contador que o cache das assinaturas do app compara, subido por quem cria ou remove vetores ou trechos; F5.10: sql_strong, sql_max_rows, sql_timeout_s e as guardas
-sql_max_cost_usd, sql_max_minutes, sql_max_rounds), `hotkeys.history`, `suggest.*` (F5.20: enabled, learn, options,
-window_min e name_hint valem em uso, dossier na próxima gravação; internas `memo`, `memo_at` e `memo_ratings`, o memorando
-do que o usuário prefere; F5.21: screen, screen_source (`auto`, `cursor` ou `monitor:<chave>`) e screen_keep, em uso, e a
-interna `screen_consent`, os provedores que já receberam a tela com a data), `hotkeys.suggest`, `hotkeys.suggest_screen`, `ui.history_geometry`,
-`ui.meeting_geometry`, `ui.history_filters`; tipo, faixa e escopo na tabela `SPECS` (M-24).
-Esquema do main: v1 (F1), v2 (datas com offset, A5), v3 (`meetings.audio_file`), v4 (F2: fila, clusters, artefatos,
-colunas dos perfis), v5 (calib_n, cluster_id), v6 (F3: camada de LLM, sementes de preço e provedores), v7 (F4: colunas
-de `captions` e `presets`, índice das legendas), v8 (F5: base consultável, FTS5 obrigatório, conversas, índice da fila
-por reunião; a guarda da CP3 renomeia tabelas da v1 com linhas para `*_v1`), v9 (F5.10: `chat_messages.trace_json`,
-a primeira com volta: `MAIN_DOWNS[9]` em `store/downgrade.py`, pela linha de comando com o app fechado, `python -m
-listener --downgrade <pasta do banco> 8`), v10 (F5.20: `suggestions`, `suggestion_options` e `meetings.goal`, também com
-volta, `MAIN_DOWNS[10]`, que apaga as sugestões, as avaliações e os objetivos: só a pedido, CP3), v11 (F5.21:
-`suggestion_screens`, `suggestions.screen_summary` e `suggestion_options.screen`, com volta, `MAIN_DOWNS[11]`); áudio:
-v1 tabela, v2 datas, por arquivo;
-`user_version` acompanha; cada migração roda inteira num `BEGIN IMMEDIATE`. `events.data` passa pelo `json_default`
-(numpy e datas; o resto é erro).
-Papéis do `Store`: APP migra; WORKER (worker da F2 e processo ao vivo da F4) escreve no main sem migrar e lê o áudio em
-`mode=ro` com `mmap_size` 256 MB; READONLY.
-Job vigente de uma reunião (revisão, leitura, trecho de 5 s): o `concluído` mais recente entre `meeting` e `reprocess`;
-sem concluído, o ativo; jobs `llm` nunca contam (F3A-04) e tudo que escrevem leva o `job_id` do pai. Chaves de API em
-`providers.api_key`, nunca em `config_json`, log ou erro (redação, CP10).
-O que a LLM lê em "Perguntar à base" (F5.10): só as visões TEMP em PT-BR de `rag/semantic.py`, numa conexão própria só
-de leitura (`rag/sandbox.py`); nunca `providers`, `settings`, `people.email` e `notes`, `meetings.notes`, os pedidos e
-respostas guardados de `llm_calls`, `chat_*` e o resto da lista de negação da spec (D2). Visão nova ou coluna nova numa
-visão entra no dicionário (`rag/dictionary.py`) e passa pelo teste da lista de negação.
-Fora do SQLite, por decisão: o ponteiro `db-location.json` na
-pasta de configuração do sistema (D-029) e o arquivo de log rotativo escolhido pelo usuário (D-033).
+## Regras
+- Nada apaga dados sem o usuário pedir (CP3). As únicas remoções são: Cancelar da gravação em curso; Reprocessar
+  (troca atômica dos clusters e segments do job anterior no último passo, com as decisões humanas transportadas por
+  cosseno); excluir reunião (tudo dela em cascata, áudio e legendas inclusive; os perfis de voz ficam; D-063); e
+  apagar pessoa (o perfil e os vetores de voz dela).
+- `revisions` registra toda edição humana.
+- `*.db` nunca no git nem em pasta sincronizada.
+- As chaves de API ficam em `providers.api_key`, nunca em `config_json`, em log ou em mensagem de erro (CP10).
+- `events.data` passa pelo `json_default` (numpy e datas; o resto é erro).
+- Cada migração roda inteira num `BEGIN IMMEDIATE`; `user_version` acompanha.
+
+## Chaves de `settings`
+Os padrões e a lista completa estão em `listener/config/defaults.py`; o tipo, a faixa e o escopo, na tabela `SPECS`.
+| Grupo | Chaves |
+| --- | --- |
+| `app.language` | idioma padrão do app (pt-BR ou en), usado na transcrição, na legenda e na LLM |
+| `capture.*` | `mic_rate`, `target_rate`, `chunk_seconds`, `silence_rms`, `l_alert_seconds`, `r_alert_seconds`, `echo_corr_min` |
+| `hotkeys.*` | atalhos globais; inclui `history`, `suggest` e `suggest_screen` |
+| `log.*` | `path` e `level` |
+| `warmup.last_*` | última escolha do "Antes de gravar" |
+| `pipeline.*` | `auto_start`, `pause_on_record`, `transcriber`, `whisper_model`, `whisper_hq`, `whisper_window_s`, `diar_window_s`, `torch_threads`, `models_dir`, `glossary`, `threshold`, `margin`, `ref_cos` e `max_refs` (referências de voz), `embedding_batch` (lote dos embeddings da diarização, em trechos), `echo_gate` (eco do L zerado fora da sala presencial); internas: `paused_until`, `paused_manual`, `rtf_json` |
+| `llm.*` | `ask_last`, `auto_tasks`, `cost_alert_usd`, `max_parallel`, `audio_second_opinion`, `glossary_enabled`, `store_payloads`, `proxy_url`, `ca_bundle`, `system_certs` |
+| `live.*` | `enabled`, `names`, `model`, `threads`, `partial`, `summary_interval_min`, `in_widget`, `caption_tray` |
+| `rag.*` | `auto_index` (vetores automáticos), `top_k`, `max_per_meeting`; "perguntar à base": `sql_strong`, `sql_max_rows`, `sql_timeout_s` e as guardas `sql_max_cost_usd`, `sql_max_minutes`, `sql_max_rounds`; interna: `vector_version` (contador que o cache das assinaturas compara) |
+| `suggest.*` | `enabled`, `learn`, `options`, `window_min` e `name_hint` (valem em uso); `dossier` (na próxima gravação); `screen`, `screen_source` (`auto`, `cursor` ou `monitor:<chave>`) e `screen_keep`; internas: `memo`, `memo_at`, `memo_ratings` (o memorando) e `screen_consent` (provedores que já receberam a tela, com a data) |
+| `ui.*` | `widget_pos`, `widget_size`, `live_geometry`, `live_on_top`, `history_geometry`, `meeting_geometry`, `history_filters` |
+
+## Migrações do `main`
+| Versão | O que trouxe |
+| --- | --- |
+| v1 | tabelas da captura |
+| v2 | datas com offset |
+| v3 | `meetings.audio_file` |
+| v4 | fila, clusters, artefatos, colunas dos perfis |
+| v5 | `calib_n`, `cluster_id` |
+| v6 | camada de LLM, sementes de preço e de provedores |
+| v7 | colunas de `captions` e de `presets`, índice das legendas |
+| v8 | base consultável: FTS5 obrigatório, conversas, índice da fila por reunião; tabelas da v1 com linhas são renomeadas para `*_v1` (CP3) |
+| v9 | `chat_messages.trace_json`; a primeira com volta (`MAIN_DOWNS[9]`) |
+| v10 | `suggestions`, `suggestion_options`, `meetings.goal`; com volta, que apaga as sugestões, as avaliações e os objetivos (só a pedido, CP3) |
+| v11 | `suggestion_screens`, `suggestions.screen_summary`, `suggestion_options.screen`; com volta |
+
+A volta de uma migração fica em `store/downgrade.py` e roda só pela linha de comando, com o app fechado:
+`python -m listener --downgrade <pasta do banco> <versão>`. Os arquivos de áudio têm v1 (tabela) e v2 (datas).
+
+## Papéis do `Store`
+| Papel | Quem usa | O que pode |
+| --- | --- | --- |
+| APP | o app | migra e escreve |
+| WORKER | os workers e o processo ao vivo | escreve no `main` sem migrar; lê o áudio em `mode=ro`, com `mmap_size` de 256 MB |
+| READONLY | sondas e leitura | só lê |
+
+## Job vigente de uma reunião
+Para a revisão, a leitura e o trecho de 5 s, vale o job `concluído` mais recente entre `meeting` e `reprocess`; sem
+concluído, o ativo. Jobs `llm` nunca contam, e tudo o que escrevem leva o `job_id` do pai.
+
+## O que a LLM lê em "perguntar à base"
+Só as visões temporárias em PT-BR de `rag/semantic.py`, numa conexão própria só de leitura (`rag/sandbox.py`). Nunca
+`providers`, `settings`, `people.email` e `notes`, `meetings.notes`, os pedidos e respostas guardados de `llm_calls`,
+`chat_*` nem o resto da lista de negação. Visão nova, ou coluna nova numa visão, entra no dicionário
+(`rag/dictionary.py`) e passa pelo teste da lista de negação.

@@ -1,38 +1,69 @@
-# specs/ — como as specs funcionam e como escrever documentos aqui
+# specs/ — como a documentação funciona
 
-Quando ler: antes de escrever ou alterar qualquer documento. Tamanho-alvo: 3,5 KB.
+Quando ler: antes de escrever ou alterar qualquer documento. Tamanho-alvo: 5 KB.
 
 ## Arquivos
-`00-handoff-v4.md` mestre do dono (só ele edita) · `01-clausulas.md` cartão CP1 a CP15 · `decisoes.md` D-nnn, perguntas
-P-nn e medições · `roadmap.md` fases e gates · `backlog.md` estado e o que fazer agora · `dados.md` modelo de dados
-canônico · `ux-melhorias.md` U-nnn · `llm-contrato.md` desenho técnico da camada de LLM (dono único; a spec F3 só diz o produto) ·
-`roteiro-teste-windows.md` o passo a passo do que só o dono testa (o estado de cada item fica no backlog) ·
-`features/F<n>-<nome>.md`
-uma spec por entrega (correções de fase aprovada: `F<n>.<m>-<nome>.md`).
+| Arquivo | Dono único de |
+| --- | --- |
+| `01-clausulas.md` | cláusulas CP1 a CP17 e o fluxo LLM + pyannote (CP11) |
+| `decisoes.md` | decisões D-nnn, perguntas abertas P-nn e medições de referência |
+| `backlog.md` | estado do projeto: pendências, perguntas ao dono, dívidas técnicas |
+| `roadmap.md` | o que vem pela frente e os gates |
+| `dados.md` | modelo de dados (tabelas, migrações, chaves de configuração) |
+| `llm-contrato.md` | desenho técnico da camada de LLM |
+| `ux-melhorias.md` | catálogo das melhorias de UX (U-nnn) |
+| `features/F<n>-<nome>.md` | uma spec por entrega |
+
+Fora desta pasta: `AGENTS.md` (regras e comandos), `ARCHITECTURE.md` (camadas, processos, logs), `CHANGELOG.md`
+(o que cada versão entregou) e `memory/` (fatos do ambiente e achados de revisão já decididos).
 
 ## Ciclo de vida de uma spec
-`rascunho` (LLM escreveu; pode ter perguntas e melhorias) → `em revisão` (ele lendo) → `aprovada` (linha "Aprovada por
-Herculano em AAAA-MM-DD"; libera código, CP13) → `implementada` (o código faz o que a spec diz; nada além) →
-`verificada` (gate medido em reunião real, anotado em `decisoes.md`). Cada transição importante fecha com commit (CP16).
-Mudou o contrato de uma spec aprovada? Volta para `em revisão` e o código espera. Condensar o texto sem mudar o contrato não reabre a aprovação (D-031).
+`rascunho` (pode ter perguntas) → `em revisão` (o dono lendo) → `aprovada` (libera o código, CP13) → `implementada`
+(o código faz o que a spec diz, e a spec é condensada). Mudou o contrato de uma spec aprovada? Ela volta para
+`em revisão` e o código espera. Reescrever o texto sem mudar o contrato não reabre a aprovação. Cada transição
+importante fecha com um commit (CP16).
 
-## Template (seções obrigatórias, nesta ordem)
-Cabeçalho: `Status · Aprovada por Herculano em · Fase e gate · CPs` e a linha `Quando ler / Tamanho-alvo`.
-`## Objetivo` (uma frase: o que o usuário consegue fazer) · `## Escopo` (itens verificáveis) · `## Fora de escopo` ·
-`## Cláusulas` (uma linha por CP envolvida: como cumpre) · `## Interface` (telas, estados, atalhos; melhorias
-`U-nnn ... incluir? sim/não`) · `## Dados` (só o que muda em relação a `dados.md`) · `## Comportamento` (passo a passo;
-erros; pausar, cancelar, perder dispositivo, ficar sem rede) · `## Aceite` (gate medido em reunião real, com número e
-como medir) · `## Riscos` (com mitigação) · `## Perguntas` (cada uma com o padrão assumido).
+## Modelo de spec nova (seções obrigatórias, nesta ordem)
+Cabeçalho: `Status · Aprovada em · CPs` e a linha `Quando ler / Tamanho-alvo`.
+| Seção | Conteúdo |
+| --- | --- |
+| `## Objetivo` | uma frase: o que o usuário consegue fazer |
+| `## Escopo` | itens verificáveis |
+| `## Fora de escopo` | o que alguém esperaria e não entra |
+| `## Cláusulas` | uma linha por CP envolvida: como a spec a cumpre |
+| `## Interface` | telas, estados, atalhos; cada melhoria como `U-nnn ... incluir? sim/não` |
+| `## Dados` | só o que muda em relação a `dados.md` |
+| `## Comportamento` | passo a passo; erros; pausar, cancelar, perder dispositivo, ficar sem rede |
+| `## Aceite` | critérios com número e como medir, em uso real |
+| `## Riscos` | cada um com a mitigação |
+| `## Perguntas` | cada uma com o padrão assumido |
 
-## Regras de escrita para leitura por IA (D-031)
-1. Dono único: cada fato mora em um arquivo; os outros citam o ID (CP, D, P, U, A, B, Q, F/G) sem repetir o texto.
-2. Cabeçalho de duas linhas: o que é, quando ler, tamanho-alvo. Orçamento conferido com `wc -c` ao fechar a sessão.
+## Modelo de spec implementada (a forma condensada, de 4 a 9 KB)
+Ao fechar a entrega, a spec é reescrita para o contrato vigente: o que uma pessoa ou LLM que nunca viu o projeto
+precisa para mexer na feature sem quebrar uma regra.
+Cabeçalho: `Status: implementada · Versão · Aprovada em · Decisões · CPs` e a linha `Quando ler / Tamanho-alvo`.
+| Seção | Conteúdo |
+| --- | --- |
+| `## Objetivo` | uma frase |
+| `## Comportamento` | o que o produto faz hoje: regras, padrões e limites com número, chaves de configuração, bordas |
+| `## Interface` | telas, estados, textos-chave, atalhos; melhorias pelo ID (U-nnn) |
+| `## Dados` | tabelas, colunas, migração e chaves de `settings` que a feature criou ou mudou |
+| `## Código` | módulos e testes principais, um por linha, com o papel |
+| `## Invariantes` | o que uma mudança futura não pode quebrar, com o motivo em uma oração |
+| `## Fora de escopo` | fronteiras que ainda valem |
+| `## Aceite` | critérios com número e como medir |
+
+Saem da spec implementada: lotes, briefing de implementação, listas de testes, perguntas já respondidas, achados de
+revisão aplicados, medições de uma sessão e qualquer estado. O histórico é o git.
+
+## Regras de escrita
+1. Dono único: cada fato mora em um arquivo; os outros citam o ID (CP, D, P, U, F) sem repetir o texto.
+2. Cabeçalho de duas linhas: o que é, quando ler e o tamanho-alvo. Confira o tamanho ao fechar a sessão.
 3. Enumeração vira tabela ou bullet de uma frase; justificativa em uma oração.
-4. Tags [fato] (fonte ou teste), [exp] (experiência) e [chute] (a medir) no lugar de frases sobre certeza.
-5. Estado atual só em `backlog.md`; nenhum outro arquivo tem seção "estado".
-6. `memory/` guarda só o que não está em spec nem em código; memória superada é apagada depois de incorporada (o git
-   guarda o histórico).
-7. Sem narrativa de sessão: histórico é `decisoes.md` mais git.
-8. Markdown puro, linhas de até 120 colunas, sem HTML nem emoji; títulos previsíveis.
-9. Critérios de aceite sempre com número; perguntas abertas sempre com padrão assumido.
-10. Orçamentos: T0 (AGENTS, cláusulas, backlog) até 12 KB somados; spec de fase até 8 KB; `decisoes.md` até 8 KB.
+4. Marque a certeza: [fato] (fonte ou teste), [exp] (experiência), [chute] (a medir).
+5. Estado só em `backlog.md`. Nenhum outro arquivo diz o que falta fazer ou verificar.
+6. Sem narrativa de sessão: nada de "hoje", de quem implementou, de hash de commit ou de ordem de trabalho.
+7. `memory/` guarda só o que não está em spec nem em código; o que foi superado é apagado.
+8. Markdown puro: sem HTML e sem emoji; prosa com até 120 colunas (linha de tabela pode passar); títulos previsíveis.
+9. Critério de aceite sempre com número; pergunta aberta sempre com o padrão assumido.
+10. Português do Brasil correto e direto; identificadores, caminhos e chaves como estão no código.
