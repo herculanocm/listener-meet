@@ -68,7 +68,7 @@ outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o
 | U-062 | Widget: mudo = microfone cortado; L, R e ao vivo com ícone; apagado salvando; hora h:mm:ss | Widget | F5.4 |
 | U-063 | Medidor com trilho nos dois temas e zonas: verde até -18 dBFS, âmbar até -6, vermelho acima | Widget | F5.4 |
 | U-064 | Dispositivos: atual com marca, nome e tipo em duas linhas, Novo em selo, resultado em faixa | Painel | F5.4 |
-| U-065 | Antes de gravar em duas colunas (Áudio; Reunião), até 984 × 600 px | Warm-up | F5.4 |
+| U-065 | Antes de gravar em duas colunas (Áudio; Reunião) | Warm-up | F5.4 |
 | U-066 | Antes de gravar: falta de chave em faixa no rodapé, ao lado de Gravar (primário com ícone) | Warm-up | F5.4 |
 | U-067 | Fontes com medidor próprio por linha e Reunião em selo; sala e ao vivo numa linha Opções | Warm-up | F5.4 |
 | U-068 | Marcador e avisos no tema, com ícone do tipo além da faixa e fechar de 32 × 32 px | Avisos | F5.4 |

@@ -13,7 +13,9 @@ que muda. A verdade executável está em `listener/store/schema.py` e `core.py`.
   de log (D-033).
 
 ## Tabelas
-A coluna "Esquema" diz a versão do `main` em que a tabela mudou pela última vez.
+A coluna "Esquema" diz a versão do `main` em que a tabela mudou pela última vez. Quase toda tabela tem também
+`created_at` ou `updated_at`; `schema_migrations` guarda as migrações aplicadas em cada arquivo. Tabelas e colunas
+conferidas contra um banco novo na v11.
 | Tabela | Arquivo | Colunas principais | Feature | Esquema |
 | --- | --- | --- | --- | --- |
 | settings | main | key PK, value, scope (`now` ou `next_recording`), updated_at | F1 | v1 |

@@ -19,7 +19,7 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
                                                     da busca local (`rag`, F5.1), progresso em linhas JSON
   --hf-check [--db DIR]                             testa o token do Hugging Face lido do stdin (F5.11, A-29): o "Testar"
                                                     das Chaves de acesso e do assistente; o resultado numa linha JSON
-  --downgrade DIR VERSAO                            volta o banco principal até a versão dada (F5.10: só a v9 tem volta),
+  --downgrade DIR VERSAO                            volta o banco principal até a versão dada (F5.10),
                                                     com o app fechado; imprime as versões desfeitas numa linha JSON
 """
 from __future__ import annotations

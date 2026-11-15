@@ -2,7 +2,9 @@
 
 Quando ler: ao mexer em produto ou arquitetura, ou quando o código ou uma spec citar um `D-nnn`. Cada linha diz a regra
 que vale hoje e o motivo; o detalhe de cada entrega está na spec da feature. Decisão superada continua na tabela, para
-o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por delegação (D-064). Tamanho-alvo: 30 KB.
+o ID resolver. D-104 a D-107 pertencem ao branch `claude/speakers-search-typeahead-a2d9ae` (F5.23 e F5.24), ainda não
+integrado à `main` (`backlog.md`). "Quem": o dono decide o produto; a LLM decide por medida ou por delegação (D-064).
+Tamanho-alvo: 30 KB.
 
 ## Decisões
 | # | Quem | Decisão vigente | Motivo |
@@ -13,7 +15,7 @@ o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por d
 | D-004 | dono | o mudo global muta o microfone no sistema (o app de reunião também silencia) e grava silêncio | é o único mudo visível sem API de plataforma (CP4) |
 | D-005 | dono | legenda ao vivo leve: VAD e Whisper em janelas, 5 a 10 s de atraso, nome por embedding como melhor esforço; a passagem final a substitui | diarização e transcrição completas são em lote, e a CPU é dividida |
 | D-006 | dono | repositório recomeçado do zero em spec-driven; o protótipo anterior foi apagado | "não quero guardar lixo" |
-| D-007 | dono | superada pela D-104 (o handoff v4 como documento mestre) | |
+| D-007 | dono | superada pela D-108 (o handoff v4 como documento mestre) | |
 | D-008 | LLM | identificação por embedding do pyannote e cosseno: limiar 0,60, margem 0,05, calibração por perfil (referências por pessoa desde a D-087) | a identificação pronta da pyannoteAI é paga; CP5 |
 | D-009 | dono | embeddings da busca: `gemini-embedding-001` em 768 dimensões por padrão; modelo e dimensão gravados por vetor; reindexar ao trocar | CP2 |
 | D-010 | dono | reunião detectada pelas sessões de áudio do sistema; o app nunca grava sozinho (o aviso é o da D-065) | sessão de áudio é do sistema, não da plataforma (CP4) |
@@ -37,7 +39,7 @@ o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por d
 | D-028 | dono | timestamps por palavra do faster-whisper como padrão; wav2vec2 como opção de alta precisão | o alinhamento wav2vec2 custava mais que a transcrição |
 | D-029 | dono | assistente de primeira abertura; o usuário escolhe a pasta do banco, e só o ponteiro `db-location.json` fica fora do SQLite | |
 | D-030 | dono | CP15: open source e multiplataforma como cláusula (eleva D-026 e D-027) | |
-| D-031 | dono | documentação compacta para leitura por LLM, com regras em `specs/README.md` (revista pela D-104) | arquivos grandes estouravam o limite de leitura |
+| D-031 | dono | documentação compacta para leitura por LLM, com regras em `specs/README.md` (revista pela D-108) | arquivos grandes estouravam o limite de leitura |
 | D-032 | dono | git reiniciado limpo em 2026-10-24 | "não quero guardar lixo" |
 | D-033 | dono | log em arquivo rotativo escolhido pelo usuário, com nível editável; exceção explícita à CP9 | diagnóstico legível fora do app, vivo mesmo com o banco em falha |
 | D-034 | dono | licença MIT | |
@@ -50,7 +52,7 @@ o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por d
 | D-041 | dono | F2: diarizar e identificar antes de transcrever; o worker termina a fila com o app fechado; o perfil do usuário é reforçado pelo canal L só depois de uma confirmação; participantes esperados desempatam abaixo de 0,05 de margem; processamento aceito até 2× a duração | |
 | D-042 | LLM | janela da diarização de 1.200 s por padrão (`pipeline.diar_window_s`, de 300 a 7.200), costurada por centroide e tempo | janela menor devolve a CPU mais cedo |
 | D-043 | dono | F3: alerta de custo de US$ 2 por reunião; segunda opinião por áudio desligada por padrão; "gerar de novo" pela fila, no worker leve; reprocessar mantém a ata antiga; pedido e resposta guardados no banco | desenho em `llm-contrato.md` |
-| D-044 | dono | F4: ao vivo ligado por padrão com 8 núcleos ou mais; nomes ao vivo ligados; `small` com `base` na degradação; a janela "Ao vivo" não abre sozinha; o parcial conta no alerta de custo e para primeiro; processo `--live` com pipes | |
+| D-044 | dono | F4: ao vivo ligado por padrão com 8 núcleos ou mais; nomes ao vivo ligados; `small` com `base` na degradação; a janela "Ao vivo" não abre sozinha; o resumo parcial é escolha da gravação (`live.partial`, desligado por padrão) e divide o teto de custo com as sugestões; processo `--live` com pipes | |
 | D-045 | dono | o Windows é o propósito do app: a sessão começa conferindo o ambiente; o que é feito no Linux só vale depois de verificado no Windows, e a pendência vai para o backlog | o que faltava rodar no Windows se perdia entre sessões |
 | D-046 | dono | superada pela D-090 (verificação no Windows adiada) | |
 | D-047 | dono | F5: índice automático com custo visível; ata e ações na busca; conversas guardadas; legendas ao vivo fora do índice; reunião aberta no lugar da janela de transcrição; chat global no modelo rápido | |
@@ -63,7 +65,7 @@ o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por d
 | D-054 | dono | o assistente pede a LLM, a chave e o token do Hugging Face logo depois da pasta do banco, tudo opcional (U-038); com o Claude, a busca por sentido fica na local | |
 | D-055 | dono | a captura do app soma a raiz com as sessões de áudio mais fundas (`capture/mixer.py`); a revisão só abre sozinha com voz a confirmar; padrões do Gemini: `gemini-3.8-flash` e `gemini-3.1-pro-preview`, com orçamento de raciocínio | o loopback de processo pega só os filhos diretos, e o Teams toca num WebView2 neto; o Gemini 2.5 dá 404 para conta nova |
 | D-056 | dono | os workers nascem só com `CREATE_NO_WINDOW`, sem `DETACHED_PROCESS`; o custo cai na família de preço (`price_ref`) quando o modelo não tem linha própria; nome de pessoa e texto falado ficam fora do log | o `DETACHED_PROCESS` abria uma janela preta por worker, que, fechada, matava o worker sem rastro |
-| D-057 | dono | F5.2: ficha da pessoa com nome obrigatório e cargo, empresa e e-mail opcionais; o e-mail fica só local, fora da LLM e da busca; a ata espera as vozes, com "Gerar ata mesmo assim"; os dispositivos se atualizam sozinhos, sem trocar o microfone escolhido | |
+| D-057 | dono | F5.2: ficha da pessoa com nome obrigatório e cargo, empresa e e-mail opcionais; o e-mail fica só local, fora da LLM e da busca; o pedido de ata pode esperar todas as vozes terem nome (D-063); os dispositivos se atualizam sozinhos, sem trocar o microfone escolhido | |
 | D-058 | LLM | o worker tem um vigia no laço do asyncio: parado por 120 s, grava o traceback de todas as threads e sai; o app o relança, e o job é retomado | uma chamada nativa presa (verificação de certificado) parava a fila para sempre |
 | D-059 | dono | convenção de logs em `ARCHITECTURE.md`: níveis, categoria por módulo, sem dado pessoal | o log precisa contar a história sozinho |
 | D-060 | dono | F5.3: o idioma é escolhido por reunião (pt-BR ou en; padrão nas Configurações, escolha no "Antes de gravar", troca com reprocessamento), sem detecção; avisos do próprio app, fora da captura; microfone e saída trocados durante a gravação | a detecção errava e dobrava o custo da legenda; o "Não perturbe" esconde o balão do Windows |
@@ -110,13 +112,13 @@ o ID resolver. "Quem": o dono decide o produto; a LLM decide por medida ou por d
 | D-101 | LLM | F5.20: desvios e achados da implementação, incorporados à spec | |
 | D-102 | dono | F5.21: a tela nas sugestões. A captura a pedido cabe na CP4; o alvo padrão é a janela da reunião; as janelas por cima saem pretas; confirmação na primeira vez por provedor; "[tela]" no lugar de "sem evidência" | pedido do dono |
 | D-103 | LLM | F5.21: desvios e achados da implementação, incorporados à spec (a tela vazia decide pelo miolo escuro; a reunião coberta em 80 % ou mais não vai; a escolha do alvo roda na tarefa do pedido) | |
-| D-104 | dono | 2026-11-15: documentação reestruturada. O handoff v4 foi apagado: as cláusulas e o fluxo da CP11 moram em `01-clausulas.md`. Specs implementadas condensadas ao contrato vigente. Apagados o roteiro de teste no Windows, as specs de preparo e de correção (F0, F1.1, F1.2, F3.1), `memory/README.md` e `memory/dono.md` (incorporado ao `AGENTS.md`). `CHANGELOG.md` criado | documentação enxuta, no padrão de mercado, para qualquer LLM ler e programar |
+| D-108 | dono | 2026-11-15: documentação reestruturada. O handoff v4 foi apagado: as cláusulas e o fluxo da CP11 moram em `01-clausulas.md`. Specs implementadas condensadas ao contrato vigente. Apagados o roteiro de teste no Windows, as specs de preparo e de correção (F0, F1.1, F1.2, F3.1), `memory/README.md` e `memory/dono.md` (incorporado ao `AGENTS.md`). `CHANGELOG.md` criado | documentação enxuta, no padrão de mercado, para qualquer LLM ler e programar |
+| D-109 | dono | 2026-11-15: o código é a referência. Onde uma spec ou outro documento diverge do código, o documento é ajustado ao código; texto desatualizado no código é apagado. O que está suspenso sai do repositório: a spec F5.22 (GPU quando houver) foi apagada, e a CP14 segue como está. A licença segue MIT, com o alerta do `libx264` (GPL) no README | repositório limpo; o código implementado é a verdade |
 
 ## Em aberto (o padrão vale enquanto não há resposta)
 | # | Pergunta | Padrão |
 | --- | --- | --- |
 | P22 | corrigir a deriva de relógio entre os canais | só medir; vira spec se uma reunião mostrar mais de 100 ms por hora |
-| P24 | F5.22: emendar a CP14 e implementar a GPU NVIDIA opcional. O dono suspendeu a implementação em 2026-11-08 | sim, no escopo mínimo, quando ele decidir; até lá, nada muda e a CP14 vale |
 
 ## Medições de referência
 Máquina: Windows 11, Intel Core Ultra 5 235U (12 núcleos, 14 threads, 2 de desempenho), 31,5 GB de RAM, sem GPU
@@ -149,4 +151,4 @@ dedicada, torch 2.8 de CPU. Todas são [fato] medido entre 2026-10-24 e 2026-11-
 | Dispositivos | reiniciar o PortAudio: 57 a 84 ms; trocar o microfone: ~300 ms, sem silêncio | F5.3 |
 | Exportação, reunião de 55 min | MP3 em 10 s (17 MB); MP4 em 62 s (49 MB) | F5.19 |
 | Suíte de testes | rápida ~62 s; inteira ~140 s com `-n 4 --dist loadgroup` (em série, 287 s) | D-091, D-093 |
-| GPU | só a Intel integrada e a NPU; sem NVIDIA, sem CUDA; nada da stack as usa | F5.22 suspensa |
+| GPU | só a Intel integrada e a NPU; sem NVIDIA, sem CUDA; nada da stack travada as usa. Só uma NVIDIA com CUDA 12 aceleraria sem trocar de motor, e um `.exe` com CUDA passaria de 5 GB | o app segue só em CPU (CP14) |

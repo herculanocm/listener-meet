@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "listener-meet"
 dynamic = ["version"]
-description = "Gravador de reuniões (qualquer app) com identificação por perfil de voz, transcrição local, ata por LLM agnóstica e base consultável. Código aberto. Documento mestre: specs/00-handoff-v4.md."
+description = "Gravador de reuniões (qualquer app) com identificação por perfil de voz, transcrição local, ata por LLM agnóstica e base consultável. Código aberto."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = {text = "MIT"}

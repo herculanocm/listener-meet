@@ -108,4 +108,8 @@ Testes (qualquer sistema, com a plataforma simulada): `python -m pytest -q` roda
 precisa da `libportaudio2`.
 
 ## Licença
-MIT ([LICENSE](LICENSE)).
+O código deste repositório é MIT ([LICENSE](LICENSE)).
+
+Atenção ao distribuir o executável: o pacote gerado leva bibliotecas de terceiros, cada uma com a própria licença.
+Em especial, o FFmpeg que vem com o PyAV traz o `libx264`, que é GPL: quem redistribui o `.exe` ou o zip precisa
+cumprir também essa licença.

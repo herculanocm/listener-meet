@@ -5,14 +5,18 @@ Tamanho-alvo: 12 KB.
 
 ## Estado (2026-11-15)
 - Versão 0.14.0, esquema do banco v11. F1 a F5.21 implementadas (`CHANGELOG.md`); F6 é rascunho e F7 é futuro.
-- F5.22 (GPU quando houver) está em revisão, com a implementação suspensa pelo dono em 08/11: nenhum código até a
-  decisão dele (P24). A CP14 vale como está.
+- **Atenção: há trabalho fora da `main`.** O branch `claude/speakers-search-typeahead-a2d9ae` (15 commits, de 13 a
+  15/11) tem a F5.23 (busca ao escolher a pessoa na revisão) e a F5.24 (remoção da legenda ao vivo, da bandeja de
+  legendas, do resumo parcial e das sugestões ao vivo; D-104 a D-107) implementadas e ainda não integradas. Esta
+  documentação descreve o código da `main`. Integrar o branch pede refazer os documentos das features removidas.
+- O código é a referência (D-109): documento que diverge do código é ajustado ao código.
 - O `.exe` 0.14.0 e o zip foram gerados em 08/11. A sonda `--probe` e o push são do dono.
 - Sem CI (D-090): os testes rodam na máquina, antes de cada commit.
-- Documentação reestruturada em 15/11 (D-104): specs implementadas condensadas, handoff e roteiro de teste apagados.
+- Documentação reestruturada em 15/11 (D-108): specs implementadas condensadas, handoff e roteiro de teste apagados.
+  A spec F5.22 (GPU), que estava suspensa, foi apagada (D-109); a CP14 vale como está.
 
 ## Próximos passos
-1. O dono decide a F5.22 (as perguntas estão na spec; o padrão é implementar o escopo mínimo).
+1. O dono decide a integração do branch da F5.23 e da F5.24 à `main`.
 2. O dono confere no uso real o que está em "Verificar no Windows".
 3. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
 
@@ -44,18 +48,11 @@ só o Windows confirma.
 - **`.exe` 0.14.0**: a sonda `--probe`.
 
 ## Perguntas abertas ao dono (o padrão entre parênteses só vale com a resposta dele)
-- F5.22: implementar ou não, e as perguntas da spec, com a emenda da CP14 (padrão: sim, no escopo mínimo; P24).
 - F5.21: as miniaturas da aba "Sugestões" ficam na janela da reunião, que aparece na captura quando é compartilhada
   (padrão: ficam, como o resto da reunião; a cópia maior abre fora da captura).
 - F5.19: o .docx loga o caminho inteiro do arquivo salvo, contra a regra de privacidade do log (D-053); o .md e a
   exportação de mídia logam só a pasta (padrão: alinhar o .docx).
 - Limpeza: apagar o venv antigo do preparo (F0) e as duas entradas vazias no cache do Hugging Face (padrão: apagar).
-- Textos desatualizados no código, achados na revisão da documentação de 15/11 (padrão: corrigir; mexer em código
-  pede o OK dele, CP13): a docstring de `listener/__init__.py`, a `description` do `pyproject.toml` e a docstring de
-  `scripts/medir.py` citam documentos apagados; a ajuda do `--downgrade` em `__main__.py` diz que só a v9 tem volta
-  (v10 e v11 também têm); a docstring de `rag/sandbox.py` diz 10.000 instruções (a constante é 1.000); a de
-  `ui/history_ask.py` diz "Cancelar" (o botão é "Parar").
-- O `.exe` leva o `libx264` do PyAV, que é GPL, e o projeto é MIT (padrão: avaliar antes de distribuir o zip).
 
 ## Dívidas técnicas
 Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparecerem no uso.
@@ -102,7 +99,6 @@ Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparece
 - Dez cópias de `title or title_llm` poderiam usar `effective_title`.
 - Em "perguntar à base", cada rodada paga os resultados acumulados: o `cache_prefix` só marca a primeira mensagem.
 - A estimativa de custo da ata usa 250 tokens por minuto e 20 caracteres por fala [chute]: calibrar no banco real.
-- `pipeline/worker.py` importa o `importlib.metadata` no topo do módulo; a F5.18 o queria preguiçoso.
 - O PyAV não é declarado no `pyproject`: vem com o faster-whisper.
 
 **Interface**

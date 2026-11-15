@@ -1,4 +1,4 @@
-"""F0 — script de medição descartável (autorizado em 24/10/2026, D-022; spec specs/features/F0-preparacao.md).
+"""F0 — script de medição descartável (autorizado em 24/10/2026, D-022).
 
 Roda no venv Python 3.12 do Windows. Não faz parte do produto.
 

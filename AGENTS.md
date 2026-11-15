@@ -11,6 +11,8 @@ transcreve na própria máquina (faster-whisper), mostra legenda ao vivo, gera a
 
 ## Regras inegociáveis
 O texto completo das cláusulas (CP1 a CP17) está em `specs/01-clausulas.md`. Só o dono do projeto as altera.
+- **O código é a referência.** Para o que já está implementado, vale o código: documento que diverge dele é
+  ajustado ao código, e comentário ou docstring desatualizado é apagado (D-109).
 - **Spec antes do código (CP13).** Nenhum código, build, dependência ou script sem uma spec `aprovada` pelo dono, e só
   o que a spec diz. Documentos podem ser escritos sem autorização.
 - **Só CPU e só open source (CP14).** A única parte paga é a LLM. Dependência nova é proposta, não decisão.

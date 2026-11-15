@@ -40,33 +40,32 @@ adaptador por nome (importação preguiçosa; `llm/registry.py`, `types.py`, `sc
 importam `google`, `openai`, `anthropic`, `httpx` nem `truststore` no nível do módulo; teste estático garante). Clientes
 assíncronos vivem dentro do event loop que os criou: cada `asyncio.run()` cria e fecha o seu.
 
-O timeout é por pedido, com teto de 600 s no cliente. A resposta cortada pelo limite de saída é reenviada uma vez,
-com o teto maior (ao menos 8.192 tokens a mais, até o limite do modelo), e o uso das duas chamadas é somado.
+O timeout é por pedido, com teto de 600 s no cliente. A resposta cortada pelo limite de saída é reenviada uma vez, com o
+teto maior (ao menos 8.192 tokens a mais, até o limite do modelo), e o uso das duas chamadas é somado.
 
 ## Saída estruturada e validação (`llm/schema.py`)
 Um só esquema JSON por tarefa, escrito no subconjunto estrito aceito pelos três SDKs: `additionalProperties: false`,
 todas as chaves em `required`, nulo como união `["string", "null"]`, sem `format`, `minLength` nem `pattern`. Tradução:
 Gemini `response_mime_type = application/json` + esquema de resposta; OpenAI formato `json_schema` estrito; Anthropic,
 por família (F5.14): `output_config.format` com o esquema sem as chaves de `PROVIDER_SOFT_KEYS`, e ferramenta forçada
-com `input_schema` (resposta em `content[].input`) só nas que não aceitam a saída estruturada (Opus 4.7 e 4.6, Sonnet
-4.6, 4.5 e 4; o Opus 5.5 e o Sonnet 5.5 recusam a ferramenta forçada). Validação sempre do projeto (~120 linhas):
-`type`, `required`, `enum`, `maxLength`, `items`, união com nulo, coerção int/float, erro com caminho; dataclass
-`frozen, slots` montada do dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte (o pydantic
-vem com os SDKs, mas o projeto não depende dele). O hash do esquema (`schema_hash`) vai para `llm_calls`, sem versão
-própria por tarefa.
+com `input_schema` (resposta em `content[].input`) só nas famílias que não aceitam a saída estruturada (a tabela por
+família está em `llm/models_table.py`). Validação sempre do projeto (~120 linhas): `type`, `required`, `enum`,
+`maxLength`, `items`, união com nulo, coerção int/float, erro com caminho; dataclass `frozen, slots` montada do
+dicionário validado. Sem pydantic nem msgspec no código do projeto nem na suíte (o pydantic vem com os SDKs, mas o
+projeto não depende dele). O hash do esquema (`schema_hash`) vai para `llm_calls`, sem versão própria por tarefa.
 
 ## Prompts (`llm/prompts/<task>.py`)
-`PROMPT_VERSION = "2.0"`, `SCHEMA`, `INSTRUCTIONS` (editáveis na página Prompts, F5.6) e `CONTRACT` (fixo, por último no
-texto de sistema), `build(ctx, instructions=None) -> tuple[Message, ...]`; com instruções do usuário, a versão gravada
-leva `+u<hash>` do texto. Instruções e contrato em pt-BR, o idioma padrão do app (D-071), com o idioma da reunião
-injetado como instrução de idioma e `{idioma}` trocado pelo nome do idioma em português ("português do Brasil",
+`PROMPT_VERSION` (uma por módulo), `SCHEMA`, `INSTRUCTIONS` (editáveis na página Prompts, F5.6) e `CONTRACT` (fixo, por
+último no texto de sistema), `build(ctx, instructions=None) -> tuple[Message, ...]`; com instruções do usuário, a versão
+gravada leva `+u<hash>` do texto. Instruções e contrato em pt-BR, o idioma padrão do app (D-071), com o idioma da
+reunião injetado como instrução de idioma e `{idioma}` trocado pelo nome do idioma em português ("português do Brasil",
 "inglês"); glossário, nomes próprios e siglas nunca traduzidos; `summaries.prompt_version` e `llm_calls.prompt_version`
 gravam `"minutes/2.0"`; mudar o texto do prompt sobe a versão (regra de revisão de diff) e a cópia congelada
-`tests/data/prompts_ptbr.json` é gerada de novo. Classe por tarefa (`TASK_CLASS`): rápido = glossary, title,
-pre_summary, revise, transcribe, chat; forte = identify, minutes, executive. `Reasoning.NONE` no rápido (Gemini Flash
-com orçamento de pensamento zero), `LOW` no forte. No Claude (F5.14), o pensamento adaptativo com o esforço `low`
-(NONE), `medium` (LOW) ou `high` (HIGH), trocável por classe nos Parâmetros (`effort_fast`, `effort_strong`), e o
-`max_tokens` com a folga do pensamento; nas famílias antigas, o `budget_tokens`.
+`tests/data/prompts_ptbr.json` é gerada de novo. Classe por tarefa (`TASK_CLASS`, em `llm/types.py`): forte = identify,
+minutes, executive; todas as outras, rápido. `Reasoning.NONE` no rápido (Gemini Flash com orçamento de pensamento zero),
+`LOW` no forte. No Claude (F5.14), o pensamento adaptativo com o esforço `low` (NONE), `medium` (LOW) ou `high` (HIGH),
+trocável por classe nos Parâmetros (`effort_fast`, `effort_strong`), e o `max_tokens` com a folga do pensamento; nas
+famílias antigas, o `budget_tokens`.
 
 ## Esquemas (resumo; o dicionário completo fica no módulo da tarefa)
 - `identify`: por cluster `{cluster, person_id | null, new_name | null, confidence 0..1, evidence: [{segment_id,
@@ -84,7 +83,8 @@ com orçamento de pensamento zero), `LOW` no forte. No Claude (F5.14), o pensame
 - `transcribe` (LLMAudioTranscriber): `{language, utterances: [{start_s, end_s, text}]}` relativo ao início da janela.
 - `chat`: texto livre com `[mm:ss]` da transcrição enviada; o projeto reescreve cada `[mm:ss]` para o segmento mais
   próximo (≤ 5 s) ou remove o link, nunca a citação.
-- `rag_chat` (F5, chat global, rápido): trechos de até `rag.top_k` por reunião com apelido (`[R1] título — data —
+- `rag_chat` (F5, chat global, rápido; desde a F5.10 a aba de perguntas usa o agente de `rag_sql` e `rag_answer`, e este
+  prompt só é exercitado pelos testes): trechos de até `rag.top_k` por reunião com apelido (`[R1] título — data —
   participantes`, linhas `#segment_id [mm:ss] Nome — Cargo: texto` dos segmentos vigentes); a resposta cita `[R1 12:03]`
   e o projeto liga à reunião e à linha enviada mais próxima (≤ 5 s); o histórico volta ao prompt sem apelidos.
 - `suggest` (F5.20): `{options: [{kind, text, facts: [caption_id]}], thread_summary}` em streaming, lido opção a opção

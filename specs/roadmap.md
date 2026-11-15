@@ -11,7 +11,6 @@ no Windows, sem os números (D-090). Da F5.16 em diante, o aceite de cada spec �
 ## Próximas entregas
 | Fase | Entrega | Gate, medido em uso real | Esforço |
 | --- | --- | --- | --- |
-| F5.22 GPU quando houver | o adaptador detectado; `pipeline.device` e `live.device` (auto, CPU, GPU) com queda para CPU; o lock `windows-gpu.txt` só no venv; o `.exe` segue só CPU. Pede a emenda da CP14 e a decisão do dono (P24) | sem CUDA, nenhuma regressão; numa NVIDIA, pós-reunião em até 0,25× a duração e ao vivo com p95 de até 6 s [chute] | 3 a 4 d |
 | F6 Telas completas | janela principal (Gravar, Histórico, Perfis, Configurações); tela de Perfis (criar de um trecho, mesclar, separar, vozes desconhecidas); todo o CP8 editável em uso; presets; tamanho do banco e backup; mover o banco; tema escolhido à mão | G6: uma semana de uso diário sem terminal; toda configuração do CP8 editável durante o uso | 7 a 10 d |
 | F7 Linux e macOS | adaptadores em `listener/platform/linux/` e `macos/` e o empacotamento por sistema (CP15) | G7: os testes da plataforma simulada passam nos três sistemas; uma reunião real em cada | sem estimativa |
 

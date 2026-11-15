@@ -4,7 +4,7 @@ os filtros, a conversa escolhida e os widgets da aba (`ui/history_chat.py`) e ab
 
 F5.10 (Interface, D6, D7): a pergunta vai a "Perguntar à base" (`rag.agent.run_agent`), com os filtros da aba Reuniões e o
 texto deles; durante, "Consultando a base… rodada 2 · 7 consultas" (o progresso pelo `on_progress` do `run_stream`) e
-Cancelar; na resposta, o "Como cheguei aqui" recolhido (`rag/trace.py`), que abre e fecha no clique, com "Copiar SQL" e "Ver
+Parar; na resposta, o "Como cheguei aqui" recolhido (`rag/trace.py`), que abre e fecha no clique, com "Copiar SQL" e "Ver
 dados" (U-097, `ui/ask_data.py`, a consulta refeita numa `Task`); no estado vazio, sugestões como links
 `listener://ask?q=` (U-096). O log leva o tamanho da pergunta e a conversa, nunca o texto."""
 from __future__ import annotations
@@ -246,7 +246,7 @@ class AskMixin:
 
     def _answered_away(self, ok: bool) -> None:
         """F5.3 (A-12): terminou com o Histórico fora de foco (o usuário foi para outro app ou o escondeu: a pergunta segue e
-        grava): o controlador avisa. Parada pelo usuário ("Cancelar"), não."""
+        grava): o controlador avisa. Parada pelo usuário, não."""
         if self.on_answer is not None and not self._chat_stopped and not cast(QWidget, self).window().isActiveWindow():
             self.on_answer(ok)
 

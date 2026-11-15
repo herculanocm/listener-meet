@@ -2,7 +2,7 @@
 `mode=ro` (o `Store(READONLY)` anexaria o áudio). A ordem é a provada no venv (SQLite 3.49.1): os limites do SQLite (`LIMITS`)
 -> `temp_store = MEMORY` -> `BEGIN`, quem abre cria e preenche as tabelas e visões TEMP (`fill`), `COMMIT` -> `query_only = 1`
 (ele bloqueia o TEMP também: por isso depois) -> as dependências de cada visão, gravadas com `SELECT * … LIMIT 0` -> o
-autorizador (`Policy`). O prazo de cada consulta é um progress handler a cada 10.000 instruções.
+autorizador (`Policy`). O prazo de cada consulta é um progress handler (`PROGRESS_STEPS`).
 
 O autorizador é uma lista de permissão: SELECT, READ, FUNCTION (só as de `FUNCTIONS`), RECURSIVE e o `PRAGMA data_version`
 sem argumento (o FTS5 o roda por dentro); tudo o mais é negado (escrita, ATTACH, PRAGMA, transação). Ler o `main` só no

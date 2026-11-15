@@ -57,6 +57,8 @@ Saem da spec implementada: lotes, briefing de implementação, listas de testes,
 revisão aplicados, medições de uma sessão e qualquer estado. O histórico é o git.
 
 ## Regras de escrita
+O código é a referência do que está implementado (D-109): ao achar uma divergência, ajuste o documento ao código.
+A spec vem antes do código só para o que ainda vai ser feito (CP13).
 1. Dono único: cada fato mora em um arquivo; os outros citam o ID (CP, D, P, U, F) sem repetir o texto.
 2. Cabeçalho de duas linhas: o que é, quando ler e o tamanho-alvo. Confira o tamanho ao fechar a sessão.
 3. Enumeração vira tabela ou bullet de uma frase; justificativa em uma oração.
