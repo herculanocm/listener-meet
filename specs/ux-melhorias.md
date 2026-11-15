@@ -3,7 +3,7 @@
 Quando ler: ao escrever a spec de uma feature, ou quando o código citar um `U-nnn`. É o catálogo das melhorias de
 interface aprovadas pelo dono (CP12). A coluna "Entrega" diz a feature ou a decisão que implementou cada uma; sem
 outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o próximo número e, na spec, como pergunta
-"incluir? sim/não". Os números que faltam na sequência não foram usados. Tamanho-alvo: 24 KB.
+"incluir? sim/não". Os números que faltam na sequência não foram usados. Tamanho-alvo: 25 KB.
 
 | # | Melhoria | Onde | Entrega |
 | --- | --- | --- | --- |
@@ -174,3 +174,10 @@ outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o
 | U-168 | A confirmação em linha no cartão na primeira vez com cada provedor, sem janela: "A imagem da tela vai para o <provedor>. Mandar · Agora não" | Bandeja | F5.21 |
 | U-169 | "[tela]" nos fatos da opção que usou a tela, ao lado dos [mm:ss], e no lugar de "sem evidência" | Bandeja | F5.21 |
 | U-170 | A miniatura da tela enviada no chat da bandeja, no ponto do tempo, como um anexo seu entre as falas; o clique abre maior numa janela sem foco e fora da captura; o selo "com a tela" do cartão rola o chat até ela | Bandeja | F5.21 |
+| U-171 | "Outra pessoa" com busca: o campo nasce com o foco e a lista filtra a cada tecla por nome, cargo e empresa, sem acento e sem maiúscula; setas e Enter resolvem sem o mouse | Revisão | F5.25, a implementar |
+| U-172 | Busca sem ninguém: "Nova pessoa "texto"…" abre a ficha com o nome preenchido, e o Enter a aciona | Revisão | F5.25, a implementar |
+| U-173 | A nota da voz em percentual ("58 %") em toda linha de quem tem perfil no "Outra pessoa", alinhada à direita | Revisão | F5.25, a implementar |
+| U-174 | "Outra pessoa" em seções com o campo vazio: "Pela voz", "Esperadas nesta reunião" e "Todas", cada pessoa uma vez; "já na Voz N" em quem já foi decidido noutra voz | Revisão | F5.25, a implementar |
+| U-175 | Busca sem resultado mostra até 3 "Nomes parecidos" antes de oferecer a pessoa nova (erro de digitação) | Revisão | F5.25, a implementar |
+| U-176 | Enter seguro no "Outra pessoa": com o campo vazio e sem linha pela voz, nada vem selecionado | Revisão | F5.25, a implementar |
+| U-177 | O cartão da voz com a nota em percentual: "(similaridade 70 %, margem 3 pontos)" | Revisão | F5.25, a implementar |

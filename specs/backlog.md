@@ -8,6 +8,8 @@ Tamanho-alvo: 12 KB.
 - A `main` é a referência. O branch `claude/speakers-search-typeahead-a2d9ae` (F5.23, busca ao escolher a pessoa
   na revisão, e F5.24, remoção da legenda ao vivo e das sugestões) foi descartado pelo dono em 15/11 (D-109): a
   legenda ao vivo, a bandeja de legendas, o resumo parcial e as sugestões ao vivo ficam no produto.
+- F5.25 (busca ao escolher a pessoa na revisão, com a nota da voz em percentual) aprovada em 15/11 (D-110), escrita
+  sobre a `main`; a implementação não começou.
 - O código é a referência (D-109): documento que diverge do código é ajustado ao código.
 - O `.exe` 0.14.0 e o zip foram gerados em 08/11. A sonda `--probe` e o push são do dono.
 - Sem CI (D-090): os testes rodam na máquina, antes de cada commit.
@@ -16,7 +18,8 @@ Tamanho-alvo: 12 KB.
 
 ## Próximos passos
 1. O dono confere no uso real o que está em "Verificar no Windows".
-2. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
+2. Implementar a F5.25 pelo fluxo do `AGENTS.md` (passos 4 e 5), em lotes pequenos, um commit por lote.
+3. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
 
 ## Verificar no Windows (uso real; os critérios e os números estão no Aceite de cada spec)
 Até a F5.15, tudo foi dado por verificado pelo uso real (D-090). Entrega feita fora do Windows acrescenta aqui o que
