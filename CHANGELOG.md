@@ -3,6 +3,12 @@
 O que cada versão entregou, da mais nova para a mais antiga. A versão mora em `listener/__init__.py`: a minor sobe a
 cada feature e a patch a cada correção (D-081). O contrato de cada feature está em `specs/features/`.
 
+## 0.15.0 (2026-11-15)
+- F5.25: "Outra pessoa" com busca na revisão de vozes. Filtra por nome, cargo e empresa a cada tecla, sem acento;
+  mostra a nota da voz em percentual em toda linha; a lista vem em seções ("Pela voz", "Esperadas nesta reunião",
+  "Todas"); um erro de digitação traz nomes parecidos; sem ninguém, "Nova pessoa" abre a ficha com o nome digitado.
+  O cartão da voz diz "similaridade 70 %, margem 3 pontos".
+
 ## 0.14.0 (2026-11-08)
 - F5.21: a tela nas sugestões ao vivo. O print da janela da reunião (ou de um monitor) vai junto com as legendas, a
   pedido; a miniatura aparece no chat da bandeja de legendas e na aba "Sugestões" da reunião.

@@ -75,6 +75,10 @@ as chamadas sem reunião.
   10 esquemas depois do `provider_schema`; o `stream` com `betas` e `fallbacks`; a soma das partes do fallback; o
   `translate_error` com os erros dos três provedores; as sementes de preço idempotentes ao abrir; a chave e o conteúdo
   fora do log; nenhum parâmetro de amostragem enviado.
+- **Busca ao escolher a pessoa (F5.25):** a escolha pelo id da linha; o Enter sem linha selecionada (também depois do
+  clique no título ou do Ctrl+clique); o `deleteLater` no `finally` com o `exec` aninhado na saída; o filtro de tecla
+  pelo `__dict__`; nada persiste; o log sem nome nem texto digitado. Aceitos, como na caixa de antes: o polling que
+  recarrega a revisão com a janela aberta e o Enter segurado que confirma a voz seguinte.
 
 ## Vistos e deixados de fora
 Sem efeito no uso, ou decisão de UX: código morto e duplicado; arquivos acima de 400 linhas (dividir ao mexer); SQL

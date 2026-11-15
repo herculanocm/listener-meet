@@ -139,7 +139,7 @@ outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o
 | U-133 | O menu da bandeja mostra o atalho global ao lado de cada item que tem um | Bandeja | F5.13 |
 | U-134 | O aviso do envio nomeia o provedor (Gemini, OpenAI, Anthropic) e aparece também no assistente | LLM, Assistente | F5.14 |
 | U-135 | Com o Claude ativo para texto, uma linha diz que a busca por sentido segue com o ativo para embeddings | LLM | F5.14 |
-| U-136 | "Outra pessoa…" traz no topo as 3 pessoas mais parecidas com a voz, com a nota; depois, a ordem alfabética | Revisão | F5.15 |
+| U-136 | "Outra pessoa…" traz no topo as 3 pessoas mais parecidas com a voz, com a nota; depois, a ordem alfabética (desde a F5.25, a seção "Pela voz") | Revisão | F5.15 |
 | U-137 | A cada confirmação, as vozes pendentes da reunião refazem a sugestão pela voz com o perfil novo | Revisão | F5.15 |
 | U-138 | A linha do U-101 diz se a voz cabe numa referência da pessoa ou cria uma nova, e o total depois | Revisão | F5.15 |
 | U-139 | Sem o token do Hugging Face, a reunião aberta e a fila dizem que falta quem falou no R e como resolver (o token e Reprocessar) | Reunião, Fila | F5.16 |
@@ -174,10 +174,10 @@ outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o
 | U-168 | A confirmação em linha no cartão na primeira vez com cada provedor, sem janela: "A imagem da tela vai para o <provedor>. Mandar · Agora não" | Bandeja | F5.21 |
 | U-169 | "[tela]" nos fatos da opção que usou a tela, ao lado dos [mm:ss], e no lugar de "sem evidência" | Bandeja | F5.21 |
 | U-170 | A miniatura da tela enviada no chat da bandeja, no ponto do tempo, como um anexo seu entre as falas; o clique abre maior numa janela sem foco e fora da captura; o selo "com a tela" do cartão rola o chat até ela | Bandeja | F5.21 |
-| U-171 | "Outra pessoa" com busca: o campo nasce com o foco e a lista filtra a cada tecla por nome, cargo e empresa, sem acento e sem maiúscula; setas e Enter resolvem sem o mouse | Revisão | F5.25, a implementar |
-| U-172 | Busca sem ninguém: "Nova pessoa "texto"…" abre a ficha com o nome preenchido, e o Enter a aciona | Revisão | F5.25, a implementar |
-| U-173 | A nota da voz em percentual ("58 %") em toda linha de quem tem perfil no "Outra pessoa", alinhada à direita | Revisão | F5.25, a implementar |
-| U-174 | "Outra pessoa" em seções com o campo vazio: "Pela voz", "Esperadas nesta reunião" e "Todas", cada pessoa uma vez; "já na Voz N" em quem já foi decidido noutra voz | Revisão | F5.25, a implementar |
-| U-175 | Busca sem resultado mostra até 3 "Nomes parecidos" antes de oferecer a pessoa nova (erro de digitação) | Revisão | F5.25, a implementar |
-| U-176 | Enter seguro no "Outra pessoa": com o campo vazio e sem linha pela voz, nada vem selecionado | Revisão | F5.25, a implementar |
-| U-177 | O cartão da voz com a nota em percentual: "(similaridade 70 %, margem 3 pontos)" | Revisão | F5.25, a implementar |
+| U-171 | "Outra pessoa" com busca: o campo nasce com o foco e a lista filtra a cada tecla por nome, cargo e empresa, sem acento e sem maiúscula; setas e Enter resolvem sem o mouse | Revisão | F5.25 |
+| U-172 | Busca sem ninguém: "Nova pessoa "texto"…" abre a ficha com o nome preenchido, e o Enter a aciona | Revisão | F5.25 |
+| U-173 | A nota da voz em percentual ("58 %") em toda linha de quem tem perfil no "Outra pessoa", alinhada à direita | Revisão | F5.25 |
+| U-174 | "Outra pessoa" em seções com o campo vazio: "Pela voz", "Esperadas nesta reunião" e "Todas", cada pessoa uma vez; "já na Voz N" em quem já foi decidido noutra voz | Revisão | F5.25 |
+| U-175 | Busca sem resultado mostra até 3 "Nomes parecidos" antes de oferecer a pessoa nova (erro de digitação) | Revisão | F5.25 |
+| U-176 | Enter seguro no "Outra pessoa": com o campo vazio e sem linha pela voz, nada vem selecionado | Revisão | F5.25 |
+| U-177 | O cartão da voz com a nota em percentual: "(similaridade 70 %, margem 3 pontos)" | Revisão | F5.25 |
