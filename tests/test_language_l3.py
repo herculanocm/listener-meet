@@ -90,7 +90,7 @@ def test_review_and_queue_texts_have_no_llm_nor_pyannote():
     shown += [*JOB_KIND_LABELS.values(), *JOB_KIND_HELP.values(), *JOB_STEP_LABELS.values(), *JOB_STEP_HELP.values(),
               *JOB_STATUS_HELP.values()]
     assert [t for t in shown if "LLM" in t or "pyannote" in t.casefold()] == []
-    assert base.summary() == "pela voz: Ana (similaridade 0,70, margem 0,03) · pelo contexto: Rodrigo (0,80) “valeu, Rodrigo” aos 00:12"
+    assert base.summary() == "pela voz: Ana (similaridade 70 %, margem 3 pontos) · pelo contexto: Rodrigo (0,80) “valeu, Rodrigo” aos 00:12"
     assert (JOB_STEP_LABELS["minutes"], JOB_KIND_LABELS[JobKind.LLM], JOB_STEP_LABELS["waiting"]) == ("IA: ata", "IA", "espera a gravação")
 
 

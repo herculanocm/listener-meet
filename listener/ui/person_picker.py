@@ -2,7 +2,7 @@
 sem candidato) abrem esta janela no lugar da caixa de escolha de antes.
 
 A parte pura, sem Qt: `fold` (sem acento e sem maiúscula), `top_by_voice` (as até 3 de "Pela voz", U-136), `PersonIndex.view`
-(o filtro, a ordem e as seções) e `percent` (a nota da voz em percentual, U-173). A busca olha o nome, o cargo e a empresa,
+(o filtro, a ordem e as seções); a nota da voz em percentual (U-173) é o `fmt.percent`. A busca olha o nome, o cargo e a empresa,
 nunca o e-mail; cada palavra digitada aparece em qualquer posição de um deles. A escolha vai sempre pelo id da linha
 (homônimos, A-11).
 
@@ -13,7 +13,6 @@ Todo widget nasce com o pai, sem folha de estilo. `run` abre a janela: é o pont
 from __future__ import annotations
 
 import difflib
-import math
 import re
 import unicodedata
 from collections.abc import Sequence
@@ -25,7 +24,7 @@ from PySide6.QtGui import QBrush, QKeyEvent
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
-from ..fmt import plural
+from ..fmt import percent, plural
 from ..pipeline.review_suggest import FLOOR
 from .person import MAX_LEN
 from .theme import PRIMARY, font_for, note, qcolor, set_kind, surface_tokens
@@ -41,13 +40,6 @@ _WORD = re.compile(r"\w+")
 def fold(text: str) -> str:
     """O texto para comparar: `casefold` e NFKD sem os sinais combinantes ("Conceição" vira "conceicao")."""
     return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
-
-
-def percent(score: float | None) -> str:
-    """U-173: o cosseno vezes 100, sem casas, arredondado para cima a partir de meio; negativo vira 0 %; sem nota, nada."""
-    if score is None or not math.isfinite(score):
-        return ""
-    return f"{max(0, math.floor(score * 100 + 0.5))} %"
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,4 +375,4 @@ def run(picker: PersonPicker) -> Pick:
 
 
 __all__ = ["ALL_TITLE", "BY_VOICE_TITLE", "EXPECTED_TITLE", "PERSON_ROLE", "PLACEHOLDER", "SIMILAR_TITLE", "TIP", "TOP_BY_VOICE",
-           "Candidate", "PersonIndex", "PersonPicker", "Pick", "Section", "View", "fold", "percent", "run", "top_by_voice"]
+           "Candidate", "PersonIndex", "PersonPicker", "Pick", "Section", "View", "fold", "run", "top_by_voice"]

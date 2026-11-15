@@ -69,16 +69,22 @@ def card_detail(summary: str, badge: str) -> str:
     return "" if summary == badge else summary
 
 
-def taken_voices(items: Sequence[ReviewItem]) -> dict[int, int]:
-    """U-137 (F5.15, pergunta 2): a voz pendente cuja sugestão é uma pessoa já decidida (automática ou confirmada, pela
-    `resolve_person`) noutra voz da reunião -> essa outra voz. Calculado aqui, com os itens da tela, e não no `review_items`,
-    que conta pendentes noutros lugares (A-07)."""
+def decided_people(items: Sequence[ReviewItem]) -> dict[int, int]:
+    """Pessoa -> a primeira voz não mesclada da tela onde ela está decidida (automática ou confirmada, pela
+    `resolve_person`): o "(já na Voz N)" do U-137 e da escolha da pessoa (F5.25, U-174)."""
     rows = {it.cluster_id: ClusterRow(id=it.cluster_id, person_id=it.person_id, status=str(it.status), merged_into=it.merged_into)
             for it in items}
     decided: dict[int, int] = {}
     for it in items:
         if it.merged_into is None and (pid := resolve_person(rows[it.cluster_id], rows)) is not None:
             decided.setdefault(pid, it.cluster_id)
+    return decided
+
+
+def taken_voices(items: Sequence[ReviewItem]) -> dict[int, int]:
+    """U-137 (F5.15, pergunta 2): a voz pendente cuja sugestão é uma pessoa já decidida noutra voz da reunião -> essa outra
+    voz. Calculado aqui, com os itens da tela, e não no `review_items`, que conta pendentes noutros lugares (A-07)."""
+    decided = decided_people(items)
     return {it.cluster_id: decided[it.person_id] for it in items if it.pending and it.merged_into is None
             and it.person_id is not None and decided.get(it.person_id, it.cluster_id) != it.cluster_id}
 
@@ -323,4 +329,5 @@ def stage_primary(primary: QPushButton, others: Iterable[QPushButton]) -> None:
 
 
 __all__ = ["BADGE_ROLE", "BADGE_TONE_ROLE", "DETAIL_ROLE", "META_ROLE", "PLAY_TEXT", "PLAY_TIP", "STATUS_BADGES", "TITLE_ROLE",
-           "KeyButton", "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "stage_primary", "taken_voices"]
+           "KeyButton", "VoiceCardDelegate", "badge_of", "card_detail", "card_item", "decided_people",
+           "stage_primary", "taken_voices"]

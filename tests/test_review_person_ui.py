@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 from listener.model import ClusterStatus
 from listener.pipeline import review, review_person
@@ -59,19 +59,27 @@ def test_new_person_saves_every_field_and_a_repeated_name_asks(qtbot, platform, 
 
 
 def test_other_person_lists_role_and_company_and_picks_by_id(qtbot, platform, store, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from listener.ui import person_picker
+
     mid, items = _processed(platform, store)
     first = store.people.create_person("Ana", role="CFO")
     second = store.people.create_person("Ana", role="CFO")                               # homônima até no cargo
     dlg = _dialog(qtbot, store, mid)
     shown: list[list[str]] = []
 
-    def pick(_parent, _title, _label, labels, *_a):
-        shown.append(list(labels))
-        return f"Ana — CFO (#{second})", True
+    def run(picker: person_picker.PersonPicker) -> person_picker.Pick:
+        QTest.keyClicks(picker.search, "ana")
+        shown.append([row.text(0) for row in picker.rows])
+        QTest.keyClick(picker.search, Qt.Key.Key_Down)
+        QTest.keyClick(picker.search, Qt.Key.Key_Return)
+        return picker.picked
 
-    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
+    monkeypatch.setattr(person_picker, "run", run)
     dlg.ask_other_person()
-    assert f"Ana — CFO (#{first})" in shown[0] and f"Ana — CFO (#{second})" in shown[0]
+    assert shown == [[f"Ana — CFO (#{first})", f"Ana — CFO (#{second})"]]
     assert store.segments.get_cluster(items[0].cluster_id)["person_id"] == second
 
 

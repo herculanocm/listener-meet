@@ -55,11 +55,12 @@ def validate(data: PersonData) -> str | None:
 
 
 class PersonDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, *, data: PersonData | None = None, can_delete: bool = False):
+    def __init__(self, parent: QWidget | None = None, *, data: PersonData | None = None, can_delete: bool = False, name: str = ""):
+        """`data` edita uma pessoa ("Editar pessoa"); sem ela, a ficha nova, com o `name` já preenchido (F5.25, U-172)."""
         super().__init__(parent)
         self.setWindowTitle("Editar pessoa" if data is not None else "Nova pessoa")
         self.setMinimumWidth(480)
-        start = data or PersonData("")
+        start = data or PersonData(name)
         self.name_edit = self._field(start.name, "obrigatório", MAX_LEN["name"])
         self.role_edit = self._field(start.role, "opcional (ex.: Gerente de TI)", MAX_LEN["role"])
         self.company_edit = self._field(start.company, "opcional", MAX_LEN["company"])

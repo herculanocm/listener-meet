@@ -3,7 +3,8 @@ confirmação ensina e como desfazer (U-101; sem vetor, sem promessa), o Enter q
 apagado, o "Ouvir 5 s" pintado no cartão selecionado (U-099, A-20; o Espaço segue), o "Mais" com M, I e E (U-100, A-21) e
 o nome comprido cortado no meio numa coluna fixa. A P-03 (ignorar ou mesclar numa voz sem pessoa tira o reforço) está em
 `tests/test_review.py`, com a lógica sem Qt. F5.15 L2: a sugestão refeita da próxima voz com "(já na Voz N)" (U-137), a linha
-do U-101 com a previsão das referências (U-138) e as 3 mais parecidas pela voz no "Outra pessoa…" (U-136)."""
+do U-101 com a previsão das referências (U-138). As 3 mais parecidas pela voz no "Outra pessoa…" (U-136) estão em
+`tests/test_person_picker.py` (F5.25)."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -255,86 +256,8 @@ def test_already_in_goes_right_after_the_name_even_inside_the_fixed_text(qapp, n
     from listener.ui.review_cards import DETAIL_ROLE, card_item
 
     pending = replace(BASE, status=ClusterStatus.UNNAMED, person_name=name, similarity=0.5, margin=None)
-    assert pending.summary(" (já na Voz 3)") == f"sem nome; parecida com {name} (já na Voz 3) (similaridade 0,50)"
-    assert card_item(pending, NAMES, 9).data(DETAIL_ROLE) == f"parecida com {name} (já na Voz 3) (similaridade 0,50)"
+    assert pending.summary(" (já na Voz 3)") == f"sem nome; parecida com {name} (já na Voz 3) (similaridade 50 %)"
+    assert card_item(pending, NAMES, 9).data(DETAIL_ROLE) == f"parecida com {name} (já na Voz 3) (similaridade 50 %)"
     asked = replace(BASE, person_name=name)
-    assert card_item(asked, NAMES, 9).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (já na Voz 3) (similaridade 0,70, margem 0,03)"
-    assert card_item(asked, NAMES).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (similaridade 0,70, margem 0,03)"
-
-
-def test_other_person_lists_the_nearest_by_voice_first_without_the_suggested(qtbot, platform, store, monkeypatch):
-    """U-136: no topo, até 3 pessoas com nota de 0,45 ou mais pela voz (só quem tem perfil; a já sugerida fica fora; D-089),
-    com a nota, e depois a lista alfabética de antes; a escolha vai do índice para o id (homônimas); ninguém acima do piso ou
-    a voz sem vetor, só a alfabética."""
-    from PySide6.QtWidgets import QInputDialog
-
-    from listener.ui.person import person_labels
-    from listener.ui.review import ReviewDialog
-    from tests.fake_live import tone
-    from tests.fake_pipeline import ToneEmbedder
-
-    mid, items = _processed(platform, store)
-    c0, c1 = _centroids(store, items)
-    ana = store.people.create_person("Ana", role="CFO")
-    bia1, bia2 = store.people.create_person("Bia", role="CFO"), store.people.create_person("Bia", role="CFO")   # homônimas
-    caio = store.people.create_person("Caio")                                        # perfil longe da voz: abaixo do piso
-    store.people.create_person("Davi")                                               # sem perfil: só na alfabética
-    for person, vec in ((ana, c1), (bia1, normalize(c0 + c1)), (bia2, normalize(c1 + 0.5 * c0)),
-                        (caio, ToneEmbedder().embed(tone(1.0, 550), 16000))):
-        store.profiles.confirm(person, "fake-tone-256", vec, None)
-    store.segments.update_cluster(items[1].cluster_id, person_id=bia1, status=ClusterStatus.AMBIGUOUS)   # a já sugerida
-    dlg = ReviewDialog(store, mid)
-    qtbot.addWidget(dlg)
-    dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(items[1].cluster_id))
-    shown: list[list[str]] = []
-    answers = iter([1, None, None])
-
-    def pick(_parent, _title, _label, labels, *_a):
-        shown.append(list(labels))
-        index = next(answers)
-        return (labels[index], True) if index is not None else ("", False)
-
-    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
-    dlg.ask_other_person()
-    alphabetical = person_labels(store.people.list_people())
-    assert shown[0] == ["Ana — CFO · voz 1,00", f"Bia — CFO (#{bia2}) · voz 0,89", *alphabetical]   # Caio, 0,00: fora
-    assert store.segments.get_cluster(items[1].cluster_id)["person_id"] == bia2       # do índice para o id
-    far = ToneEmbedder().embed(tone(1.0, 660), 16000)                                # ninguém com 0,45 ou mais
-    store._x("UPDATE clusters SET centroid = ? WHERE id = ?", (to_blob(far), items[0].cluster_id))
-    dlg.reload(items[0].cluster_id)
-    dlg.ask_other_person()
-    store._x("UPDATE clusters SET centroid = NULL WHERE id = ?", (items[0].cluster_id,))
-    dlg.reload(items[0].cluster_id)
-    dlg.ask_other_person()                                                           # voz sem vetor: só a alfabética
-    assert shown[1] == shown[2] == alphabetical
-
-
-def test_other_person_falls_back_to_the_alphabetical_list_when_the_ranking_fails(qtbot, platform, store, monkeypatch, caplog):
-    import logging
-
-    from PySide6.QtWidgets import QInputDialog
-
-    from listener.pipeline import review_suggest
-    from listener.ui.person import person_labels
-    from listener.ui.review import ReviewDialog
-
-    mid, _items = _processed(platform, store)
-    store.people.create_person("Anastácia Zimmerwald")
-    dlg = ReviewDialog(store, mid)
-    qtbot.addWidget(dlg)
-    shown: list[list[str]] = []
-
-    def pick(_parent: object, _title: str, _label: str, labels: list[str], *_a: object) -> tuple[str, bool]:
-        shown.append(list(labels))
-        return "", False
-
-    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(pick))
-
-    def broken(*_a: object) -> list:
-        raise RuntimeError("falha de teste")
-
-    monkeypatch.setattr(review_suggest, "voice_ranking", broken)
-    with caplog.at_level(logging.WARNING, logger="listener.ui.review"):
-        dlg.ask_other_person()
-    assert shown == [person_labels(store.people.list_people())] and "a ordem pela voz" in caplog.text
-    assert "Anastácia" not in caplog.text
+    assert card_item(asked, NAMES, 9).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (já na Voz 3) (similaridade 70 %, margem 3 pontos)"
+    assert card_item(asked, NAMES).data(DETAIL_ROLE) == f"{BY_VOICE}: {name} (similaridade 70 %, margem 3 pontos)"

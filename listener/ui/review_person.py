@@ -1,24 +1,32 @@
 """A ficha da pessoa na revisão de falantes (U-041, F5.2), fora do `ui/review.py`, que passava de 400 linhas (F5.4 L4): "Outra
-pessoa" (O, a escolha pelo id; F5.15, U-136: as 3 mais parecidas pela voz no topo), "Nova pessoa" (N, a ficha; nome repetido
+pessoa" (O, a escolha pelo id; F5.25: a janela com busca, `ui/person_picker.py`), "Nova pessoa" (N, a ficha; nome repetido
 pergunta "é ela?"), "Editar pessoa" (E, só voz com pessoa decidida; item do "Mais" desde a F5.11, U-100) e "Apagar
 pessoa…" (LGPD; confirmação, CP3). A base do mixin das ações (`ui/review_actions.py`), que o `ReviewDialog` herda: usa o
 estado e os métodos dele."""
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog, QInputDialog, QLabel, QMessageBox, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QWidget
 
+from ..config.defaults import SPECS
 from ..log import get_logger
 from ..model import ClusterStatus
 from ..pipeline import review, review_suggest
 from ..pipeline import review_person as sheet
+from ..pipeline.profiles import expected_person_ids
+from . import person_picker
 from .person import DELETE, PersonData, PersonDialog, person_data, person_labels
+from .person_picker import Candidate, PersonIndex, PersonPicker, top_by_voice
+from .review_cards import decided_people
 
 if TYPE_CHECKING:
+    from ..pipeline.voices import VoiceNames
     from ..store import Store
+    from ..store.people import PersonRow
 
 log = get_logger("ui.review")
 
@@ -26,17 +34,14 @@ DELETE_TEXT = ("Apagar {name}?\n\nSaem a ficha, o perfil de voz e o vínculo com
                "reuniões; as vozes dela voltam a \"sem nome\". O áudio e as falas ficam.\n\nAtas, resumos, respostas do chat e o "
                "histórico das chamadas à IA já gerados não mudam: use \"Gerar de novo\" para refazê-los sem o nome.")
 EDITABLE = (ClusterStatus.CONFIRMED, ClusterStatus.AUTO)         # U-041 (A-12): só voz com pessoa decidida tem ficha a editar
-TOP_BY_VOICE = 3                                                  # U-136: as mais parecidas no topo do "Outra pessoa…"
-
-
-def _decimal(x: float) -> str:
-    return f"{x:.2f}".replace(".", ",")
 
 
 class PersonActionsMixin:
     """As ações da ficha do `ReviewDialog` (o diálogo é o pai das caixas de pergunta)."""
     store: Store
     meeting_id: int
+    items: list[review.ReviewItem]
+    names: VoiceNames
     header: QLabel
     act_edit: QAction
     on_edited: Callable[..., Any] | None
@@ -59,44 +64,74 @@ class PersonActionsMixin:
     def _next_pending(self) -> None:
         raise NotImplementedError
 
+    def focus_voices(self) -> None:
+        raise NotImplementedError
+
     def _parent(self) -> QWidget | None:
         return self if isinstance(self, QWidget) else None
 
     def ask_other_person(self) -> None:
-        """"Outra pessoa" (e o "Escolher pessoa…"): no topo, até 3 de maior nota pela voz (0,45 ou mais), sem a já
-        sugerida, com a nota ("Ana — CFO · voz 0,58", U-136); depois, "Nome — Cargo · Empresa" em ordem alfabética. A
-        escolha vai do índice para o id, nunca pelo nome (homônimos, A-11)."""
+        """"Outra pessoa" (e o "Escolher pessoa…"): a janela com busca (F5.25). A escolha vai pelo id da linha, nunca pelo
+        texto (homônimos, A-11); "Nova pessoa" abre a ficha com o nome digitado; sem escolha, o foco volta à lista."""
         people = self.store.people.list_people()
         if not people:
             self.ask_new_person()
             return
-        ids, labels = [int(p["id"]) for p in people], person_labels(people)
-        top = self._top_by_voice(dict(zip(ids, labels, strict=True)))
-        shown = [label for _, label in top] + labels
-        choice, ok = QInputDialog.getItem(self._parent(), "Outra pessoa", "Quem é esta voz?", shown, 0, False)
-        if ok and choice in shown:
-            self.confirm_current(([pid for pid, _ in top] + ids)[shown.index(choice)])
-
-    def _top_by_voice(self, labels: dict[int, str]) -> list[tuple[int, str]]:
-        """U-136: até `TOP_BY_VOICE` pessoas com nota de 0,45 ou mais contra a voz atual (o piso da pergunta 4, D-089: o
-        primeiro item vem selecionado e o Enter o aceitaria), sem a já sugerida (pergunta 5). Nenhuma na voz sem vetor, sem
-        perfil no modelo ou sem ninguém acima do piso; uma falha vira aviso no log, sem nome, e fica a lista alfabética."""
         it = self.current_item()
-        if it is None or not it.has_centroid:
+        if it is None:
+            return
+        picker = PersonPicker(self._parent(), self._person_index(it, people),
+                              question=f"Quem é a {self.names.title(it.cluster_id, it.title)}?",
+                              threshold=float(self.store.get(SPECS["pipeline.threshold"])))
+        try:
+            pick = person_picker.run(picker)
+        finally:
+            picker.deleteLater()
+        if pick.person_id is not None:
+            self.confirm_current(pick.person_id)
+        elif pick.new_name is not None:
+            self._new_person_named(pick.new_name)
+        else:
+            self.focus_voices()
+
+    def _person_index(self, it: review.ReviewItem, people: list[PersonRow]) -> PersonIndex:
+        """Tudo o que a janela mostra, lido uma vez antes de ela abrir (Comportamento 1): a nota pela voz de cada pessoa
+        (U-173), "Pela voz" (U-136), as esperadas da reunião e "já na Voz N" (U-174, das vozes da tela, como o U-137)."""
+        t0 = time.perf_counter()
+        ranked = self._voice_ranking(it)
+        scores = dict(ranked)
+        expected = expected_person_ids((self.store.get_meeting(self.meeting_id) or {}).get("expected_people_json"))
+        taken = {pid: self.names.title(cid, f"voz #{cid}") for pid, cid in decided_people(self.items).items() if cid != it.cluster_id}
+        candidates = []
+        for p, label in zip(people, person_labels(people), strict=True):
+            pid = int(p["id"])
+            candidates.append(Candidate(pid, label, str(p["name"]), str(p.get("role") or ""), str(p.get("company") or ""),
+                                        scores.get(pid), pid in expected, taken.get(pid, "")))
+        index = PersonIndex(candidates, top_by_voice(ranked, it.person_id, set(scores)))
+        log.debug("revisão da reunião %s: a escolha da pessoa para a voz %s com %d pessoas (%d com nota, %d pela voz) em %.1f ms",
+                  self.meeting_id, it.cluster_id, len(candidates), len(scores), len(index.top), (time.perf_counter() - t0) * 1000)
+        return index
+
+    def _voice_ranking(self, it: review.ReviewItem) -> list[tuple[int, float]]:
+        """A nota da voz para cada pessoa com perfil, da maior para a menor; vazia na voz sem vetor. Uma falha vira aviso no
+        log, sem nome, e a janela abre sem "Pela voz" e sem os números."""
+        if not it.has_centroid:
             return []
         try:
-            ranked = review_suggest.voice_ranking(self.store, it.cluster_id)
+            return review_suggest.voice_ranking(self.store, it.cluster_id)
         except Exception as e:
             log.warning("revisão da reunião %s: a ordem pela voz %s falhou: %s", self.meeting_id, it.cluster_id, e)
             return []
-        near = [(pid, s) for pid, s in ranked if s >= review_suggest.FLOOR and pid != it.person_id and pid in labels]
-        return [(pid, f"{labels[pid]} · voz {_decimal(s)}") for pid, s in near[:TOP_BY_VOICE]]
 
     def ask_new_person(self) -> None:
         """U-041: a ficha da pessoa (nome obrigatório; cargo, empresa e e-mail opcionais)."""
+        self._new_person_named("")
+
+    def _new_person_named(self, name: str) -> None:
+        """A ficha nova, com o nome já preenchido quando vem da janela de busca (U-172); cancelar volta à revisão."""
         if self.current_item() is None:
             return
-        dlg = PersonDialog(self._parent())
+        dlg = PersonDialog(self._parent(), name=name)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.data()
             self.create_person(data.name, data.role, data.company, data.email)

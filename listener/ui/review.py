@@ -219,6 +219,11 @@ class ReviewDialog(ReviewActionsMixin, QDialog):
         waiting = review.pending(review.review_items(self.store, self.meeting_id))
         self.reload(waiting[0].cluster_id if waiting else self.current_cluster_id(), focus=True)
 
+    @override
+    def focus_voices(self) -> None:
+        """O foco de volta à lista de vozes (F5.25: a escolha da pessoa fechada sem escolher)."""
+        self.list.setFocus()
+
     def _on_player(self, st: object) -> None:
         """Sem dispositivo de saída ou sem o arquivo de áudio: o motivo no cabeçalho, como antes."""
         if isinstance(st, PlayerState) and st.state == ERROR and st.meeting_id in (None, self.meeting_id) and st.message:

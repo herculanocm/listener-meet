@@ -6,8 +6,10 @@ from dataclasses import replace
 
 import pytest
 
-from listener.ui.person_picker import (ALL_TITLE, BY_VOICE_TITLE, EXPECTED_TITLE, SIMILAR_TITLE, Candidate, PersonIndex, fold,
-                                       percent, top_by_voice)
+from listener.fmt import percent, points
+from listener.model import ClusterStatus
+from listener.ui.person_picker import (ALL_TITLE, BY_VOICE_TITLE, EXPECTED_TITLE, PERSON_ROLE, SIMILAR_TITLE, Candidate, PersonIndex,
+                                       fold, top_by_voice)
 
 ME = Candidate(1, "Rui Alves", "Rui Alves", score=0.31)
 ANA = Candidate(2, "Ana Souza — CFO · Acme", "Ana Souza", "CFO", "Acme", score=0.58)
@@ -123,6 +125,16 @@ def test_at_most_three_similar_names_most_similar_first():
                                               (None, ""), (float("nan"), "")])
 def test_percent_is_the_cosine_times_100_without_decimals(score, shown):
     assert percent(score) == shown
+
+
+def test_the_voice_card_speaks_percent_and_points():
+    """U-177: o cartão da voz na mesma língua da janela; a margem de 1 diz "1 ponto"."""
+    from listener.pipeline.review import ReviewItem
+
+    item = ReviewItem(7, "SPK_1", "R", ClusterStatus.AMBIGUOUS, 60_000, 3, "Ana", 0.584, 0.012, None, True)
+    assert item.summary() == "pela voz: Ana (similaridade 58 %, margem 1 ponto)"
+    assert replace(item, similarity=-0.1, margin=None).summary() == "pela voz: Ana (similaridade 0 %)"
+    assert (points(0.0), points(0.03), points(0.105)) == ("0 pontos", "3 pontos", "11 pontos")
 
 
 # ---------------------------------------------------------------- a janela (U-171, U-172, U-176)
@@ -251,8 +263,6 @@ def test_escape_closes_without_choosing(qtbot, typed):
 
 
 def test_double_click_picks_the_row_and_the_titles_do_not_select(qtbot):
-    from listener.ui.person_picker import PERSON_ROLE
-
     picker = _picker(qtbot, top=[2])
     title = picker.tree.topLevelItem(0)
     picker.tree.setCurrentItem(title)
@@ -271,3 +281,212 @@ def test_the_score_column_has_the_percent_and_the_tip_the_threshold(qtbot):
                               "reconhecer sozinho.")
     assert davi.toolTip(0) == "" and not picker.tree.isColumnHidden(1)
     assert _picker(qtbot).tree.isColumnHidden(1)                               # ninguém já decidido: sem a coluna
+
+
+# ---------------------------------------------------------------- na revisão (ligação, U-136, U-171 a U-176)
+@pytest.fixture
+def platform(tmp_path, clock):
+    from tests.fake_platform import FakePlatform
+
+    return FakePlatform(tmp_path, clock=clock, r_format=(16000, 1), system_format=(16000, 1))
+
+
+def _review(qtbot, platform, store):
+    from tests.test_review import _processed
+
+    mid, items = _processed(platform, store)
+    return mid, items, (lambda: _open_review(qtbot, store, mid))
+
+
+def _open_review(qtbot, store, mid):
+    from listener.ui.review import ReviewDialog
+
+    dlg = ReviewDialog(store, mid)
+    qtbot.addWidget(dlg)
+    return dlg
+
+
+def _drive(monkeypatch, *steps):
+    """Troca o `person_picker.run`: cada abertura roda o passo seguinte sobre a janela de verdade, sem `exec()`."""
+    from listener.ui import person_picker
+
+    opened: list = []
+    todo = iter(steps)
+
+    def run(picker):
+        opened.append(picker)
+        next(todo)(picker)
+        return picker.picked
+
+    monkeypatch.setattr(person_picker, "run", run)
+    return opened
+
+
+def _type(text, *keys):
+    def step(picker):
+        from PySide6.QtTest import QTest
+
+        QTest.keyClicks(picker.search, text)
+        for key in keys:
+            QTest.keyClick(picker.search, key)
+    return step
+
+
+def _select(dlg, cluster_id):
+    dlg.list.setCurrentRow([i.cluster_id for i in dlg.items].index(cluster_id))
+
+
+def test_by_voice_brings_the_nearest_without_the_suggested_and_every_row_has_its_percent(qtbot, platform, store, monkeypatch):
+    """U-136 adaptado: "Pela voz" traz as mesmas pessoas, na mesma ordem, que o topo de antes (0,45 ou mais, sem a já
+    sugerida); U-173: o número de cada linha é a nota do `voice_ranking` vezes 100, e quem não tem perfil fica sem número;
+    a voz longe de todos não tem "Pela voz" (nada selecionado) e a voz sem vetor não tem números."""
+    from PySide6.QtCore import Qt
+
+    from listener.pipeline import review_suggest
+    from listener.store.profiles import normalize, to_blob
+    from tests.fake_live import tone
+    from tests.fake_pipeline import ToneEmbedder
+    from tests.test_review_actions import _centroids
+
+    _mid, items, open_review = _review(qtbot, platform, store)
+    c0, c1 = _centroids(store, items)
+    ana = store.people.create_person("Ana", role="CFO")
+    bia1, bia2 = store.people.create_person("Bia", role="CFO"), store.people.create_person("Bia", role="CFO")   # homônimas
+    caio = store.people.create_person("Caio")                                        # perfil longe da voz: abaixo do piso
+    davi = store.people.create_person("Davi")                                        # sem perfil: sem número
+    for person, vec in ((ana, c1), (bia1, normalize(c0 + c1)), (bia2, normalize(c1 + 0.5 * c0)),
+                        (caio, ToneEmbedder().embed(tone(1.0, 550), 16000))):
+        store.profiles.confirm(person, "fake-tone-256", vec, None)
+    store.segments.update_cluster(items[1].cluster_id, person_id=bia1, status=ClusterStatus.AMBIGUOUS)   # a já sugerida
+    dlg = open_review()
+    _select(dlg, items[1].cluster_id)
+    seen: list[tuple[list[str], dict[int, str], int | None]] = []
+
+    def look(picker):
+        seen.append((_shown(picker), {int(r.data(0, PERSON_ROLE)): r.text(2) for r in picker.rows}, picker.selected_id()))
+
+    def look_and_pick_second(picker):
+        look(picker)
+        _key(picker, Qt.Key.Key_Down)
+        _key(picker, Qt.Key.Key_Return)
+
+    _drive(monkeypatch, look_and_pick_second, look, look)
+    ranking = dict(review_suggest.voice_ranking(store, items[1].cluster_id))
+    dlg.ask_other_person()
+    shown, numbers, selected = seen[0]
+    assert shown[:3] == ["# Pela voz", "Ana — CFO | 100 %", f"Bia — CFO (#{bia2}) | 89 %"] and selected == ana   # Caio, 0 %: fora
+    assert numbers == {pid: percent(ranking.get(pid)) for pid in numbers} and numbers[davi] == "" and numbers[caio] == "0 %"
+    assert len(numbers) == len(store.people.list_people())                          # cada pessoa uma vez
+    assert store.segments.get_cluster(items[1].cluster_id)["person_id"] == bia2      # pelo id da linha
+    far = ToneEmbedder().embed(tone(1.0, 660), 16000)                                # ninguém com 0,45 ou mais
+    store._x("UPDATE clusters SET centroid = ? WHERE id = ?", (to_blob(far), items[0].cluster_id))
+    dlg.reload(items[0].cluster_id)
+    dlg.ask_other_person()
+    assert "# Pela voz" not in seen[1][0] and seen[1][2] is None
+    store._x("UPDATE clusters SET centroid = NULL WHERE id = ?", (items[0].cluster_id,))
+    dlg.reload(items[0].cluster_id)
+    dlg.ask_other_person()                                                           # voz sem vetor: sem números
+    assert set(seen[2][1].values()) == {""} and seen[2][2] is None
+
+
+def test_without_by_voice_enter_on_the_empty_field_does_not_change_the_voice(qtbot, platform, store, monkeypatch):
+    from PySide6.QtCore import Qt
+
+    _mid, items, open_review = _review(qtbot, platform, store)
+    store.people.create_person("Ana")
+    dlg = open_review()
+    focused: list[bool] = []
+    monkeypatch.setattr(type(dlg), "focus_voices", lambda self: focused.append(True))
+    _drive(monkeypatch, _type("", Qt.Key.Key_Return, Qt.Key.Key_Enter))
+    dlg.ask_other_person()
+    c = store.segments.get_cluster(items[0].cluster_id)
+    assert (c["person_id"], c["status"]) == (None, ClusterStatus.UNNAMED) and focused == [True]   # o foco volta à lista
+
+
+def test_with_300_people_one_from_the_end_takes_four_keys_and_enter(qtbot, platform, store, monkeypatch):
+    from PySide6.QtCore import Qt
+
+    _mid, items, open_review = _review(qtbot, platform, store)
+    for i in range(299):
+        store.people.create_person(f"Pessoa {i:03d}", role="Analista")
+    zu = store.people.create_person("Zuleica Prado", role="Analista")
+    dlg = open_review()
+    opened = _drive(monkeypatch, _type("zule", Qt.Key.Key_Return))                  # 4 teclas e o Enter
+    dlg.ask_other_person()
+    assert len(opened[0].index) == 301 and store.segments.get_cluster(items[0].cluster_id)["person_id"] == zu
+
+
+def test_typing_in_the_picker_runs_no_review_shortcut(qtbot, platform, store, monkeypatch):
+    """Risco da spec: as teclas da revisão (O, N, L, M, I, E, Espaço) não disparam ao digitar na janela."""
+    from PySide6.QtCore import Qt
+
+    from listener.ui.review import ReviewDialog
+
+    _mid, items, open_review = _review(qtbot, platform, store)
+    store.people.create_person("Leonardo Minelli")
+    dlg = open_review()
+    ran: list[str] = []
+    for name in ("accept_llm_current", "ask_new_person", "edit_current", "ask_merge", "ignore_current", "play_current"):
+        monkeypatch.setattr(ReviewDialog, name, lambda self, n=name: ran.append(n))
+    _drive(monkeypatch, _type("leo mine", Qt.Key.Key_Escape))
+    dlg.ask_other_person()
+    assert ran == [] and store.segments.get_cluster(items[0].cluster_id)["status"] == ClusterStatus.UNNAMED
+
+
+def test_new_person_opens_the_sheet_with_the_typed_name_and_cancel_goes_back_to_the_review(qtbot, platform, store, monkeypatch,
+                                                                                         caplog):
+    import logging
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QDialog
+
+    from listener.ui.person import PersonData, PersonDialog
+
+    _mid, items, open_review = _review(qtbot, platform, store)
+    store.people.create_person("Ana")
+    dlg = open_review()
+    sheets: list[tuple[str, str]] = []
+    codes = iter([QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted])
+
+    def fake_exec(self):
+        sheets.append((self.windowTitle(), self.name_edit.text()))
+        return next(codes)
+
+    monkeypatch.setattr(PersonDialog, "exec", fake_exec)
+    monkeypatch.setattr(PersonDialog, "data", lambda self: PersonData(self.name_edit.text(), "Diretora"))
+    opened = _drive(monkeypatch, _type("Zuleica Prado", Qt.Key.Key_Return), _type("Zuleica Prado", Qt.Key.Key_Return))
+    with caplog.at_level(logging.DEBUG):
+        dlg.ask_other_person()
+        assert len(opened) == 1 and store.people.find_by_name("Zuleica Prado") is None   # cancelar a ficha: de volta à revisão
+        dlg.ask_other_person()
+    assert sheets == [("Nova pessoa", "Zuleica Prado")] * 2
+    zu = store.people.find_by_name("Zuleica Prado")
+    assert zu["role"] == "Diretora" and store.segments.get_cluster(items[0].cluster_id)["person_id"] == zu["id"]
+    assert "Zuleica" not in caplog.text and "Ana" not in caplog.text                 # nem o texto digitado nem nome no log
+
+
+def test_expected_people_and_already_in_another_voice(qtbot, platform, store, monkeypatch, caplog):
+    import json
+    import logging
+
+    from PySide6.QtCore import Qt
+
+    from listener.pipeline import review
+
+    mid, items, open_review = _review(qtbot, platform, store)
+    ana, caio = store.people.create_person("Ana Souza"), store.people.create_person("Caio Reis")
+    store.people.create_person("Davi Luz")
+    store._x("UPDATE meetings SET expected_people_json = ? WHERE id = ?", (json.dumps([caio]), mid))
+    review.confirm(store, items[0].cluster_id, ana)
+    dlg = open_review()
+    _select(dlg, items[1].cluster_id)
+    seen: list[tuple[str, list[str]]] = []
+    _drive(monkeypatch, lambda p: seen.append((p.question.text(), _shown(p))), _type("ana", Qt.Key.Key_Escape))
+    with caplog.at_level(logging.DEBUG):
+        dlg.ask_other_person()
+        dlg.ask_other_person()
+    voice = dlg.names.title(items[0].cluster_id, "")
+    question, shown = seen[0]
+    assert question == f"Quem é a {dlg.names.title(items[1].cluster_id, '')}?"
+    assert shown[:2] == ["# Esperadas nesta reunião", "Caio Reis"] and f"Ana Souza | já na {voice} | 0 %" in shown
+    assert not any(n in caplog.text for n in ("Ana", "Caio", "Davi", "ana"))

@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from ..fmt import percent, points
 from ..log import get_logger
 from ..model import BY_CONTEXT, BY_VOICE, ClusterStatus, DecisionSource, EventType, MeetingStatus
 from ..store import Store
@@ -87,8 +88,8 @@ class ReviewItem:
             return f"mesclada com a voz #{self.merged_into}"
         if self.status == ClusterStatus.IGNORED:
             return "ignorada"
-        sim = (f" (similaridade {self.similarity:.2f}" + (f", margem {self.margin:.2f})" if self.margin is not None else ")")
-               ).replace(".", ",") if self.similarity is not None else ""
+        sim = (f" (similaridade {percent(self.similarity)}" + (f", margem {points(self.margin)})" if self.margin is not None else ")")
+               if self.similarity is not None else "")                    # U-177 (F5.25): a língua da escolha da pessoa
         who, llm = f"{self.person_name}{also}", (f" · {self.llm_text()}" if self.has_llm else "")
         match self.status:
             case ClusterStatus.CONFIRMED:

@@ -129,7 +129,7 @@ def test_review_dialog_keyboard_and_audio(qtbot, platform, store, monkeypatch):
     dlg.show()
     assert dlg.list.count() == 2 and dlg.current_cluster_id() == items[0].cluster_id and "2 vozes para" in dlg.header.text()
     assert dlg.list.hasFocus() or not dlg.isActiveWindow()                             # foco na lista ao abrir
-    assert "pela voz: Ana (similaridade 0,70, margem 0,03)" in dlg.list.item(0).text()          # vírgula decimal (U-032)
+    assert "pela voz: Ana (similaridade 70 %, margem 3 pontos)" in dlg.list.item(0).text()   # U-177 (F5.25)
     assert dlg.btn_confirm.text() == "É Ana" and dlg.btn_confirm.isEnabled()                    # U-098: o resultado, com o nome
     qtbot.keyClick(dlg.list, Qt.Key.Key_Space)                                        # ouvir 5 s: pelo player único (F5)
     channel, t0, t1 = dlg.played[0]
