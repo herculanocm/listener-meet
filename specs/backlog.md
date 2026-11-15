@@ -5,10 +5,9 @@ Tamanho-alvo: 12 KB.
 
 ## Estado (2026-11-15)
 - Versão 0.14.0, esquema do banco v11. F1 a F5.21 implementadas (`CHANGELOG.md`); F6 é rascunho e F7 é futuro.
-- **Atenção: há trabalho fora da `main`.** O branch `claude/speakers-search-typeahead-a2d9ae` (15 commits, de 13 a
-  15/11) tem a F5.23 (busca ao escolher a pessoa na revisão) e a F5.24 (remoção da legenda ao vivo, da bandeja de
-  legendas, do resumo parcial e das sugestões ao vivo; D-104 a D-107) implementadas e ainda não integradas. Esta
-  documentação descreve o código da `main`. Integrar o branch pede refazer os documentos das features removidas.
+- A `main` é a referência. O branch `claude/speakers-search-typeahead-a2d9ae` (F5.23, busca ao escolher a pessoa
+  na revisão, e F5.24, remoção da legenda ao vivo e das sugestões) foi descartado pelo dono em 15/11 (D-109): a
+  legenda ao vivo, a bandeja de legendas, o resumo parcial e as sugestões ao vivo ficam no produto.
 - O código é a referência (D-109): documento que diverge do código é ajustado ao código.
 - O `.exe` 0.14.0 e o zip foram gerados em 08/11. A sonda `--probe` e o push são do dono.
 - Sem CI (D-090): os testes rodam na máquina, antes de cada commit.
@@ -16,9 +15,8 @@ Tamanho-alvo: 12 KB.
   A spec F5.22 (GPU), que estava suspensa, foi apagada (D-109); a CP14 vale como está.
 
 ## Próximos passos
-1. O dono decide a integração do branch da F5.23 e da F5.24 à `main`.
-2. O dono confere no uso real o que está em "Verificar no Windows".
-3. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
+1. O dono confere no uso real o que está em "Verificar no Windows".
+2. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
 
 ## Verificar no Windows (uso real; os critérios e os números estão no Aceite de cada spec)
 Até a F5.15, tudo foi dado por verificado pelo uso real (D-090). Entrega feita fora do Windows acrescenta aqui o que

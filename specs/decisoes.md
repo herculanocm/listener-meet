@@ -2,8 +2,8 @@
 
 Quando ler: ao mexer em produto ou arquitetura, ou quando o código ou uma spec citar um `D-nnn`. Cada linha diz a regra
 que vale hoje e o motivo; o detalhe de cada entrega está na spec da feature. Decisão superada continua na tabela, para
-o ID resolver. D-104 a D-107 pertencem ao branch `claude/speakers-search-typeahead-a2d9ae` (F5.23 e F5.24), ainda não
-integrado à `main` (`backlog.md`). "Quem": o dono decide o produto; a LLM decide por medida ou por delegação (D-064).
+o ID resolver. D-104 a D-107 não existem na `main`: eram de um branch descartado (D-109), e os números não são
+reutilizados. "Quem": o dono decide o produto; a LLM decide por medida ou por delegação (D-064).
 Tamanho-alvo: 30 KB.
 
 ## Decisões
@@ -113,7 +113,7 @@ Tamanho-alvo: 30 KB.
 | D-102 | dono | F5.21: a tela nas sugestões. A captura a pedido cabe na CP4; o alvo padrão é a janela da reunião; as janelas por cima saem pretas; confirmação na primeira vez por provedor; "[tela]" no lugar de "sem evidência" | pedido do dono |
 | D-103 | LLM | F5.21: desvios e achados da implementação, incorporados à spec (a tela vazia decide pelo miolo escuro; a reunião coberta em 80 % ou mais não vai; a escolha do alvo roda na tarefa do pedido) | |
 | D-108 | dono | 2026-11-15: documentação reestruturada. O handoff v4 foi apagado: as cláusulas e o fluxo da CP11 moram em `01-clausulas.md`. Specs implementadas condensadas ao contrato vigente. Apagados o roteiro de teste no Windows, as specs de preparo e de correção (F0, F1.1, F1.2, F3.1), `memory/README.md` e `memory/dono.md` (incorporado ao `AGENTS.md`). `CHANGELOG.md` criado | documentação enxuta, no padrão de mercado, para qualquer LLM ler e programar |
-| D-109 | dono | 2026-11-15: o código é a referência. Onde uma spec ou outro documento diverge do código, o documento é ajustado ao código; texto desatualizado no código é apagado. O que está suspenso sai do repositório: a spec F5.22 (GPU quando houver) foi apagada, e a CP14 segue como está. A licença segue MIT, com o alerta do `libx264` (GPL) no README | repositório limpo; o código implementado é a verdade |
+| D-109 | dono | 2026-11-15: o código é a referência. Onde uma spec ou outro documento diverge do código, o documento é ajustado ao código; texto desatualizado no código é apagado. O que está suspenso sai do repositório: a spec F5.22 (GPU quando houver) foi apagada, e a CP14 segue como está. O branch `claude/speakers-search-typeahead-a2d9ae` (F5.23 e F5.24, que removia a legenda ao vivo e as sugestões) foi descartado: a `main` é a referência. A licença segue MIT, com o alerta do `libx264` (GPL) no README | repositório limpo; o código implementado é a verdade |
 
 ## Em aberto (o padrão vale enquanto não há resposta)
 | # | Pergunta | Padrão |
