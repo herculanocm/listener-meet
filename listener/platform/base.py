@@ -296,6 +296,11 @@ class Platform(Protocol):
         del rect
         return None
 
+    # F5.27: o processo sem Qt (o filho da tela, a sonda) pede os pixels físicos antes de ler os monitores ou tirar o print;
+    # sem isso, o monitor com escala sai em pixels lógicos. True quando o processo já fala pixels físicos
+    def use_physical_pixels(self) -> bool:
+        return False
+
     # dispositivos e apps
     def list_input_devices(self) -> list[AudioDevice]: ...
     def default_input_device(self) -> AudioDevice | None: ...

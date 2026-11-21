@@ -21,6 +21,8 @@ tarefas), sem UI Automation (CP4) nem WinRT (CP14). Tudo em pixels físicos: o p
 - `grab_screen(rect)`: BitBlt (`SRCCOPY | CAPTUREBLT`) só do retângulo, num DIB de 32 bits de cima para baixo (A-02), copiado
   uma vez por `memmove` (sem o GIL) para um buffer gravável (R-06); as janelas com `WDA_EXCLUDEFROMCAPTURE` não saem no
   Windows 10 2004 ou mais novo [fato: Microsoft; que o BitBlt respeita, exp].
+- `use_physical_pixels()` (F5.27): o PMv2 pedido pelo processo sem Qt (o filho da tela, a sonda); sem ele, o monitor com
+  escala sai em pixels lógicos [fato: medido, o monitor de 125 % saiu 1536 x 864 em vez de 1920 x 1080].
 Roda em qualquer thread (a do pedido, nunca a da interface). Nada daqui roda fora do Windows: as DLLs e os tipos de callback
 nascem na primeira chamada. O log leva dimensões, pids e ms; nunca título (D-053)."""
 from __future__ import annotations
@@ -48,6 +50,7 @@ GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT, WS_EX_LAYERED = 0x00000020, 0x00080000
 SRCCOPY, CAPTUREBLT = 0x00CC0020, 0x40000000
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, DPI_AWARENESS_PER_MONITOR = -4, 2   # F5.27: o filho sem Qt
 GW_OWNER = 4
 SMALL_AREA = MIN_W * MIN_H // 2               # R-02: a janela do próprio app menor que isto não cobre (o menu, a barra)
 BROWSERS = frozenset({"msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"})
@@ -211,6 +214,21 @@ def _owned_by(api: Any, hwnd: Any, target: Any) -> bool:
 
 
 class Win32Screen:
+    def use_physical_pixels(self) -> bool:
+        """F5.27: o PMv2 do processo (o que o Qt 6 liga na interface), para o processo sem Qt; se o processo já tem uma
+        consciência de DPI (o Qt ligou antes), o sistema recusa a troca e vale a que está, se for por monitor."""
+        if sys.platform != "win32":
+            return False
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.SetProcessDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
+        u32.GetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        u32.GetAwarenessFromDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
+        if u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)):
+            return True
+        aware = int(u32.GetAwarenessFromDpiAwarenessContext(u32.GetThreadDpiAwarenessContext()))
+        log.debug("PMv2 recusado (erro %s); consciência de DPI atual %d", ctypes.get_last_error(), aware)
+        return aware == DPI_AWARENESS_PER_MONITOR
+
     def monitors(self) -> tuple[Monitor, ...]:
         try:
             api = _api()

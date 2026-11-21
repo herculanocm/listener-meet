@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..rag.export import atomic_target
+from ..screen_rec.codec import CODECS, pick_codec
 from .media_audio import WRITE, AudioPlan, Tick, blocks, gain_for, measure_peak, step
 from .player_source import Chunks
 
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from .media_cues import Screen
 
 REFRESH_MS = 1000                # um quadro por segundo entre as trocas
-CODECS = ("libx264", "libopenh264", "mpeg4")     # só de CPU (CP14), do melhor para o substituto do próprio FFmpeg
 X264 = {"preset": "veryfast", "tune": "stillimage", "crf": "26"}
 KEYINT = 30                      # quadros entre quadros-chave: com um por segundo, no máximo ~30 s (o arquivo ~20 % menor que com 10)
 OTHER_BITRATE = 800_000          # o openh264 e o mpeg4: o texto nítido a 1 quadro por segundo
@@ -41,19 +41,6 @@ BT709, MPEG_RANGE = 1, 1         # AVCOL_PRI/TRC/SPC_BT709 e AVCOL_RANGE_MPEG: a
 def video_available() -> bool:
     """O PyAV instalado (vem com o extra pipeline, pelo faster-whisper), sem importá-lo."""
     return find_spec("av") is not None
-
-
-def pick_codec(av: Any, size: tuple[int, int]) -> str:
-    """O primeiro de `CODECS` que existe e abre com a tela (`size`) e a base de tempo do vídeo; `RuntimeError` sem nenhum."""
-    for name in CODECS:
-        with suppress(Exception):                # UnknownCodecError ou a abertura recusada: tenta o próximo
-            cc = av.CodecContext.create(name, "w")
-            cc.width, cc.height = size
-            cc.pix_fmt = "yuv420p"
-            cc.time_base = Fraction(1, 1000)
-            cc.open()
-            return name
-    raise RuntimeError("o PyAV desta máquina não tem codificador de vídeo de CPU (libx264, openh264 ou MPEG-4)")
 
 
 def frame_times(screens: Sequence[tuple[int, Screen]], duration_ms: int, refresh_ms: int = REFRESH_MS) -> Iterator[tuple[int, int]]:
