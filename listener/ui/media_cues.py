@@ -205,11 +205,7 @@ def text_track(cues: Sequence[Cue]) -> list[TextSample]:
             active.append(order[k])
             k += 1
         lines = tuple(caption_line(cues[i]) for i in active)
-        if not lines:
-            continue
-        if out and out[-1].end_ms == a and out[-1].lines == lines:
-            out[-1] = TextSample(out[-1].start_ms, b, lines)
-        else:
+        if lines:                                # duas legendas iguais seguidas ("Sim.") ficam duas, como na imagem
             out.append(TextSample(a, b, lines))
     return out
 

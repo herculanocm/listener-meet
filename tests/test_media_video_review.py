@@ -157,6 +157,8 @@ def test_the_text_track_has_one_sample_per_cue_with_the_speaker_and_simultaneous
     both = [Cue(0, 2000, "Ana", "CFO", "Falando."), Cue(1000, 3000, "Bia", "", "Junto.")]
     assert [(s.start_ms, s.end_ms, s.lines) for s in text_track(both)] == [
         (0, 1000, ("Ana — CFO: Falando.",)), (1000, 2000, ("Ana — CFO: Falando.", "Bia: Junto.")), (2000, 3000, ("Bia: Junto.",))]
+    repeated = [Cue(0, 1200, "Bia", "", "Sim."), Cue(1200, 2400, "Bia", "", "Sim.")]  # coladas e iguais: duas, como na imagem
+    assert [(s.start_ms, s.end_ms) for s in text_track(repeated)] == [(0, 1200), (1200, 2400)]
     assert text_track([]) == []
 
 
@@ -167,45 +169,83 @@ def test_the_text_of_a_sample_escapes_the_backslash_and_puts_one_line_per_speake
 
 
 # ---------------------------------------------------------------- o MP4 com a faixa (Aceite)
-def test_the_mp4_has_video_audio_and_text_and_the_text_has_the_cue_times_of_the_picture(store, tmp_path, qapp):
-    av = pytest.importorskip("av")
+def _write_and_read(store: Any, mid: int, cues: list[Any], out: Any) -> tuple[list[str], list[int], list[tuple[int, int, str]]]:
+    """Grava o MP4 com a faixa (numa thread, como a tarefa) e relê: os tipos das faixas, os quadros (ms) e as amostras de
+    texto com conteúdo (começo e duração em ms, texto)."""
+    import av
+
     from listener.ui import media_audio as ma
     from listener.ui import media_cues as mc
     from listener.ui.media_frames import FrameRenderer
     from listener.ui.media_video import write_video
 
-    mid = _speech_meeting(store)
     plan = ma.plan_audio(store, mid)
     assert plan is not None
-    cues = mc.build_cues(msave.speeches_for(store, mid, True), plan.pauses, plan.duration_ms)
-    samples = mc.text_track(cues)
     renderer = FrameRenderer("Orçamento 2027", "07/11/2026", cues)
-    out = tmp_path / "reuniao.mp4"
 
-    def run() -> None:                                                      # fora da thread da interface, como a tarefa
+    def run() -> None:
         try:
             write_video(store, plan, mc.screens(cues, plan.duration_ms), renderer.render, out, lambda _s, _f: False,
-                        (renderer.width, renderer.height), samples)
+                        (renderer.width, renderer.height), mc.text_track(cues))
         finally:
             store.close_thread()
 
     thread = threading.Thread(target=run)
     thread.start()
-    thread.join(60)
+    thread.join(120)
     with av.open(str(out)) as c:
-        assert [s.type for s in c.streams] == ["video", "audio", "subtitle"]
+        kinds = [str(s.type) for s in c.streams]
         assert c.streams.subtitles[0].codec_context.name == "mov_text"
         frames = [round(float(f.time) * 1000) for f in c.decode(video=0)]
     with av.open(str(out)) as c:
         text = c.streams.subtitles[0]
         read = [(round(float(p.pts * text.time_base) * 1000), round(float(p.duration * text.time_base) * 1000), bytes(p)[2:].decode())
                 for p in c.demux(text) if p.pts is not None and p.size > 2]
-    assert len(cues) == 4 and len(read) == len(samples) == 4
+    return kinds, frames, read
+
+
+def _assert_track(cues: list[Any], frames: list[int], read: list[tuple[int, int, str]]) -> None:
+    """Cada amostra relida tem o começo e a duração da sua (±1 ms), o texto dela e um quadro da imagem no começo."""
+    from listener.ui.media_cues import text_track
+
+    samples = text_track(cues)
+    assert len(read) == len(samples)
     for (start, span, body), sample in zip(read, samples, strict=True):
         assert abs(start - sample.start_ms) <= 1 and abs(span - (sample.end_ms - sample.start_ms)) <= 1
-        assert body == "\n".join(sample.lines)
+        assert body == chr(10).join(line.replace(chr(92), chr(0x2216)) for line in sample.lines)   # \N vira a quebra de linha
         assert any(abs(start - t) <= 1 for t in frames)                     # a legenda da faixa troca com a imagem
+
+
+def test_the_mp4_has_video_audio_and_text_and_the_text_has_the_cue_times_of_the_picture(store, tmp_path, qapp):
+    pytest.importorskip("av")
+    from listener.ui import media_audio as ma
+    from listener.ui import media_cues as mc
+
+    mid = _speech_meeting(store)
+    plan = ma.plan_audio(store, mid)
+    assert plan is not None
+    cues = mc.build_cues(msave.speeches_for(store, mid, True), plan.pauses, plan.duration_ms)
+    kinds, frames, read = _write_and_read(store, mid, cues, tmp_path / "reuniao.mp4")
+    assert kinds == ["video", "audio", "subtitle"] and len(cues) == len(read) == 4
+    _assert_track(cues, frames, read)
     assert read[0][2] == "Ana — CFO: Bom dia a todos."
+
+
+def test_a_longer_mp4_keeps_the_text_times_across_blocks_gaps_repeats_and_simultaneous_speech(store, tmp_path, qapp):
+    """34 s de áudio (quatro blocos de 10 s): uma legenda em cada bloco, uma cruzando os 10 s, duas iguais coladas, falas
+    ao mesmo tempo e um silêncio de mais de 10 s."""
+    pytest.importorskip("av")
+    from listener.ui.media_cues import Cue
+
+    mid = _audio_meeting(store, seconds=34, pause=None)
+    cues = [Cue(500, 2000, "Ana", "CFO", "Começando."), Cue(9200, 11300, "Bia", "", "Cruzando os dez segundos."),
+            Cue(11300, 12500, "Bia", "", "Sim."), Cue(12500, 13700, "Bia", "", "Sim."),
+            Cue(14000, 16000, "Ana", "CFO", "Falo junto."), Cue(15000, 17000, "Bia", "", "Eu também."),
+            Cue(29000, 31000, "Ana", "CFO", "Depois do silêncio a" + chr(92) + "b.")]
+    kinds, frames, read = _write_and_read(store, mid, cues, tmp_path / "longa.mp4")
+    assert kinds == ["video", "audio", "subtitle"] and len(read) == 8
+    _assert_track(cues, frames, read)
+    assert read[-1][2] == "Ana — CFO: Depois do silêncio a" + chr(0x2216) + "b."
 
 
 # ---------------------------------------------------------------- o diálogo do texto (U-179)
