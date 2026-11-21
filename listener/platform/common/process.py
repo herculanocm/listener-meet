@@ -15,6 +15,7 @@ NICE_MAX = 19
 WORKER_FLAG = "--worker"
 LIGHT_FLAG = "--light"           # F3: worker leve (só jobs `llm`, sem torch)
 LIVE_FLAG = "--live"             # F4: processo ao vivo (legendas), preso à gravação
+SCREEN_FLAG = "--screen"         # F5.27: o filho da gravação da tela, preso à tela da reunião
 OPEN_FLAG = "--open"             # F5.13: a tela pedida ao app (o ícone fixado, o Jump List)
 
 
@@ -30,6 +31,15 @@ def worker_command(light: bool = False) -> list[str]:
 def live_command(db_dir: str | Path, meeting_id: int) -> list[str]:
     """`python -m listener --live --db DIR --meeting ID` no venv; `listener-meet.exe --live ...` empacotado (F4, F5.8)."""
     flags = [LIVE_FLAG, "--db", str(db_dir), "--meeting", str(int(meeting_id))]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *flags]
+    return [sys.executable, "-m", "listener", *flags]
+
+
+def screen_command(db_dir: str | Path, meeting_id: int) -> list[str]:
+    """F5.27: `python -m listener --screen --db DIR --meeting ID` no venv; `listener-meet.exe --screen ...` empacotado, pelo
+    mesmo caminho do `--live`."""
+    flags = [SCREEN_FLAG, "--db", str(db_dir), "--meeting", str(int(meeting_id))]
     if getattr(sys, "frozen", False):
         return [sys.executable, *flags]
     return [sys.executable, "-m", "listener", *flags]

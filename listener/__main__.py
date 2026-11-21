@@ -17,6 +17,8 @@ Flags de desenvolvimento (não fazem parte do produto; servem ao gate G1):
                                                     stdout (LISTENER_LIVE=fake nos testes)
   --live --prepare [--what live|rag] [--db DIR]     baixa os modelos do ao vivo (small e base, `live`, o padrão) ou o e5-small
                                                     da busca local (`rag`, F5.1), progresso em linhas JSON
+  --screen --db DIR --meeting ID                    filho da gravação da tela (F5.27): o app o lança ao gravar a tela e
+                                                    conversa por stdin e stdout (LISTENER_SCREEN=fake nos testes)
   --hf-check [--db DIR]                             testa o token do Hugging Face lido do stdin (F5.11, A-29): o "Testar"
                                                     das Chaves de acesso e do assistente; o resultado numa linha JSON
   --downgrade DIR VERSAO                            volta o banco principal até a versão dada (F5.10),
@@ -223,6 +225,10 @@ def _dispatch(argv: list[str] | None) -> int:
         from .live.proc import main as live_main
 
         return live_main([a for a in argv if a != "--live"])
+    if "--screen" in argv:                                   # F5.27: o filho da tela tem o seu próprio parser e log
+        from .screen_rec.proc import main as screen_main
+
+        return screen_main([a for a in argv if a != "--screen"])
     if "--worker" in argv:                                   # o worker tem o seu próprio parser e log (F2)
         from .pipeline.worker import main as worker_main
 
