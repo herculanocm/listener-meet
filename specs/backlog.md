@@ -17,7 +17,9 @@ Tamanho-alvo: 12 KB.
 
 ## Próximos passos
 1. O dono confere no uso real o que está em "Verificar no Windows".
-2. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
+2. F5.26 (o vídeo só com as vozes decididas) e F5.27 (gravar a tela) aprovadas em 20/11 (D-112, D-113), em
+   implementação. A F5.27 começa pela sonda de go/no-go (CPU, disco, EDR).
+3. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
 
 ## Verificar no Windows (uso real; os critérios e os números estão no Aceite de cada spec)
 Até a F5.15, tudo foi dado por verificado pelo uso real (D-090). Entrega feita fora do Windows acrescenta aqui o que
