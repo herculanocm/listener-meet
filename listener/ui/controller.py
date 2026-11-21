@@ -669,9 +669,6 @@ class Controller(QObject):
             return False
         self.recorder = rec
         self.state = AppState.RECORDING
-        screen_key = fields.get("screen_monitor")         # F5.27: o monitor do "Antes de gravar" (None = sem tela)
-        if screen_key:
-            self.store.set_setting("screen_rec.monitor", str(screen_key))
         self.toasts.refresh_privacy()                    # R-10: o aviso à vista perde o título se a captura não o exclui
         self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
         self._marked_items = set()
@@ -706,9 +703,7 @@ class Controller(QObject):
         w.settings_requested.connect(self.open_settings)
         w.moved.connect(functools.partial(save_widget_pos, self.store))   # R-06: sem lambda com `self` (o ciclo pelo C++)
         w.show()
-        self.screen.attach_widget(w, rec.meeting_id, session_t0(rec))      # F5.27: depois do widget, que sai da captura
-        if screen_key:
-            self.screen.start(rec.meeting_id, session_t0(rec), str(screen_key))
+        self._start_screen(rec, w, fields.get("screen_monitor"))
         if tray:                                         # F5.17 (U-140): a bandeja de legendas, filha do widget
             self.captions = CaptionTrayHost(self.store, self.platform, w, rec.meeting_id, on_mark=self.mark_caption,
                                             on_open_live=self._open_live_front, live_state=self.live_status,
@@ -729,6 +724,17 @@ class Controller(QObject):
         if lines:
             self._notify_with("\n".join(lines), NoticeMeta(short_text="\n".join(plain), log_text="\n".join(plain)))
         return True
+
+    def _start_screen(self, rec: Recorder, w: RecordingWidget, key: Any) -> None:
+        """F5.27, depois do widget (que sai da captura): o monitor do "Antes de gravar" (None = sem tela); a tela nunca impede a
+        gravação."""
+        try:
+            self.screen.attach_widget(w, rec.meeting_id, session_t0(rec))
+            if key:
+                self.store.set_setting("screen_rec.monitor", str(key))
+                self.screen.start(rec.meeting_id, session_t0(rec), str(key))
+        except Exception:
+            log.exception("gravação %s segue sem tela", rec.meeting_id)
 
     def show_widget(self) -> None:
         if self.widget:

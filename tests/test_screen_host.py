@@ -212,3 +212,65 @@ def test_the_controller_pauses_the_screen_and_the_stop_waits_for_the_last_chunk_
         assert c.screen.state == host_mod.OFF
     finally:
         c.emergency_stop()
+
+
+def _controller(qapp: Any, store: Store, platform: Any, monkeypatch: Any, screen: MutableScreen, children: list[ThreadChild]) -> Any:
+    from listener.ui import controller as ctl
+
+    store.set_setting("live.enabled", False)
+    monkeypatch.setattr(platform, "spawn_child", spawner(store.base_dir, screen, children))
+    monkeypatch.setattr(ctl, "SummaryDialog", lambda *a, **k: type("D", (), {"exec": lambda self: None})())
+    c = ctl.Controller(qapp, platform, store, clock_factory=lambda: platform.clock)
+    c.tray = None
+    return c
+
+
+def test_the_app_exit_mid_recording_writes_the_last_chunk_and_the_stop_event_before_the_store_closes(qtbot, qapp, store, platform,
+                                                                                                    monkeypatch):
+    screen, children = MutableScreen(D1, D2), list[ThreadChild]()
+    c = _controller(qapp, store, platform, monkeypatch, screen, children)
+    real_insert, real_close = ScreenRepo.insert_chunk, store.close
+    closed_with: list[bool] = []
+
+    def slow_insert(self: ScreenRepo, *a: Any, **k: Any) -> int:
+        time.sleep(0.8)
+        return real_insert(self, *a, **k)
+
+    def close() -> None:
+        closed_with.append(all(ch.poll() is not None for ch in children))
+        real_close()
+
+    monkeypatch.setattr(ScreenRepo, "insert_chunk", slow_insert)
+    monkeypatch.setattr(store, "close", close)
+    assert c.start_recording(_cfg(), {"title": "sair gravando", "screen_monitor": "DISPLAY1"})
+    mid = c.recorder.meeting_id if c.recorder else 0
+    qtbot.waitUntil(lambda: c.screen.state == host_mod.RECORDING, timeout=10000)
+    qtbot.waitUntil(lambda: len(screen.grabs) >= 1, timeout=5000)
+    platform.pump(0.4)
+    c.emergency_stop()
+    assert closed_with == [True]                                          # o filho saiu antes de o banco fechar
+    with Store.open_readonly(store.base_dir) as ro:
+        assert len(ro.screen.list_chunks(mid)) >= 1
+        stops = [e["data"] for e in ro.list_events(mid) if e["type"] == "screen_stop"]
+    assert len(stops) == 1 and stops[0]["reason"] == "reuniao" and stops[0]["written"] >= 1
+
+
+def test_cancel_kills_the_screen_child_before_the_meeting_is_deleted(qtbot, qapp, store, platform, monkeypatch):
+    screen, children = MutableScreen(D1, D2), list[ThreadChild]()
+    c = _controller(qapp, store, platform, monkeypatch, screen, children)
+    monkeypatch.setattr("listener.ui.controller.confirm_discard", lambda *_a: True)
+    order: list[str] = []
+    real_delete = store.delete_meeting
+
+    def delete(meeting_id: int) -> None:
+        order.append("delete" if all(ch.killed and ch.poll() is not None for ch in children) else "delete-com-filho-vivo")
+        real_delete(meeting_id)
+
+    monkeypatch.setattr(store, "delete_meeting", delete)
+    try:
+        assert c.start_recording(_cfg(), {"title": "cancelar", "screen_monitor": "DISPLAY2"})
+        qtbot.waitUntil(lambda: c.screen.state == host_mod.RECORDING, timeout=10000)
+        c.cancel_recording()
+        assert order == ["delete"] and c.screen.state == host_mod.OFF and c.state == AppState.IDLE
+    finally:
+        c.emergency_stop()

@@ -111,14 +111,18 @@ class ScreenSession:
             self._loop(self.rec)
         except Exception as e:                                      # o codificador ou o print: grava o que fechou e sai com erro
             log.exception("reunião %s: a gravação da tela parou", self.meeting_id)
-            self.out.emit({"type": ERROR, "message": f"{type(e).__name__}: {e}", "retry": True})
+            self.out.emit({"type": ERROR, "message": f"falha na gravação da tela ({type(e).__name__})", "retry": True})
+            self._finish(self.rec)
+            return 1
+        if self.writer.failed:                                      # o banco recusou de um jeito que não é a trava: o app relança
+            self.out.emit({"type": ERROR, "message": "falha ao gravar os pedaços da tela", "retry": True})
             self._finish(self.rec)
             return 1
         return self._finish(self.rec)
 
     def _loop(self, rec: ScreenRecorder) -> None:
         next_check = self.monotonic() + self.check_s
-        while not self._stop.is_set():
+        while not self._stop.is_set() and not self.writer.failed:
             self._apply_commands(rec)
             if self.monotonic() >= next_check:
                 self._check_monitor(rec)
@@ -303,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     except (NotImplementedError, RuntimeError) as e:
         out = _protocol_stdout(process.sync_stdout_handle)
         with suppress(Exception):
-            out.write(encode_line({"type": ERROR, "message": f"sem tela nesta plataforma: {e}", "retry": False}))
+            out.write(encode_line({"type": ERROR, "message": f"sem tela nesta plataforma ({type(e).__name__})", "retry": False}))
             out.flush()
         return 1
     out = _protocol_stdout(source.sync_stdout_handle)
@@ -313,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f"screen: não abri o banco: {type(e).__name__}", file=sys.stderr)  # noqa: T201
         with suppress(Exception):                                # banco ocupado passa: o app relança uma vez
-            out.write(encode_line({"type": ERROR, "message": f"banco indisponível: {e}", "retry": True}))
+            out.write(encode_line({"type": ERROR, "message": f"banco indisponível ({type(e).__name__})", "retry": True}))
             out.flush()
         return 3
     with store:

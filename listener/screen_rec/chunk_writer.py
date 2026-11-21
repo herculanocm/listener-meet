@@ -5,10 +5,12 @@ por isso: só depois do EOF, passado `DRAIN_S` de novas tentativas, o que sobrou
 começa no maior já gravado da reunião mais 1 e, num índice repetido (um filho anterior ainda gravando), relê o maior e segue."""
 from __future__ import annotations
 
+import functools
 import queue
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, BinaryIO
 
@@ -57,6 +59,7 @@ class ChunkWriter:
         self.retry_base_s = retry_base_s
         self.written = 0
         self.unwritten = 0
+        self.failed = False               # a thread parou por um erro que não é a trava: a sessão sai com erro
         self._pending: queue.SimpleQueue[Segment | None] = queue.SimpleQueue()
         self._deadline: float | None = None
         self._thread = threading.Thread(target=self._run, name="screen-write", daemon=True)
@@ -78,45 +81,65 @@ class ChunkWriter:
 
     def _run(self) -> None:
         try:
-            idx = self._next_idx()
+            idx = self._retrying(self._next_idx, -1)
             while (segment := self._pending.get()) is not None:
                 idx = self._write(segment, idx)
-        except Exception:
+        except _GaveUpError:                                    # passou o prazo do fim: o que sobrou fica contado
+            self.unwritten += 1 + self._drain()
+        except Exception:                                  # não é a trava do SQLite: a sessão para e o app relança
             log.exception("reunião %s: a gravação dos pedaços da tela parou", self.meeting_id)
-            while (segment := self._pending.get()) is not None:
-                self.unwritten += 1
+            self.failed = True
+            self.unwritten += self._drain()
         finally:
             with suppress(Exception):
                 self.store.close_thread()
+
+    def _drain(self) -> int:
+        n = 0
+        while self._pending.get() is not None:             # o `finish` sempre põe o None no fim
+            n += 1
+        return n
 
     def _next_idx(self) -> int:
         return max((int(c["idx"]) for c in self.store.screen.list_chunks(self.meeting_id)), default=-1) + 1
 
     def _write(self, s: Segment, idx: int) -> int:
         """Grava `s` com o índice `idx` (ou o seguinte livre); devolve o próximo índice."""
-        failures = 0
         while True:
+            insert = functools.partial(self.store.screen.insert_chunk, self.meeting_id, idx=idx, t_start_ms=s.t_start_ms,
+                                       t_end_ms=s.t_end_ms, frames=s.frames, width=s.width, height=s.height, codec=s.codec, data=s.data)
             try:
-                self.store.screen.insert_chunk(self.meeting_id, idx=idx, t_start_ms=s.t_start_ms, t_end_ms=s.t_end_ms, frames=s.frames,
-                                               width=s.width, height=s.height, codec=s.codec, data=s.data)
+                self._retrying(insert, idx)
             except sqlite3.IntegrityError:                 # o índice já existe: um filho anterior ainda gravava
-                idx = max(idx + 1, self._next_idx())
-                continue
-            except sqlite3.OperationalError as e:
-                failures += 1
-                if self._deadline is not None and time.monotonic() >= self._deadline:
-                    log.error("reunião %s: pedaço %d da tela não gravado depois de %d tentativas: %s", self.meeting_id, idx,  # noqa: TRY400
-                              failures, e)                 # o erro esperado (a trava), sem a pilha
-                    self.unwritten += 1
-                    return idx
-                (log.warning if failures == 1 else log.debug)("reunião %s: pedaço %d da tela, nova tentativa: %s", self.meeting_id,
-                                                               idx, e)
-                time.sleep(min(RETRY_MAX_S, self.retry_base_s * 2 ** (failures - 1)))
+                idx = max(idx + 1, self._retrying(self._next_idx, idx))
                 continue
             self.written += 1
             self.out.emit({"type": CHUNK, "idx": idx, "t_start_ms": s.t_start_ms, "t_end_ms": s.t_end_ms, "frames": s.frames,
                            "bytes": len(s.data)})
             return idx + 1
+
+    def _retrying[T](self, fn: Callable[[], T], idx: int) -> T:
+        """`fn` com nova tentativa em erro do SQLite que não é de integridade ("database is locked" e afins), sem prazo até o
+        fim da tela; depois do `finish`, até o prazo dele (`_GaveUpError`)."""
+        failures = 0
+        while True:
+            try:
+                return fn()
+            except sqlite3.IntegrityError:
+                raise
+            except sqlite3.Error as e:
+                failures += 1
+                if self._deadline is not None and time.monotonic() >= self._deadline:
+                    log.error("reunião %s: pedaço %d da tela não gravado depois de %d tentativas: %s", self.meeting_id, idx,  # noqa: TRY400
+                              failures, e)                 # o erro esperado (a trava), sem a pilha
+                    raise _GaveUpError from e
+                (log.warning if failures == 1 else log.debug)("reunião %s: pedaço %d da tela, nova tentativa: %s", self.meeting_id,
+                                                               idx, e)
+                time.sleep(min(RETRY_MAX_S, self.retry_base_s * 2 ** min(failures - 1, 10)))
+
+
+class _GaveUpError(Exception):
+    """O prazo do fim passou com o SQLite ainda recusando."""
 
 
 __all__ = ["DRAIN_S", "RETRY_BASE_S", "RETRY_MAX_S", "ChunkWriter", "Emitter"]

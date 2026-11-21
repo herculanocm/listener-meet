@@ -195,6 +195,34 @@ def test_database_locked_is_retried_and_no_chunk_is_lost(store, monkeypatch):
     assert len(run.chunks()) == bye["written"] == bye["stats"]["segments"] >= 1
 
 
+def test_a_locked_first_index_read_is_retried_and_a_non_lock_failure_ends_the_child_with_an_error(store, monkeypatch):
+    real_list = ScreenRepo.list_chunks
+    locked = {"n": 0}
+
+    def flaky_list(self: ScreenRepo, meeting_id: int) -> Any:
+        if locked["n"] < 2:
+            locked["n"] += 1
+            raise sqlite3.OperationalError("database is locked")
+        return real_list(self, meeting_id)
+
+    monkeypatch.setattr(ScreenRepo, "list_chunks", flaky_list)
+    screen = MutableScreen()
+    run = Run(store, screen)
+    run.wait(sc.STARTED)
+    wait_for(lambda: len(screen.grabs) >= 2)
+    run.finish()
+    assert locked["n"] == 2 and run.client.bye is not None and run.client.bye["unwritten"] == 0 and len(run.chunks()) >= 1
+
+    def broken(self: ScreenRepo, *a: Any, **k: Any) -> int:
+        raise RuntimeError("arquivo da tela estranho")
+
+    monkeypatch.setattr(ScreenRepo, "insert_chunk", broken)
+    run = Run(store, MutableScreen())
+    end = run.wait(sc.EXIT, timeout=15.0)[0]                              # a sessão para sozinha: o app relança
+    assert end["code"] == 1 and not end["expected"] and run.of(sc.ERROR)[0]["retry"] is True
+    assert run.client.bye is not None and run.client.bye["unwritten"] >= 1 and run.client.bye["written"] == 0
+
+
 def test_idx_continues_after_the_chunks_already_there_and_skips_a_taken_one(store, monkeypatch):
     calls: list[int] = []
     real_next = proc.ChunkWriter._next_idx

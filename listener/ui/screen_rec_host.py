@@ -1,24 +1,20 @@
-"""F5.27 (lote 2): a gravação da tela do lado da interface (`ScreenRecHost`, em `controller.screen`). O controlador só liga os
-ganchos; o ciclo de vida do filho `--screen` (`screen_rec/proc.py`, conduzido pelo `ScreenClient`) mora aqui.
-
-- `start`: confere o monitor (fora do Windows não há monitores: False, o motivo no log), cria o arquivo da tela do mês
-  (`store.screen.ensure_file`, papel APP, fora de transação) e lança o filho com o `t0_perf` da sessão, a taxa, o lado máximo e a
-  pausa da reunião. Com a tela já gravando nesta reunião, vira troca; com um filho anterior dela ainda gravando o último pedaço, o
-  lançamento espera ele sair (o `idx` segue a ordem do tempo).
-- Eventos, no tempo da sessão que o filho informa: `screen_start` (número e tamanho; `back` quando o mesmo monitor volta),
-  `screen_switch`, `screen_lost` (o número) e `screen_stop` (as estatísticas do recorder e `reason`: "usuario", "reuniao",
-  "perdido" = a reunião parou com o monitor fora, ou "queda"). Nunca a chave do monitor.
-- Avisos na linha de alerta do widget (`alert()`, lida pelo `_tick` do controlador sem alerta dos dispositivos): U-183 até o
-  monitor voltar, e a falha de leitura, apagada no primeiro quadro bom. A primeira queda relança; a segunda para a tela com o aviso
-  (`on_error`), e o áudio segue.
-- `stop` (a reunião parou): EOF no filho, que fecha e grava o último pedaço; `then_wait(rec.stop)` faz a tarefa da parada esperar o
-  filho sair (até `STOP_WAIT_S`) antes de o controlador pôr a reunião na fila, fora da thread da interface; passado o prazo, segue
-  (o filho termina de gravar até o kill do `client.CLOSE_GRACE_S`) e o atraso vai ao log. `shutdown` (a saída): para, espera,
-  mata o que sobrou e grava o `screen_stop` antes de o banco fechar. `cancel`: mata o filho antes de a reunião ser apagada.
-- `settings_changed`: `screen_rec.fps` e `screen_rec.max_side` (gravados no OK das Configurações) vão por `params` ao filho e
-  valem no próximo pedaço. Ao começar a tela, o widget sai da captura (`exclude_from_capture`).
-Threads: as mensagens do filho chegam pela `screen-read` e viram o sinal `_message`, enfileirado para a thread da interface; só
-`wait_closed` (e o `then_wait`) roda na tarefa da parada, sobre uma cópia da lista dos filhos."""
+"""F5.27 (lote 2): a gravação da tela do lado da interface (`ScreenRecHost`, em `controller.screen`); o controlador só liga os
+ganchos. `start` confere o monitor (fora do Windows não há monitores: False, o motivo no log), cria o arquivo da tela do mês
+(`store.screen.ensure_file`, papel APP, fora de transação) e lança o filho `--screen` (`ScreenClient`) com o `t0_perf` da sessão,
+a taxa, o lado máximo e a pausa da reunião; com a tela já gravando nesta reunião vira troca, e com um filho anterior dela ainda
+gravando o último pedaço, o lançamento espera ele sair (o `idx` segue a ordem do tempo). Eventos, no tempo da sessão que o filho
+informa: `screen_start` (número e tamanho; `back` quando o mesmo monitor volta), `screen_switch`, `screen_lost` (o número) e
+`screen_stop` (as estatísticas, os pedaços gravados e não gravados e `reason`: "usuario", "reuniao", "perdido" = a reunião parou
+com o monitor fora, ou "queda"); nunca a chave do monitor. Avisos na linha de alerta do widget (`alert()`, lida pelo `_tick` do
+controlador sem alerta dos dispositivos): U-183 até o monitor voltar e a falha de leitura, apagada no primeiro quadro bom. A
+primeira queda relança; a segunda para a tela com o aviso (`on_error`), e o áudio segue.
+`stop` (a reunião parou): EOF no filho, que fecha e grava o último pedaço; `then_wait(rec.stop)` faz a tarefa da parada esperar o
+filho sair (até `STOP_WAIT_S`) antes de o controlador pôr a reunião na fila, fora da thread da interface; passado o prazo, segue
+(o filho termina de gravar até o kill do `client.CLOSE_GRACE_S`) e o atraso vai ao log. `shutdown` (a saída) para, espera, mata o
+que sobrou e grava o `screen_stop` antes de o banco fechar; `cancel` mata o filho antes de a reunião ser apagada.
+`settings_changed` leva `screen_rec.fps` e `screen_rec.max_side` (gravados no OK das Configurações) ao próximo pedaço. Ao começar a
+tela, o widget sai da captura (`exclude_from_capture`). Threads: as mensagens do filho chegam pela `screen-read` e viram o sinal
+`_message`, enfileirado para a thread da interface; só `wait_closed` roda na tarefa da parada, sobre uma cópia da lista."""
 from __future__ import annotations
 
 import functools
@@ -37,8 +33,7 @@ from ..platform.base import Platform
 from ..platform.common import process
 from ..platform.screen_types import Monitor
 from ..screen_rec import client as sc
-from ..screen_rec.recorder import FAILING as REC_FAILING
-from ..screen_rec.recorder import OK as REC_OK
+from ..screen_rec import recorder
 from ..store import Store
 
 log = get_logger("ui.screen_rec_host")
@@ -47,8 +42,7 @@ OFF, STARTING, RECORDING, PAUSED, LOST, FAILING, STOPPED = "off", "starting", "r
 LOST_TEXT = "A gravação da tela parou: o {label} saiu. O áudio segue."     # U-183
 FAILING_TEXT = "A gravação da tela não está conseguindo ler o monitor."
 CRASHED_TEXT = "A gravação da tela parou por um erro. O áudio segue."
-STOP_WAIT_S = 10.0               # a parada da reunião espera o último pedaço até isto antes do processamento
-SHUTDOWN_WAIT_S = 10.0
+STOP_WAIT_S = SHUTDOWN_WAIT_S = 10.0   # a parada da reunião e a saída esperam o último pedaço até isto
 RETRIES = 1                      # a spec (pergunta 8): uma nova tentativa por reunião
 
 
@@ -134,7 +128,7 @@ class ScreenRecHost(QObject):
         except Exception as e:
             log.exception("reunião %s: o filho da tela não iniciou", meeting_id)
             self._set_state(STOPPED)
-            self.on_error(f"A gravação da tela não iniciou: {e}")
+            self.on_error(f"A gravação da tela não iniciou ({type(e).__name__}).")   # sem a mensagem: pode trazer um caminho
             return False
         session = sc.ChildRun(client, meeting_id, t0_perf, key, label)
         with self._lock:
@@ -236,9 +230,8 @@ class ScreenRecHost(QObject):
         for s in self._snapshot():
             if not s.client.exited:
                 s.client.terminate()
-            bye = s.client.bye
-            if bye is not None:
-                s.stats, s.t_ms = dict(bye.get("stats") or s.stats), sc.as_int(bye.get("t_ms"))
+            if s.client.bye is not None:
+                self._bye(s, s.client.bye)
             elif not s.reason:
                 s.reason = "queda"
             self._finalize(s)
@@ -311,19 +304,27 @@ class ScreenRecHost(QObject):
         elif kind == sc.STATS:
             s.stats = dict(msg.get("stats") or {})
         elif kind == sc.BYE:
-            s.stats, s.t_ms = dict(msg.get("stats") or s.stats), sc.as_int(msg.get("t_ms"))
+            self._bye(s, msg)
         elif kind == sc.ERROR:
             s.error = msg
-            log.warning("filho da tela: %s", msg.get("message"))
+            log.warning("filho da tela: %s (nova tentativa %s)", msg.get("message"), "sim" if msg.get("retry") else "não")
         elif kind == sc.EXIT:
             self._on_exit(s, msg)
 
+    def _bye(self, s: sc.ChildRun, msg: dict[str, Any]) -> None:
+        """As estatísticas finais e os pedaços gravados e não gravados, que vão no `screen_stop`."""
+        written, unwritten = sc.as_int(msg.get("written")) or 0, sc.as_int(msg.get("unwritten")) or 0
+        s.stats = {**dict(msg.get("stats") or s.stats), "written": written, "unwritten": unwritten}
+        s.t_ms = sc.as_int(msg.get("t_ms"))
+        if unwritten:
+            log.warning("reunião %s: %d pedaço(s) da tela não gravado(s) (o banco recusou até o fim)", s.meeting_id, unwritten)
+
     def _on_status(self, state: str) -> None:
-        if state == REC_FAILING and self._state == RECORDING:
+        if state == recorder.FAILING and self._state == RECORDING:
             log.info("tela: 60 s sem conseguir ler o monitor")
             self._alert = FAILING_TEXT
             self._set_state(FAILING)
-        elif state == REC_OK and self._state == FAILING:
+        elif state == recorder.OK and self._state == FAILING:
             self._alert = None
             self._set_state(PAUSED if self._paused else RECORDING)
 
@@ -396,5 +397,4 @@ class ScreenRecHost(QObject):
             log.warning("reunião %s: evento %s não gravado: %s", s.meeting_id, etype, type(e).__name__)
 
 
-__all__ = ["CRASHED_TEXT", "FAILING_TEXT", "LOST_TEXT", "OFF", "PAUSED", "RECORDING", "STARTING", "STOPPED", "STOP_WAIT_S",
-           "ScreenRecHost", "session_t0"]
+__all__ = ["CRASHED_TEXT", "FAILING_TEXT", "LOST_TEXT", "OFF", "PAUSED", "RECORDING", "STOPPED", "ScreenRecHost", "session_t0"]
