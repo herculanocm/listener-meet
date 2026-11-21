@@ -157,6 +157,12 @@ def meeting_report(store: Store, meeting_id: int) -> dict[str, Any]:
         out["rag"] = meeting_rag(store, meeting_id)
     except Exception as e:                                   # o bloco da busca também nunca derruba o relatório
         out["rag"] = {"error": f"{type(e).__name__}: {e}"}
+    try:                                                     # F5.27: a tela gravada, só leitura
+        from .screen_rec.report import screen_rec_report
+
+        out["screen_rec"] = screen_rec_report(store, meeting_id, events)
+    except Exception as e:                                   # o bloco da tela também nunca derruba o relatório
+        out["screen_rec"] = {"error": f"{type(e).__name__}: {e}"}
     return out
 
 

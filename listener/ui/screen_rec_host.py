@@ -247,19 +247,16 @@ class ScreenRecHost(QObject):
 
     # ---------------------------------------------------------------- widget
     def attach_widget(self, widget: Any, meeting_id: int, t0_perf: float) -> None:
-        """O widget da gravação: o estado e os pedidos (ligados só se o widget já os tem) e a exclusão da captura com a tela ativa."""
+        """O widget da gravação: o estado, os três pedidos do menu da tela e a exclusão da captura com a tela ativa. Ligação
+        direta: um nome divergente quebra aqui, e não vira um menu que não faz nada."""
         self._widget = widget
         self._meeting = (meeting_id, t0_perf)
         widget.destroyed.connect(lambda *_a: setattr(self, "_widget", None))
-        setter = getattr(widget, "set_screen_state", None)
-        if callable(setter):
-            self.state_changed.connect(setter)
-            setter(self._state, self.monitor_label)
-        for name, slot in (("screen_start_requested", self._start_requested), ("screen_switch_requested", self.switch),
-                           ("screen_stop_requested", self.stop_screen)):
-            signal = getattr(widget, name, None)
-            if signal is not None:
-                signal.connect(slot)
+        self.state_changed.connect(widget.set_screen_state)
+        widget.set_screen_state(self._state, self.monitor_label)
+        widget.screen_start_requested.connect(self._start_requested)
+        widget.screen_switch_requested.connect(self.switch)
+        widget.screen_stop_requested.connect(self.stop_screen)
         if self._session is not None:
             self._exclude_widget()
 

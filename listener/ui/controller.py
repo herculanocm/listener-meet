@@ -685,7 +685,7 @@ class Controller(QObject):
         self._start_partial(meeting_id)
         tray = self.live is not None and bool(self.store.get(SPECS["live.caption_tray"]))      # F5.17: com ela, sem a linha
         live_line = self.live is not None and bool(self.store.get(SPECS["live.in_widget"])) and not tray
-        self.widget = RecordingWidget(live_line=live_line, captions_button=tray, **widget_prefs(self.store))
+        self.widget = RecordingWidget(live_line=live_line, captions_button=tray, platform=self.platform, **widget_prefs(self.store))
         w = self.widget
         w.height_changed.connect(self.toasts.relayout)    # F5.4 L2 (A-16): o widget cresceu para cima; os avisos sobem junto
         w.live_clicked.connect(self.open_live_window)
