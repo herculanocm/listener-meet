@@ -7,9 +7,14 @@ na tela, sem passar o começo da seguinte; terminada, fica mais `HOLD_MS` se nad
 
 `screens` diz o que a tela mostra em cada intervalo (`Screen`): a legenda atual (a de começo mais recente ainda na tela)
 e a anterior a ela, quando terminou até `CONTEXT_MS` antes do começo da atual, com a marca de que ainda fala (falas ao
-mesmo tempo, L e R). O vídeo desenha uma tela por troca e a repete entre as trocas."""
+mesmo tempo, L e R). O vídeo desenha uma tela por troca e a repete entre as trocas.
+
+`text_track` dá as amostras da faixa de texto do MP4 (F5.26): as mesmas legendas, nos mesmos tempos. A faixa é sequencial
+(o MP4 empurra a amostra que começa antes do fim da anterior), então legendas ao mesmo tempo dividem o intervalo: cada trecho
+mostra as que estão no ar, uma por linha, como a tela mostra a anterior que ainda fala."""
 from __future__ import annotations
 
+import itertools
 from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -60,6 +65,20 @@ class Screen:
 
 
 IDLE = Screen()
+
+
+@dataclass(frozen=True, slots=True)
+class TextSample:
+    """Uma amostra da faixa de texto, no tempo do arquivo: as legendas no ar, "Nome — Cargo: texto", uma por linha."""
+    start_ms: int
+    end_ms: int
+    lines: tuple[str, ...]
+
+
+def caption_line(cue: Cue) -> str:
+    """"Ana — CFO: texto" (sem cargo, "Bia: texto"), como a linha da transcrição."""
+    who = f"{cue.name} — {cue.role}" if cue.role else cue.name
+    return f"{who}: {cue.text}"
 
 
 def split_text(text: str, max_chars: int = MAX_CHARS) -> list[str]:
@@ -171,5 +190,25 @@ def screens(cues: Sequence[Cue], duration_ms: int) -> list[tuple[int, Screen]]:
     return out
 
 
-__all__ = ["CONTEXT_MS", "HOLD_MS", "IDLE", "MAX_CHARS", "MIN_CUE_MS", "Cue", "Screen", "ScreenIndex", "Speech", "build_cues",
-           "screens", "split_text"]
+def text_track(cues: Sequence[Cue]) -> list[TextSample]:
+    """As amostras da faixa de texto, em ordem e sem sobreposição: sem legendas ao mesmo tempo, uma por legenda, nos tempos
+    dela; com, o intervalo cortado nos começos e fins, cada trecho com as legendas no ar (na ordem de começo). Uma passada
+    só pelos começos e fins, com a lista das que estão no ar."""
+    order = sorted(range(len(cues)), key=lambda i: (cues[i].start_ms, i))
+    bounds = sorted({t for c in cues for t in (c.start_ms, c.end_ms)})
+    active: list[int] = []
+    k = 0
+    out: list[TextSample] = []
+    for a, b in itertools.pairwise(bounds):
+        active = [i for i in active if cues[i].end_ms > a]          # no ar em `a` fica no ar até `b` (o próximo limite)
+        while k < len(order) and cues[order[k]].start_ms <= a:
+            active.append(order[k])
+            k += 1
+        lines = tuple(caption_line(cues[i]) for i in active)
+        if lines:                                # duas legendas iguais seguidas ("Sim.") ficam duas, como na imagem
+            out.append(TextSample(a, b, lines))
+    return out
+
+
+__all__ = ["CONTEXT_MS", "HOLD_MS", "IDLE", "MAX_CHARS", "MIN_CUE_MS", "Cue", "Screen", "ScreenIndex", "Speech", "TextSample",
+           "build_cues", "caption_line", "screens", "split_text", "text_track"]
