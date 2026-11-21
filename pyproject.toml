@@ -26,6 +26,7 @@ pipeline-hq = ["whisperx>=3.3"]
 llm         = ["google-genai>=2.33,<3", "openai>=3.37,<4", "anthropic>=2.3,<3", "truststore>=0.9"]   # F3: pinos por major (R-1)
 local       = ["onnxruntime>=1.18", "tokenizers>=0.20", "huggingface-hub>=0.26"]   # F5.1: embeddings locais (e5-small, D-051)
 docx        = ["python-docx>=1.1"]                                                  # F5.1: exportar .docx (U-011)
+video       = ["av>=19,<20"]       # F5.19 e F5.27: o vídeo exportado e a tela gravada (no lock: av==19.0.2; o faster-whisper pede >=11)
 dev         = ["pytest>=8", "pytest-qt>=4.4", "pytest-xdist>=3.8", "ruff>=0.6", "mypy>=1.11"]   # D-091: a suíte em paralelo
 
 [project.scripts]

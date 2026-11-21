@@ -1,5 +1,6 @@
 """Fachada `Store`: os repositórios por domínio (`settings`, `meetings`, `audio`, `people`; F2: `jobs`, `profiles`,
-`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`; F5: `rag`; F5.20: `suggestions`)
+`segments`; F3: `providers`, `summaries`, `actions`, `llm_calls`, `chat`; F4: `captions`; F5: `rag`; F5.20: `suggestions`;
+F5.27: `screen`)
 atrás dos nomes de método da F1. Uma conexão por thread (M-02/M-18); `with Store(dir) as s:` fecha ao sair;
 `Store.open_readonly(dir)` para o `--check`; `Store.open_worker(dir)` para o worker da F2 (`StoreRole`)."""
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .people import PeopleRepo, PersonRow
 from .profiles import ProfilesRepo
 from .providers import ProvidersRepo
 from .rag import RagRepo
+from .screen import ScreenRepo
 from .segments import SegmentsRepo
 from .settings import SettingsRepo
 from .suggestions import SuggestionsRepo
@@ -56,6 +58,7 @@ class Store:
         self.chat = ChatRepo(self.core)
         self.captions = CaptionsRepo(self.core)
         self.suggestions = SuggestionsRepo(self.core)       # F5.20: as sugestões ao vivo e as avaliações
+        self.screen = ScreenRepo(self.core)                 # F5.27: a tela gravada, nos arquivos mensais da tela
         self.rag = RagRepo(self.core)
         if role == StoreRole.APP:
             self.providers.refresh_seeds()            # F5.14 (item 8): depois das migrações, só no papel que escreve e migra
@@ -227,13 +230,14 @@ class Store:
         commit, numa conexão própria com o arquivo (`space.delete_chunks`), e o arquivo na lista do espaço a liberar; depois,
         no main: as revisões da reunião (A-33), as amostras de voz dela sem o vínculo de voz e fala (A-34), as chamadas de LLM
         sem a reunião e sem o conteúdo (o custo do mês fica), os pisos de id (A-34) e a linha, cuja cascata leva o resto
-        (A-32). Uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão, e excluir de novo termina. O log leva só ids
-        e contagens (A-46)."""
+        (A-32). Uma falha no meio deixa uma reunião sem áudio, nunca áudio órfão, e excluir de novo termina. F5.27: a tela vai
+        junto com o áudio, antes do main (`ScreenRepo.delete_for_meeting`). O log leva só ids e contagens (A-46)."""
         file = self.meeting_audio_file(meeting_id)
         chunks = 0
         if file is not None:
             space.add_pending(self.core, file)
             chunks = space.delete_chunks(self.base_dir / file, meeting_id)
+        screen = self.screen.delete_for_meeting(meeting_id)
         with self.core.transaction():
             rows = self.meetings.cascade_counts(meeting_id)
             rows["revisions"] = self.meetings.delete_revisions(meeting_id)
@@ -243,7 +247,7 @@ class Store:
                 floors.raise_floor(self.core, table, key)
             self.meetings.delete_meeting_row(meeting_id)
         self.core.forget_meeting(meeting_id)
-        log.info("reunião %s excluída: %d pedaço(s) de áudio; linhas: %s", meeting_id, chunks,
+        log.info("reunião %s excluída: %d pedaço(s) de áudio, %d da tela; linhas: %s", meeting_id, chunks, screen.chunks,
                  ", ".join(f"{t} {n}" for t, n in rows.items() if n) or "nenhuma")
 
     # ---------------------------------------------------------------- pedaços

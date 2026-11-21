@@ -223,6 +223,12 @@ SPECS: dict[str, SettingSpec] = {s.key: s for s in (
     SettingSpec("suggest.memo", "", _NOW, "O que o assistente aprendeu", _text, phase="F5.20", internal=True),
     SettingSpec("suggest.memo_at", "", _NOW, "Quando o memorando foi refeito", _text, phase="F5.20", internal=True),
     SettingSpec("suggest.memo_ratings", 0, _NOW, "Avaliações usadas no último memorando", int, low=0, phase="F5.20", internal=True),
+    # F5.27: a gravação da tela (CP8: a taxa e a resolução valem a partir do próximo pedaço, mesmo gravando); `monitor` é a
+    # chave do último monitor escolhido no "Antes de gravar", escrita pelo app
+    SettingSpec("screen_rec.fps", 1, _NOW, "Quadros por segundo da tela gravada (1 a 5)", int, low=1, high=5, phase="F5.27"),
+    SettingSpec("screen_rec.max_side", 1920, _NOW, "Lado maior da tela gravada (px, 960 a 3840)", int, low=960, high=3840,
+                phase="F5.27"),
+    SettingSpec("screen_rec.monitor", "", _NOW, "Último monitor escolhido para gravar a tela", _text, phase="F5.27", internal=True),
     # F5 (Dados): grupo "Busca" (a tela é do L5). `rag.auto_index` = vetores automáticos (o custo dos embeddings, Q1):
     # desligado, os jobs `index` continuam e gravam trechos e FTS (locais e grátis), só os vetores ficam de fora, salvo no
     # "reindexar" (pedido forçado). F5.1 (A-05): o embedder local não tem custo, logo o rótulo só fala de custo nos pagos;

@@ -9,7 +9,8 @@ v7 = ao vivo (F4): colunas em `captions` (canal, confiança, rótulo, modelo, at
 tiverem linhas, viram `*_v1`, CP3), `rag_models`, `rag_fts` (FTS5 com conteúdo externo e gatilhos; requisito), `chat_threads`
 e `chat_messages` reconstruída com `meeting_id` nulo (chat global), `thread_id` e `rating`; v9 = `chat_messages.trace_json`
 (F5.10: os passos de "Perguntar à base"), a primeira com volta (`store/downgrade.py`); v10 = as sugestões ao vivo (F5.20):
-`suggestions`, `suggestion_options` e `meetings.goal`, também com volta.
+`suggestions`, `suggestion_options` e `meetings.goal`, também com volta; v11 = a tela das sugestões (F5.21), com volta;
+v12 = `meetings.screen_file` (F5.27: o arquivo mensal da tela, `store/screen_file.py`), com volta.
 Cada arquivo de áudio (`listener-audio.db` legado ou `listener-audio-AAAA-MM.db`): v1 = tabela; v2 = datas com fuso.
 Cada migração é uma lista de statements (não um script), executada inteira num `BEGIN IMMEDIATE` junto com a linha de
 versão e o `PRAGMA user_version`; `{s}` é o nome do schema anexado. Migrações em Python ficam em `core.py`.
@@ -233,6 +234,10 @@ MAIN_V11: tuple[str, ...] = (
 MAIN_V11_COLUMNS: tuple[tuple[str, str, str], ...] = (("suggestions", "screen_summary", "TEXT"),
                                                       ("suggestion_options", "screen", "INTEGER NOT NULL DEFAULT 0"))
 
+# F5.27 (v12): `meetings.screen_file`, o arquivo mensal da tela da reunião (nulo: reunião sem tela), por `_add_columns`; a ida
+# religa as reuniões aos arquivos da tela que já estão na pasta (`screen_file.relink_meetings`). A volta é `MAIN_DOWNS[12]`.
+MAIN_V12_COLUMNS: tuple[tuple[str, str, str], ...] = (("meetings", "screen_file", "TEXT"),)
+
 FTS5_MISSING = ("o SQLite deste Python não tem FTS5 ({error}); a busca da F5 precisa dele: use o Python 3.12 do python.org "
                 "(Windows) ou um sqlite3 com FTS5 (Linux e macOS)")
 
@@ -291,6 +296,7 @@ MAIN_MIGRATIONS: list[Migration] = [
     (9, None),        # F5.10: `chat_messages.trace_json` (MAIN_V9_COLUMNS); a volta em `store/downgrade.py`
     (10, MAIN_V10),   # F5.20: `suggestions`, `suggestion_options` e `meetings.goal` (MAIN_V10_COLUMNS); a volta em `downgrade.py`
     (11, MAIN_V11),   # F5.21: `suggestion_screens`, o resumo da tela e a tela por opção (MAIN_V11_COLUMNS); a volta em `downgrade.py`
+    (12, None),       # F5.27: `meetings.screen_file` (MAIN_V12_COLUMNS) e a religação aos arquivos da tela; a volta em `downgrade.py`
 ]
 AUDIO_MIGRATIONS: list[Migration] = [
     (1, AUDIO_V1),

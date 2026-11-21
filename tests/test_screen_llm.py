@@ -95,10 +95,10 @@ def test_v11_on_a_v10_database_the_screens_and_the_way_back(tmp_path, monkeypatc
         oid = int(old._q("SELECT id FROM suggestion_options")[0][0])
     monkeypatch.undo()
     with Store(tmp_path) as s:
-        assert s.schema_version() == 11 and s.suggestions.get_option(oid)["screen"] == 0
+        assert s.schema_version() == 12 and s.suggestions.get_option(oid)["screen"] == 0
         s.suggestions.insert_screen(ScreenInsert(sid, ScreenStatus.SENT, ScreenSource.WINDOW, "janela do Teams", 1600, 900, 219_000, 1,
                                                  b"thumb", b"copy"))
-    assert down.downgrade(tmp_path, 10) == [11]
+    assert down.downgrade(tmp_path, 10) == [12, 11]
     with sqlite3.connect(tmp_path / "listener.db") as c:
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         columns = {r[1] for r in c.execute("PRAGMA table_info(suggestions)")}
@@ -106,7 +106,7 @@ def test_v11_on_a_v10_database_the_screens_and_the_way_back(tmp_path, monkeypatc
         assert "screen" not in {r[1] for r in c.execute("PRAGMA table_info(suggestion_options)")}      # S01
         assert c.execute("SELECT COUNT(*) FROM suggestions").fetchone()[0] == 1          # as sugestões ficam
     with Store(tmp_path) as again:
-        assert again.schema_version() == 11 and again.suggestions.screens_for_meeting(mid) == {}
+        assert again.schema_version() == 12 and again.suggestions.screens_for_meeting(mid) == {}
 
 
 def test_the_screen_repo_keeps_the_thumb_and_the_copy_and_reads_the_summaries_in_the_window(store):
