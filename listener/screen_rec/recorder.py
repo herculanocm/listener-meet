@@ -155,16 +155,14 @@ class ScreenRecorder:
             self.stop()
 
     def step(self) -> int:
-        """Aplica os pedidos, fecha o pedaço vencido e, se é a hora, tira e codifica um quadro. Devolve os ms até o próximo
-        compromisso (o próximo quadro ou o fim do pedaço)."""
+        """Aplica os pedidos e, se é a hora, tira e codifica um quadro; o pedaço vencido fecha nesse quadro, e o seguinte abre no
+        mesmo instante. Devolve os ms até o próximo quadro."""
         if self._stopped:
             return WAIT_CAP_MS
         now = self._now()
         self._apply_requests(now)
         if self._paused:
             return WAIT_CAP_MS
-        if self._encoder is not None and now - self._chunk_open_ms >= self._chunk_ms:
-            self._close(now)
         if self._next_ms is None or now >= self._next_ms:
             self._tick(now)
             now = self._now()
@@ -179,8 +177,6 @@ class ScreenRecorder:
 
     def _delay(self, now: int) -> int:
         due = self._next_ms if self._next_ms is not None else now
-        if self._encoder is not None:
-            due = min(due, self._chunk_open_ms + self._chunk_ms)
         return max(1, int(due - now))
 
     def _apply_requests(self, now: int) -> None:
@@ -252,6 +248,8 @@ class ScreenRecorder:
         """Codifica o quadro no pedaço (abrindo outro se preciso) e devolve os ms de `add`."""
         if self._encoder is not None and self._encoder.src_size != (frame.width, frame.height):
             self._close(now)                                   # o monitor mudou de resolução: outro pedaço
+        elif self._encoder is not None and now - self._chunk_open_ms >= self._chunk_ms:
+            self._close(now)                                   # a virada dos 60 s num quadro: o seguinte abre no mesmo instante
         if self._encoder is None:
             new_fps, self._max_side = self._want_params
             if new_fps != self._fps:

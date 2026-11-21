@@ -3,6 +3,7 @@ do `ScreenRecorder` com relógio e print falsos (nenhuma espera de verdade)."""
 from __future__ import annotations
 
 import itertools
+import random
 import subprocess
 import sys
 import threading
@@ -145,6 +146,20 @@ def test_segment_closes_every_60_seconds():
     rec.stop()
     assert segments[-1].t_start_ms == 120_000 and segments[-1].frames == 11 and segments[-1].t_end_ms == 130_500
     assert rec.stats.segments == 3 and rec.stats.skipped == 0
+
+
+def test_the_60_s_rollover_leaves_no_hole_when_the_loop_wakes_late():
+    """Revisão do diff: com o acordar atrasado (o timer do Windows tem ~15 ms), a virada dos 60 s não deixa ~1 s sem tela."""
+    rng = random.Random(7)  # noqa: S311 (atraso de teste, não criptografia)
+    rec, clock, _grab, segments, _ = _recorder()
+    while clock.ms < 360_000:
+        delay = rec.step()
+        clock.ms += delay + rng.randint(0, 15)
+    rec.stop()
+    assert len(segments) >= 6
+    for before, after in itertools.pairwise(segments):
+        assert after.t_start_ms == before.t_end_ms
+    assert all(59 <= s.frames <= 61 for s in segments[:-1])
 
 
 def test_grab_failure_closes_the_segment_so_the_hole_stays_between_segments():
