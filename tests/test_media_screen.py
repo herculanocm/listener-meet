@@ -223,3 +223,22 @@ def test_save_video_from_the_menu_takes_the_screen_path_in_its_task(qtbot, store
     plan = ma.plan_audio(store, mid)
     assert plan is not None and size == (1920, 1080) and win.message.text() == f"Salvo em {out}."
     assert needs == [msave.estimate_bytes(True, "mp4", plan) + 2 * store.screen.total_bytes(mid)]
+
+
+def test_without_the_text_track_box_the_screen_video_has_only_video_and_audio(qtbot, store, tmp_path, monkeypatch):
+    """D-115: a caixa desmarcada também vale no vídeo com a tela."""
+    pytest.importorskip("av")
+    from listener.ui import media_save as msave
+    from listener.ui.meeting import MeetingWindow
+
+    win = MeetingWindow(store, _screen_meeting(store))
+    qtbot.addWidget(win)
+    monkeypatch.setattr(msave, "ask_text", lambda *_a, **_k: (True, False))
+    monkeypatch.setattr(win.media, "_ask_video", lambda _m: str(tmp_path / "v.mp4"))
+    try:
+        assert win.media.save_video() is not None
+        qtbot.waitUntil(lambda: win.media.task is None, timeout=60_000)
+    finally:
+        msave._running.clear()
+    kinds, size, _frames = _read(tmp_path / "v.mp4")
+    assert kinds == ["video", "audio"] and size == (1920, 1080)

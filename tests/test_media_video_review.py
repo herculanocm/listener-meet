@@ -317,9 +317,9 @@ def test_the_choice_in_the_dialog_replaces_what_the_transcript_shows_and_goes_in
     captured: list[Any] = []
     asked: list[tuple[bool, bool]] = []
 
-    def ask(_parent: Any, *, revised: bool, prefer_llm: bool, cost: Any, on_generate: Any) -> bool:
+    def ask(_parent: Any, *, revised: bool, prefer_llm: bool, cost: Any, on_generate: Any) -> tuple[bool, bool]:
         asked.append((revised, prefer_llm))
-        return False                                                         # "Original (como foi transcrito)"
+        return False, True                                                   # "Original (como foi transcrito)", com a faixa
 
     monkeypatch.setattr(msave, "ask_text", ask)
     monkeypatch.setattr(msave, "write_video", _fake_video(captured))
@@ -360,3 +360,39 @@ def test_generate_in_the_dialog_asks_for_the_revision_and_opens_no_save_dialog(q
     QTimer.singleShot(0, click)
     assert win.media.save_video() is None and revised == [True] and saved == [] and not win.media.busy
     assert labels == ["Gerar a revisão"]                                      # sem chave da IA: sem valor
+
+
+# ---------------------------------------------------------------- a caixa da faixa de texto (D-115)
+def test_the_text_track_box_is_checked_by_default(qtbot):
+    dlg = mvd.VideoTextDialog(None, revised=True, prefer_llm=True)
+    qtbot.addWidget(dlg)
+    assert dlg.track.text() == "Incluir a legenda também como faixa de texto" and dlg.track.isChecked() and dlg.with_track
+    dlg.track.setChecked(False)
+    assert not dlg.with_track
+
+
+def _tracks(out: Any) -> list[str]:
+    import av
+
+    with av.open(str(out)) as c:
+        return [str(s.type) for s in c.streams]
+
+
+@pytest.mark.parametrize(("with_track", "kinds"), [(False, ["video", "audio"]), (True, ["video", "audio", "subtitle"])])
+def test_the_box_decides_if_the_mp4_has_the_text_track(qtbot, store, tmp_path, monkeypatch, with_track, kinds):
+    pytest.importorskip("av")
+    win = _window(qtbot, store, _speech_meeting(store))
+    monkeypatch.setattr(msave, "ask_text", lambda *_a, **_k: (True, with_track))
+    monkeypatch.setattr(win.media, "_ask_video", lambda _m: str(tmp_path / "v.mp4"))
+    assert win.media.save_video() is not None
+    qtbot.waitUntil(lambda: win.media.task is None, timeout=60000)
+    assert _tracks(tmp_path / "v.mp4") == kinds
+
+
+def test_saving_to_a_given_path_skips_the_dialog_and_keeps_the_text_track(qtbot, store, tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    win = _window(qtbot, store, _speech_meeting(store))
+    monkeypatch.setattr(msave, "ask_text", lambda *_a, **_k: pytest.fail("o diálogo não abre com o destino dado"))
+    assert win.media.save_video(str(tmp_path / "w.mp4")) is not None
+    qtbot.waitUntil(lambda: win.media.task is None, timeout=60000)
+    assert _tracks(tmp_path / "w.mp4") == ["video", "audio", "subtitle"]

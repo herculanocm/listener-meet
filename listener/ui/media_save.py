@@ -243,8 +243,15 @@ class MediaSaver(QObject):
 
         return self._start(AUDIO, chosen.key, target, plan, make)
 
-    def _ask_text(self, rows: list[TranscriptRow]) -> bool | None:
-        """U-179: True a revisada, False a original, None cancelou (ou pediu a revisão, que segue sozinha)."""
+    def _choice(self, rows: list[TranscriptRow], path: str | None, prefer_llm: bool | None) -> tuple[bool, bool] | None:
+        """(usa a revisada, inclui a faixa de texto): com `path` ou `prefer_llm`, sem o diálogo e com a faixa; senão, o U-179."""
+        if prefer_llm is not None or path is not None:
+            return (self.prefer_llm() if prefer_llm is None else prefer_llm), True
+        return self._ask_text(rows)
+
+    def _ask_text(self, rows: list[TranscriptRow]) -> tuple[bool, bool] | None:
+        """U-179: (True a revisada, False a original; a caixa da faixa de texto, D-115), None cancelou (ou pediu a revisão, que
+        segue sozinha)."""
         revised = any(r.text_llm for r in rows)
         return ask_text(self.window, revised=revised, prefer_llm=self.prefer_llm(), on_generate=self.on_revise,
                         cost=None if revised else revise_cost(self.store, self.meeting_id))
@@ -264,9 +271,10 @@ class MediaSaver(QObject):
             return None
         if self._video_held():
             return None
-        use_llm = prefer_llm if prefer_llm is not None else (self._ask_text(rows) if path is None else self.prefer_llm())
-        if use_llm is None:
+        choice = self._choice(rows, path, prefer_llm)
+        if choice is None:
             return None
+        use_llm, with_track = choice
         speeches = speeches_for(self.store, self.meeting_id, use_llm, rows)
         if not speeches:
             self.message(NO_SPEECH)
@@ -284,7 +292,7 @@ class MediaSaver(QObject):
         if self._blocked(target, estimate_bytes(True, "mp4", plan) + (with_screen.extra_bytes if with_screen else 0)):
             return None
 
-        captions = text_track(cues, plan.duration_ms)  # F5.26: a faixa de texto, com as mesmas legendas
+        captions = text_track(cues, plan.duration_ms) if with_track else ()   # F5.26 (D-115): a faixa de texto, se pedida
 
         def make(tick: Tick) -> tuple[Path, int, int]:
             if with_screen is not None:
