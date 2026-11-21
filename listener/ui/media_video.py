@@ -15,7 +15,7 @@ from contextlib import suppress
 from fractions import Fraction
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -57,7 +57,7 @@ def frame_times(screens: Sequence[tuple[int, Screen]], duration_ms: int, refresh
             k += refresh_ms
 
 
-def _video_stream(av: Any, out: Any, size: tuple[int, int]) -> Any:
+def _video_stream(av: Any, out: Any, size: tuple[int, int], threads: int = 1) -> Any:
     codec = pick_codec(av, size)
     stream = out.add_stream(codec, rate=Fraction(1000, REFRESH_MS))
     stream.width, stream.height = size
@@ -65,7 +65,7 @@ def _video_stream(av: Any, out: Any, size: tuple[int, int]) -> Any:
     stream.time_base = Fraction(1, 1000)
     cc = stream.codec_context
     cc.time_base = Fraction(1, 1000)
-    cc.thread_count = 1
+    cc.thread_count = threads
     cc.gop_size = KEYINT
     with suppress(AttributeError, ValueError):   # a etiqueta de cor: sem ela o player supõe, e as cores mudam um pouco
         cc.color_primaries, cc.color_trc, cc.colorspace, cc.color_range = BT709, BT709, BT709, MPEG_RANGE
@@ -89,12 +89,13 @@ def _audio_stream(av: Any, out: Any, rate: int) -> tuple[Any, Any]:
 class _Muxer:
     """Os quadros e o áudio para o contêiner: cada tela convertida uma vez (a última fica guardada)."""
 
-    def __init__(self, av: Any, out: Any, size: tuple[int, int], rate: int, render: Callable[[Screen], np.ndarray]):
+    def __init__(self, av: Any, out: Any, size: tuple[int, int], rate: int, render: Callable[[Screen], np.ndarray] | None = None,
+                 threads: int = 1):
         from av.video.reformatter import Colorspace
 
         self.av, self.out, self.rate, self.render = av, out, rate, render
         self.colorspace = Colorspace.ITU709
-        self.video = _video_stream(av, out, size)
+        self.video = _video_stream(av, out, size, threads)
         self.audio, self.resampler = _audio_stream(av, out, rate)
         self._screen: int | None = None
         self._frame: Any = None
@@ -102,11 +103,21 @@ class _Muxer:
 
     def picture(self, t_ms: int, index: int, screen: Screen) -> None:
         if index != self._screen:
-            rgb = self.av.VideoFrame.from_ndarray(self.render(screen), format="rgb24")
-            self._frame = rgb.reformat(format="yuv420p", dst_colorspace=self.colorspace, dst_color_range=MPEG_RANGE)
+            if self.render is None:
+                raise RuntimeError("as telas das legendas pedem o desenhista")
+            self._frame = self.yuv(self.render(screen))
             self._screen = index
-        self._frame.pts = t_ms
-        self._mux(self.video.encode(self._frame))
+        self.encode(self._frame, t_ms)
+
+    def yuv(self, rgb: np.ndarray) -> Any:
+        """Uma tela RGB no quadro yuv420p em BT.709 de faixa limitada, pronto para `encode`."""
+        frame = self.av.VideoFrame.from_ndarray(rgb, format="rgb24")
+        return frame.reformat(format="yuv420p", dst_colorspace=self.colorspace, dst_color_range=MPEG_RANGE)
+
+    def encode(self, frame: Any, t_ms: int) -> None:
+        """Um quadro pronto no instante `t_ms` (o mesmo quadro pode voltar com outro instante)."""
+        frame.pts = t_ms
+        self._mux(self.video.encode(frame))
         self.frames += 1
 
     def sound(self, x: np.ndarray, pos: int) -> None:
@@ -138,36 +149,63 @@ def _text_track(av: Any, out: Any, captions: Sequence[TextSample]) -> TextTrack 
     return TextTrack(av, out, captions)
 
 
+class Pictures(Protocol):
+    """Os quadros do vídeo em ordem de tempo: `until` grava pelo `mux` os que começam antes de `limit_ms` (None: todos os que
+    faltam) e chama `check` entre quadros (o cancelar e a espera da gravação valem no meio de um bloco)."""
+
+    def until(self, mux: _Muxer, limit_ms: int | None, check: Callable[[], None]) -> None: ...
+
+
+class _Slides:
+    """F5.19: as telas das legendas, um quadro em cada troca e um por segundo entre elas (`frame_times`)."""
+
+    def __init__(self, screens: Sequence[tuple[int, Screen]], duration_ms: int):
+        self.screens = screens
+        self.frames = frame_times(screens, duration_ms)
+        self.pending = next(self.frames, None)
+
+    def until(self, mux: _Muxer, limit_ms: int | None, check: Callable[[], None]) -> None:
+        while self.pending is not None and (limit_ms is None or self.pending[0] < limit_ms):
+            mux.picture(self.pending[0], self.pending[1], self.screens[self.pending[1]][1])
+            self.pending = next(self.frames, None)
+
+
 def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Screen]], render: Callable[[Screen], np.ndarray],
                 target: Path, tick: Tick, size: tuple[int, int], captions: Sequence[TextSample] = ()) -> tuple[Path, int]:
     """O MP4 em `target`: mede o pico (a primeira passada), grava áudio, quadros e a faixa de texto (`captions`, F5.26) no
     temporário e troca no fim; devolve o caminho e os quadros gravados. `ExportCancelledError` quando o `tick` pede,
     `OSError` na escrita; nos dois, o temporário sai (o contêiner fecha antes, no `with`: o Windows não apaga arquivo
     aberto, A-21)."""
+    return write_pictures(store, plan, _Slides(screens, plan.duration_ms), target, tick, size, captions, render=render)
+
+
+def write_pictures(store: Store, plan: AudioPlan, pictures: Pictures, target: Path, tick: Tick, size: tuple[int, int],
+                   captions: Sequence[TextSample] = (), *, render: Callable[[Screen], np.ndarray] | None = None,
+                   threads: int = 1) -> tuple[Path, int]:
+    """O corpo do `write_video` com os quadros de `pictures` (as telas das legendas ou, F5.27, a tela gravada com a faixa da
+    legenda): áudio, quadros e texto intercalados a cada bloco (A-06); `threads` é o do codificador do vídeo."""
     import av
 
     chunks = Chunks(store, plan.meeting_id, plan.rate)
     gain = gain_for(measure_peak(plan, chunks, tick))
     with atomic_target(target) as tmp:
         with av.open(str(tmp), "w", format="mp4", options={"movflags": "+faststart"}) as out:
-            mux = _Muxer(av, out, size, plan.rate, render)
+            mux = _Muxer(av, out, size, plan.rate, render, threads)
             text = _text_track(av, out, captions)
-            frames = frame_times(screens, plan.duration_ms)
-            pending = next(frames, None)
             pos = 0
+
+            def check() -> None:
+                step(tick, WRITE, pos / max(1, plan.frames))
+
             for x in blocks(plan, chunks, gain):
                 mux.sound(x, pos)
                 pos += len(x)
                 done_ms = pos * 1000 // plan.rate
-                while pending is not None and pending[0] < done_ms:
-                    mux.picture(pending[0], pending[1], screens[pending[1]][1])
-                    pending = next(frames, None)
+                pictures.until(mux, done_ms, check)
                 if text is not None:
                     text.until(done_ms)
                 step(tick, WRITE, pos / max(1, plan.frames))
-            while pending is not None:              # o arredondamento do último bloco
-                mux.picture(pending[0], pending[1], screens[pending[1]][1])
-                pending = next(frames, None)
+            pictures.until(mux, None, check)            # o arredondamento do último bloco
             if text is not None:
                 text.until(None)
             mux.flush()
@@ -175,4 +213,4 @@ def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Scre
     return target, mux.frames
 
 
-__all__ = ["CODECS", "REFRESH_MS", "frame_times", "pick_codec", "video_available", "write_video"]
+__all__ = ["CODECS", "REFRESH_MS", "Pictures", "frame_times", "pick_codec", "video_available", "write_pictures", "write_video"]

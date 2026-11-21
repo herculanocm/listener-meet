@@ -10,7 +10,8 @@ resultado ("Salvo em …", "Exportação cancelada.", os avisos) vai para a comu
 parada (A-07). Uma exportação de mídia por app (A-17). Fechar a janela no meio pergunta; a saída do app cancela e espera.
 F5.26 (D-112): no vídeo, o reprocessamento em curso e as vozes pendentes que falam seguram antes de tudo (U-178); depois, o
 diálogo do texto da legenda (U-179, com o destino escolhido pelo usuário) decide entre a revisada e a original, e as legendas
-vão também numa faixa de texto do MP4 (`media_video_dialog`, `media_text`)."""
+vão também numa faixa de texto do MP4 (`media_video_dialog`, `media_text`). F5.27: a reunião com a tela gravada sai em
+1920 x 1080, com a tela em cima e a faixa da legenda embaixo (`media_compose`); sem tela, o vídeo da F5.19."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from ..pipeline import review
 from ..rag import export
 from .components import InfoBar
 from .media_audio import PEAK, AudioFormat, AudioPlan, Tick, available_formats, format_for, plan_audio, write_audio
+from .media_compose import screen_job
 from .media_cues import Speech, build_cues, screens, text_track
 from .media_frames import FrameRenderer
 from .media_job import WAIT, JobFailure, estimate_bytes, held_by_another, media_error_text, progress_tick, run_job, space_problem
@@ -56,6 +58,11 @@ WHAT = {AUDIO: "o áudio", VIDEO: "o vídeo"}
 DOING = {AUDIO: "Gravando o áudio", VIDEO: "Gerando o vídeo"}
 PEAK_SHARE = {AUDIO: 0.3, VIDEO: 0.05}  # a primeira passada (só decodificar) no tempo todo [chute pela reunião 22]
 _running: dict[int, str] = {}    # A-17: a exportação de mídia em curso no app (reunião -> tipo): a interface põe, a tarefa tira
+
+
+def exporting(meeting_id: int) -> bool:
+    """Uma exportação de mídia desta reunião em curso (F5.27: o "Apagar a tela" fica apagado)."""
+    return meeting_id in _running
 
 
 def overall_percent(kind: str, stage: str, percent: int) -> int:
@@ -105,6 +112,7 @@ class MediaSaver(QObject):
         self.recording = recording or (lambda: False)
         self.on_review = on_review                       # F5.26 (U-178): abre a revisão de falantes
         self.on_revise = on_revise                       # F5.26 (U-179): o pedido de "Revisar a transcrição com IA"
+        self.held: Callable[[], str | None] = lambda: None   # F5.27: o aviso que segura a exportação (a tela sendo apagada)
         self.formats = available_formats()
         self.video_ready = video_available()             # procura sem importar
         self.act_audio = QAction("Salvar áudio…", window)
@@ -148,6 +156,10 @@ class MediaSaver(QObject):
         m = self.store.get_meeting(self.meeting_id)
         if m is None:
             self.message("Esta reunião não existe mais.")
+            return None
+        held = self.held()
+        if held:
+            self.message(held)
             return None
         if m.get("status") in (MeetingStatus.RECORDING, MeetingStatus.PAUSED):
             self.message(RECORDING)
@@ -262,19 +274,24 @@ class MediaSaver(QObject):
         cues = build_cues(speeches, plan.pauses, plan.duration_ms)
         timeline: list[tuple[int, Screen]] = screens(cues, plan.duration_ms)
         title = str(m.get("title") or m.get("title_llm") or f"Reunião {self.meeting_id}")
-        renderer = FrameRenderer(title, export.fmt_date(m.get("started_at")), cues)
+        date = export.fmt_date(m.get("started_at"))
+        renderer = FrameRenderer(title, date, cues)
+        with_screen = screen_job(self.store, plan, title, date, cues)      # F5.27: com a tela gravada, 1920 x 1080
         path = path or self._ask_video(m)
         if not path:
             return None
         target, store = Path(path if path.lower().endswith(".mp4") else path + ".mp4"), self.store
-        if self._blocked(target, estimate_bytes(True, "mp4", plan)):
+        if self._blocked(target, estimate_bytes(True, "mp4", plan) + (with_screen.extra_bytes if with_screen else 0)):
             return None
 
         captions = text_track(cues, plan.duration_ms)  # F5.26: a faixa de texto, com as mesmas legendas
 
         def make(tick: Tick) -> tuple[Path, int, int]:
-            out, frames = write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height),
-                                      captions)
+            if with_screen is not None:
+                out, frames = with_screen.write(target, tick, timeline, captions)
+            else:
+                out, frames = write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height),
+                                          captions)
             return out, len(cues), frames
 
         return self._start(VIDEO, "mp4", target, plan, make)
@@ -359,4 +376,4 @@ class MediaSaver(QObject):
 
 
 __all__ = ["AUDIO", "NO_AUDIO", "NO_SPEECH", "RECORDING", "VIDEO", "VIDEO_MISSING", "VIDEO_TIP", "WAITING", "MediaSaver", "audio_tip",
-           "missing_audio", "overall_percent", "speeches_for"]
+           "exporting", "missing_audio", "overall_percent", "speeches_for"]

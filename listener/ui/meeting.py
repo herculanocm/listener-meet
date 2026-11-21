@@ -68,13 +68,14 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
     def __init__(self, store: Store, meeting_id: int, *, player: Player | None = None, on_review: Callable[[int], Any] | None = None,
                  on_launch: Callable[[bool], Any] | None = None, on_edited: Callable[..., Any] | None = None, cascade: int = 0,
                  on_chat_answer: Callable[[bool], Any] | None = None, recording: Callable[[], bool] | None = None,
-                 platform: Platform | None = None, parent: QWidget | None = None):
+                 platform: Platform | None = None, on_free_space: Callable[[], Any] | None = None, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.store = store
         self.meeting_id = meeting_id
         self.player = player
         self.on_review = on_review
         self.recording = recording                       # F5.19 (A-25): o controlador diz se há gravação em curso
+        self.on_free_space = on_free_space               # F5.27 (U-184): depois de apagar a tela, o espaço volta
         self.on_edited = on_edited
         self.setMinimumSize(*MIN_SIZE)
         self.llm = LlmTabsGroup(store, meeting_id, on_launch=on_launch, on_edited=self._edited, on_message=self.show_message,
@@ -285,6 +286,7 @@ class MeetingWindow(MeetingHeaderMixin, QWidget):
         self._save_title()
         self.chat.shutdown()
         self.media.shutdown()
+        self.screen_eraser.shutdown()                    # F5.27: o DELETE da tela em curso termina antes de o banco fechar
         self.docx.shutdown()
 
     @override

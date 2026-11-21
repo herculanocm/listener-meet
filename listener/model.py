@@ -51,6 +51,7 @@ class EventType(StrEnum):
     SCREEN_STOP = "screen_stop"      # parada pelo usuário ou com a reunião
     SCREEN_LOST = "screen_lost"      # o monitor saiu ou o filho caiu de vez; o áudio segue
     SCREEN_SWITCH = "screen_switch"  # outro monitor pelo widget (um pedaço novo)
+    SCREEN_DELETED = "screen_deleted"  # "Apagar a tela desta reunião" (U-184): os pedaços e os bytes apagados
 
 
 class Health(StrEnum):
