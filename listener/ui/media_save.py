@@ -270,7 +270,7 @@ class MediaSaver(QObject):
         if self._blocked(target, estimate_bytes(True, "mp4", plan)):
             return None
 
-        captions = text_track(cues)                     # F5.26: a faixa de texto, com as mesmas legendas
+        captions = text_track(cues, plan.duration_ms)  # F5.26: a faixa de texto, com as mesmas legendas
 
         def make(tick: Tick) -> tuple[Path, int, int]:
             out, frames = write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height),

@@ -9,9 +9,10 @@ na tela, sem passar o começo da seguinte; terminada, fica mais `HOLD_MS` se nad
 e a anterior a ela, quando terminou até `CONTEXT_MS` antes do começo da atual, com a marca de que ainda fala (falas ao
 mesmo tempo, L e R). O vídeo desenha uma tela por troca e a repete entre as trocas.
 
-`text_track` dá as amostras da faixa de texto do MP4 (F5.26): as mesmas legendas, nos mesmos tempos. A faixa é sequencial
-(o MP4 empurra a amostra que começa antes do fim da anterior), então legendas ao mesmo tempo dividem o intervalo: cada trecho
-mostra as que estão no ar, uma por linha, como a tela mostra a anterior que ainda fala."""
+`text_track` dá as amostras da faixa de texto do MP4 (F5.26): as mesmas legendas, nos tempos da imagem, com a sobra de
+`HOLD_MS` no fim (`held_ends`). A faixa é sequencial (o MP4 empurra a amostra que começa antes do fim da anterior), então
+legendas ao mesmo tempo dividem o intervalo: cada trecho mostra as que estão no ar, uma por linha, como a tela mostra a
+anterior que ainda fala."""
 from __future__ import annotations
 
 import itertools
@@ -190,25 +191,40 @@ def screens(cues: Sequence[Cue], duration_ms: int) -> list[tuple[int, Screen]]:
     return out
 
 
-def text_track(cues: Sequence[Cue]) -> list[TextSample]:
-    """As amostras da faixa de texto, em ordem e sem sobreposição: sem legendas ao mesmo tempo, uma por legenda, nos tempos
-    dela; com, o intervalo cortado nos começos e fins, cada trecho com as legendas no ar (na ordem de começo). Uma passada
-    só pelos começos e fins, com a lista das que estão no ar."""
+def held_ends(cues: Sequence[Cue], duration_ms: int | None = None) -> list[int]:
+    """O fim de cada legenda na imagem: terminada, ela fica mais `HOLD_MS` na tela, sem passar o começo da seguinte (em ordem
+    de começo) nem o fim do arquivo (`duration_ms`), a regra de `ScreenIndex.screen_at`."""
     order = sorted(range(len(cues)), key=lambda i: (cues[i].start_ms, i))
-    bounds = sorted({t for c in cues for t in (c.start_ms, c.end_ms)})
+    out = [c.end_ms for c in cues]
+    for k, i in enumerate(order):
+        following = cues[order[k + 1]].start_ms if k + 1 < len(order) else None
+        held = cues[i].end_ms + HOLD_MS if following is None else min(cues[i].end_ms + HOLD_MS, following)
+        if duration_ms is not None:
+            held = min(held, duration_ms)
+        out[i] = max(cues[i].end_ms, held)
+    return out
+
+
+def text_track(cues: Sequence[Cue], duration_ms: int | None = None) -> list[TextSample]:
+    """As amostras da faixa de texto, em ordem e sem sobreposição, nos tempos da imagem (o fim de cada legenda com a sobra de
+    `held_ends`): sem legendas ao mesmo tempo, uma por legenda; com, o intervalo cortado nos começos e fins, cada trecho com
+    as legendas no ar (na ordem de começo). Uma passada só pelos começos e fins, com a lista das que estão no ar."""
+    ends = held_ends(cues, duration_ms)
+    order = sorted(range(len(cues)), key=lambda i: (cues[i].start_ms, i))
+    bounds = sorted({t for i, c in enumerate(cues) for t in (c.start_ms, ends[i])})
     active: list[int] = []
     k = 0
     out: list[TextSample] = []
     for a, b in itertools.pairwise(bounds):
-        active = [i for i in active if cues[i].end_ms > a]          # no ar em `a` fica no ar até `b` (o próximo limite)
+        active = [i for i in active if ends[i] > a]                 # no ar em `a` fica no ar até `b` (o próximo limite)
         while k < len(order) and cues[order[k]].start_ms <= a:
             active.append(order[k])
             k += 1
-        lines = tuple(caption_line(cues[i]) for i in active)
+        lines = tuple(caption_line(cues[i]) for i in active if ends[i] > a)
         if lines:                                # duas legendas iguais seguidas ("Sim.") ficam duas, como na imagem
             out.append(TextSample(a, b, lines))
     return out
 
 
 __all__ = ["CONTEXT_MS", "HOLD_MS", "IDLE", "MAX_CHARS", "MIN_CUE_MS", "Cue", "Screen", "ScreenIndex", "Speech", "TextSample",
-           "build_cues", "caption_line", "screens", "split_text", "text_track"]
+           "build_cues", "caption_line", "held_ends", "screens", "split_text", "text_track"]

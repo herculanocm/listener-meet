@@ -152,14 +152,32 @@ def test_the_text_track_has_one_sample_per_cue_with_the_speaker_and_simultaneous
     from listener.ui.media_cues import Cue, text_track
 
     alone = [Cue(0, 1200, "Ana", "CFO", "Bom dia."), Cue(1500, 2700, "Bia", "", "Oi.")]
-    assert [(s.start_ms, s.end_ms, s.lines) for s in text_track(alone)] == [
-        (0, 1200, ("Ana — CFO: Bom dia.",)), (1500, 2700, ("Bia: Oi.",))]
+    assert [(s.start_ms, s.end_ms, s.lines) for s in text_track(alone, 10_000)] == [   # a sobra até a seguinte e até 1,5 s
+        (0, 1500, ("Ana — CFO: Bom dia.",)), (1500, 4200, ("Bia: Oi.",))]
     both = [Cue(0, 2000, "Ana", "CFO", "Falando."), Cue(1000, 3000, "Bia", "", "Junto.")]
-    assert [(s.start_ms, s.end_ms, s.lines) for s in text_track(both)] == [
-        (0, 1000, ("Ana — CFO: Falando.",)), (1000, 2000, ("Ana — CFO: Falando.", "Bia: Junto.")), (2000, 3000, ("Bia: Junto.",))]
+    assert [(s.start_ms, s.end_ms, s.lines) for s in text_track(both, 4000)] == [
+        (0, 1000, ("Ana — CFO: Falando.",)), (1000, 2000, ("Ana — CFO: Falando.", "Bia: Junto.")), (2000, 4000, ("Bia: Junto.",))]
     repeated = [Cue(0, 1200, "Bia", "", "Sim."), Cue(1200, 2400, "Bia", "", "Sim.")]  # coladas e iguais: duas, como na imagem
-    assert [(s.start_ms, s.end_ms) for s in text_track(repeated)] == [(0, 1200), (1200, 2400)]
+    assert [(s.start_ms, s.end_ms) for s in text_track(repeated, 2400)] == [(0, 1200), (1200, 2400)]
     assert text_track([]) == []
+
+
+def test_the_text_sample_holds_the_cue_like_the_picture_until_the_next_or_the_end_of_the_file():
+    """Revisão do diff: a imagem segura a legenda mais `HOLD_MS` quando nada começa antes; a amostra também, e o fim dela é
+    uma troca da imagem (±1 ms)."""
+    from listener.ui import media_cues as mc
+
+    single = [mc.Cue(0, 2000, "Ana", "CFO", "Só eu.")]
+    assert [(s.start_ms, s.end_ms) for s in mc.text_track(single, 10_000)] == [(0, 3500)]
+    assert dict(mc.screens(single, 10_000))[3500] == mc.IDLE                 # a imagem apaga no mesmo ms
+    assert [(s.start_ms, s.end_ms) for s in mc.text_track(single, 2800)] == [(0, 2800)]   # não passa o fim do arquivo
+    cues = [mc.Cue(0, 2000, "Ana", "CFO", "um"), mc.Cue(2600, 4000, "Bia", "", "dois"), mc.Cue(9000, 9500, "Ana", "CFO", "três")]
+    samples = mc.text_track(cues, 20_000)
+    assert [(s.start_ms, s.end_ms) for s in samples] == [(0, 2600), (2600, 5500), (9000, 11_000)]
+    changes = [t for t, _s in mc.screens(cues, 20_000)]
+    for s in samples:
+        assert any(abs(s.end_ms - t) <= 1 for t in changes), (s, changes)   # o fim da amostra é uma troca da imagem
+        assert any(abs(s.start_ms - t) <= 1 for t in changes)
 
 
 def test_the_text_of_a_sample_escapes_the_backslash_and_puts_one_line_per_speaker():
@@ -186,7 +204,7 @@ def _write_and_read(store: Any, mid: int, cues: list[Any], out: Any) -> tuple[li
     def run() -> None:
         try:
             write_video(store, plan, mc.screens(cues, plan.duration_ms), renderer.render, out, lambda _s, _f: False,
-                        (renderer.width, renderer.height), mc.text_track(cues))
+                        (renderer.width, renderer.height), mc.text_track(cues, plan.duration_ms))
         finally:
             store.close_thread()
 
@@ -204,11 +222,11 @@ def _write_and_read(store: Any, mid: int, cues: list[Any], out: Any) -> tuple[li
     return kinds, frames, read
 
 
-def _assert_track(cues: list[Any], frames: list[int], read: list[tuple[int, int, str]]) -> None:
+def _assert_track(cues: list[Any], frames: list[int], read: list[tuple[int, int, str]], duration_ms: int) -> None:
     """Cada amostra relida tem o começo e a duração da sua (±1 ms), o texto dela e um quadro da imagem no começo."""
     from listener.ui.media_cues import text_track
 
-    samples = text_track(cues)
+    samples = text_track(cues, duration_ms)
     assert len(read) == len(samples)
     for (start, span, body), sample in zip(read, samples, strict=True):
         assert abs(start - sample.start_ms) <= 1 and abs(span - (sample.end_ms - sample.start_ms)) <= 1
@@ -227,7 +245,7 @@ def test_the_mp4_has_video_audio_and_text_and_the_text_has_the_cue_times_of_the_
     cues = mc.build_cues(msave.speeches_for(store, mid, True), plan.pauses, plan.duration_ms)
     kinds, frames, read = _write_and_read(store, mid, cues, tmp_path / "reuniao.mp4")
     assert kinds == ["video", "audio", "subtitle"] and len(cues) == len(read) == 4
-    _assert_track(cues, frames, read)
+    _assert_track(cues, frames, read, plan.duration_ms)
     assert read[0][2] == "Ana — CFO: Bom dia a todos."
 
 
@@ -244,7 +262,7 @@ def test_a_longer_mp4_keeps_the_text_times_across_blocks_gaps_repeats_and_simult
             Cue(29000, 31000, "Ana", "CFO", "Depois do silêncio a" + chr(92) + "b.")]
     kinds, frames, read = _write_and_read(store, mid, cues, tmp_path / "longa.mp4")
     assert kinds == ["video", "audio", "subtitle"] and len(read) == 8
-    _assert_track(cues, frames, read)
+    _assert_track(cues, frames, read, 34_000)
     assert read[-1][2] == "Ana — CFO: Depois do silêncio a" + chr(0x2216) + "b."
 
 
