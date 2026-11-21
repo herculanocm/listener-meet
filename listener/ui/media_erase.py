@@ -3,8 +3,9 @@ perder o áudio (CP3: só por ação do usuário, com confirmação, e o padrão
 
 O item aparece só com a reunião parada (nem gravando nem pausada) e com pedaços da tela, e fica apagado com uma exportação
 de mídia da mesma reunião em curso (a tarefa lê os pedaços). O tamanho é a soma dos MP4 (`store.screen.total_bytes`), lido
-ao abrir o menu. Com o arquivo da tela do mês na lista do espaço a liberar (`space.pending`), o item some sem consultar o
-arquivo: anexá-lo na conexão da interface interromperia o `VACUUM` que devolve o disco (`store/attached.py`).
+ao abrir o menu. O arquivo da tela na lista do espaço a liberar não esconde o item: ele nasce com `auto_vacuum`
+incremental, a liberação dele nunca é o `VACUUM` inteiro, e anexá-lo na conexão da interface não a interrompe (revisão do
+diff).
 
 Apagar roda numa `Task` (o DELETE de 1 GB de BLOBs lê cada página de transbordo): `delete_for_meeting` apaga os pedaços e
 põe o arquivo na lista do espaço a liberar; o evento `screen_deleted` leva os pedaços e os bytes. No fim, como a exclusão
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 
 from ..log import get_logger
 from ..model import EventType, MeetingStatus
-from ..store import space
 from .common import human_size
 from .tasks import Task, run_task, wait_before_close
 
@@ -84,12 +84,11 @@ class ScreenEraser(QObject):
         self.size = 0
 
     def screen_bytes(self) -> int:
-        """Os bytes da tela a apagar, ou 0 quando o item não cabe (gravando, sem tela, o espaço do arquivo a liberar)."""
+        """Os bytes da tela a apagar, ou 0 quando o item não cabe (gravando ou sem tela)."""
         m = self.store.get_meeting(self.meeting_id)
         if m is None or m.get("status") in (MeetingStatus.RECORDING, MeetingStatus.PAUSED):
             return 0
-        file = self.store.screen.file_for(self.meeting_id)
-        if file is None or file in space.pending(self.store.core):
+        if self.store.screen.file_for(self.meeting_id) is None:
             return 0
         return self.store.screen.total_bytes(self.meeting_id)
 

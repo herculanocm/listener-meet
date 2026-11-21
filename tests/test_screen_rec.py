@@ -203,6 +203,20 @@ def test_grab_failure_retries_every_5_s_and_reports_failing_then_ok():
     assert [(s.t_start_ms, s.t_end_ms, s.frames) for s in segments] == [(0, 3_000, 3), (73_000, 75_500, 3)]
 
 
+def test_a_failure_that_goes_on_after_a_pause_warns_again_60_s_later():
+    """Revisão do diff: pausar e retomar (ou trocar de monitor) com a tela falhando não apaga o aviso para sempre."""
+    rec, clock, grab, _segments, status = _recorder()
+    _run_until(rec, clock, 1_500)
+    grab.failing = True
+    _run_until(rec, clock, 65_000)
+    assert [s for _t, s in status] == [FAILING]
+    rec.pause()
+    _run_until(rec, clock, 70_000)
+    rec.resume()
+    _run_until(rec, clock, 140_000)
+    assert [s for _t, s in status] == [FAILING, FAILING]
+
+
 def test_short_grab_failure_gives_no_status():
     rec, clock, grab, _segments, status = _recorder()
     grab.failing = True

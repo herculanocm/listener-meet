@@ -197,9 +197,10 @@ class ScreenRecorder:
             log.info("tela: %s", "pausada" if self._paused else "retomada")
 
     def _restart(self) -> None:
-        """O próximo quadro já, e a contagem do tempo sem quadro do zero (o aviso já dado continua valendo até um quadro bom)."""
+        """O próximo quadro já, e a contagem do tempo sem quadro do zero: a falha que continua avisa de novo aos 60 s."""
         self._next_ms = None
         self._fail_since = None
+        self._warned = False           # a falha que segue depois de pausar ou trocar avisa de novo aos 60 s (revisão do diff)
 
     def _tick(self, now: int) -> None:
         period = 1000 / self._fps

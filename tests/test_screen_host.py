@@ -87,6 +87,20 @@ def test_without_monitors_start_returns_false_and_launches_nothing(env, platform
     assert not env.host.start(env.mid, time.perf_counter(), "DISPLAY9")          # o monitor escolhido saiu antes de gravar
 
 
+def test_a_screen_asked_for_that_cannot_start_tells_the_user(env, platform, store, monkeypatch):
+    """Revisão do diff: o monitor que saiu antes de gravar e o arquivo da tela que não abre avisam, não só o log."""
+    platform.screen_monitors = (D1,)
+    assert not env.host.start(env.mid, time.perf_counter(), "DISPLAY9")
+    assert env.errors == [host_mod.NOT_STARTED_TEXT]
+
+    def broken(_mid: int) -> str:
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(store.screen, "ensure_file", broken)
+    assert not env.host.start(env.mid, time.perf_counter(), "DISPLAY1")
+    assert env.errors == [host_mod.NOT_STARTED_TEXT] * 2
+
+
 def test_a_lost_monitor_shows_u183_until_it_comes_back_and_a_stop_while_lost_says_perdido(qtbot, env, store):
     host = env.host
     host.start(env.mid, time.perf_counter(), "DISPLAY1")

@@ -37,11 +37,11 @@ from ..screen_rec import recorder
 from ..store import Store
 
 log = get_logger("ui.screen_rec_host")
-
 OFF, STARTING, RECORDING, PAUSED, LOST, FAILING, STOPPED = "off", "starting", "recording", "paused", "lost", "failing", "stopped"
 LOST_TEXT = "A gravação da tela parou: o {label} saiu. O áudio segue."     # U-183
 FAILING_TEXT = "A gravação da tela não está conseguindo ler o monitor."
 CRASHED_TEXT = "A gravação da tela parou por um erro. O áudio segue."
+NOT_STARTED_TEXT = "A gravação da tela não começou (o monitor escolhido ou o arquivo da tela). O áudio segue."
 STOP_WAIT_S = SHUTDOWN_WAIT_S = 10.0   # a parada da reunião e a saída esperam o último pedaço até isto
 RETRIES = 1                      # a spec (pergunta 8): uma nova tentativa por reunião
 
@@ -88,6 +88,7 @@ class ScreenRecHost(QObject):
             return False
         found = self._find(monitor_key)
         if found is None:
+            self.on_error(NOT_STARTED_TEXT)
             return False
         self._meeting = (meeting_id, t0_perf)
         cur = self._session
@@ -98,6 +99,7 @@ class ScreenRecHost(QObject):
             self.store.screen.ensure_file(meeting_id)
         except Exception:
             log.exception("reunião %s: arquivo da tela não criado; a tela não será gravada", meeting_id)
+            self.on_error(NOT_STARTED_TEXT)
             return False
         label = sc.short_label(found[1])
         if any(s.meeting_id == meeting_id for s in self._snapshot()):   # o filho anterior grava o último pedaço: espera ele

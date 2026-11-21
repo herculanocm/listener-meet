@@ -75,6 +75,15 @@ def test_the_item_is_hidden_without_screen_chunks(qtbot, store):
     assert not _window(qtbot, store, empty).screen_eraser.action.isVisible()
 
 
+def test_the_item_stays_with_the_month_file_waiting_for_the_space_to_be_freed(qtbot, store):
+    """Revisão do diff: o arquivo da tela do mês na fila do espaço (outra reunião apagada) não esconde o item das outras."""
+    a, b = _meeting(store), _meeting(store)
+    store.screen.delete_for_meeting(a)                   # põe o arquivo do mês na fila do espaço a liberar
+    assert store.screen.file_for(b) in space.pending(store.core)
+    win = _window(qtbot, store, b)
+    assert win.screen_eraser.action.isVisible() and win.screen_eraser.action.isEnabled()
+
+
 def test_the_confirmation_keeps_on_enter_and_escape():
     box, erase = me.confirm_box(None, SIZE)
     assert box.defaultButton().text() == me.KEEP == "Manter" and box.escapeButton() is box.defaultButton()

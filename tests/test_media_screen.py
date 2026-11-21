@@ -88,6 +88,16 @@ def _screen_meeting(store: Any) -> int:
     return mid
 
 
+def test_a_hole_inside_a_pause_keeps_the_paused_screen_instead_of_flashing_the_dark_one():
+    """Revisão do diff: o pedaço fecha na pausa e o seguinte começa uns ms depois da volta (o pipe): sem tela escura."""
+    chunks = [{"idx": 0, "t_start_ms": 0, "t_end_ms": 10_500}, {"idx": 1, "t_start_ms": 20_003, "t_end_ms": 25_000}]
+    data = {0: _frames(range(10)), 1: _frames(range(5), 77)}
+    clock = FileClock(ma.sound_spans(25_000, [(10_000, 20_000)]))
+    out = [(t, s.key if isinstance(s, Shot) else None) for t, s in shots(chunks, data.get, _decode, clock)]
+    assert (10_000, None) not in out and (10_003, (1, 0)) in out
+    assert out[-1] == (10_003, (1, 0))                                       # quadros iguais não trocam; o fim do arquivo fecha
+
+
 def _export(store: Any, mid: int, target: Path, tick: ma.Tick) -> dict[str, Any]:
     """O vídeo com a tela, como o `save_video` monta (na thread da interface) e a tarefa grava (noutra thread)."""
     from listener.ui.media_compose import screen_job

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .media_cues import Screen
 
 REFRESH_MS = 1000                # um quadro por segundo entre as trocas (o mesmo da F5.19)
+PAUSE_GAP_MS = REFRESH_MS        # buraco menor que isto no arquivo é a volta da pausa (o atraso do pipe): sem a tela escura
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -91,6 +92,9 @@ def shots(chunks: Sequence[Mapping[str, Any]], read: Read, decode: Decode, clock
             f = clock.at(t1)
             if f is None:
                 return
+            nxt = clock.at(following) if following is not None else None
+            if nxt is not None and nxt - f < PAUSE_GAP_MS:  # o buraco cai quase todo numa pausa: a tela da pausa segue
+                continue
             last = None
             yield f, None
 

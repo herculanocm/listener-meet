@@ -829,6 +829,7 @@ class Controller(QObject):
         job = self._enqueue_processing(rec.meeting_id)
         if not self._quitting:
             self._start_sweep()                          # F5.1 (A-07): os vetores que o local adiou durante a gravação
+            self.deleter.start_space()                   # F5.27: o espaço que a gravação segurou (a tela apagada no meio)
             SummaryDialog(self.store, rec.meeting_id, stats, on_edited=self.on_edited, after_job_id=job,   # F5.6 (U-089)
                           on_launch=self.launch_worker, on_message=self.notify).exec()
 
@@ -852,6 +853,7 @@ class Controller(QObject):
         self._clear_lease()
         if not self._quitting:
             self._start_sweep()                          # F5.1 (A-07): os vetores que o local adiou durante a gravação
+            self.deleter.start_space()                   # F5.27: o disco da tela e do áudio descartados volta
 
     def emergency_stop(self) -> None:
         """Logoff, desligamento ou `quit()` por fora: para e salva sem diálogo (M-05); o resumo fica para a próxima vez."""
