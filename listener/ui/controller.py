@@ -1343,7 +1343,8 @@ class Controller(QObject):
             win = MeetingWindow(self.store, meeting_id, player=self.player, on_review=self.open_review, on_launch=self.launch_worker,
                                 on_edited=self.on_edited, cascade=len(self._meetings),
                                 on_chat_answer=functools.partial(self._chat_answered, meeting_id),
-                                recording=lambda: self.recorder is not None, platform=self.platform)   # F5.19 (A-07); F5.21
+                                recording=lambda: self.recorder is not None, platform=self.platform,   # F5.19 (A-07); F5.21
+                                on_free_space=self.deleter.start_space)   # F5.27: o disco volta depois de apagar a tela
             win.closed.connect(self._meeting_closed)
             self._meetings[meeting_id] = win
             with suppress(Exception):
