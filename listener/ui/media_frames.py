@@ -10,7 +10,7 @@ permite QPainter num QImage fora da thread da interface (sonda de 07/11). A medi
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from PySide6.QtCore import QRect, QRectF, Qt
@@ -47,6 +47,18 @@ class Look:
     dot: int = 14
     dim: float = 0.5             # a anterior que já terminou
     live: float = 0.85           # a anterior que ainda fala
+
+
+def scaled(look: Look, factor: float) -> Look:
+    """As medidas de `look` multiplicadas por `factor` (as opacidades ficam): F5.27, a tela da F5.19 em 1920 x 1080."""
+    sizes = {f: round(getattr(look, f) * factor) for f in look.__dataclass_fields__ if f not in ("lines", "dim", "live")}
+    return replace(look, **sizes)
+
+
+# F5.27: a faixa da legenda sob a tela gravada (1920 x `BAND_H`), sem o título: o traço do topo separa a tela da faixa, e as
+# medidas cabem a atual em até duas linhas com a anterior de uma linha acima (sem espaço, só a atual, como na F5.19)
+BAND_LOOK = Look(margin=64, top_h=0, bottom=26, name_px=28, text_px=38, min_text_px=30, context_name_px=22, context_text_px=28,
+                 lines=2, gap=16, header_gap=4, dot=14)
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,4 +224,4 @@ def to_rgb(img: QImage) -> np.ndarray:
     return raw[:, : w * 3].reshape(h, w, 3).copy()
 
 
-__all__ = ["HEIGHT", "WIDTH", "FrameRenderer", "Look", "to_rgb"]
+__all__ = ["BAND_LOOK", "HEIGHT", "WIDTH", "FrameRenderer", "Look", "scaled", "to_rgb"]

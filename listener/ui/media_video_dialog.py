@@ -10,13 +10,15 @@ O U-179 vem antes do diálogo de salvar: "Revisado pela IA" ou "Original (como f
 Transcrição mostra. Sem nenhuma fala revisada, a primeira opção fica apagada e "Gerar a revisão" faz o pedido de "Revisar a
 transcrição com IA" e fecha; nada fica encadeado. O custo é o da conta do job sobre a transcrição vigente
 (`llm_steps.estimate_meeting_usd`, a mesma da pergunta do reprocessamento); sem chave, sem modelo ou sem preço, o botão vai
-sem valor."""
+sem valor. D-115: a caixa "Incluir a legenda também como faixa de texto", marcada a cada abertura (sem chave nas
+Configurações), decide se o MP4 leva a faixa `mov_text` além da legenda desenhada."""
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QVBoxLayout,
+                               QWidget)
 
 from ..llm.costs import fmt_usd
 from ..model import JobStep
@@ -34,6 +36,7 @@ TEXT_LABEL = "Texto da legenda"
 LLM_TEXT = "Revisado pela IA"
 ORIGINAL_TEXT = "Original (como foi transcrito)"
 NOT_REVISED = "A revisão pela IA não foi gerada."
+TRACK_TEXT = "Incluir a legenda também como faixa de texto"
 CHOOSE = "Escolher onde salvar…"
 CANCEL = "Cancelar"
 
@@ -129,8 +132,11 @@ class VideoTextDialog(QDialog):
         options = QVBoxLayout(box)
         options.addWidget(self.llm)
         options.addWidget(self.original)
+        self.track = QCheckBox(TRACK_TEXT)                 # D-115: marcada por padrão
+        self.track.setChecked(True)
         layout = QVBoxLayout(self)
         layout.addWidget(box)
+        layout.addWidget(self.track)
         self.missing: QLabel | None = None
         self.btn_generate: QPushButton | None = None
         if not revised:
@@ -159,6 +165,10 @@ class VideoTextDialog(QDialog):
     def use_llm(self) -> bool:
         return self.llm.isEnabled() and self.llm.isChecked()
 
+    @property
+    def with_track(self) -> bool:
+        return self.track.isChecked()
+
     def _generate(self) -> None:
         if self.on_generate is not None:
             self.on_generate()
@@ -166,11 +176,11 @@ class VideoTextDialog(QDialog):
 
 
 def ask_text(parent: QWidget, *, revised: bool, prefer_llm: bool, cost: float | None,
-             on_generate: Callable[[], None] | None) -> bool | None:
-    """Mostra o U-179: True usa a revisada, False a original; None cancelou ou pediu a revisão."""
+             on_generate: Callable[[], None] | None) -> tuple[bool, bool] | None:
+    """Mostra o U-179: (usa a revisada, inclui a faixa de texto); None cancelou ou pediu a revisão."""
     dlg = VideoTextDialog(parent, revised=revised, prefer_llm=prefer_llm, cost=cost, on_generate=on_generate)
     try:
-        return dlg.use_llm if dlg.exec() == QDialog.DialogCode.Accepted else None
+        return (dlg.use_llm, dlg.with_track) if dlg.exec() == QDialog.DialogCode.Accepted else None
     finally:
         dlg.deleteLater()
 
@@ -186,6 +196,7 @@ __all__ = [
     "REVIEW",
     "TEXT_LABEL",
     "TEXT_TITLE",
+    "TRACK_TEXT",
     "VideoTextDialog",
     "ask_review",
     "ask_text",

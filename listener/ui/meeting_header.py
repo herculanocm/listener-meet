@@ -2,8 +2,9 @@
 do campo e no Enter, com o Esc de volta ao gravado (A-22, `TitleTab` compacto); "Revisar falantes…" à vista só com voz
 pendente (pergunta 7); "Exportar" e o "⋯", com "Revisar falantes…" (sem voz pendente), a sugestão de título e o "gerar de
 novo" dele, "Revisar a transcrição com IA", a troca de idioma e "Reprocessar…", que perguntam antes com o tempo e o custo
-(P-05). Embaixo, a legenda: data, duração, participantes, idioma e custo. A contagem das vozes pendentes é uma consulta
-leve por recarga (A-36). Mora aqui também o "Exportar" (copiar a ata ou a transcrição com texto e HTML; salvar o .md com
+(P-05), e, com a tela gravada, "Apagar a tela desta reunião (…)…" (F5.27, U-184, `ui/media_erase.py`). Embaixo, a
+legenda: data, duração, participantes, idioma e custo. A contagem das vozes pendentes é uma consulta leve por recarga
+(A-36). Mora aqui também o "Exportar" (copiar a ata ou a transcrição com texto e HTML; salvar o .md com
 escrita atômica ou o .docx, U-011, D-012; F5.19: o áudio e o vídeo com legendas, `ui/media_save.py`). Um mixin da
 `MeetingWindow`: usa o estado e os métodos dela."""
 from __future__ import annotations
@@ -28,7 +29,8 @@ from .common import copy_rich, markdown_html
 from .components import InfoBar
 from .docx_save import DocxSaver
 from .meeting_language import MeetingLanguage
-from .media_save import MediaSaver
+from .media_erase import ERASING, ScreenEraser
+from .media_save import MediaSaver, exporting
 from .meeting_parts import menu_button
 from .theme import METRICS, note, role
 
@@ -62,6 +64,7 @@ class MeetingHeaderMixin:
     transcript: TranscriptTab
     on_review: Callable[[int], Any] | None
     recording: Callable[[], bool] | None                 # F5.19 (A-07): uma gravação em curso faz a exportação de mídia esperar
+    on_free_space: Callable[[], Any] | None              # F5.27 (U-184): a liberação do espaço do controlador
 
     def title_text(self) -> str:
         raise NotImplementedError
@@ -151,9 +154,15 @@ class MeetingHeaderMixin:
         menu.addSeparator()
         menu.addAction(self.language_bar.action)
         menu.addAction(self.language_bar.act_reprocess)
+        self.screen_eraser = ScreenEraser(host, self.store, self.meeting_id, message=self.show_message,          # F5.27 (U-184)
+                                          exporting=lambda: exporting(self.meeting_id), on_free_space=self.on_free_space)
+        self.media.held = lambda: ERASING if self.screen_eraser.task is not None else None
+        self.act_screen_sep = menu.addSeparator()
+        menu.addAction(self.screen_eraser.action)
         return menu
 
     def _show_more(self) -> None:
+        self.refresh_screen_item()
         self.more_menu.popup(self.btn_more.mapToGlobal(QPoint(0, self.btn_more.height())))
 
     # ---------------------------------------------------------------- leitura
@@ -169,6 +178,12 @@ class MeetingHeaderMixin:
         self.act_review_sep.setVisible(pending == 0)
         self.act_revise.setEnabled(self.transcript.btn_revise.isEnabled())
         self.act_revise.setToolTip(self.transcript.btn_revise.toolTip())
+        self.refresh_screen_item()
+
+    def refresh_screen_item(self) -> None:
+        """F5.27 (U-184): "Apagar a tela desta reunião (…)" só com tela, parada; apagado com a exportação em curso."""
+        self.screen_eraser.refresh()
+        self.act_screen_sep.setVisible(self.screen_eraser.action.isVisible())
 
     def reload_legend(self) -> None:
         """A legenda: data e hora, duração, participantes (quem fala, `review.participants`) e o idioma; o custo vem ao lado."""
