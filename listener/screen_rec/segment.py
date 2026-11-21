@@ -16,14 +16,16 @@ trabalho pelos núcleos que a legenda ao vivo usa.
 | 23, 300 | 29 MB/h | 134 MB/h | 45,0 dB |
 | 23, 30 | 51 MB/h | 151 MB/h | 45,0 dB |
 | 26, 300 | 33 MB/h | 101 MB/h | 42,3 dB |
-- `CRF` = 23: o texto pequeno a 45 dB, e os slides no menor tamanho medido (o 26 sai maior nos slides: o quadro-chave pior é
-  refinado pelos quadros P seguintes); com a câmera de quem apresenta, ainda abaixo dos 150 MB por hora do Aceite. O 20 passa
+- `CRF` = 23: o texto pequeno a 45 dB, e os slides no menor tamanho medido. O 26 sai maior nos slides: os quadros P seguintes
+  refinam o quadro-chave pior (num slide parado por 40 s, o quadro-chave do 26 teve 166 kB contra 187 kB, e os 39 quadros P,
+  304 kB contra 238 kB). Com a câmera de quem apresenta, ainda abaixo dos 150 MB por hora do Aceite. O 20 passa
   do alvo com a câmera. Rolar uma planilha o tempo todo (24 px por quadro) dá ~390 MB por hora em qualquer CRF: não é o caso
   do Aceite, e o `max_side` menor é a saída.
 - `KEYINT` = 300 quadros, o máximo de quadros de um pedaço (5 por segundo em 60 s): o pedaço já começa num quadro-chave e é
   decodificado inteiro e em ordem (a exportação), então um quadro-chave por pedaço basta (-44 % nos slides contra 30). O
   `ultrafast` não tem `scenecut`: a troca de slide sai como quadro P cheio de blocos intra, do tamanho de um quadro-chave.
-- A redução, a conversão e a codificação de um quadro de 1920 x 1080 levaram 14 a 18 ms na mediana e 21 a 28 ms no p95.
+- A conversão e a codificação de um quadro de 1920 x 1080 levaram 14 a 18 ms na mediana e 21 a 28 ms no p95; a redução de
+  3840 x 2160 a 1920 x 1080 com elas, 27 ms e 35 ms (medidas com outros processos disputando a CPU: um teto, não o piso).
 
 O MP4 é fragmentado (`frag_keyframe+empty_moov`): o muxer escreve em ordem, sem voltar ao começo do buffer para o índice, e
 o pedaço lido de volta não depende de nada fora dele. A base de tempo é de 1 ms: os pts são o instante do quadro menos
@@ -66,8 +68,8 @@ def fit_size(width: int, height: int, max_side: int) -> tuple[int, int]:
 @dataclass(frozen=True, slots=True)
 class Segment:
     """Um pedaço da tela: `data` é um MP4 autocontido que começa num quadro-chave, com os pts relativos a `t_start_ms` (o
-    instante do primeiro quadro, em ms da sessão). Cada quadro vale do próprio instante até o seguinte; o último, até
-    `t_end_ms` (exclusivo), que nunca passa de um intervalo nominal (`1000 / fps`) depois dele."""
+    instante do primeiro quadro, em ms da sessão). O pedaço cobre exatamente [`t_start_ms`, `t_end_ms`): cada quadro vale do
+    próprio instante até o seguinte, e o último, até `t_end_ms`. `codec` é o nome do codificador do FFmpeg (`libx264`)."""
     t_start_ms: int
     t_end_ms: int
     frames: int
@@ -159,8 +161,8 @@ class SegmentEncoder:
         self.frames += 1
 
     def close(self, t_end_ms: int | None = None) -> Segment | None:
-        """Fecha o MP4. `t_end_ms` (ms da sessão) é o fim exclusivo do pedaço, preso entre 1 ms depois do último quadro e um
-        intervalo nominal depois dele (o padrão). None sem nenhum quadro."""
+        """Fecha o MP4. `t_end_ms` (ms da sessão) é o fim exclusivo do pedaço, ao menos 1 ms depois do último quadro; sem
+        ele, um intervalo nominal (`1000 / fps`) depois do último quadro. None sem nenhum quadro."""
         if self._out is None:
             raise RuntimeError("pedaço já fechado")
         self._mux(self._stream.encode(None))
@@ -169,7 +171,7 @@ class SegmentEncoder:
         if self.t_start_ms is None:
             return None
         last = self.t_start_ms + self._last_rel
-        end = last + self.frame_ms if t_end_ms is None else min(max(t_end_ms, last + 1), last + self.frame_ms)
+        end = last + self.frame_ms if t_end_ms is None else max(t_end_ms, last + 1)
         return Segment(self.t_start_ms, end, self.frames, self.size[0], self.size[1], self.codec, self._buf.getvalue())
 
     def _mux(self, packets: Any) -> None:

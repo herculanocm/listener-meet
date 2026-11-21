@@ -6,9 +6,12 @@ Regras (a seção Comportamento da spec):
 - Um quadro a cada `1000 / fps` ms, numa grade fixa. Atrasou (o print ou a codificação passou do intervalo): sai um quadro
   já, e os outros instantes da grade que passaram são pulados e contados em `stats.skipped`, nunca enfileirados.
 - O instante do quadro é o do relógio logo antes do print.
-- O pedaço abre no primeiro quadro e fecha `chunk_s` segundos depois, conferido em todo `step`, com ou sem quadro novo (a
-  tela bloqueada não segura um pedaço aberto em memória). Fecham também: a pausa, a troca de monitor (`switch`), o quadro
-  de outro tamanho e o `stop`. O pedaço fechado sai por `on_segment`; sem nenhum quadro, nada sai.
+- O pedaço abre no primeiro quadro e fecha `chunk_s` segundos depois, conferido em todo `step`, com ou sem quadro novo.
+  Fecham também: o primeiro print que falha, a pausa, a troca de monitor (`switch`), o quadro de outro tamanho e o `stop`.
+  O pedaço termina (`t_end_ms`) no instante em que fechou; o seguinte começa no quadro seguinte. Assim, entre o fim de um
+  pedaço e o começo do outro, ou não passou tempo (a virada dos 60 s, a troca de tamanho ou de monitor) ou não houve tela
+  (a falha, a pausa): a exportação nunca estica um quadro velho sobre um buraco. O pedaço fechado sai por `on_segment`; sem
+  nenhum quadro, nada sai.
 - `set_params(fps, max_side)` vale a partir do próximo pedaço.
 - O print que falha (None ou `OSError`) deixa o trecho sem quadros e é tentado de novo a cada `FAIL_RETRY_MS`, sem parar a
   gravação; essas esperas não contam como pulados. Com `FAIL_WARN_MS` desde a primeira falha seguida, `on_status("falhando")`
@@ -231,6 +234,7 @@ class ScreenRecorder:
         self.stats.failures += 1
         if self._fail_since is None:
             self._fail_since = now
+            self._close(now)                                   # o buraco fica entre dois pedaços, nunca dentro de um
         elif not self._warned and now - self._fail_since >= FAIL_WARN_MS:
             self._warned = True
             log.info("tela: %d s sem quadro", (now - self._fail_since) // 1000)

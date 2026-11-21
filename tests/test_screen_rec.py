@@ -2,6 +2,9 @@
 do `ScreenRecorder` com relógio e print falsos (nenhuma espera de verdade)."""
 from __future__ import annotations
 
+import itertools
+import subprocess
+import sys
 import threading
 
 import numpy as np
@@ -144,12 +147,16 @@ def test_segment_closes_every_60_seconds():
     assert rec.stats.segments == 3 and rec.stats.skipped == 0
 
 
-def test_segment_closes_on_time_even_without_new_frames():
+def test_grab_failure_closes_the_segment_so_the_hole_stays_between_segments():
     rec, clock, grab, segments, _ = _recorder()
     _run_until(rec, clock, 10_500)
     grab.failing = True                                                    # a tela bloqueada: nenhum quadro novo
-    _run_until(rec, clock, 60_100)
-    assert len(segments) == 1 and segments[0].frames == 11 and segments[0].t_end_ms == 11_000
+    _run_until(rec, clock, 30_500)
+    assert [(s.t_start_ms, s.t_end_ms, s.frames) for s in segments] == [(0, 11_000, 11)]   # fechado na primeira falha
+    grab.failing = False
+    _run_until(rec, clock, 35_500)
+    rec.stop()
+    assert [(s.t_start_ms, s.t_end_ms) for s in segments] == [(0, 11_000), (31_000, 35_500)]
 
 
 def test_frame_size_change_closes_the_segment():
@@ -176,7 +183,7 @@ def test_grab_failure_retries_every_5_s_and_reports_failing_then_ok():
     assert status == [(63_000, FAILING), (73_000, OK)]                     # o primeiro quadro bom
     assert grab.calls[-3:] == [73_000, 74_000, 75_000]                     # e a grade volta a 1 por segundo
     rec.stop()
-    assert sum(s.frames for s in segments) == 3 + 3
+    assert [(s.t_start_ms, s.t_end_ms, s.frames) for s in segments] == [(0, 3_000, 3), (73_000, 75_500, 3)]
 
 
 def test_short_grab_failure_gives_no_status():
@@ -263,6 +270,29 @@ def test_run_returns_on_stop_event_and_closes_the_segment():
     rec._grab = grab_then_stop                                             # três quadros, um por segundo do relógio falso
     rec.run(stop)
     assert len(segments) == 1 and segments[0].frames == 3
+
+
+def test_segments_tile_time_without_overlap_across_every_kind_of_close():
+    rec, clock, grab, segments, _ = _recorder(cost_ms=1700)              # atrasado: pula quadros e passa da virada dos 60 s
+    _run_until(rec, clock, 70_000)
+    grab.size = (48, 30)
+    _run_until(rec, clock, 80_000)
+    rec.switch(ScreenRect(0, 0, 80, 40))
+    _run_until(rec, clock, 90_000)
+    rec.stop()
+    assert len(segments) == 4
+    for a, b in itertools.pairwise(segments):
+        assert a.t_start_ms < a.t_end_ms == b.t_start_ms                  # contíguos: sem buraco falso nem sobreposição
+    for seg in segments:
+        rels = [t for t, _ in decode_segment(seg.data)]
+        assert rels[0] == 0 and seg.t_start_ms + rels[-1] < seg.t_end_ms
+
+
+def test_screen_rec_imports_without_av_qt_or_torch():
+    code = ("import sys, listener.screen_rec.recorder, listener.screen_rec.segment, listener.screen_rec.codec; "
+            "print(sorted(m for m in ('av', 'PySide6', 'torch') if m in sys.modules))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)  # noqa: S603 (o próprio Python)
+    assert out.stdout.strip() == "[]"
 
 
 def test_stats_summary_has_percentiles():
