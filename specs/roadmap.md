@@ -4,9 +4,9 @@ Quando ler: ao planejar a próxima entrega. O que já foi entregue está no `CHA
 em `features/`. O estado de cada item está no `backlog.md`. Esforço em dias de foco é [chute]. Tamanho-alvo: 3 KB.
 
 ## Entregue
-F1 a F5.21 estão implementadas (versão 0.14.0). Até a F5.15, os gates foram dados por cumpridos pelo uso real do app
-no Windows, sem os números (D-090). Da F5.16 em diante, o aceite de cada spec é conferido no uso, e o que falta está em
-"Verificar no Windows", no backlog.
+F1 a F5.21 e F5.25 a F5.27 estão implementadas (versão 0.16.0). Até a F5.15, os gates foram dados por cumpridos pelo uso
+real do app no Windows, sem os números (D-090). Da F5.16 em diante, o aceite de cada spec é conferido no uso, e o que
+falta está em "Verificar no Windows", no backlog.
 
 ## Próximas entregas
 | Fase | Entrega | Gate, medido em uso real | Esforço |

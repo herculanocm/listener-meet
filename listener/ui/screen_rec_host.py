@@ -6,15 +6,13 @@ gravando o último pedaço, o lançamento espera ele sair (o `idx` segue a ordem
 informa: `screen_start` (número e tamanho; `back` quando o mesmo monitor volta), `screen_switch`, `screen_lost` (o número) e
 `screen_stop` (as estatísticas, os pedaços gravados e não gravados e `reason`: "usuario", "reuniao", "perdido" = a reunião parou
 com o monitor fora, ou "queda"); nunca a chave do monitor. Avisos na linha de alerta do widget (`alert()`, lida pelo `_tick` do
-controlador sem alerta dos dispositivos): U-183 até o monitor voltar e a falha de leitura, apagada no primeiro quadro bom. A
-primeira queda relança; a segunda para a tela com o aviso (`on_error`), e o áudio segue.
-`stop` (a reunião parou): EOF no filho, que fecha e grava o último pedaço; `then_wait(rec.stop)` faz a tarefa da parada esperar o
-filho sair (até `STOP_WAIT_S`) antes de o controlador pôr a reunião na fila, fora da thread da interface; passado o prazo, segue
-(o filho termina de gravar até o kill do `client.CLOSE_GRACE_S`) e o atraso vai ao log. `shutdown` (a saída) para, espera, mata o
-que sobrou e grava o `screen_stop` antes de o banco fechar; `cancel` mata o filho antes de a reunião ser apagada.
-`settings_changed` leva `screen_rec.fps` e `screen_rec.max_side` (gravados no OK das Configurações) ao próximo pedaço. Ao começar a
-tela, o widget sai da captura (`exclude_from_capture`). Threads: as mensagens do filho chegam pela `screen-read` e viram o sinal
-`_message`, enfileirado para a thread da interface; só `wait_closed` roda na tarefa da parada, sobre uma cópia da lista."""
+controlador sem alerta dos dispositivos): U-183 até o monitor voltar e a falha de leitura, apagada no primeiro quadro bom; a
+primeira queda relança, a segunda para a tela com o aviso (`on_error`). `stop` (a reunião parou): EOF no filho, que grava o
+último pedaço; `then_wait(rec.stop)` faz a tarefa da parada esperar o filho sair (até `STOP_WAIT_S`) antes da fila; passado o
+prazo, segue (o filho grava até o kill do `client.CLOSE_GRACE_S`). `shutdown` (a saída) para, espera, mata o que sobrou e grava
+o `screen_stop` antes de o banco fechar; `cancel` mata o filho antes de a reunião ser apagada.
+`settings_changed` leva a taxa e o lado (gravados no OK das Configurações) ao próximo pedaço; ao começar a tela, o widget sai da
+captura. As mensagens do filho viram o sinal `_message`, enfileirado para a interface; só `wait_closed` roda na tarefa da parada."""
 from __future__ import annotations
 
 import functools
@@ -42,8 +40,7 @@ LOST_TEXT = "A gravação da tela parou: o {label} saiu. O áudio segue."     # 
 FAILING_TEXT = "A gravação da tela não está conseguindo ler o monitor."
 CRASHED_TEXT = "A gravação da tela parou por um erro. O áudio segue."
 NOT_STARTED_TEXT = "A gravação da tela não começou (o monitor escolhido ou o arquivo da tela). O áudio segue."
-STOP_WAIT_S = SHUTDOWN_WAIT_S = 10.0   # a parada da reunião e a saída esperam o último pedaço até isto
-RETRIES = 1                      # a spec (pergunta 8): uma nova tentativa por reunião
+STOP_WAIT_S, SHUTDOWN_WAIT_S, RETRIES = 10.0, 10.0, 1   # a espera do último pedaço na parada e na saída; um relançamento (pergunta 8)
 
 
 def session_t0(rec: Any) -> float:
@@ -253,7 +250,7 @@ class ScreenRecHost(QObject):
         direta: um nome divergente quebra aqui, e não vira um menu que não faz nada."""
         self._widget = widget
         self._meeting = (meeting_id, t0_perf)
-        widget.destroyed.connect(lambda *_a: setattr(self, "_widget", None))
+        widget.destroyed.connect(self._widget_gone)     # um método, nunca um lambda com `self` (F5.3: prendia o widget)
         self.state_changed.connect(widget.set_screen_state)
         widget.set_screen_state(self._state, self.monitor_label)
         widget.screen_start_requested.connect(self._start_requested)
@@ -261,6 +258,9 @@ class ScreenRecHost(QObject):
         widget.screen_stop_requested.connect(self.stop_screen)
         if self._session is not None:
             self._exclude_widget()
+
+    def _widget_gone(self, *_a: Any) -> None:
+        self._widget = None
 
     def _start_requested(self, monitor_key: str) -> None:
         if self._meeting is not None:

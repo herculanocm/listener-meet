@@ -3,27 +3,41 @@
 Quando ler: sempre. É o único lugar de estado: atualize ao fim de cada sessão e apague o que foi concluído.
 Tamanho-alvo: 12 KB.
 
-## Estado (2026-11-15)
-- Versão 0.15.0, esquema do banco v11. F1 a F5.21 e F5.25 implementadas (`CHANGELOG.md`); F6 é rascunho e F7 é
-  futuro.
+## Estado (2026-11-21)
+- Versão 0.16.0, esquema do banco v12. F1 a F5.21 e F5.25 a F5.27 implementadas (`CHANGELOG.md`); F6 é rascunho e F7
+  é futuro.
 - A `main` é a referência. O branch `claude/speakers-search-typeahead-a2d9ae` (F5.23, busca ao escolher a pessoa
   na revisão, e F5.24, remoção da legenda ao vivo e das sugestões) foi descartado pelo dono em 15/11 (D-109): a
   legenda ao vivo, a bandeja de legendas, o resumo parcial e as sugestões ao vivo ficam no produto.
 - O código é a referência (D-109): documento que diverge do código é ajustado ao código.
-- O `.exe` 0.14.0 e o zip foram gerados em 08/11; o 0.15.0 não foi gerado. A sonda `--probe` e o push são do dono.
+- O `.exe` 0.14.0 e o zip foram gerados em 08/11; o 0.15.0 e o 0.16.0 não foram gerados. A sonda `--probe` e o push são
+  do dono.
 - Sem CI (D-090): os testes rodam na máquina, antes de cada commit.
 - Documentação reestruturada em 15/11 (D-108): specs implementadas condensadas, handoff e roteiro de teste apagados.
   A spec F5.22 (GPU), que estava suspensa, foi apagada (D-109); a CP14 vale como está.
+- A F5.26 e a F5.27 foram feitas numa máquina nova (i7-8565U, `memory/maquina.md`), sem os modelos, sem as chaves e
+  sem o PyInstaller: nela, 6 testes falham pelo ambiente (3 do `test_build_exe`, `test_keys_ui` e 2 do
+  `test_llm_request_*` da caixa do parcial). A régua foi nenhuma falha nova.
 
 ## Próximos passos
 1. O dono confere no uso real o que está em "Verificar no Windows".
-2. F5.26 (o vídeo só com as vozes decididas) e F5.27 (gravar a tela) aprovadas em 20/11 (D-112, D-113), em
-   implementação. A F5.27 começa pela sonda de go/no-go (CPU, disco, EDR).
-3. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
+2. Depois: F6 (telas completas), pelo fluxo do `AGENTS.md`.
 
 ## Verificar no Windows (uso real; os critérios e os números estão no Aceite de cada spec)
 Até a F5.15, tudo foi dado por verificado pelo uso real (D-090). Entrega feita fora do Windows acrescenta aqui o que
 só o Windows confirma.
+- **F5.27** (três reuniões com tela compartilhada, máquina de referência): o lote 0 num monitor 4K a 150 % (CPU do
+  filho e ciclo p95 no `--check`) e o atraso p95 da legenda ao vivo com a tela gravando (D-114); o BitBlt com escala
+  dentro do filho; o `--screen` no `.exe` congelado (pipes num build `--windowed`, a prioridade abaixo do normal no
+  neto); o widget e o menu fora do vídeo; o U-183 em até 6 s com um monitor desligado; Win+L, UAC e EDR (o aviso de
+  falha e a volta); a saída do app com a tela gravando; a parada com o banco preso por mais de 10 s; a sincronia com
+  um cronômetro lido em voz alta; a planilha legível a 75 % em 1080p; o MP4 no player do Windows e no celular; o
+  "Antes de gravar" com a tela ligada no notebook a 150 % (629 px com a faixa "Falta configurar", o "Gravar" pode
+  sair da tela); a prévia num 4K; o menu do widget e o foco ao fechar; o caminho A-34 (a exclusão da captura
+  falhando); o disco por hora no banco real; "Apagar a tela" devolvendo o disco.
+- **F5.26**: a guarda com 1 voz pendente numa reunião real (até 2 cliques depois de decidir); a faixa de texto em
+  dobro sobre a legenda desenhada no player do Windows e no celular (se dobrar, o padrão da caixa vira desmarcada,
+  D-115); o player liga e desliga a faixa.
 - **F5.25** (três reuniões revisadas): toda escolha por "Outra pessoa…" sai sem rolar a lista; o tempo de abertura
   no banco real (o plano B da spec, guardar as referências entre aberturas, só se passar de 150 ms).
 - **F5.21** (três reuniões com a tela compartilhada): `scripts/win_probe.py shots` nos temas claro e escuro, com as
@@ -102,7 +116,10 @@ Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparece
 - Dez cópias de `title or title_llm` poderiam usar `effective_title`.
 - Em "perguntar à base", cada rodada paga os resultados acumulados: o `cache_prefix` só marca a primeira mensagem.
 - A estimativa de custo da ata usa 250 tokens por minuto e 20 caracteres por fala [chute]: calibrar no banco real.
-- O PyAV não é declarado no `pyproject`: vem com o faster-whisper.
+- O anexo do áudio (`Core.attach`) dentro de `transaction()` ou `snapshot()` tem o problema achado no da tela: o
+  `PRAGMA` do anexo falha ali, e a fila não desanexa ninguém. O da tela recusa; o do áudio não mexeu.
+- `screen_stop` de queda: o comentário de `EventType.SCREEN_LOST` em `model.py` diz "ou o filho caiu de vez", mas a
+  queda grava `screen_stop` com `reason` "queda" (o código vale, D-109: apagar o trecho do comentário ao mexer).
 
 **Interface**
 - O aviso "banco não responde há N s" exagera o tempo (`pending_since`).
@@ -144,8 +161,9 @@ Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparece
 
 **Tamanho do código**
 - Acima de 400 linhas, dividir ao mexer: `ui/controller.py`, `live/proc.py`, `ui/player.py`, `capture/recorder.py`,
-  `pipeline/llm_steps.py`, `store/rag.py`. Perto do limite: `rag/agent.py`, `ui/history_ask.py`, `rag/sandbox.py`,
-  `tests/test_win32_devices.py`.
+  `pipeline/llm_steps.py`, `store/rag.py`, `ui/warmup.py` (555), `store/core.py`. Perto do limite: `rag/agent.py`,
+  `ui/history_ask.py`, `rag/sandbox.py`, `tests/test_win32_devices.py`, `ui/screen_rec_host.py` (397),
+  `platform/base.py` (397), `ui/media_save.py` (387, com `save_video` em 47 linhas).
   Funções longas: `MeetingWindow.__init__` (~88 linhas) e `ProviderTab.__init__` (68).
 
 **Stack**

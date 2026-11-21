@@ -181,3 +181,10 @@ outra indicação, a melhoria está implementada. Melhoria nova entra aqui com o
 | U-175 | Busca sem resultado mostra até 3 "Nomes parecidos" antes de oferecer a pessoa nova (erro de digitação) | Revisão | F5.25 |
 | U-176 | Enter seguro no "Outra pessoa": com o campo vazio e sem linha pela voz, nada vem selecionado | Revisão | F5.25 |
 | U-177 | O cartão da voz com a nota em percentual: "(similaridade 70 %, margem 3 pontos)" | Revisão | F5.25 |
+| U-178 | O vídeo com legendas não sai com voz sem nome que fala nele: "2 vozes sem nome falam no vídeo. Decida quem é cada uma para salvar.", com "Revisar falantes…" (padrão e Enter) e "Fechar"; sem "salvar mesmo assim" | Reunião | F5.26 |
+| U-179 | O diálogo "Vídeo com legendas" antes do de salvar: o texto ("Revisado pela IA" ou "Original"), "Gerar a revisão (~US$ X)" sem a revisada e a caixa "Incluir a legenda também como faixa de texto" (D-115) | Reunião | F5.26 |
+| U-180 | "Gravar a tela" no "Antes de gravar", desligada a cada abertura: os monitores lado a lado com a prévia a cada 1 s; um clique escolhe; o último vem marcado se existir | Warm-up | F5.27 |
+| U-181 | Sob os monitores: "Tudo o que aparecer neste monitor fica gravado, inclusive notificações. A bandeja, os avisos e as sugestões do listener-meet não aparecem." | Warm-up | F5.27 |
+| U-182 | "Tela: Monitor 2" no widget; o clique troca o monitor, para a tela ou a começa no meio da reunião; o widget e o menu fora da captura enquanto a tela grava | Widget | F5.27 |
+| U-183 | Monitor perdido: "Tela: parada" e, na linha de alerta do widget, "A gravação da tela parou: o Monitor 2 saiu. O áudio segue." até ele voltar (e a tela retoma sozinha) | Widget | F5.27 |
+| U-184 | "Apagar a tela desta reunião (1,2 GB)…" no "⋯", com "Manter" no padrão; apaga só a tela e devolve o disco: "Tela apagada: 1,2 GB liberados." | Reunião | F5.27 |

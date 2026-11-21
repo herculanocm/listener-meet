@@ -22,8 +22,9 @@ Princípios de produto:
 | Transcrição | `listener/pipeline/` | `JobRunner` em janelas de 600 s cortadas no silêncio; faster-whisper large-v3-turbo int8 com `word_timestamps` (D-028); glossário e contexto no `initial_prompt`; idioma escolhido por reunião, sem detecção (D-060); um artefato por janela, para retomar. |
 | Identificação | `listener/pipeline/` | L é o usuário (salvo no preset de sala). No R, o pyannote community-1 diariza em janelas de até 20 min, costuradas; cada voz é comparada por cosseno com as referências de voz de cada pessoa (limiar 0,60, margem 0,05; D-008, F5.15); a revisão reforça o perfil a cada confirmação. Sem o token do Hugging Face, o job só transcreve (F5.16). |
 | Ao vivo | `listener/live/` | Processo próprio (D-044): VAD Silero incremental, janelas de 4 a 10 s, Whisper `small` int8 (degrada para `base`), nome por embedding só para exibição (CP11). |
+| Tela gravada | `listener/screen_rec/` | F5.27, sem Qt e sem torch: o laço da gravação (`ScreenRecorder`, 1 a 5 quadros por segundo no relógio da sessão), os pedaços de 60 s em MP4 com H.264 de CPU (`SegmentEncoder`, o PyAV só dentro das funções), o filho `--screen` e o protocolo com o app (`client.py`), o bloco do `--check`. O host Qt é `ui/screen_rec_host.py`. |
 | Inteligência | `listener/llm/`, `pipeline/llm_steps.py` | Contrato único de provedor (texto, JSON validado pelo projeto, áudio, imagem, embeddings, streaming) com adaptadores Gemini, OpenAI e Claude carregados sob demanda, e um provedor local de embeddings (e5-small em ONNX). Prompts, esquemas, validação de evidência e render da ata são do projeto. Tarefas: glossário, identidade por contexto, ata, resumo executivo, pré-resumo, título, transcrição revisada, resumo parcial, chats e sugestões ao vivo. |
-| Base | `listener/store/` | `listener.db` e um `listener-audio-AAAA-MM.db` por mês, anexado sob demanda (D-003, D-039), em WAL. Conexão por thread, migrações atômicas, `Store` como fachada dos repositórios com os papéis APP, WORKER e READONLY, fila de jobs com claim atômico e artefatos no banco. |
+| Base | `listener/store/` | `listener.db`, um `listener-audio-AAAA-MM.db` e um `listener-screen-AAAA-MM.db` (F5.27) por mês, anexados sob demanda na mesma fila de até 8 por conexão (D-003, D-039), em WAL. Conexão por thread, migrações atômicas, `Store` como fachada dos repositórios com os papéis APP, WORKER e READONLY, fila de jobs com claim atômico e artefatos no banco. |
 | Busca | `listener/rag/` | Trechos de 60 a 120 s e itens da ata com nome e cargo; FTS5 obrigatório; vetores float32 com modelo e dimensão por vetor (D-009); busca por assinatura binária em numpy, sem sqlite-vec (D-048); híbrida por RRF com teto por reunião; chat com citações; "perguntar à base" numa sandbox SQL somente leitura (F5.10). |
 | Interface | `listener/ui/` | PySide6: assistente de primeiro uso, "Antes de gravar", widget flutuante, bandeja do sistema, bandeja de legendas, revisão de falantes, Histórico, reunião aberta (ata, transcrição, linha do tempo, player, exportação), fila, Configurações e Sobre. |
 | Config | `listener/config/` | Padrões e tipos das configurações (`SPECS`) e o ponteiro da pasta do banco (D-029). |
@@ -47,6 +48,7 @@ Princípios de produto:
 | Worker pesado | `--worker` | abaixo do normal; ociosa durante uma gravação | Diarização, identificação e transcrição. Solto do app (`Platform.spawn_detached`): termina a fila mesmo com o app fechado e sai após 60 s ocioso. |
 | Worker leve | `--worker --light` | abaixo do normal | Jobs `llm` e `index`, sem `torch`. Pode rodar durante a gravação. Fica até 10 min ocioso. |
 | Ao vivo | `--live` | normal | Legenda. Filho do app (`Platform.spawn_child`, pipes binários, sem janela), preso à gravação: o fim do stdin o encerra. Não consome a fila. |
+| Tela | `--screen` | abaixo do normal (rebaixa-se ao nascer) | F5.27: grava o monitor escolhido. Filho do app como o ao vivo, preso à tela da gravação: linhas JSON nos dois sentidos, e o fim do stdin fecha o último pedaço e o encerra. Papel WORKER: anexa só o arquivo da tela, em escrita, sem criar. |
 
 Regras dos processos:
 - **Fila.** O app cria o job ao parar e lança o worker. O worker faz o claim atômico, bate o heartbeat numa thread
@@ -62,6 +64,10 @@ Regras dos processos:
   stdin do filho e a `live-read` lê linhas JSON do stdout e as vira sinal do Qt. O filho grava `captions` (papel
   WORKER), calcula o embedding do nome numa thread própria enquanto o Whisper transcreve e limita os tokens novos pelo
   tamanho do prompt (`live/pacing.py`).
+- **Tela.** O app cria o arquivo da tela do mês e lança o filho com o `t0_perf` da sessão. O filho pede os pixels
+  físicos antes de ler os monitores, roda o laço numa thread e grava os pedaços em ordem noutra (`screen-write`), com
+  nova tentativa em "database is locked". A parada da reunião espera o filho sair (até 10 s) antes de a reunião entrar
+  na fila; a primeira queda relança, a segunda para só a tela.
 - **Eco.** Fora do preset de sala, os blocos do L que são eco do R são zerados para o Whisper e para o reforço do
   perfil (`pipeline/echo_gate.py`); a regra é a de `capture/echo.py`, a mesma do ao vivo.
 - **Instância única.** Um mutex da plataforma e um canal local entregam ao app que já roda o pedido de um segundo
@@ -88,8 +94,8 @@ Regras dos processos:
 - `from __future__ import annotations` fica em todo módulo até o piso do Python subir para 3.14.
 
 ## Logs
-Quatro arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (o pesado), `listener-llm.log` (o leve)
-e `listener-live.log` (o ao vivo). A categoria é o logger `listener.<módulo>`.
+Cinco arquivos na pasta do log: `listener.log` (o app), `listener-worker.log` (o pesado), `listener-llm.log` (o leve),
+`listener-live.log` (o ao vivo) e `listener-screen.log` (a tela, F5.27). A categoria é o logger `listener.<módulo>`.
 | Nível | O que registra |
 | --- | --- |
 | DEBUG | o detalhe de cada chamada, lote ou decisão; configuração mudada; apps com som, só quando mudam |

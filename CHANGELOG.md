@@ -3,6 +3,14 @@
 O que cada versão entregou, da mais nova para a mais antiga. A versão mora em `listener/__init__.py`: a minor sobe a
 cada feature e a patch a cada correção (D-081). O contrato de cada feature está em `specs/features/`.
 
+## 0.16.0 (2026-11-21)
+- F5.27: gravar a tela da reunião. No "Antes de gravar", "Gravar a tela" escolhe o monitor com uma prévia; um processo
+  próprio grava 1 quadro por segundo (até 5) no relógio do áudio, em pedaços no SQLite; o widget mostra e troca o
+  monitor. O "Salvar vídeo com legendas…" de uma reunião com tela sai em 1920 × 1080, com a tela em cima e a legenda
+  embaixo; "Apagar a tela desta reunião" libera o disco sem perder o áudio. Esquema v12.
+- F5.26: o vídeo com legendas só sai com as vozes decididas ("Revisar falantes…"); um diálogo escolhe o texto
+  revisado pela IA ou o original e oferece gerar a revisão; a legenda também vai como faixa de texto no MP4.
+
 ## 0.15.0 (2026-11-15)
 - F5.25: "Outra pessoa" com busca na revisão de vozes. Filtra por nome, cargo e empresa a cada tecla, sem acento;
   mostra a nota da voz em percentual em toda linha; a lista vem em seções ("Pela voz", "Esperadas nesta reunião",

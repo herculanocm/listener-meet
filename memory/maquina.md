@@ -10,6 +10,11 @@ código; fato com data ou fonte; nenhum segredo; o que for superado é apagado. 
   falso; onnxruntime só com `CPUExecutionProvider`). Python 3.12.10 pelo `py -3.12`; o venv do projeto fica em `.venv`,
   no checkout, instalado pelo lock. Modelos em `%LOCALAPPDATA%\listener-meet\models` (large-v3-turbo, `small`, `base`).
   Monitores mudam com o lugar (4K a 150 %, 1080p a 100 %, notebook a 150 %). O terminal padrão é o Windows Terminal.
+- **Windows 11, segunda máquina (2026-11-20, F5.26 e F5.27).** Intel i7-8565U (4 núcleos, 8 threads), 16 GB, dois
+  monitores de 1920 x 1080 físicos, um a 125 % (1536 x 864 lógicos). Só tinha o Python 3.15: o 3.12.10 veio do
+  `pymanager install 3.12` e convive com ele (`py -3.12`). O `.venv` foi criado pelo lock em 2026-11-20. Sem modelos em
+  `%LOCALAPPDATA%\listener-meet\models`, sem chaves e sem PyInstaller: 6 testes falham pelo ambiente (3 do
+  `test_build_exe`, `test_keys_ui` e 2 do `test_llm_request_*`). Números medidos nela não valem para a máquina alvo.
 - **Linux de desenvolvimento.** Ubuntu 24.04 nativo ou WSL, sem PortAudio, sem PyInstaller e sem sudo. Venv com
   `pip install -c requirements/windows.txt -e ".[dev,llm,docx]"`, sem o extra `[pipeline]`. A suíte inteira tem ~13
   falhas do ambiente (o build do `.exe`, o widget 1 px mais alto no offscreen, os tempos dos avisos e do cartão de
@@ -63,7 +68,11 @@ google.genai 0,8 s, openai 0,9 s, anthropic 4,0 s.
 
 ## Interface (Qt)
 - A plataforma `offscreen` não tem as fontes do sistema (cai num "Sans Serif" cerca de duas vezes mais largo): meça
-  layout só com a plataforma real. Uma caixa modal aberta no `closeEvent` trava o encerramento do teste.
+  layout só com a plataforma real. Num script no Windows, ela desenha o texto como quadradinhos: para conferir os
+  quadros de um vídeo exportado, rode com `QT_QPA_PLATFORM=windows`.
+- Um processo sem Qt lê um monitor com escala em pixels lógicos (1536 x 864 num 1080p a 125 %) até chamar
+  `SetProcessDpiAwarenessContext(PMv2)` (`Platform.use_physical_pixels`, F5.27); o Qt faz isso sozinho no app. Uma caixa
+  modal aberta no `closeEvent` trava o encerramento do teste.
 - Para capturar uma tela no DPI real sem aparecer para o usuário: janela em (-10000, -10000) com
   `WA_ShowWithoutActivating` e `grab()` (`scripts/win_probe.py shots`). Com `WA_DontShowOnScreen`, o diálogo sai em
   DPR 1.

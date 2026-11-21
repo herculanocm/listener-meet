@@ -8,24 +8,30 @@ que muda. A verdade executável está em `listener/store/schema.py` e `core.py`.
 - `listener-audio-AAAA-MM.db` (schema `audio_AAAA_MM`): um arquivo por mês de `meetings.started_at`, com
   `audio_chunks` e `schema_migrations` próprios. O do mês corrente é anexado na abertura; os outros, sob demanda, até 8
   por conexão (D-003, D-039). O `listener-audio.db` antigo segue lido como schema `audio`.
-- WAL em todos; `page_size` de 32 KB nos de áudio. Datas em ISO 8601 local, com offset.
+- `listener-screen-AAAA-MM.db` (schema da tela do mês; F5.27, D-113): um arquivo por mês de `meetings.started_at`, com
+  `screen_chunks` e `schema_migrations` próprios, criado e migrado pelo app ao começar a gravar a tela. Anexado sob
+  demanda na mesma fila do áudio: os 8 anexos por conexão contam os dois; o anexo novo é recusado dentro de transação ou
+  snapshot. Nasce com `auto_vacuum` incremental, para "Apagar a tela desta reunião" devolver o disco pelo espaço a
+  liberar.
+- WAL em todos; `page_size` de 32 KB nos de áudio e nos da tela. Datas em ISO 8601 local, com offset.
 - Fora do SQLite, por decisão: o ponteiro `db-location.json`, na pasta de configuração do sistema (D-029), e o arquivo
   de log (D-033).
 
 ## Tabelas
 A coluna "Esquema" diz a versão do `main` em que a tabela mudou pela última vez. Quase toda tabela tem também
 `created_at` ou `updated_at`; `schema_migrations` guarda as migrações aplicadas em cada arquivo. Tabelas e colunas
-conferidas contra um banco novo na v11.
+conferidas contra um banco novo na v12.
 | Tabela | Arquivo | Colunas principais | Feature | Esquema |
 | --- | --- | --- | --- | --- |
 | settings | main | key PK, value, scope (`now` ou `next_recording`), updated_at | F1 | v1 |
 | presets | main | id, name UNIQUE, mic_device_id, mic_device_name, source_kind (`app` ou `system`), source_exe, sample_rate, is_in_room; F4: live_enabled e live_names (caixas do warm-up; nulo = padrão das Configurações) | F1, F4 | v7 |
 | people | main | id, name, email, role, company, notes, is_me | F1 | v1 |
 | providers | main | id PK texto, kind, api_key, model (F3: modelo de embeddings), params (JSON), is_active_llm, is_active_embed, fast_model, strong_model, models_json (cache de `list_models()`), tested_at, latency_ms, base_url (nulo, P9); linhas `gemini`, `openai`, `anthropic` (Gemini ativo por padrão, CP14) e `huggingface` (token, CP10) | F1, F2, F3 | v6 |
-| meetings | main | id, title, title_llm (F3: sugestão da LLM, com `revisions`), started_at, ended_at, duration_ms, platform, preset_id, status, expected_participants, is_in_room, notes, audio_file (v3), language (v4, D-013), glossary e expected_people_json (v6: warm-up), goal (v10, F5.20: "Meu objetivo nesta reunião", que as sugestões leem; nunca no "Perguntar à base"). Status: gravando, pausada, gravada, cancelada, interrompida, processada, revisada | F1, F2, F3, F5.20 | v10 |
+| meetings | main | id, title, title_llm (F3: sugestão da LLM, com `revisions`), started_at, ended_at, duration_ms, platform, preset_id, status, expected_participants, is_in_room, notes, audio_file (v3), language (v4, D-013), glossary e expected_people_json (v6: warm-up), goal (v10, F5.20: "Meu objetivo nesta reunião", que as sugestões leem; nunca no "Perguntar à base"), screen_file (v12, F5.27: o arquivo da tela; nulo = nunca gravou a tela; fica depois de "Apagar a tela", e "tem tela" quer dizer "tem pedaços"). Status: gravando, pausada, gravada, cancelada, interrompida, processada, revisada | F1, F2, F3, F5.20, F5.27 | v12 |
+| screen_chunks | tela do mês (`listener-screen-AAAA-MM.db`) | id, meeting_id, idx, t_start_ms, t_end_ms (o pedaço cobre exatamente [t_start_ms, t_end_ms) no tempo da sessão; entre dois pedaços não houve tela), frames, width e height (o quadro fixo do pedaço), codec (o nome do FFmpeg, `libx264`), mp4 BLOB (um MP4 fragmentado autocontido que começa num quadro-chave, pts em ms relativos a t_start_ms); UNIQUE(meeting_id, idx); sem FK entre arquivos: órfãos só são reportados (CP3) | F5.27 | v12 |
 | audio_chunks | audio_AAAA_MM (um por mês; `audio` = legado) | id, meeting_id, channel (L ou R), idx, t_start_ms, frames, sample_rate, gap_frames, flac BLOB; UNIQUE(meeting_id, channel, idx); sem FK entre arquivos: órfãos só são reportados (CP3) | F1 | v1 |
 | markers | main | id, meeting_id (FK cascade), t_ms, note | F1 | v1 |
-| events | main | id, meeting_id (FK cascade; nulo = evento do app), t_ms, type, data JSON. Tipos: start, pause, resume, mute, unmute, marker (F4: `origin` legenda ou parcial), source_change, device_lost, device_back, alert, warning, stop, cancel, error; F2: job_start, job_step, job_done, job_error, job_cancel, profile_confirm; F4: live_started, live_degraded, live_stopped (gravados pelo processo ao vivo, com os contadores) e live_cpu (pelo app, `app_pct` e `live_pct`); F5.11: o `stop` leva `signal_ms` por canal (o tempo com sinal; reunião antiga não tem o campo); F5.16: o `job_done` sem diarização leva `sem_diarizacao` (`{"motivo": "token"}`) nas `timings` | F1, F2, F4, F5.11, F5.16 | v1 |
+| events | main | id, meeting_id (FK cascade; nulo = evento do app), t_ms, type, data JSON. Tipos: start, pause, resume, mute, unmute, marker (F4: `origin` legenda ou parcial), source_change, device_lost, device_back, alert, warning, stop, cancel, error; F2: job_start, job_step, job_done, job_error, job_cancel, profile_confirm; F4: live_started, live_degraded, live_stopped (gravados pelo processo ao vivo, com os contadores) e live_cpu (pelo app, `app_pct` e `live_pct`); F5.11: o `stop` leva `signal_ms` por canal (o tempo com sinal; reunião antiga não tem o campo); F5.16: o `job_done` sem diarização leva `sem_diarizacao` (`{"motivo": "token"}`) nas `timings`; F5.27 (pelo app, no tempo da sessão; o monitor sempre pelo número, nunca pela chave do sistema): screen_start (o monitor, o tamanho, `fps` e `max_side`; também quando o mesmo monitor volta e no relançamento depois de uma queda), screen_switch (o monitor novo e o tamanho), screen_lost (o monitor), screen_stop (o resumo do gravador daquela sessão: quadros, pulados, falhas, tempos p50 e p95; os pedaços gravados e não gravados; `reason`: `usuario`, `reuniao`, `perdido` = a reunião parou com o monitor fora, ou `queda`), screen_deleted (U-184: `chunks` e `bytes`, `t_ms` nulo) | F1, F2, F4, F5.11, F5.16, F5.27 | v1 |
 | revisions | main | id, entity, entity_id, field, before, after, author (só acréscimo) | F1 | v1 |
 | segments | main | id, meeting_id, channel, t_start_ms, t_end_ms, text, text_llm, cluster (rótulo local), person_id, role_at_time (D-016), confidence, attribution (pyannote, usuario, llm, canal), source (final; live na F4), words_json, cluster_id, job_id (v4) | F2 | v4 |
 | captions | main | id, meeting_id (FK cascade), channel (L ou R), t_start_ms, t_end_ms, text, person_id (só exibição, CP11), label ("Nome — Cargo", "Participante" ou o usuário), confidence (cosseno do nome; nulo sem embedding), model (`faster-whisper:small:int8`), latency_ms, created_at. Gravadas uma a uma pelo processo `--live` (papel WORKER) por fim de janela, logo fora da ordem de tempo entre L e R; nunca apagadas | F4 | v7 |
@@ -60,8 +66,8 @@ conferidas contra um banco novo na v11.
 ## Regras
 - Nada apaga dados sem o usuário pedir (CP3). As únicas remoções são: Cancelar da gravação em curso; Reprocessar
   (troca atômica dos clusters e segments do job anterior no último passo, com as decisões humanas transportadas por
-  cosseno); excluir reunião (tudo dela em cascata, áudio e legendas inclusive; os perfis de voz ficam; D-063); e
-  apagar pessoa (o perfil e os vetores de voz dela).
+  cosseno); excluir reunião (tudo dela em cascata, áudio, tela e legendas inclusive; os perfis de voz ficam; D-063);
+  apagar pessoa (o perfil e os vetores de voz dela); e "Apagar a tela desta reunião" (só os pedaços da tela, F5.27).
 - `revisions` registra toda edição humana.
 - `*.db` nunca no git nem em pasta sincronizada.
 - As chaves de API ficam em `providers.api_key`, nunca em `config_json`, em log ou em mensagem de erro (CP10).
@@ -80,6 +86,7 @@ Os padrões e a lista completa estão em `listener/config/defaults.py`; o tipo, 
 | `pipeline.*` | `auto_start`, `pause_on_record`, `transcriber`, `whisper_model`, `whisper_hq`, `whisper_window_s`, `diar_window_s`, `torch_threads`, `models_dir`, `glossary`, `threshold`, `margin`, `ref_cos` e `max_refs` (referências de voz), `embedding_batch` (lote dos embeddings da diarização, em trechos), `echo_gate` (eco do L zerado fora da sala presencial); internas: `paused_until`, `paused_manual`, `rtf_json` |
 | `llm.*` | `ask_last`, `auto_tasks`, `cost_alert_usd`, `max_parallel`, `audio_second_opinion`, `glossary_enabled`, `store_payloads`, `proxy_url`, `ca_bundle`, `system_certs` |
 | `live.*` | `enabled`, `names`, `model`, `threads`, `partial`, `summary_interval_min`, `in_widget`, `caption_tray` |
+| `screen_rec.*` | F5.27: `fps` (1, de 1 a 5) e `max_side` (1920, de 960 a 3840), que valem no próximo pedaço, mesmo gravando; interna: `monitor` (a chave do último monitor escolhido, gravada pelo controller ao começar) |
 | `rag.*` | `auto_index` (vetores automáticos), `top_k`, `max_per_meeting`; "perguntar à base": `sql_strong`, `sql_max_rows`, `sql_timeout_s` e as guardas `sql_max_cost_usd`, `sql_max_minutes`, `sql_max_rounds`; interna: `vector_version` (contador que o cache das assinaturas compara) |
 | `suggest.*` | `enabled`, `learn`, `options`, `window_min` e `name_hint` (valem em uso); `dossier` (na próxima gravação); `screen`, `screen_source` (`auto`, `cursor` ou `monitor:<chave>`) e `screen_keep`; internas: `memo`, `memo_at`, `memo_ratings` (o memorando) e `screen_consent` (provedores que já receberam a tela, com a data) |
 | `ui.*` | `widget_pos`, `widget_size`, `live_geometry`, `live_on_top`, `history_geometry`, `meeting_geometry`, `history_filters` |
@@ -98,16 +105,17 @@ Os padrões e a lista completa estão em `listener/config/defaults.py`; o tipo, 
 | v9 | `chat_messages.trace_json`; a primeira com volta (`MAIN_DOWNS[9]`) |
 | v10 | `suggestions`, `suggestion_options`, `meetings.goal`; com volta, que apaga as sugestões, as avaliações e os objetivos (só a pedido, CP3) |
 | v11 | `suggestion_screens`, `suggestions.screen_summary`, `suggestion_options.screen`; com volta |
+| v12 | `meetings.screen_file`, religando as reuniões aos arquivos da tela já na pasta; com volta, que só tira a coluna (os arquivos da tela ficam, CP3, e a ida seguinte religa) |
 
-A volta de uma migração fica em `store/downgrade.py` e roda só pela linha de comando, com o app fechado:
-`python -m listener --downgrade <pasta do banco> <versão>`. Os arquivos de áudio têm v1 (tabela) e v2 (datas).
+A volta de uma migração fica em `store/downgrade.py` e roda só pela linha de comando, com o app fechado: `python -m
+listener --downgrade <pasta do banco> <versão>`. Os arquivos de áudio têm v1 (tabela) e v2 (datas); os da tela, v1.
 
 ## Papéis do `Store`
 | Papel | Quem usa | O que pode |
 | --- | --- | --- |
 | APP | o app | migra e escreve |
-| WORKER | os workers e o processo ao vivo | escreve no `main` sem migrar; lê o áudio em `mode=ro`, com `mmap_size` de 256 MB |
-| READONLY | sondas e leitura | só lê |
+| WORKER | os workers, o processo ao vivo e o da tela | escreve no `main` sem migrar; lê o áudio em `mode=ro`, com `mmap_size` de 256 MB; anexa a tela em `mode=rw` sem criar nem migrar (versão velha pede abrir o app), sem mapa de memória |
+| READONLY | sondas e leitura | só lê (a tela em `mode=ro`) |
 
 ## Job vigente de uma reunião
 Para a revisão, a leitura e o trecho de 5 s, vale o job `concluído` mais recente entre `meeting` e `reprocess`; sem
