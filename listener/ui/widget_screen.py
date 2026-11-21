@@ -1,4 +1,4 @@
-"""F5.27 (U-182, U-183): a linha da tela no widget de gravação, fora do `ui/widget.py` (399 linhas). O controller liga o
+"""F5.27 (U-182, U-183): a linha da tela no widget de gravação, fora do `ui/widget.py` (perto do limite). O controller liga o
 `state_changed` do host da tela a `RecordingWidget.set_screen_state(estado, rótulo)` e os sinais do widget
 (`screen_start_requested(chave)`, `screen_switch_requested(chave)`, `screen_stop_requested()`) ao host.
 

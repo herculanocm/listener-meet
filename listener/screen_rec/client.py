@@ -40,7 +40,7 @@ HELLO, PAUSE, RESUME, SWITCH, PARAMS, STOP = "hello", "pause", "resume", "switch
 STARTED, STATUS, LOST, BACK, SWITCHED, CHUNK, STATS, ERROR, BYE = (
     "started", "status", "lost", "back", "switched", "chunk", "stats", "error", "bye")
 EXIT = "exit"                     # mensagem do próprio cliente: o filho terminou
-CLOSE_GRACE_S = 30.0              # depois do EOF o filho grava o último pedaço (com novas tentativas até 20 s) e sai; depois, kill
+CLOSE_GRACE_S = 30.0              # depois do EOF o filho grava o último pedaço (novas tentativas até `DRAIN_S`) e sai; depois, kill
 EXIT_WAIT_S = 5.0
 
 type Spawn = Callable[[list[str], Mapping[str, str] | None], ChildProcess]

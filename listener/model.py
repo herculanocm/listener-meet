@@ -49,7 +49,7 @@ class EventType(StrEnum):
     # F5.27: a gravação da tela (o `data` leva o número do monitor e o tamanho, nunca a chave do sistema)
     SCREEN_START = "screen_start"    # começou ou voltou (o mesmo monitor de volta)
     SCREEN_STOP = "screen_stop"      # parada pelo usuário ou com a reunião
-    SCREEN_LOST = "screen_lost"      # o monitor saiu ou o filho caiu de vez; o áudio segue
+    SCREEN_LOST = "screen_lost"      # o monitor saiu; o áudio segue (a queda do filho grava `screen_stop` com reason "queda")
     SCREEN_SWITCH = "screen_switch"  # outro monitor pelo widget (um pedaço novo)
     SCREEN_DELETED = "screen_deleted"  # "Apagar a tela desta reunião" (U-184): os pedaços e os bytes apagados
 

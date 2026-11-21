@@ -283,7 +283,8 @@ class ScreenRecHost(QObject):
             log.debug("mensagem de um filho da tela já encerrado: %s", msg.get("type"))
             return
         kind, current = msg.get("type"), s is self._session
-        size = {"monitor": msg.get("monitor"), "width": msg.get("width"), "height": msg.get("height")}
+        size = {"monitor": msg.get("monitor"), "width": msg.get("width"), "height": msg.get("height"),
+                "fps": self._params[0], "max_side": self._params[1]}     # o critério de disco do `--check` lê estes
         if kind in (sc.STARTED, sc.BACK, sc.SWITCHED):
             s.label = f"Monitor {msg.get('monitor')}"
             etype = EventType.SCREEN_SWITCH if kind == sc.SWITCHED else EventType.SCREEN_START

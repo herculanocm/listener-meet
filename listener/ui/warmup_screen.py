@@ -1,4 +1,4 @@
-"""F5.27 (U-180, U-181): a gravação da tela no "Antes de gravar", fora do `ui/warmup.py` (548 linhas), que só põe a caixa
+"""F5.27 (U-180, U-181): a gravação da tela no "Antes de gravar", fora do `ui/warmup.py` (acima do limite), que só põe a caixa
 no rodapé, ao lado do Gravar, e a seção na largura toda, acima dele (A-17 da F5.4: a caixa não custa altura, e a seção, ~90 px
 só quando ligada), e lê `monitor_key()` para `fields["screen_monitor"]` (o `Monitor.key` escolhido, ou None sem a tela).
 
