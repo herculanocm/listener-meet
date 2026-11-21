@@ -9,6 +9,7 @@ abre tudo com `mode=ro` (`--check`). F5.18 (PF-26): nos dois papéis em escrita,
 Arquivos: `listener.db` (main) e um `listener-audio-AAAA-MM.db` por mês de `meetings.started_at` (D-039); o
 `listener-audio.db` da F1 continua sendo lido pelas reuniões antigas e nunca é apagado nem renomeado (CP3).
 Cada arquivo de áudio tem `schema_migrations` e `audio_chunks` próprios, páginas de 32 KB e WAL; os novos (F5.6), `auto_vacuum` incremental.
+F5.27: os arquivos mensais da tela (`listener-screen-AAAA-MM.db`) entram na mesma fila de anexos por conexão (`store/screen.py`).
 """
 from __future__ import annotations
 
@@ -31,8 +32,9 @@ from .attached import AttachedFiles
 from .schema import (AUDIO_DATE_COLUMNS, AUDIO_MIGRATIONS, AUDIO_NEW_FILE, AUDIO_PAGE_SIZE, AUDIO_SCHEMA_VERSION, CHAT_V8_INDEXES,
                      CHAT_V8_TABLE, FTS5_MISSING, MAIN_DATE_COLUMNS, MAIN_MIGRATIONS, MAIN_SCHEMA_VERSION, MAIN_V4_COLUMNS,
                      MAIN_V5_COLUMNS, MAIN_V6_COLUMNS, MAIN_V6_INDEXES, MAIN_V7_COLUMNS, MAIN_V7_INDEXES, MAIN_V8_RAG, MAIN_V9_COLUMNS,
-                     MAIN_V10_COLUMNS, MAIN_V11_COLUMNS,
+                     MAIN_V10_COLUMNS, MAIN_V11_COLUMNS, MAIN_V12_COLUMNS,
                      RAG_TABLES, RAG_TRIGGERS, fts5_error)
+from .screen_file import relink_meetings, screen_files
 
 log = get_logger("store")
 
@@ -40,7 +42,7 @@ MAIN_FILE = "listener.db"
 LEGACY_AUDIO_FILE = "listener-audio.db"
 AUDIO_FILE_PREFIX = "listener-audio-"
 WAL_AUTOCHECKPOINT = 4000        # páginas; vale para a conexão inteira (o main é pequeno)
-MAX_ATTACHED = 8                 # anexos simultâneos por conexão; os menos usados são desanexados
+MAX_ATTACHED = 8                 # anexos simultâneos por conexão (áudio e, F5.27, tela); os menos usados são desanexados
 VACUUM_MAX_BYTES = 100_000_000   # só arquivos legados pequenos recebem VACUUM para mudar o page_size
 BUSY_TIMEOUT_S = 5.0
 AUDIO_MMAP_BYTES = 256 * 1024 * 1024   # worker da F2: horas de FLAC lidas por mmap, sem cópia para o cache de páginas
@@ -265,9 +267,16 @@ def _main_v11_screen(_core: Core, conn: sqlite3.Connection, schema: str) -> None
     _add_columns(conn, schema, MAIN_V11_COLUMNS)
 
 
+def _main_v12_screen_file(core: Core, conn: sqlite3.Connection, schema: str) -> None:
+    """F5.27: `meetings.screen_file` e a religação aos arquivos da tela da pasta (a volta é `store/downgrade.py`)."""
+    _add_columns(conn, schema, MAIN_V12_COLUMNS)
+    relink_meetings(conn, schema, core.base_dir)
+
+
 MAIN_PY_MIGRATIONS: dict[int, PyMigration] = {2: _main_v2_dates, 3: _main_v3_audio_file, 4: _main_v4_pipeline,
                                               5: _main_v5_review_columns, 6: _main_v6_llm, 7: _main_v7_live, 8: _main_v8_rag,
-                                              9: _main_v9_trace, 10: _main_v10_suggest, 11: _main_v11_screen}
+                                              9: _main_v9_trace, 10: _main_v10_suggest, 11: _main_v11_screen,
+                                              12: _main_v12_screen_file}
 AUDIO_PY_MIGRATIONS: dict[int, PyMigration] = {2: _audio_v2_dates}
 
 
@@ -551,9 +560,9 @@ class Core:
         return schema
 
     def release_audio(self, keep: int = 0) -> None:
-        """Desanexa desta conexão os arquivos de áudio menos usados até sobrarem `keep` (nunca no meio de uma transação). F5.6:
-        o worker ocioso solta os mapas, que impedem o arquivo de encolher (R-01), e um arquivo sem anexo pode receber o
-        VACUUM inteiro (R-02)."""
+        """Desanexa desta conexão os arquivos (de áudio e, F5.27, da tela) menos usados até sobrarem `keep` (nunca no meio de uma
+        transação). F5.6: o worker ocioso solta os mapas, que impedem o arquivo de encolher (R-01), e um arquivo sem anexo
+        pode receber o VACUUM inteiro (R-02)."""
         c, attached = self._local.conn, self._local.attached
         while c is not None and len(attached) > keep and not self._local.in_tx:
             schema, file_name = attached.popitem(last=False)
@@ -583,4 +592,6 @@ class Core:
         def size(p: Path) -> int:
             return sum(f.stat().st_size for s in ("", "-wal", "-shm") if (f := Path(str(p) + s)).exists())
         files = {name: size(self.base_dir / name) for name in self.audio_files()}
-        return {"main": size(self.main_path), "audio": sum(files.values()), "audio_files": files}
+        screen = {name: size(self.base_dir / name) for name in screen_files(self.base_dir)}      # F5.27
+        return {"main": size(self.main_path), "audio": sum(files.values()), "audio_files": files, "screen": sum(screen.values()),
+                "screen_files": screen}

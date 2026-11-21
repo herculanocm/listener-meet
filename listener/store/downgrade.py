@@ -1,11 +1,11 @@
 """F5.10 (v9): a volta das migrações do arquivo principal, pela linha de comando e com o app fechado
 (`python -m listener --downgrade <pasta do banco> 8`). Cada volta roda inteira num `BEGIN IMMEDIATE`: desfaz o que a
 migração fez, apaga a linha dela em `schema_migrations` e põe o `user_version` na anterior; uma falha no meio desfaz tudo.
-A v9, a v10 (F5.20) e a v11 (F5.21) têm volta (`MAIN_DOWNS`): a v8 para trás reconstrói tabelas e não volta. Abre o arquivo direto
-(o `Store` do app migraria de novo); os arquivos de áudio não mudam. Apaga as colunas e as tabelas da versão e o que
-estava nelas (os passos das respostas; as sugestões, as avaliações e os objetivos; as telas das sugestões): só por pedido do
-usuário (CP3). O
-log leva as versões, nunca o conteúdo."""
+A v9, a v10 (F5.20), a v11 (F5.21) e a v12 (F5.27) têm volta (`MAIN_DOWNS`): a v8 para trás reconstrói tabelas e não
+volta. Abre o arquivo direto (o `Store` do app migraria de novo); os arquivos de áudio e da tela não mudam. Apaga as colunas
+e as tabelas da versão e o que estava nelas (os passos das respostas; as sugestões, as avaliações e os objetivos; as telas
+das sugestões; o apontador da tela, que a ida seguinte refaz): só por pedido do usuário (CP3). O log leva as versões, nunca
+o conteúdo."""
 from __future__ import annotations
 
 import sqlite3
@@ -49,7 +49,14 @@ def _down_v11(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE main.{table} DROP COLUMN {column}")
 
 
-MAIN_DOWNS: dict[int, Down] = {9: _down_v9, 10: _down_v10, 11: _down_v11}
+def _down_v12(conn: sqlite3.Connection) -> None:
+    """A v12 de volta (F5.27): sem `meetings.screen_file` (o `DROP COLUMN` só se ela existe; a coluna não tem índice). Os arquivos
+    da tela e os pedaços ficam na pasta (CP3): a ida seguinte religa as reuniões a eles (`screen_file.relink_meetings`)."""
+    if "screen_file" in _columns(conn, "meetings"):
+        conn.execute("ALTER TABLE main.meetings DROP COLUMN screen_file")
+
+
+MAIN_DOWNS: dict[int, Down] = {9: _down_v9, 10: _down_v10, 11: _down_v11, 12: _down_v12}
 
 
 def current_version(conn: sqlite3.Connection) -> int:

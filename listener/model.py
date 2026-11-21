@@ -46,6 +46,11 @@ class EventType(StrEnum):
     LLM_CHAINED = "llm_chained"    # F5.6 (A-12): o fim do processamento enfileirou o núcleo e consumiu os pedidos (job pai)
     DEVICE_CHANGE = "device_change"  # F5.3 (A-21): outro aparelho num canal (id do endpoint, acompanha, motivo; nunca o nome)
     ECHO_WARNING = "echo_warning"  # F5.9 (item 7): eco depois da troca de microfone (correlação e atraso, sem áudio)
+    # F5.27: a gravação da tela (o `data` leva o número do monitor e o tamanho, nunca a chave do sistema)
+    SCREEN_START = "screen_start"    # começou ou voltou (o mesmo monitor de volta)
+    SCREEN_STOP = "screen_stop"      # parada pelo usuário ou com a reunião
+    SCREEN_LOST = "screen_lost"      # o monitor saiu ou o filho caiu de vez; o áudio segue
+    SCREEN_SWITCH = "screen_switch"  # outro monitor pelo widget (um pedaço novo)
 
 
 class Health(StrEnum):
@@ -366,5 +371,5 @@ class ChunkKind(StrEnum):
 
 class StoreRole(StrEnum):
     APP = "app"                    # main em escrita, migra, VACUUM de legado
-    WORKER = "worker"              # main em escrita sem migrar; áudio só leitura com mmap (F2)
+    WORKER = "worker"              # main em escrita sem migrar; áudio só leitura com mmap (F2); a tela em escrita (F5.27)
     READONLY = "readonly"          # tudo `mode=ro` (`--check`)

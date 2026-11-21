@@ -40,6 +40,7 @@ class MeetingRow(TypedDict, total=False):
     glossary: str | None               # F3: termos prováveis do warm-up (LLM, editados pelo usuário)
     expected_people_json: str | None   # F3: ids de `people` casados com os participantes esperados
     goal: str | None                   # F5.20 (U-156): "Meu objetivo nesta reunião", lido pelas sugestões ao vivo
+    screen_file: str | None            # F5.27: o arquivo mensal da tela (nulo: reunião sem tela)
 
 
 class PresetRow(TypedDict, total=False):
