@@ -54,7 +54,8 @@ troca de microfone é ignorada (A-18). O log da gravação leva o id do microfon
 F5.6 L3 (U-093): excluir reuniões e o espaço de volta em `ui/meeting_delete.py` (o Histórico pede; gravar interrompe).
 F5.6 L1b (U-089): o resumo da gravação recebe o job do processamento (o pedido de ata ao parar fica preso a ele).
 F5.7 L3 (U-094): `busy` para o aviso de reunião sem gravação (`ui/call_watch.py`, ligado em `ui/app.py`), `open_warmup` com o
-app como fonte e o `hotkeys.start` pelo `on_start` dela; as preferências do widget saíram para `ui/widget_parts.py`."""
+app como fonte e o `hotkeys.start` pelo `on_start` dela; as preferências do widget saíram para `ui/widget_parts.py`.
+F5.27 (lote 2): a gravação da tela mora em `ui/screen_rec_host.py` (`self.screen`); aqui só os ganchos."""
 from __future__ import annotations
 
 import functools
@@ -101,6 +102,7 @@ from .player import Player, PlayRequest, prewarm_audio
 from .queue import QueueDialog
 from .recording_devices import RecordingDevices
 from .review import ReviewDialog
+from .screen_rec_host import ScreenRecHost, session_t0
 from .settings_min import SettingsDialog
 from .sources import SourceTable
 from .summary import SummaryDialog
@@ -263,6 +265,7 @@ class Controller(QObject):
         self.toasts = ToastManager(platform, on_action=self._on_notice_action, recording=self._recording_now,
                                    anchor=self._toast_anchor, parent=self)
         self.support = Support(store, self.notify, platform, parent=self)   # F5.12 (U-123 a U-127): o apoio; o convite em ui/app.py
+        self.screen = ScreenRecHost(platform, store, on_error=functools.partial(self._notify_as, NoticeKind.ERROR), parent=self)   # F5.27
         self._notice_requested.connect(self._on_notice_requested, Qt.ConnectionType.QueuedConnection)
 
     @functools.cached_property
@@ -666,6 +669,9 @@ class Controller(QObject):
             return False
         self.recorder = rec
         self.state = AppState.RECORDING
+        screen_key = fields.get("screen_monitor")         # F5.27: o monitor do "Antes de gravar" (None = sem tela)
+        if screen_key:
+            self.store.set_setting("screen_rec.monitor", str(screen_key))
         self.toasts.refresh_privacy()                    # R-10: o aviso à vista perde o título se a captura não o exclui
         self._marked_captions = set()                    # novos conjuntos: a janela da gravação anterior fica com os dela
         self._marked_items = set()
@@ -700,6 +706,9 @@ class Controller(QObject):
         w.settings_requested.connect(self.open_settings)
         w.moved.connect(functools.partial(save_widget_pos, self.store))   # R-06: sem lambda com `self` (o ciclo pelo C++)
         w.show()
+        self.screen.attach_widget(w, rec.meeting_id, session_t0(rec))      # F5.27: depois do widget, que sai da captura
+        if screen_key:
+            self.screen.start(rec.meeting_id, session_t0(rec), str(screen_key))
         if tray:                                         # F5.17 (U-140): a bandeja de legendas, filha do widget
             self.captions = CaptionTrayHost(self.store, self.platform, w, rec.meeting_id, on_mark=self.mark_caption,
                                             on_open_live=self._open_live_front, live_state=self.live_status,
@@ -731,9 +740,11 @@ class Controller(QObject):
             return
         if self.recorder.paused:
             self.recorder.resume()
+            self.screen.resume()
             self.state = AppState.RECORDING
         else:
             self.recorder.pause()
+            self.screen.pause()
             self.state = AppState.PAUSED
         if self.tray:
             self.tray.set_state(self.state)
@@ -792,9 +803,10 @@ class Controller(QObject):
         self._stop_mute_poller()
         self._stop_devices()                             # F5.3: nenhuma troca de aparelho enquanto salva
         self._stop_live()
+        self.screen.stop()                               # F5.27: o filho fecha o último pedaço; a tarefa o espera antes da fila
         self._stop_partial()
         self._end_live_window(rec.meeting_id, "gravação parada: só leitura")
-        self._run_task(rec.stop, lambda result: self._on_stopped(rec, result))
+        self._run_task(self.screen.then_wait(rec.stop), lambda result: self._on_stopped(rec, result))
 
     def _on_stopped(self, rec: Recorder, result: Any) -> None:
         self._timer.stop()
@@ -823,6 +835,7 @@ class Controller(QObject):
         self._timer.stop()
         self._stop_mute_poller()
         self._terminate_live()                           # antes de apagar: o filho não pode gravar numa reunião apagada
+        self.screen.cancel()                             # F5.27: o filho da tela também
         self._stop_partial(cancel=True)                  # a resposta que vier depois não grava (a reunião some)
         self._end_live_window(rec.meeting_id, "gravação cancelada (apagada): só leitura", discarded=True)
         rec.cancel()
@@ -845,11 +858,13 @@ class Controller(QObject):
             self._stop_mute_poller()
             self._stop_devices()
             self._stop_live(detach=True)                 # EOF: o filho termina sozinho, mesmo com o app saindo
+            self.screen.stop()
             self._stop_partial()
             try:
                 rec.stop()
             except Exception:
                 log.exception("parada de emergência da gravação %s falhou", rec.meeting_id)
+            self.screen.shutdown()                       # F5.27: o último pedaço da tela antes da fila
             self.platform.keep_awake(False)
             self.recorder = None
             self.state = AppState.IDLE
@@ -874,6 +889,7 @@ class Controller(QObject):
         if self.live_window is not None:                 # guarda a posição antes de o banco fechar
             with suppress(Exception):
                 self.live_window.close()
+        self.screen.shutdown()                           # F5.27: o filho da tela sai antes de o banco fechar
         self.store.close()
 
     def _stop_windows(self) -> None:
@@ -997,7 +1013,7 @@ class Controller(QObject):
             self._write_lease(rec)
         alert = self.devices.alert(health) if self.devices is not None else None    # F5.3 (A-21): com prioridade
         if alert is None:
-            w.show_alert(None)
+            w.show_alert(self.screen.alert())            # F5.27: U-183 e a falha de leitura da tela, depois dos dispositivos
         else:
             w.show_alert(alert.text, alert.button, alert.action, alert.tip, alert.kind, alert.middle)
 
@@ -1846,6 +1862,7 @@ class Controller(QObject):
             self._run_task(self.register_hotkeys, self._on_hotkeys_registered)
             if self.captions is not None:                # F5.20: `suggest.enabled` e a chave valem em uso (CP8)
                 self.captions.settings_changed()
+            self.screen.settings_changed()               # F5.27: a taxa e o lado máximo da tela, no próximo pedaço
             from .app import attach_log
 
             err = attach_log(self.store)
@@ -1865,8 +1882,10 @@ class Controller(QObject):
             self._timer.stop()
             self._stop_mute_poller()
             self._stop_live(detach=True)
+            self.screen.stop()
             self._stop_partial()
             rec.stop()                                   # síncrono aqui: o usuário mandou sair
+            self.screen.shutdown()                       # F5.27: o último pedaço da tela antes da fila
             if rec.muted:
                 self.platform.mic_mute().set(False)
             self._finish(rec)

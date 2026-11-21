@@ -41,7 +41,7 @@ from ..platform.common import paths, process
 from ..platform.screen_types import Frame, Monitor, ScreenRect
 from ..store import Store
 from .client import (BACK, BYE, ERROR, LOST, PARAMS, PAUSE, RESUME, STARTED, STATS, STATUS, STOP, SWITCH, SWITCHED,
-                     ProtocolError, ScreenHello, decode_line, encode_line)
+                     ProtocolError, ScreenHello, decode_line, encode_line, find_monitor)
 from .chunk_writer import DRAIN_S, RETRY_BASE_S, ChunkWriter, Emitter
 from .recorder import WAIT_CAP_MS, ScreenRecorder
 from .segment import Segment
@@ -56,11 +56,6 @@ PLACEHOLDER = ScreenRect(0, 0, 2, 2)  # o recorder nasce com um retângulo; com 
 class ScreenSource(Protocol):
     def monitors(self) -> tuple[Monitor, ...]: ...
     def grab_screen(self, rect: ScreenRect) -> Frame | None: ...
-
-
-def find_monitor(monitors: tuple[Monitor, ...], key: str) -> tuple[int, Monitor] | None:
-    """(número na ordem da F5.21, da esquerda para a direita, a partir de 1; o monitor) da chave, ou None."""
-    return next(((i, m) for i, m in enumerate(monitors, 1) if m.key == key), None)
 
 
 class ScreenSession:

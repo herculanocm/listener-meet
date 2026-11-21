@@ -24,11 +24,12 @@ import subprocess
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Self
 
 from ..log import argv_text, get_logger
 from ..platform.base import ChildProcess
+from ..platform.screen_types import Monitor
 
 log = get_logger("screen_rec.client")
 
@@ -94,6 +95,11 @@ class ScreenHello:
         if not hello.monitor_key or hello.chunk_s < 1:
             raise ProtocolError("hello inválido: sem monitor ou pedaço menor que 1 s")
         return hello
+
+
+def find_monitor(monitors: tuple[Monitor, ...], key: str) -> tuple[int, Monitor] | None:
+    """(número na ordem da F5.21, da esquerda para a direita, a partir de 1; o monitor) da chave, ou None."""
+    return next(((i, m) for i, m in enumerate(monitors, 1) if m.key == key), None)
 
 
 class ScreenClient:
@@ -251,6 +257,57 @@ class ScreenClient:
                 self.proc.kill()
 
 
-__all__ = ["BACK", "BYE", "CHUNK", "CLOSE_GRACE_S", "ERROR", "EXIT", "HELLO", "LOST", "PARAMS", "PAUSE", "PROTOCOL_VERSION", "RESUME",
-           "STARTED", "STATS", "STATUS", "STOP", "SWITCH", "SWITCHED", "ProtocolError", "ScreenClient", "ScreenHello", "decode_line",
-           "encode_line"]
+@dataclass(slots=True, eq=False)
+class ChildRun:
+    """Um filho do lado do app (o host da interface): o da tela atual ou um que ainda fecha, com o que vai no `screen_stop`."""
+    client: ScreenClient
+    meeting_id: int
+    t0_perf: float
+    key: str
+    label: str                                   # "Monitor 2"
+    reason: str = ""
+    stats: dict[str, Any] = field(default_factory=dict)
+    t_ms: int | None = None
+    error: dict[str, Any] | None = None
+    done: bool = False                           # `screen_stop` gravado
+    cancelled: bool = False                      # a reunião vai ser apagada: nenhum evento
+
+
+def short_label(monitor: Monitor) -> str:
+    """"Monitor 2" do rótulo da F5.21 ("Monitor 2 · 3840 x 2160 · principal")."""
+    return monitor.label.split(" · ")[0]
+
+
+def as_int(value: object) -> int | None:
+    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+__all__ = [
+    "BACK",
+    "BYE",
+    "CHUNK",
+    "CLOSE_GRACE_S",
+    "ERROR",
+    "EXIT",
+    "HELLO",
+    "LOST",
+    "PARAMS",
+    "PAUSE",
+    "PROTOCOL_VERSION",
+    "RESUME",
+    "STARTED",
+    "STATS",
+    "STATUS",
+    "STOP",
+    "SWITCH",
+    "SWITCHED",
+    "ChildRun",
+    "ProtocolError",
+    "ScreenClient",
+    "ScreenHello",
+    "as_int",
+    "decode_line",
+    "encode_line",
+    "find_monitor",
+    "short_label",
+]
