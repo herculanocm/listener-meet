@@ -223,7 +223,7 @@ def _write_and_read(store: Any, mid: int, cues: list[Any], out: Any) -> tuple[li
 
 
 def _assert_track(cues: list[Any], frames: list[int], read: list[tuple[int, int, str]], duration_ms: int) -> None:
-    """Cada amostra relida tem o começo e a duração da sua (±1 ms), o texto dela e um quadro da imagem no começo."""
+    """Cada amostra relida tem o começo e a duração da sua (±1 ms), o texto dela e um quadro da imagem no começo e no fim."""
     from listener.ui.media_cues import text_track
 
     samples = text_track(cues, duration_ms)
@@ -232,6 +232,8 @@ def _assert_track(cues: list[Any], frames: list[int], read: list[tuple[int, int,
         assert abs(start - sample.start_ms) <= 1 and abs(span - (sample.end_ms - sample.start_ms)) <= 1
         assert body == chr(10).join(line.replace(chr(92), chr(0x2216)) for line in sample.lines)   # \N vira a quebra de linha
         assert any(abs(start - t) <= 1 for t in frames)                     # a legenda da faixa troca com a imagem
+        end = start + span                                                  # e sai com ela (ou no fim do arquivo)
+        assert any(abs(end - t) <= 1 for t in frames) or abs(end - duration_ms) <= 1, (end, frames)
 
 
 def test_the_mp4_has_video_audio_and_text_and_the_text_has_the_cue_times_of_the_picture(store, tmp_path, qapp):

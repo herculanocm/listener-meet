@@ -199,3 +199,27 @@ def test_cancelling_the_screen_video_in_the_middle_leaves_nothing_behind(store, 
 
     result = _export(store, mid, target, tick)
     assert result["out"] == "cancelado" and target.read_bytes() == b"anterior" and [p.name for p in folder.iterdir()] == ["tela.mp4"]
+
+
+def test_save_video_from_the_menu_takes_the_screen_path_in_its_task(qtbot, store, tmp_path, monkeypatch):
+    """O "Salvar vídeo com legendas…" da reunião com tela: a estimativa de espaço com a tela, a tarefa da F5.19 (a tela anexada
+    na conexão dela enquanto a da interface também a tem) e o MP4 de 1920 x 1080."""
+    pytest.importorskip("av")
+    from listener.ui import media_save as msave
+    from listener.ui.meeting import MeetingWindow
+
+    mid = _screen_meeting(store)
+    win = MeetingWindow(store, mid)
+    qtbot.addWidget(win)
+    needs: list[int] = []
+    monkeypatch.setattr(msave, "space_problem", lambda _target, need: needs.append(need))
+    try:
+        assert win.media.save_video(str(tmp_path / "reuniao"), prefer_llm=True) is not None
+        qtbot.waitUntil(lambda: win.media.task is None, timeout=60_000)
+    finally:
+        msave._running.clear()
+    out = tmp_path / "reuniao.mp4"
+    _kinds, size, _frames = _read(out)
+    plan = ma.plan_audio(store, mid)
+    assert plan is not None and size == (1920, 1080) and win.message.text() == f"Salvo em {out}."
+    assert needs == [msave.estimate_bytes(True, "mp4", plan) + 2 * store.screen.total_bytes(mid)]
