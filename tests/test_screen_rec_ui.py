@@ -56,6 +56,7 @@ def test_the_screen_box_is_born_off_and_greyed_out_without_monitors(qtbot, platf
 
 def test_the_preview_runs_only_with_the_box_on_and_stops_when_it_turns_off(qtbot, platform, store):
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QImage
 
     dlg = _warmup(qtbot, platform, store)
     box = dlg.screen_box
@@ -75,9 +76,14 @@ def test_the_preview_runs_only_with_the_box_on_and_stops_when_it_turns_off(qtbot
     assert box.previews == asked                                                  # desligada: nenhuma volta nova
     box.check.setChecked(True)
     _wait_preview(qtbot, box)
-    late = box.tiles["DISPLAY1"]
-    box._on_thumbs(seq, {})                                                       # a resposta velha é descartada
-    assert box.tiles["DISPLAY1"] is late
+    tile = box.tiles["DISPLAY1"]
+    before = tile.icon().cacheKey()
+    stale = QImage(96, 54, QImage.Format.Format_RGB32)
+    stale.fill(QColor("red"))
+    box._on_thumbs(seq, {"DISPLAY1": stale})                                      # a resposta velha é descartada
+    assert tile.icon().cacheKey() == before
+    box._on_thumbs(box._seq, {"DISPLAY1": stale})                                 # a da volta de agora entra
+    assert tile.icon().cacheKey() != before
     dlg.reject()
     assert not box.running
 
@@ -145,9 +151,10 @@ def test_the_thumbnail_is_scaled_off_the_interface_and_a_failed_grab_skips_the_m
 
     out = thumbnails(platform, [(m.key, m.rect) for m in platform.screen_monitors], 96, 54)
     assert {k: (i.width(), i.height()) for k, i in out.items()} == {"DISPLAY1": (96, 54), "DISPLAY2": (96, 54)}
+    assert out["DISPLAY1"].pixelColor(48, 27).alpha() == 255                       # a imagem é própria: o print já morreu
     platform.grab_fail = True
     assert thumbnails(platform, [("DISPLAY1", platform.screen_monitors[0].rect)], 96, 54) == {}
-    assert [thumb_width(n) for n in (1, 2, 3, 4, 8)] == [96, 96, 92, 67, 64]
+    assert [thumb_width(n) for n in (1, 2, 3, 4, 8)] == [88, 88, 88, 67, 64]
     assert tile_text("Monitor 3") == "Monitor 3"
 
 
@@ -226,6 +233,39 @@ def test_the_widget_menu_starts_switches_and_stops_the_screen(qtbot, platform):
     popup.close()
 
 
+
+def test_the_widget_still_drags_and_opens_the_settings_and_the_screen_line_does_not_drag(qtbot, platform):
+    """O arrasto foi para o `DragMixin` (F5.27): arrastar move e emite `moved`, o duplo clique abre as Configurações e o
+    clique na linha da tela não começa arrasto."""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    w = _widget(qtbot, platform)
+    moved: list[QPoint] = []
+    opened: list[bool] = []
+    w.moved.connect(moved.append)
+    w.settings_requested.connect(lambda: opened.append(True))
+
+    def event(kind: QEvent.Type, local: QPoint, buttons: Qt.MouseButton) -> QMouseEvent:
+        return QMouseEvent(kind, QPointF(local), QPointF(w.mapToGlobal(local)), Qt.MouseButton.LeftButton, buttons,
+                           Qt.KeyboardModifier.NoModifier)
+
+    start = w.pos()
+    w.mousePressEvent(event(QEvent.Type.MouseButtonPress, QPoint(10, 10), Qt.MouseButton.LeftButton))
+    w.mouseMoveEvent(event(QEvent.Type.MouseMove, QPoint(40, 30), Qt.MouseButton.LeftButton))
+    w.mouseReleaseEvent(event(QEvent.Type.MouseButtonRelease, QPoint(40, 30), Qt.MouseButton.NoButton))
+    assert w.pos() == start + QPoint(30, 20) and moved == [w.pos()]
+    w.mouseDoubleClickEvent(event(QEvent.Type.MouseButtonDblClick, QPoint(10, 10), Qt.MouseButton.LeftButton))
+    assert opened == [True]
+    qtbot.mousePress(w.screen_line, Qt.MouseButton.LeftButton)
+    assert w._drag_offset is None
+    qtbot.mouseRelease(w.screen_line, Qt.MouseButton.LeftButton)
+    popup = QApplication.activePopupWidget()                                      # o clique sem arrastar abriu o menu
+    assert popup is not None
+    popup.close()
+
+
 # ---------------------------------------------------------------- Configurações (CP8)
 def test_the_screen_settings_in_the_capture_page(qtbot, platform, store):
     from PySide6.QtWidgets import QFormLayout
@@ -253,7 +293,7 @@ def test_the_screen_settings_in_the_capture_page(qtbot, platform, store):
 
 # ---------------------------------------------------------------- o `--check`
 def test_the_check_block_with_and_without_the_screen(store):
-    from listener.screen_rec.report import NO_SCREEN, screen_report
+    from listener.screen_rec.report import NO_SCREEN, screen_rec_report
     from listener.store import Store
     from tests.test_screen_store import _meeting
 
@@ -271,7 +311,7 @@ def test_the_check_block_with_and_without_the_screen(store):
     store.add_event(mid, 185_000, EventType.SCREEN_STOP, {"reason": "reuniao", "frames": 60, "skipped": 3, "failures": 1,
                                                           "cycle_ms_p95": 80.0})
     with Store.open_readonly(store.base_dir) as ro:
-        out, none = screen_report(ro, mid), screen_report(ro, plain)
+        out, none = screen_rec_report(ro, mid), screen_rec_report(ro, plain)
     assert none == {"enabled": False, "note": NO_SCREEN}
     assert (out["chunks"], out["mb"], out["covered_ms"], out["frames"], out["fps_effective"]) == (3, 1.5, 180_000, 180, 1.0)
     assert out["mb_per_hour"] == 30.0 and out["gate"]["disk"]["ok"] is True and out["idx_missing"] == 0

@@ -1,11 +1,12 @@
 """F5.27 (U-180, U-181): a gravação da tela no "Antes de gravar", fora do `ui/warmup.py` (548 linhas), que só põe a caixa
-no rodapé, ao lado do Gravar, e a seção na largura toda, acima dele (A-17 da F5.4: a caixa não custa altura, e a seção, ~60 px
+no rodapé, ao lado do Gravar, e a seção na largura toda, acima dele (A-17 da F5.4: a caixa não custa altura, e a seção, ~90 px
 só quando ligada), e lê `monitor_key()` para `fields["screen_monitor"]` (o `Monitor.key` escolhido, ou None sem a tela).
 
 - A caixa "Gravar a tela" nasce desligada a cada abertura (pergunta 1). Fora do Windows (a plataforma sem monitores), apagada,
   com o motivo na dica.
 - Ligada: os monitores lado a lado, com o rótulo da plataforma ("Monitor 2 · 3840 x 2160 · principal", o número numa linha e o
-  resto na outra, ao lado da miniatura; inteiro na dica) e a prévia, e a linha da U-181 ao lado. Um clique escolhe o monitor.
+  resto na outra, ao lado da miniatura; inteiro na dica) e a prévia, e a linha da U-181 sob a lista; o escolhido também no tom
+  de destaque. Um clique escolhe o monitor.
   O último escolhido (`screen_rec.monitor`, que o controller grava ao começar) vem marcado se ainda existir; senão nenhum, e o
   "Gravar" pede a escolha (`confirm`).
 - A prévia: a cada 1 s, só com a caixa ligada e o diálogo aberto, um print de cada monitor numa tarefa fora da thread da
@@ -38,18 +39,18 @@ if TYPE_CHECKING:
 log = get_logger("ui.warmup")
 
 TOGGLE_TEXT = "Gravar a tela"
-TOGGLE_TIP = "Grava o monitor escolhido junto com o áudio, nesta gravação (1 quadro por segundo, nas Configurações)."
+TOGGLE_TIP = "Grava o monitor escolhido junto com o áudio, nesta gravação (a taxa e o tamanho nas Configurações, Captura)."
 ONLY_WINDOWS = "A gravação da tela, por enquanto, só no Windows."
 PRIVACY = ("Tudo o que aparecer neste monitor fica gravado, inclusive notificações. A bandeja, os avisos e as sugestões do "
            "listener-meet não aparecem.")
 PICK_MONITOR = "Escolha o monitor a gravar, ou desligue \"Gravar a tela\"."
 MONITOR_KEY = "screen_rec.monitor"
 PREVIEW_MS = 1000
-THUMB_MAX_W, THUMB_MIN_W, ROW_W = 96, 64, 300      # A-17 da F5.4: a linha da tela, com o texto ao lado, em ~60 px de altura
+THUMB_MAX_W, THUMB_MIN_W, ROW_W = 88, 64, 300      # A-17 da F5.4: os monitores e a linha da U-181 em ~76 px de altura
 
 
 def thumb_width(n: int) -> int:
-    """A largura da miniatura com `n` monitores lado a lado (16:9): 96 px com um ou dois, menor com mais."""
+    """A largura da miniatura com `n` monitores lado a lado (16:9): 88 px com até três, menor com mais."""
     return max(THUMB_MIN_W, min(THUMB_MAX_W, ROW_W // max(1, n) - 8))
 
 
@@ -76,7 +77,7 @@ def thumbnails(platform: Platform, rects: Sequence[tuple[str, ScreenRect]], widt
     for key, rect in rects:
         try:
             frame = platform.grab_screen(rect)
-        except OSError as e:
+        except Exception as e:                           # a prévia nunca derruba nada: o monitor fica sem ela nesta volta
             log.debug("prévia da tela sem um monitor nesta volta (%s)", type(e).__name__)
             continue
         if frame is not None:
@@ -114,17 +115,16 @@ class ScreenSection(QWidget):
         self.pick_note.setWordWrap(True)
         note(self.pick_note, Tone.WARNING)
         self.pick_note.hide()
-        notes = QVBoxLayout()
-        notes.setSpacing(4)
-        notes.addStretch(1)
-        notes.addWidget(self.privacy)
-        notes.addWidget(self.pick_note)
-        notes.addStretch(1)
-        lay = QHBoxLayout(self)
+        tiles = QHBoxLayout()
+        tiles.setContentsMargins(0, 0, 0, 0)
+        tiles.addLayout(self.row)
+        tiles.addStretch(1)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
-        lay.addLayout(self.row)
-        lay.addLayout(notes, 1)
+        lay.setSpacing(4)
+        lay.addLayout(tiles)
+        lay.addWidget(self.privacy)                      # U-181: sob a lista
+        lay.addWidget(self.pick_note)
         self.hide()
         self.timer = QTimer(self)
         self.timer.setInterval(PREVIEW_MS)

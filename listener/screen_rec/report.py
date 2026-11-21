@@ -66,7 +66,7 @@ def _disk_gate(mb_per_hour: float | None, starts: Sequence[Mapping[str, Any]], f
             "settings": {"fps": fps, "max_side": side}, "ok": ok}
 
 
-def screen_report(store: Store, meeting_id: int, events: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+def screen_rec_report(store: Store, meeting_id: int, events: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """O bloco `screen_rec` da reunião."""
     events = list(events if events is not None else store.list_events(meeting_id))
     kinds = {str(t) for t in (EventType.SCREEN_START, EventType.SCREEN_STOP, EventType.SCREEN_LOST, EventType.SCREEN_SWITCH)}
@@ -102,4 +102,4 @@ def screen_report(store: Store, meeting_id: int, events: Sequence[Mapping[str, A
     return out
 
 
-__all__ = ["GAP_MS", "NO_SCREEN", "TARGET_MB_PER_HOUR", "chunk_gaps", "screen_report"]
+__all__ = ["GAP_MS", "NO_SCREEN", "TARGET_MB_PER_HOUR", "chunk_gaps", "screen_rec_report"]
