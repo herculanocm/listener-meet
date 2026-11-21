@@ -49,13 +49,17 @@ class ScreenDeleted:
 # ---------------------------------------------------------------- anexo
 def attach(core: Core, file_name: str) -> str:
     """Garante o arquivo da tela anexado na conexão desta thread e devolve o schema. Só o app cria (e migra) um arquivo; o
-    WORKER o abre em escrita e o READONLY em leitura, os dois só se ele existe. Fora de transação (o SQLite recusa o ATTACH)."""
+    WORKER o abre em escrita e o READONLY em leitura, os dois só se ele existe. Um arquivo ainda não anexado só se anexa fora de
+    `transaction()` e de `snapshot()`: lá dentro o SQLite 3.49 aceita o ATTACH, mas recusa o `synchronous`, o rollback desfaria a
+    migração e a fila não desanexa ninguém (conferido); quem lê numa leitura consistente resolve o schema antes."""
     c = core.conn()
     schema = screen_schema_for(file_name)
     attached = core._local.attached
     if schema in attached:
         attached.move_to_end(schema)
         return schema
+    if core._local.in_tx:
+        raise RuntimeError(f"o arquivo da tela {file_name} só se anexa fora de transação: resolva o schema antes")
     path = core.base_dir / file_name
     new_file = not path.exists() or path.stat().st_size == 0
     if new_file and core.role != StoreRole.APP:

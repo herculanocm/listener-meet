@@ -183,7 +183,12 @@ def test_audio_and_screen_share_the_attach_limit_and_the_export_gets_both(store)
                    f"(SELECT COUNT(*) FROM {s}.screen_chunks WHERE meeting_id = ?)", (mid, mid))[0]
     assert tuple(row) == (1, 1)
     store.core.release_audio()                                               # o worker ocioso solta também a tela
-    assert _attached(store) == set() and store.screen.total_bytes(mid) == 3
+    assert _attached(store) == set()
+    with store.snapshot(), pytest.raises(RuntimeError, match="fora de transação"):
+        store.screen.list_chunks(mid)                                        # anexar dentro da leitura consistente: recusado
+    assert store.screen.total_bytes(mid) == 3
+    with store.snapshot():
+        assert [c["idx"] for c in store.screen.list_chunks(mid)] == [0]      # já anexado: lê
 
 
 # ---------------------------------------------------------------- diagnóstico, chaves, eventos e PyAV
