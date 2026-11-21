@@ -148,10 +148,12 @@ def test_segment_closes_every_60_seconds():
     assert rec.stats.segments == 3 and rec.stats.skipped == 0
 
 
-def test_the_60_s_rollover_leaves_no_hole_when_the_loop_wakes_late():
-    """Revisão do diff: com o acordar atrasado (o timer do Windows tem ~15 ms), a virada dos 60 s não deixa ~1 s sem tela."""
+@pytest.mark.parametrize("fps", [1, 3, 5])
+def test_the_60_s_rollover_leaves_no_hole_when_the_loop_wakes_late(fps: int):
+    """Revisão do diff: com o acordar atrasado (o timer do Windows tem ~15 ms), a virada dos 60 s não deixa buraco, nem o
+    de ~1 s nem o de 1 ms da grade em ponto flutuante a 3 quadros por segundo."""
     rng = random.Random(7)  # noqa: S311 (atraso de teste, não criptografia)
-    rec, clock, _grab, segments, _ = _recorder()
+    rec, clock, _grab, segments, _ = _recorder(fps=fps)
     while clock.ms < 360_000:
         delay = rec.step()
         clock.ms += delay + rng.randint(0, 15)
@@ -159,7 +161,7 @@ def test_the_60_s_rollover_leaves_no_hole_when_the_loop_wakes_late():
     assert len(segments) >= 6
     for before, after in itertools.pairwise(segments):
         assert after.t_start_ms == before.t_end_ms
-    assert all(59 <= s.frames <= 61 for s in segments[:-1])
+    assert all(60 * fps - 1 <= s.frames <= 60 * fps + 1 for s in segments[:-1])
 
 
 def test_grab_failure_closes_the_segment_so_the_hole_stays_between_segments():
