@@ -8,7 +8,9 @@ e Log e banco de dados. O subtítulo de cada página diz quando o que está nela
 mora em `ui/settings_detect.py`.
 F5.11: o "Testar" do token do Hugging Face (U-113, `ui/hf_test.py`), com o resultado no selo e a mensagem ao lado; no
 Processamento, o grupo "Avançado" fechado por padrão (U-120, A-34: limiar, margem, alta precisão, pasta, threads e janelas,
-`SettingSpec.advanced`) e "Escolher…" na pasta dos modelos, que avisa que a pasta nova baixa tudo de novo."""
+`SettingSpec.advanced`) e "Escolher…" na pasta dos modelos, que avisa que a pasta nova baixa tudo de novo.
+F5.27 (CP8): na Captura, o cartão "Gravação da tela" com a taxa e o tamanho (`screen_rec.*`, fora a interna do monitor), que
+valem a partir do próximo pedaço, mesmo gravando."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -54,6 +56,10 @@ SUBTITLES = {
     "Log e banco de dados": "O arquivo de log do app e a pasta do banco. Aplica agora.",
 }
 HOTKEY_OK, HOTKEY_FAILED = "Registrado", "Falhou"                       # U-075
+SCREEN_CARD = "Gravação da tela"                            # F5.27 (CP8)
+SCREEN_REC_KEYS = tuple(k for k, s in SPECS.items() if k.startswith("screen_rec.") and not s.internal)
+SCREEN_NOTE = ("Vale a partir do próximo pedaço da tela (até 1 min), mesmo gravando. Mais quadros e mais pixels ocupam mais "
+               "disco: 1 quadro por segundo e 1920 px é o padrão.")
 HOTKEY_W = 240                                              # o campo do atalho, igual em todas as linhas
 MODELS_DIR = "pipeline.models_dir"
 NEW_MODELS_DIR = ("Pasta nova: os modelos (transcrição, vozes, legenda ao vivo e busca local) são baixados de novo nela, no "
@@ -139,6 +145,10 @@ class GeneralPagesMixin(DetectCardMixin):
         form = page.form()
         for key in CAPTURE_KEYS:
             self._add(page, form, key)
+        screen = page.form(SCREEN_CARD)                        # F5.27: liga-se no "Antes de gravar"; aqui, a taxa e o tamanho
+        for key in SCREEN_REC_KEYS:
+            self._add(page, screen, key)
+        page.add_note(screen, SCREEN_NOTE)
         presets = page.card("Presets")
         self.presets = QListWidget()
         for p in self.store.list_presets():
