@@ -29,6 +29,7 @@ from .media_cues import Speech, build_cues, screens
 from .media_frames import FrameRenderer
 from .media_job import WAIT, JobFailure, estimate_bytes, held_by_another, media_error_text, progress_tick, run_job, space_problem
 from .media_video import video_available, write_video
+from .media_video_dialog import REPROCESSING, ask_review, blocking_voices, reprocessing
 from .player_source import audio_path_missing
 from .tasks import StreamTask, run_stream, wait_before_close
 from .timeline import build_lanes, lane_of_rows
@@ -91,11 +92,13 @@ class MediaSaver(QObject):
     """Os itens `act_audio` e `act_video`, a faixa do progresso (`bar`, com "Cancelar") e a tarefa (`task`, None parada)."""
 
     def __init__(self, window: QWidget, store: Store, meeting_id: int, *, message: Callable[[str], None],
-                 saved: Callable[[Path], None], prefer_llm: Callable[[], bool], recording: Callable[[], bool] | None = None):
+                 saved: Callable[[Path], None], prefer_llm: Callable[[], bool], recording: Callable[[], bool] | None = None,
+                 on_review: Callable[[], None] | None = None):
         super().__init__(window)
         self.window, self.store, self.meeting_id = window, store, meeting_id
         self.message, self.saved, self.prefer_llm = message, saved, prefer_llm
         self.recording = recording or (lambda: False)
+        self.on_review = on_review                       # F5.26 (U-178): abre a revisão de falantes
         self.formats = available_formats()
         self.video_ready = video_available()             # procura sem importar
         self.act_audio = QAction("Salvar áudio…", window)
@@ -174,6 +177,17 @@ class MediaSaver(QObject):
                                               "Vídeo MP4 (*.mp4)")
         return path or None
 
+    def _video_held(self) -> bool:
+        """F5.26: o reprocessamento em curso avisa na faixa; uma voz pendente que fala no vídeo mostra o U-178, que só leva à
+        revisão (sem "salvar mesmo assim"). True segura o vídeo."""
+        if reprocessing(self.store, self.meeting_id):
+            self.message(REPROCESSING)
+            return True
+        n = blocking_voices(self.store, self.meeting_id)
+        if n and ask_review(self.window, n, self.on_review is not None) and self.on_review is not None:
+            self.on_review()
+        return n > 0
+
     def _blocked(self, target: Path, need: int) -> bool:
         """Depois do diálogo, antes de gerar: o destino aberto num player (o aviso do U-030) ou pouco espaço livre."""
         if held_by_another(target):
@@ -222,6 +236,8 @@ class MediaSaver(QObject):
         speeches = speeches_for(self.store, self.meeting_id, self.prefer_llm())
         if not speeches:
             self.message(NO_SPEECH)
+            return None
+        if self._video_held():
             return None
         cues = build_cues(speeches, plan.pauses, plan.duration_ms)
         timeline: list[tuple[int, Screen]] = screens(cues, plan.duration_ms)
