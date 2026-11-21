@@ -6,9 +6,9 @@ F5.7 (L3): as preferências do widget no banco (posição, tamanho e os atalhos 
 para ele não crescer."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, cast, override
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal, SignalInstance
 from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QAbstractButton, QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QWidget
 
@@ -270,6 +270,30 @@ class MarkerPopup(QDialog):
         return self.edit.text().strip()
 
 
+
+class DragMixin:
+    """O arrasto do widget de gravação (saiu do `ui/widget.py`, F5.27, para ele seguir abaixo de 400 linhas): o botão esquerdo
+    arrasta, soltar emite `moved` com a posição nova e o duplo clique abre as Configurações (`settings_requested`)."""
+    _drag_offset: QPoint | None
+    moved: SignalInstance
+    settings_requested: SignalInstance
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - cast("QWidget", self).frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            cast("QWidget", self).move(event.globalPosition().toPoint() - self._drag_offset)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._drag_offset is not None:
+            self._drag_offset = None
+            self.moved.emit(cast("QWidget", self).pos())
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self.settings_requested.emit()
+
 # ---------------------------------------------------------------- preferências no banco (F5.7: saíram do controlador)
 def save_widget_pos(store: Store, pos: QPoint) -> None:
     store.set_setting("ui.widget_pos", f"{pos.x()},{pos.y()}")
@@ -299,6 +323,6 @@ def widget_prefs(store: Store) -> dict[str, Any]:
 
 
 __all__ = ["BUTTON_TIPS", "CAPTIONS_TIP", "CHANNEL_ICONS", "CHANNEL_NAMES", "CLICK_SLOP_PX", "HEALTH_ICONS", "ICON_PX", "LIVE_BADGES",
-           "CaptionLine", "ElidedLabel", "MarkerPopup", "apply_suggest_state", "caption_text", "channel_letter", "clock_text",
+           "CaptionLine", "DragMixin", "ElidedLabel", "MarkerPopup", "apply_suggest_state", "caption_text", "channel_letter", "clock_text",
            "confirm_discard", "hbox", "health_icon", "icon_label", "initial_pos", "save_widget_pos", "saved_widget_pos",
            "saved_widget_size", "shortcut_text", "widget_prefs", "wrap_elided"]

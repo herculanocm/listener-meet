@@ -15,14 +15,15 @@ F5.4 L2, no tema (claro ou escuro, como o resto do app; sem folha de estilo):
   o ao vivo com ícone, que muda de forma com o estado (não só a cor, U-054); salvando, tudo apagado; h:mm:ss depois de 1 h.
 F5.17 (U-142): com a bandeja de legendas, o botão "Legendas" entre Dispositivos e Parar; o selo, as telas e a posição
 inicial moram em `ui/widget_parts.py`. F5.20 (U-153): o botão "Sugerir" entre "Legendas" e Parar, que o host das sugestões
-mostra, apaga e destaca (fora do `_buttons()`: o estado da gravação não o religa)."""
+mostra, apaga e destaca (fora do `_buttons()`: o estado da gravação não o religa). F5.27 (U-182, U-183): a linha da tela no
+canto do cabeçalho, com o menu dos monitores (`ui/widget_screen.py`); o arrasto mora em `ui/widget_parts.py`."""
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal, SignalInstance
-from PySide6.QtGui import QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtGui import QPainter, QPainterPath, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ..log import get_logger
@@ -33,8 +34,12 @@ from .icons import set_icon
 from .meters import LevelMeter
 from .theme import Tone, note, qcolor, role, surface_tokens, tone
 from .widget_parts import (BUTTON_TIPS, CAPTIONS_TIP, CHANNEL_ICONS, CHANNEL_NAMES, HEALTH_ICONS, ICON_PX, LIVE_BADGES, CaptionLine,
-                           ElidedLabel, MarkerPopup, apply_suggest_state, caption_text, channel_letter, clock_text, hbox, health_icon,
-                           icon_label, initial_pos, shortcut_text)
+                           DragMixin, ElidedLabel, MarkerPopup, apply_suggest_state, caption_text, channel_letter, clock_text, hbox,
+                           health_icon, icon_label, initial_pos, shortcut_text)
+from .widget_screen import ScreenLine, ScreenMenuMixin, right_column
+
+if TYPE_CHECKING:
+    from ..platform.base import Platform
 
 log = get_logger("ui.widget")
 WIDTH = 360                                   # U-060, A-16: fixa
@@ -45,7 +50,7 @@ BUTTON_SIZE = (36, 32)                        # U-061
 METER_PX = 6
 
 
-class RecordingWidget(QWidget):
+class RecordingWidget(DragMixin, ScreenMenuMixin, QWidget):
     pause_clicked = Signal()
     mark_clicked = Signal()
     mute_clicked = Signal()
@@ -59,17 +64,21 @@ class RecordingWidget(QWidget):
     suggest_clicked = Signal()            # F5.20 (U-153): o botão "Sugerir"
     moved = Signal(QPoint)
     height_changed = Signal()             # F5.4 L2 (A-16): cresceu ou encolheu, com a borda de baixo no lugar
+    screen_start_requested = Signal(str)  # F5.27 (U-182): começar a tela no monitor (a chave), pelo menu da linha
+    screen_switch_requested = Signal(str)  # trocar para o monitor (a chave)
+    screen_stop_requested = Signal()      # parar só a tela; a reunião segue
 
     def __init__(self, size: tuple[int, int] | None = None, pos: QPoint | None = None, live_line: bool = False,
-                 shortcuts: Mapping[str, str] | None = None, captions_button: bool = False):
+                 shortcuts: Mapping[str, str] | None = None, captions_button: bool = False, platform: Platform | None = None):
         """`size` (o `ui.widget_size` salvo) não vale mais: 360 px fixos e a altura do estado (A-16). `shortcuts` são os
         atalhos globais por ação (`pause`, `mark`, `mute`, `stop`), para a dica dos botões (U-061). `captions_button`: a
-        gravação tem a bandeja de legendas (F5.17)."""
+        gravação tem a bandeja de legendas (F5.17). `platform`: os monitores do menu da tela (F5.27)."""
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)     # os cantos arredondados do `paintEvent`
         self.setObjectName("recwidget")
         self.live_line = live_line
         self.captions_button = captions_button
+        self.platform = platform
         self.shortcuts = {k: shortcut_text(v) for k, v in (shortcuts or {}).items() if v}
         self._drag_offset: QPoint | None = None
         self._last_status: tuple[bool, bool, bool] | None = None    # (paused, muted, saving)
@@ -103,6 +112,9 @@ class RecordingWidget(QWidget):
         note(self.markers_label)
         for w in (self.live_icon, self.live_badge, self.markers_icon, self.markers_label):
             w.hide()                                      # o ao vivo e os marcadores só aparecem quando há
+        self.screen_line = ScreenLine()                   # F5.27: com monitores, ou quando o host da tela disser
+        self.screen_line.clicked.connect(self._open_screen_menu)
+        self.screen_line.setVisible(bool(self.screen_monitors()))
         self.time_label.setFixedHeight(self._head_h())
         self._set_clock("00:00")
 
@@ -157,8 +169,7 @@ class RecordingWidget(QWidget):
         head = hbox(self.time_label, 10)
         head.addLayout(state)
         head.addStretch(1)
-        head.addWidget(self.markers_icon)
-        head.addWidget(self.markers_label)
+        head.addLayout(right_column(self.markers_icon, self.markers_label, self.screen_line))
         meters = hbox(None, 4)
         for icon, channel, meter in ((self.health_l, "L", self.meter_l), (self.health_r, "R", self.meter_r)):
             if meter is self.meter_r:
@@ -307,7 +318,7 @@ class RecordingWidget(QWidget):
         self.btn_mute.setChecked(muted)                   # ligado, o `windows11` o preenche em `accent`: o ícone em `on_accent`
         set_icon(self.btn_mute, "mic-off" if muted else "mic", Tone.ON_ACCENT if muted else Tone.TEXT, 20)
         self.btn_mute.setAccessibleDescription("ligado" if muted else "desligado")
-        for b in self._buttons():
+        for b in (*self._buttons(), self.screen_line):
             b.setEnabled(not saving)
 
     # ---------------------------------------------------------------- ao vivo (F4)
@@ -372,27 +383,6 @@ class RecordingWidget(QWidget):
             for w in (self.alert_icon, self.alert_label, self.alert_btn):
                 w.hide()
         self._fit_height()
-
-    # ---------------------------------------------------------------- arrastar
-    @override
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-
-    @override
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
-
-    @override
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if self._drag_offset is not None:
-            self._drag_offset = None
-            self.moved.emit(self.pos())
-
-    @override
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        self.settings_requested.emit()
 
 
 __all__ = ["HEALTH_ICONS", "LIVE_BADGES", "WIDTH", "CaptionLine", "ElidedLabel", "MarkerPopup", "RecordingWidget", "caption_text",

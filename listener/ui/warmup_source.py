@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..platform.base import AudioDevice, Platform
     from ..store import Store
     from .warmup_live import LiveBoxes
+    from .warmup_screen import ScreenSection
 
 log = get_logger("ui.warmup")
 SOURCE_HINT = "Fonte: {label}, pelo aviso de reunião. Confira os medidores e clique em Gravar."
@@ -42,6 +43,7 @@ class SourceChoiceMixin:
     sources: SourceTable
     room_check: QCheckBox
     live: LiveBoxes
+    screen_box: ScreenSection
     live_check: QCheckBox
     names_check: QCheckBox
     record_btn: QPushButton
@@ -91,6 +93,7 @@ class SourceChoiceMixin:
             reason = type(e).__name__
         if reason:
             log.info("\"Antes de gravar\" segue na captura de tela (%s)", reason)
+        self.screen_box.set_excluded(not reason)         # F5.27 (A-34 da F5.21): fora da captura, a prévia; senão, só os rótulos
         if self.source_hint:
             self.record_btn.setFocus(Qt.FocusReason.OtherFocusReason)
             QTimer.singleShot(0, self.record_btn, self._to_front)

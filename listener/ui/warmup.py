@@ -56,6 +56,7 @@ from .tasks import run_task
 from .theme import METRICS, Tone, note, primary
 from .warmup_live import LiveBoxes
 from .warmup_notice import SETUP, Bars, SetupNotice
+from .warmup_screen import ScreenSection
 from .warmup_source import SourceChoiceMixin
 
 if TYPE_CHECKING:
@@ -212,6 +213,7 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         self.room_check.toggled.connect(functools.partial(mic_title, self.mic_box))      # A-41: "Microfone: você e a sala"
         self.live = LiveBoxes(store, self)               # F4, F5.6 (U-091, A-21) e F5.11 (U-111)
         self.live_check, self.names_check, self.partial_check = self.live.live_check, self.live.names_check, self.live.partial_check
+        self.screen_box = ScreenSection(self.platform, store, self)    # F5.27 (U-180, U-181): a caixa, os monitores e a prévia
         self.glossary_edit = QLineEdit()
         self.glossary_edit.setPlaceholderText("termos prováveis para a transcrição (a IA sugere; edite à vontade)")
         self.glossary_status = QLabel("")
@@ -272,12 +274,14 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
         columns.addWidget(meet_box, MEETING_STRETCH)
         footer = QHBoxLayout()
         footer.setSpacing(METRICS.card_gap)
+        footer.addWidget(self.screen_box.check, 0, Qt.AlignmentFlag.AlignVCenter)    # F5.27 (U-180): junto do Gravar, sem altura
         footer.addWidget(self.buttons, 0, Qt.AlignmentFlag.AlignVCenter)
         self._slots[SETUP] = (footer, 0, 1)                 # U-112: "Falta configurar", com a ação de cada item
         lay = QVBoxLayout(self)
         lay.setContentsMargins(DIALOG_MARGIN, DIALOG_MARGIN, DIALOG_MARGIN, DIALOG_MARGIN)
         lay.setSpacing(METRICS.card_gap)
         lay.addLayout(columns, 1)
+        lay.addWidget(self.screen_box)                      # F5.27: os monitores, na largura toda, só com a caixa ligada
         lay.addLayout(footer)
         primary(self, self.record_btn)                      # F5.4 (U-056, A-02): Gravar é o primário (Enter)
 
@@ -300,6 +304,8 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
 
     @override
     def accept(self) -> None:
+        if not self.screen_box.confirm():                       # F5.27 (U-180): a tela ligada sem monitor pede a escolha
+            return
         self._accepted = True
         self._save_last_choice()
         self._shutdown()
@@ -544,5 +550,6 @@ class WarmupDialog(SourceChoiceMixin, QDialog):
             "glossary_call_ids": list(self.glossary_call_ids),
             "language": self.meeting_language(),                          # F5.3 (A-01): a reunião nasce com ele
             **self.live.fields(),                                         # F4 e F5.6: legenda, nomes e parcial (CP6, A-21)
+            "screen_monitor": self.screen_box.monitor_key(),                  # F5.27: o `Monitor.key` ou None (sem a tela)
         }
         return cfg, fields

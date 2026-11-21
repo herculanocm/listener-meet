@@ -18,6 +18,9 @@ from .theme import METRICS, Tone, note, role
 
 SCOPE_TEXT = {SettingScope.NOW: "aplica agora", SettingScope.NEXT_RECORDING: "na próxima gravação"}
 FORM_SPACING = 16                                      # entre o rótulo e o campo
+# o rótulo na tela quando difere do da `SPECS`, que segue na mensagem do valor inválido (com a faixa, que o spin já limita)
+SHOWN_LABELS = {"screen_rec.fps": "Quadros por segundo da tela",                          # F5.27 (CP8)
+                "screen_rec.max_side": "Tamanho máximo da tela gravada (px)"}
 
 
 def pill(badge: Badge) -> Badge:
@@ -135,7 +138,7 @@ class SettingsPage(QScrollArea):
         if isinstance(editor, BoolEditor):
             form.addRow(field)
         else:
-            form.addRow(editor.spec.label, field)
+            form.addRow(SHOWN_LABELS.get(editor.key, editor.spec.label), field)
         return shown
 
 
@@ -172,4 +175,4 @@ class DownloadRow(QWidget):
         self.badge.set_tone(value)
 
 
-__all__ = ["SCOPE_TEXT", "DownloadRow", "SettingsPage", "pill"]
+__all__ = ["SCOPE_TEXT", "SHOWN_LABELS", "DownloadRow", "SettingsPage", "pill"]
