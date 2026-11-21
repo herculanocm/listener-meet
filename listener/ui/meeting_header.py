@@ -129,7 +129,8 @@ class MeetingHeaderMixin:
         menu.addAction(self.docx.action)
         self.media = MediaSaver(host, self.store, self.meeting_id, message=self.show_message, saved=self._saved,   # F5.19
                                 prefer_llm=lambda: self.transcript.prefer_llm, recording=self.recording,
-                                on_review=self._review_clicked if self.on_review is not None else None)   # F5.26 (U-178)
+                                on_review=self._review_clicked if self.on_review is not None else None,   # F5.26 (U-178)
+                                on_revise=self._revise_clicked)                                           # F5.26 (U-179)
         menu.addSeparator()
         menu.addAction(self.media.act_audio)
         menu.addAction(self.media.act_video)

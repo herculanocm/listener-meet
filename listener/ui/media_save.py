@@ -7,7 +7,10 @@ livre avisam antes de gerar (A-19, A-02). O arquivo sai numa `StreamTask` de pri
 prioridade baixa que segura o GIL travaria a interface e a captura), com o corpo em `media_job.run_job`, sem Qt. O
 progresso vai para uma faixa própria, com "Cancelar" (A-15: a faixa comum é escrita pelo .docx, pela LLM e pelo idioma); o
 resultado ("Salvo em …", "Exportação cancelada.", os avisos) vai para a comum. Com uma gravação em curso a tarefa espera
-parada (A-07). Uma exportação de mídia por app (A-17). Fechar a janela no meio pergunta; a saída do app cancela e espera."""
+parada (A-07). Uma exportação de mídia por app (A-17). Fechar a janela no meio pergunta; a saída do app cancela e espera.
+F5.26 (D-112): no vídeo, o reprocessamento em curso e as vozes pendentes que falam seguram antes de tudo (U-178); depois, o
+diálogo do texto da legenda (U-179, com o destino escolhido pelo usuário) decide entre a revisada e a original, e as legendas
+vão também numa faixa de texto do MP4 (`media_video_dialog`, `media_text`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -25,16 +28,17 @@ from ..pipeline import review
 from ..rag import export
 from .components import InfoBar
 from .media_audio import PEAK, AudioFormat, AudioPlan, Tick, available_formats, format_for, plan_audio, write_audio
-from .media_cues import Speech, build_cues, screens
+from .media_cues import Speech, build_cues, screens, text_track
 from .media_frames import FrameRenderer
 from .media_job import WAIT, JobFailure, estimate_bytes, held_by_another, media_error_text, progress_tick, run_job, space_problem
 from .media_video import video_available, write_video
-from .media_video_dialog import REPROCESSING, ask_review, blocking_voices, reprocessing
+from .media_video_dialog import REPROCESSING, ask_review, ask_text, blocking_voices, reprocessing, revise_cost
 from .player_source import audio_path_missing
 from .tasks import StreamTask, run_stream, wait_before_close
 from .timeline import build_lanes, lane_of_rows
 
 if TYPE_CHECKING:
+    from ..pipeline.review import TranscriptRow
     from ..store import Store
     from .media_cues import Screen
 
@@ -74,15 +78,16 @@ def missing_audio(store: Store, meeting_id: int) -> str | None:
     return None if missing is None else f"Sem o arquivo de áudio desta reunião na pasta do banco ({missing})."
 
 
-def speeches_for(store: Store, meeting_id: int, prefer_llm: bool) -> list[Speech]:
-    """As falas da leitura (o texto que a Transcrição mostra, o nome da pessoa e o cargo do dia) com a cor da faixa de cada
-    falante na Linha do tempo (U-081); sem texto, a fala sai."""
-    rows = review.transcript_rows(store, meeting_id, prefer_llm)
+def speeches_for(store: Store, meeting_id: int, prefer_llm: bool, rows: list[TranscriptRow] | None = None) -> list[Speech]:
+    """As falas da leitura (`rows`, ou lidas agora) com o texto escolhido (a revisada, quando `prefer_llm` e ela existe; senão,
+    a original), o nome da pessoa e o cargo do dia, com a cor da faixa de cada falante na Linha do tempo (U-081); sem texto, a
+    fala sai."""
+    rows = review.transcript_rows(store, meeting_id, prefer_llm) if rows is None else rows
     me = store.get_me()
     colors = lane_of_rows(build_lanes(rows, int(me["id"]) if me else None), len(rows))
     out: list[Speech] = []
     for row, color in zip(rows, colors, strict=True):
-        text = " ".join(row.shown_text.split())
+        text = " ".join((row.text_llm if prefer_llm and row.text_llm else row.text).split())
         if text:
             out.append(Speech(row.t_start_ms, row.t_end_ms, row.name, row.role, text, color or 0))
     return out
@@ -93,12 +98,13 @@ class MediaSaver(QObject):
 
     def __init__(self, window: QWidget, store: Store, meeting_id: int, *, message: Callable[[str], None],
                  saved: Callable[[Path], None], prefer_llm: Callable[[], bool], recording: Callable[[], bool] | None = None,
-                 on_review: Callable[[], None] | None = None):
+                 on_review: Callable[[], None] | None = None, on_revise: Callable[[], None] | None = None):
         super().__init__(window)
         self.window, self.store, self.meeting_id = window, store, meeting_id
         self.message, self.saved, self.prefer_llm = message, saved, prefer_llm
         self.recording = recording or (lambda: False)
         self.on_review = on_review                       # F5.26 (U-178): abre a revisão de falantes
+        self.on_revise = on_revise                       # F5.26 (U-179): o pedido de "Revisar a transcrição com IA"
         self.formats = available_formats()
         self.video_ready = video_available()             # procura sem importar
         self.act_audio = QAction("Salvar áudio…", window)
@@ -225,19 +231,33 @@ class MediaSaver(QObject):
 
         return self._start(AUDIO, chosen.key, target, plan, make)
 
-    def save_video(self, path: str | None = None) -> StreamTask | None:
-        """Gera o MP4 em `path` (ou no destino que o usuário escolher); None como no `save_audio` ou sem falas."""
+    def _ask_text(self, rows: list[TranscriptRow]) -> bool | None:
+        """U-179: True a revisada, False a original, None cancelou (ou pediu a revisão, que segue sozinha)."""
+        revised = any(r.text_llm for r in rows)
+        return ask_text(self.window, revised=revised, prefer_llm=self.prefer_llm(), on_generate=self.on_revise,
+                        cost=None if revised else revise_cost(self.store, self.meeting_id))
+
+    def save_video(self, path: str | None = None, prefer_llm: bool | None = None) -> StreamTask | None:
+        """Gera o MP4 em `path` com o texto de `prefer_llm` (ou, sem `path`, o texto e o destino que o usuário escolher; com
+        `path` e sem `prefer_llm`, o que a Transcrição mostra); None como no `save_audio`, sem falas ou com a guarda da F5.26."""
         if self.task is not None or not self.video_ready:
             return None
         checked = self._plan()
         if checked is None:
             return None
         plan, m = checked
-        speeches = speeches_for(self.store, self.meeting_id, self.prefer_llm())
-        if not speeches:
+        rows = review.transcript_rows(self.store, self.meeting_id)
+        if not speeches_for(self.store, self.meeting_id, self.prefer_llm(), rows):
             self.message(NO_SPEECH)
             return None
         if self._video_held():
+            return None
+        use_llm = prefer_llm if prefer_llm is not None else (self._ask_text(rows) if path is None else self.prefer_llm())
+        if use_llm is None:
+            return None
+        speeches = speeches_for(self.store, self.meeting_id, use_llm, rows)
+        if not speeches:
+            self.message(NO_SPEECH)
             return None
         cues = build_cues(speeches, plan.pauses, plan.duration_ms)
         timeline: list[tuple[int, Screen]] = screens(cues, plan.duration_ms)
@@ -250,8 +270,11 @@ class MediaSaver(QObject):
         if self._blocked(target, estimate_bytes(True, "mp4", plan)):
             return None
 
+        captions = text_track(cues)                     # F5.26: a faixa de texto, com as mesmas legendas
+
         def make(tick: Tick) -> tuple[Path, int, int]:
-            out, frames = write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height))
+            out, frames = write_video(store, plan, timeline, renderer.render, target, tick, (renderer.width, renderer.height),
+                                      captions)
             return out, len(cues), frames
 
         return self._start(VIDEO, "mp4", target, plan, make)

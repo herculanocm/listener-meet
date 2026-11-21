@@ -19,13 +19,17 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..log import get_logger
 from ..rag.export import atomic_target
 from .media_audio import WRITE, AudioPlan, Tick, blocks, gain_for, measure_peak, step
+from .media_text import TextTrack, text_track_available
 from .player_source import Chunks
 
 if TYPE_CHECKING:
     from ..store import Store
-    from .media_cues import Screen
+    from .media_cues import Screen, TextSample
+
+log = get_logger("ui.media")
 
 REFRESH_MS = 1000                # um quadro por segundo entre as trocas
 CODECS = ("libx264", "libopenh264", "mpeg4")     # só de CPU (CP14), do melhor para o substituto do próprio FFmpeg
@@ -137,11 +141,22 @@ class _Muxer:
             self.out.mux(packet)
 
 
+def _text_track(av: Any, out: Any, captions: Sequence[TextSample]) -> TextTrack | None:
+    """F5.26: a faixa de texto com as legendas; sem legendas, nenhuma; sem o codificador `mov_text`, nenhuma, com o aviso."""
+    if not captions:
+        return None
+    if not text_track_available(av):
+        log.warning("o PyAV desta máquina não tem o codificador mov_text: o vídeo sai sem a faixa de texto")
+        return None
+    return TextTrack(av, out, captions)
+
+
 def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Screen]], render: Callable[[Screen], np.ndarray],
-                target: Path, tick: Tick, size: tuple[int, int]) -> tuple[Path, int]:
-    """O MP4 em `target`: mede o pico (a primeira passada), grava áudio e quadros no temporário e troca no fim; devolve o
-    caminho e os quadros gravados. `ExportCancelledError` quando o `tick` pede, `OSError` na escrita; nos dois, o
-    temporário sai (o contêiner fecha antes, no `with`: o Windows não apaga arquivo aberto, A-21)."""
+                target: Path, tick: Tick, size: tuple[int, int], captions: Sequence[TextSample] = ()) -> tuple[Path, int]:
+    """O MP4 em `target`: mede o pico (a primeira passada), grava áudio, quadros e a faixa de texto (`captions`, F5.26) no
+    temporário e troca no fim; devolve o caminho e os quadros gravados. `ExportCancelledError` quando o `tick` pede,
+    `OSError` na escrita; nos dois, o temporário sai (o contêiner fecha antes, no `with`: o Windows não apaga arquivo
+    aberto, A-21)."""
     import av
 
     chunks = Chunks(store, plan.meeting_id, plan.rate)
@@ -149,6 +164,7 @@ def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Scre
     with atomic_target(target) as tmp:
         with av.open(str(tmp), "w", format="mp4", options={"movflags": "+faststart"}) as out:
             mux = _Muxer(av, out, size, plan.rate, render)
+            text = _text_track(av, out, captions)
             frames = frame_times(screens, plan.duration_ms)
             pending = next(frames, None)
             pos = 0
@@ -159,10 +175,14 @@ def write_video(store: Store, plan: AudioPlan, screens: Sequence[tuple[int, Scre
                 while pending is not None and pending[0] < done_ms:
                     mux.picture(pending[0], pending[1], screens[pending[1]][1])
                     pending = next(frames, None)
+                if text is not None:
+                    text.until(done_ms)
                 step(tick, WRITE, pos / max(1, plan.frames))
             while pending is not None:              # o arredondamento do último bloco
                 mux.picture(pending[0], pending[1], screens[pending[1]][1])
                 pending = next(frames, None)
+            if text is not None:
+                text.until(None)
             mux.flush()
         step(tick, WRITE, 1.0)                       # R-01: depois do trailer e do `+faststart`, o cancelar ainda vale
     return target, mux.frames

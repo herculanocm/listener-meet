@@ -1,16 +1,25 @@
-"""O que vem antes do "Salvar vídeo com legendas…" (F5.26, D-112): a guarda das vozes pendentes (U-178) e a do
-reprocessamento em curso.
+"""O que vem antes do "Salvar vídeo com legendas…" (F5.26, D-112): a guarda das vozes pendentes (U-178), a do
+reprocessamento em curso e o diálogo "Vídeo com legendas" (U-179), que escolhe o texto da legenda.
 
 Pendente é o que `review.pending` diz (`ambíguo` ou `sem_nome`, fora das mescladas); ignorada, mesclada e confirmada contam
 como decididas. Só segura o vídeo a pendente com pelo menos uma fala com texto na leitura vigente, contando as falas das
 vozes mescladas nela (no vídeo, elas saem com o "Voz N" do alvo). O aviso não tem "salvar mesmo assim": "Revisar
-falantes…" abre a revisão que já existe (CP11: a IA não decide nada novo)."""
+falantes…" abre a revisão que já existe (CP11: a IA não decide nada novo).
+
+O U-179 vem antes do diálogo de salvar: "Revisado pela IA" ou "Original (como foi transcrito)", com o padrão no que a
+Transcrição mostra. Sem nenhuma fala revisada, a primeira opção fica apagada e "Gerar a revisão" faz o pedido de "Revisar a
+transcrição com IA" e fecha; nada fica encadeado. O custo é o da conta do job sobre a transcrição vigente
+(`llm_steps.estimate_meeting_usd`, a mesma da pergunta do reprocessamento); sem chave, sem modelo ou sem preço, o botão vai
+sem valor."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QVBoxLayout, QWidget
 
+from ..llm.costs import fmt_usd
+from ..model import JobStep
 from ..pipeline import review
 from ..pipeline.reprocess import active_jobs
 
@@ -20,6 +29,13 @@ if TYPE_CHECKING:
 REPROCESSING = "A reunião está sendo reprocessada."
 REVIEW = "Revisar falantes…"
 CLOSE = "Fechar"
+TEXT_TITLE = "Vídeo com legendas"
+TEXT_LABEL = "Texto da legenda"
+LLM_TEXT = "Revisado pela IA"
+ORIGINAL_TEXT = "Original (como foi transcrito)"
+NOT_REVISED = "A revisão pela IA não foi gerada."
+CHOOSE = "Escolher onde salvar…"
+CANCEL = "Cancelar"
 
 
 def _root(cluster_id: int, merged: dict[int, int | None]) -> int:
@@ -82,4 +98,101 @@ def ask_review(parent: QWidget, n: int, can_review: bool) -> bool:
         box.deleteLater()
 
 
-__all__ = ["CLOSE", "REPROCESSING", "REVIEW", "ask_review", "blocked_text", "blocking_voices", "reprocessing", "review_box"]
+def revise_cost(store: Store, meeting_id: int) -> float | None:
+    """O custo estimado de revisar a transcrição vigente inteira; None sem chave da IA (o pedido não sairia), sem modelo ou
+    sem preço."""
+    from ..pipeline.llm_steps import estimate_meeting_usd
+
+    if store.providers.active_with_key("llm") is None:
+        return None
+    return estimate_meeting_usd(store, meeting_id, (JobStep.REVISE,))
+
+
+def generate_label(usd: float | None) -> str:
+    """"Gerar a revisão (~US$ 0,04)"; sem estimativa, só "Gerar a revisão"."""
+    return "Gerar a revisão" if usd is None else f"Gerar a revisão (~{fmt_usd(usd)})"
+
+
+class VideoTextDialog(QDialog):
+    """U-179: o texto da legenda (`use_llm`) e, sem a revisada, o pedido dela (`on_generate`, que fecha o diálogo)."""
+
+    def __init__(self, parent: QWidget | None, *, revised: bool, prefer_llm: bool, cost: float | None = None,
+                 on_generate: Callable[[], None] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(TEXT_TITLE)
+        self.on_generate = on_generate
+        box = QGroupBox(TEXT_LABEL)
+        self.llm = QRadioButton(LLM_TEXT)
+        self.original = QRadioButton(ORIGINAL_TEXT)
+        self.llm.setEnabled(revised)
+        (self.llm if revised and prefer_llm else self.original).setChecked(True)
+        options = QVBoxLayout(box)
+        options.addWidget(self.llm)
+        options.addWidget(self.original)
+        layout = QVBoxLayout(self)
+        layout.addWidget(box)
+        self.missing: QLabel | None = None
+        self.btn_generate: QPushButton | None = None
+        if not revised:
+            self.missing = QLabel(NOT_REVISED)
+            self.btn_generate = QPushButton(generate_label(cost))
+            self.btn_generate.setEnabled(on_generate is not None)
+            self.btn_generate.setAutoDefault(False)
+            self.btn_generate.clicked.connect(self._generate)
+            row = QHBoxLayout()
+            row.addWidget(self.missing, 1)
+            row.addWidget(self.btn_generate)
+            layout.addLayout(row)
+        self.btn_choose = QPushButton(CHOOSE)
+        self.btn_cancel = QPushButton(CANCEL)
+        self.btn_choose.setDefault(True)
+        self.btn_cancel.setAutoDefault(False)
+        self.btn_choose.clicked.connect(self.accept)
+        self.btn_cancel.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.btn_choose)
+        buttons.addWidget(self.btn_cancel)
+        layout.addLayout(buttons)
+
+    @property
+    def use_llm(self) -> bool:
+        return self.llm.isEnabled() and self.llm.isChecked()
+
+    def _generate(self) -> None:
+        if self.on_generate is not None:
+            self.on_generate()
+        self.reject()
+
+
+def ask_text(parent: QWidget, *, revised: bool, prefer_llm: bool, cost: float | None,
+             on_generate: Callable[[], None] | None) -> bool | None:
+    """Mostra o U-179: True usa a revisada, False a original; None cancelou ou pediu a revisão."""
+    dlg = VideoTextDialog(parent, revised=revised, prefer_llm=prefer_llm, cost=cost, on_generate=on_generate)
+    try:
+        return dlg.use_llm if dlg.exec() == QDialog.DialogCode.Accepted else None
+    finally:
+        dlg.deleteLater()
+
+
+__all__ = [
+    "CANCEL",
+    "CHOOSE",
+    "CLOSE",
+    "LLM_TEXT",
+    "NOT_REVISED",
+    "ORIGINAL_TEXT",
+    "REPROCESSING",
+    "REVIEW",
+    "TEXT_LABEL",
+    "TEXT_TITLE",
+    "VideoTextDialog",
+    "ask_review",
+    "ask_text",
+    "blocked_text",
+    "blocking_voices",
+    "generate_label",
+    "reprocessing",
+    "review_box",
+    "revise_cost",
+]
