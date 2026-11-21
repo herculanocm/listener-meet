@@ -73,7 +73,7 @@ def test_start_launches_the_child_emits_the_states_and_writes_the_events_until_t
     assert host.wait_closed(10.0)
     qtbot.waitUntil(lambda: bool(events(store, env.mid, "screen_stop")), timeout=5000)
     assert env.states[0] == ("starting", "Monitor 1") and ("recording", "Monitor 1") in env.states and env.states[-1] == ("off", "")
-    assert events(store, env.mid, "screen_start") == [{"monitor": 1, "width": 64, "height": 48}]
+    assert events(store, env.mid, "screen_start") == [{"monitor": 1, "width": 64, "height": 48, "fps": 1, "max_side": 1920}]
     stop = events(store, env.mid, "screen_stop")[0]
     assert stop["reason"] == "reuniao" and stop["frames"] >= 1 and stop["segments"] == len(store.screen.list_chunks(env.mid)) >= 1
     assert all("DISPLAY" not in str(e["data"]) for e in store.list_events(env.mid))   # nunca a chave do monitor
@@ -125,7 +125,7 @@ def test_switch_writes_the_event_and_updates_the_label_and_params_go_once(qtbot,
     qtbot.waitUntil(lambda: host.state == host_mod.RECORDING, timeout=10000)
     host.switch("DISPLAY2")
     qtbot.waitUntil(lambda: host.monitor_label == "Monitor 2", timeout=5000)
-    assert events(store, env.mid, "screen_switch") == [{"monitor": 2, "width": 96, "height": 54}]
+    assert events(store, env.mid, "screen_switch") == [{"monitor": 2, "width": 96, "height": 54, "fps": 1, "max_side": 1920}]
     assert env.states[-1] == ("recording", "Monitor 2")
     sent: list[dict[str, Any]] = []
     assert host._session is not None
