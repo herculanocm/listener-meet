@@ -281,10 +281,34 @@ def test_cancel_kills_the_screen_child_before_the_meeting_is_deleted(qtbot, qapp
         real_delete(meeting_id)
 
     monkeypatch.setattr(store, "delete_meeting", delete)
+    spaces: list[str] = []
+    monkeypatch.setattr(c.deleter, "start_space", lambda: spaces.append("space") or True)
     try:
         assert c.start_recording(_cfg(), {"title": "cancelar", "screen_monitor": "DISPLAY2"})
         qtbot.waitUntil(lambda: c.screen.state == host_mod.RECORDING, timeout=10000)
         c.cancel_recording()
         assert order == ["delete"] and c.screen.state == host_mod.OFF and c.state == AppState.IDLE
+        assert spaces == ["space"]                                         # o disco da tela descartada volta (revisão do diff)
+    finally:
+        c.emergency_stop()
+
+
+def test_recording_without_the_screen_launches_nothing_warns_nothing_keeps_the_monitor_and_asks_for_the_space_at_the_end(
+        qtbot, qapp, store, platform, monkeypatch):
+    screen, children = MutableScreen(D1, D2), list[ThreadChild]()
+    c = _controller(qapp, store, platform, monkeypatch, screen, children)
+    store.set_setting("screen_rec.monitor", "DISPLAY2")
+    notices: list[str] = []
+    monkeypatch.setattr(c.screen, "on_error", notices.append)
+    spaces: list[str] = []
+    monkeypatch.setattr(c.deleter, "start_space", lambda: spaces.append("space") or True)
+    try:
+        assert c.start_recording(_cfg(), {"title": "sem tela", "screen_monitor": None})
+        assert children == [] and notices == [] and c.screen.state == host_mod.OFF
+        assert store.get_setting("screen_rec.monitor") == "DISPLAY2"
+        platform.pump(0.3)
+        c.stop_recording()
+        qtbot.waitUntil(lambda: c.state == AppState.IDLE, timeout=15000)
+        assert spaces == ["space"]                                         # o espaço que a gravação segurou volta ao parar
     finally:
         c.emergency_stop()

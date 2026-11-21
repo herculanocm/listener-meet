@@ -16,8 +16,9 @@ Tamanho-alvo: 12 KB.
 - Documentação reestruturada em 15/11 (D-108): specs implementadas condensadas, handoff e roteiro de teste apagados.
   A spec F5.22 (GPU), que estava suspensa, foi apagada (D-109); a CP14 vale como está.
 - A F5.26 e a F5.27 foram feitas numa máquina nova (i7-8565U, `memory/maquina.md`), sem os modelos, sem as chaves e
-  sem o PyInstaller: nela, 6 testes falham pelo ambiente (3 do `test_build_exe`, `test_keys_ui` e 2 do
-  `test_llm_request_*` da caixa do parcial). A régua foi nenhuma falha nova.
+  sem o PyInstaller: nela, 6 testes falham já no commit de antes da F5.26, com a mesma asserção no fim (3 do
+  `test_build_exe`, pelo PyInstaller ausente [fato]; `test_keys_ui` e 2 do `test_llm_request_*` da caixa do parcial,
+  pelos modelos do ao vivo ou pelas chaves ausentes [chute]). A régua foi nenhuma falha nova.
 
 ## Próximos passos
 1. O dono confere no uso real o que está em "Verificar no Windows".
@@ -118,8 +119,6 @@ Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparece
 - A estimativa de custo da ata usa 250 tokens por minuto e 20 caracteres por fala [chute]: calibrar no banco real.
 - O anexo do áudio (`Core.attach`) dentro de `transaction()` ou `snapshot()` tem o problema achado no da tela: o
   `PRAGMA` do anexo falha ali, e a fila não desanexa ninguém. O da tela recusa; o do áudio não mexeu.
-- `screen_stop` de queda: o comentário de `EventType.SCREEN_LOST` em `model.py` diz "ou o filho caiu de vez", mas a
-  queda grava `screen_stop` com `reason` "queda" (o código vale, D-109: apagar o trecho do comentário ao mexer).
 
 **Interface**
 - O aviso "banco não responde há N s" exagera o tempo (`pending_since`).
@@ -162,7 +161,7 @@ Reais e pequenas, aceitas por ora. Corrigir ao mexer na área, ou quando aparece
 **Tamanho do código**
 - Acima de 400 linhas, dividir ao mexer: `ui/controller.py`, `live/proc.py`, `ui/player.py`, `capture/recorder.py`,
   `pipeline/llm_steps.py`, `store/rag.py`, `ui/warmup.py` (555), `store/core.py`. Perto do limite: `rag/agent.py`,
-  `ui/history_ask.py`, `rag/sandbox.py`, `tests/test_win32_devices.py`, `ui/screen_rec_host.py` (397),
+  `ui/history_ask.py`, `rag/sandbox.py`, `tests/test_win32_devices.py`, `ui/screen_rec_host.py` (400),
   `platform/base.py` (397), `ui/media_save.py` (387, com `save_video` em 47 linhas).
   Funções longas: `MeetingWindow.__init__` (~88 linhas) e `ProviderTab.__init__` (68).
 
